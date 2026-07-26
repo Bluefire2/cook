@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import ChatPanel from '../components/ChatPanel';
 import { useRecipe } from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
 import { useWakeLock } from '../lib/useWakeLock';
@@ -23,6 +24,7 @@ export default function RecipeView() {
   const [servings, setServings] = useState<number | null>(null);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
   const [currentStep, setCurrentStep] = useState(0);
+  const [chatOpen, setChatOpen] = useState(false);
 
   if (recipe === undefined) return null;
   if (recipe === null) {
@@ -180,6 +182,30 @@ export default function RecipeView() {
             {recipe.notes}
           </p>
         </section>
+      )}
+
+      {!chatOpen && (
+        <button
+          type="button"
+          onClick={() => setChatOpen(true)}
+          className="fixed right-5 bottom-8 z-10 flex h-14 items-center gap-2 rounded-full bg-amber-500 px-5 font-medium text-white shadow-lg active:bg-amber-600"
+        >
+          Ask
+        </button>
+      )}
+      {chatOpen && (
+        <ChatPanel
+          recipe={recipe}
+          cookingState={{
+            servings: effectiveServings,
+            currentStep: currentStep + 1,
+            checkedIngredients: [...checked].map((key) => {
+              const [si, ii] = key.split('-').map(Number);
+              return recipe.ingredientSections[si].items[ii].item;
+            }),
+          }}
+          onClose={() => setChatOpen(false)}
+        />
       )}
     </div>
   );
