@@ -9,9 +9,11 @@
 import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
 import { POST as chatPost } from '../api/chat.ts';
+import { POST as importPost } from '../api/import.ts';
 
 const routes: Record<string, (req: Request) => Promise<Response>> = {
   'POST /api/chat': chatPost,
+  'POST /api/import': importPost,
 };
 
 createServer(async (nodeReq, nodeRes) => {
