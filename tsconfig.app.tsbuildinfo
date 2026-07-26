@@ -1,1 +1,0 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/lib/chatstore.ts","./src/lib/db.ts","./src/lib/photostore.ts","./src/lib/recipestore.ts","./src/lib/seed.ts","./src/lib/types.ts","./src/screens/importscreen.tsx","./src/screens/library.tsx","./src/screens/recipeview.tsx","./src/screens/settings.tsx"],"version":"5.8.3"}
