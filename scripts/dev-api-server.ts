@@ -8,14 +8,14 @@
  */
 import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
-import chatHandler from '../api/chat.ts';
+import { POST as chatPost } from '../api/chat.ts';
 
 const routes: Record<string, (req: Request) => Promise<Response>> = {
-  '/api/chat': chatHandler,
+  'POST /api/chat': chatPost,
 };
 
 createServer(async (nodeReq, nodeRes) => {
-  const route = routes[(nodeReq.url ?? '').split('?')[0]];
+  const route = routes[`${nodeReq.method} ${(nodeReq.url ?? '').split('?')[0]}`];
   if (!route) {
     nodeRes.statusCode = 404;
     nodeRes.end('Not found');
