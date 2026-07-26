@@ -4,6 +4,12 @@ import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  server: {
+    proxy: {
+      // Local stand-in for Vercel functions; see scripts/dev-api-server.ts
+      '/api': 'http://localhost:3001',
+    },
+  },
   plugins: [
     react(),
     tailwindcss(),

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:api": "node --env-file=.env.local scripts/dev-api-server.ts",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },
