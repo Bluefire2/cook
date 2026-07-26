@@ -33,6 +33,9 @@ export interface Recipe {
   updatedAt: number;
 }
 
+/** A recipe as produced by extraction/modification, before it gets identity. */
+export type RecipeDraft = Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>;
+
 export interface ChatMessage {
   id: string;
   recipeId: string;
@@ -40,6 +43,8 @@ export interface ChatMessage {
   content: string;
   /** FKs into the photos table for attached images. */
   photoIds?: string[];
+  /** Set when the assistant proposed a recipe modification via update_recipe. */
+  proposedRecipe?: RecipeDraft;
   createdAt: number;
 }
 

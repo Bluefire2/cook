@@ -1,6 +1,6 @@
 import { settings } from './settings';
 import type { EncodedImage } from './image';
-import type { Recipe } from './types';
+import type { Recipe, RecipeDraft } from './types';
 
 export interface OutgoingMessage {
   role: 'user' | 'assistant';
@@ -14,9 +14,16 @@ export interface CookingState {
   checkedIngredients: string[];
 }
 
+export interface ChatReply {
+  text: string;
+  /** Present when the assistant proposed a recipe modification. */
+  proposedRecipe?: RecipeDraft;
+}
+
 /**
  * Streams an assistant reply. Calls `onDelta` with the text so far on every
- * chunk and resolves with the complete reply.
+ * chunk and resolves with the complete reply. A proposed recipe update, if
+ * any, arrives after an ASCII Record Separator (0x1E) as JSON.
  */
 export async function streamChatReply(params: {
   messages: OutgoingMessage[];
@@ -24,7 +31,7 @@ export async function streamChatReply(params: {
   cookingState?: CookingState;
   onDelta: (textSoFar: string) => void;
   signal?: AbortSignal;
-}): Promise<string> {
+}): Promise<ChatReply> {
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: {
@@ -48,12 +55,22 @@ export async function streamChatReply(params: {
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let text = '';
+  let raw = '';
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    text += decoder.decode(value, { stream: true });
-    params.onDelta(text);
+    raw += decoder.decode(value, { stream: true });
+    params.onDelta(raw.split('\x1E')[0]);
   }
-  return text;
+
+  const [text, proposalJson] = raw.split('\x1E');
+  let proposedRecipe: RecipeDraft | undefined;
+  if (proposalJson) {
+    try {
+      proposedRecipe = JSON.parse(proposalJson) as RecipeDraft;
+    } catch {
+      // Truncated/malformed proposal — keep the text reply.
+    }
+  }
+  return { text, proposedRecipe };
 }

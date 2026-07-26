@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { RECIPE_SCHEMA } from './_recipeSchema.ts';
 
 export interface ChatRequestImage {
   /** e.g. "image/jpeg" */
@@ -33,6 +34,13 @@ function systemPrompt(recipe: unknown, cookingState: unknown): string {
     'where they are in the recipe. Reply in plain text only — no markdown',
     'syntax like ** or #, since the app renders your reply verbatim. Use',
     'simple dashes for lists.',
+    '',
+    'When the user asks you to modify the recipe (substitutions, scaling',
+    'techniques, dietary changes, adding/removing components), call the',
+    'update_recipe tool with the COMPLETE updated recipe — every field, not',
+    'just the changed parts. Briefly say what you changed in your text reply.',
+    'The app shows the user a diff and lets them apply it, so do not ask for',
+    'permission first. For pure questions, answer without the tool.',
     '',
     'Current recipe (JSON):',
     JSON.stringify(recipe),
@@ -71,18 +79,46 @@ export async function POST(req: Request): Promise<Response> {
 
   const stream = anthropic.messages.stream({
     model: MODEL,
-    max_tokens: 2048,
+    max_tokens: 4096,
     system: systemPrompt(body.recipe, body.cookingState),
     messages: toAnthropicMessages(body.messages),
+    tools: [
+      {
+        name: 'update_recipe',
+        description:
+          'Propose a modified version of the recipe the user is viewing. ' +
+          'Pass the complete updated recipe.',
+        input_schema: RECIPE_SCHEMA,
+      },
+    ],
   });
 
+  // Plain text streams as-is; if the model proposed a recipe update, it is
+  // appended after an ASCII Record Separator (0x1E) as a JSON payload.
   const encoder = new TextEncoder();
   const readable = new ReadableStream<Uint8Array>({
     start(controller) {
       stream.on('text', (delta) => {
         controller.enqueue(encoder.encode(delta));
       });
-      stream.on('end', () => controller.close());
+      stream.on('end', () => {
+        void (async () => {
+          try {
+            const final = await stream.finalMessage();
+            const toolUse = final.content.find(
+              (b) => b.type === 'tool_use' && b.name === 'update_recipe',
+            );
+            if (toolUse && toolUse.type === 'tool_use') {
+              controller.enqueue(
+                encoder.encode('\x1E' + JSON.stringify(toolUse.input)),
+              );
+            }
+            controller.close();
+          } catch (err) {
+            controller.error(err);
+          }
+        })();
+      });
       stream.on('error', (err) => controller.error(err));
     },
     cancel() {

@@ -1,7 +1,7 @@
 import { settings } from './settings';
-import type { Recipe } from './types';
+import type { RecipeDraft } from './types';
 
-export type ExtractedRecipe = Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>;
+export type ExtractedRecipe = RecipeDraft;
 
 export async function importRecipe(params: {
   url?: string;
