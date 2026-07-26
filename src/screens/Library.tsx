@@ -1,8 +1,20 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useRecipes } from '../lib/recipeStore';
 
 export default function Library() {
-  const recipes = useRecipes();
+  const allRecipes = useRecipes();
+  const [query, setQuery] = useState('');
+
+  const q = query.trim().toLowerCase();
+  const recipes =
+    q === ''
+      ? allRecipes
+      : allRecipes?.filter(
+          (r) =>
+            r.title.toLowerCase().includes(q) ||
+            r.tags.some((tag) => tag.toLowerCase().includes(q)),
+        );
 
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
@@ -16,9 +28,19 @@ export default function Library() {
         </Link>
       </header>
 
+      <input
+        type="search"
+        placeholder="Search recipes…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        className="mb-4 w-full rounded-xl border border-stone-200 bg-white px-4 py-2.5 shadow-sm outline-none focus:border-stone-400"
+      />
+
       {recipes === undefined ? null : recipes.length === 0 ? (
         <p className="py-12 text-center text-stone-500">
-          No recipes yet. Import your first one!
+          {q === ''
+            ? 'No recipes yet. Import your first one!'
+            : 'No recipes match your search.'}
         </p>
       ) : (
         <ul className="flex flex-col gap-3">
