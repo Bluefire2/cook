@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --color-cream: #faf7f2;
+}
+
+html {
+  /* Avoid iOS Safari inflating text when rotating */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  @apply bg-cream text-stone-800 antialiased;
+  /* Respect iPhone safe areas (notch, home indicator) */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  overscroll-behavior-y: none;
+}
