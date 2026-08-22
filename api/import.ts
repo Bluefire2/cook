@@ -63,11 +63,17 @@ interface ImportRequestBody {
 
 const MODEL = process.env.CHAT_MODEL ?? 'claude-sonnet-4-5';
 
+const MAX_SOURCE_CHARS = 60000;
+
+// This handler awaits a complete non-streaming extraction, which regularly
+// outlasts Vercel's 10s default and would surface as a timeout, not an error.
+export const maxDuration = 60;
+
 /**
  * Prefers the schema.org/Recipe JSON-LD block most recipe sites embed
  * (compact and unambiguous); falls back to the page's stripped text.
  */
-function extractRecipeSource(html: string): string {
+export function extractRecipeSource(html: string): string {
   const ldBlocks = html.matchAll(
     /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi,
   );
@@ -80,7 +86,7 @@ function extractRecipeSource(html: string): string {
       for (const node of nodes) {
         const type = (node as { '@type'?: string | string[] })['@type'];
         if (type === 'Recipe' || (Array.isArray(type) && type.includes('Recipe'))) {
-          return JSON.stringify(node);
+          return JSON.stringify(node).slice(0, MAX_SOURCE_CHARS);
         }
       }
     } catch {
@@ -94,7 +100,7 @@ function extractRecipeSource(html: string): string {
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/\s+/g, ' ')
-    .slice(0, 60000);
+    .slice(0, MAX_SOURCE_CHARS);
 }
 
 export async function POST(req: Request): Promise<Response> {

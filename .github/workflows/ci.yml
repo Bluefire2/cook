@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # scripts/dev-api-server.ts relies on native TypeScript type stripping.
+          node-version: '22.18'
+          cache: npm
+      - run: npm ci
+      - run: npx tsc -b
+      - run: npm test

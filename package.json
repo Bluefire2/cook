@@ -7,7 +7,9 @@
     "dev": "vite",
     "dev:api": "node --env-file=.env.local scripts/dev-api-server.ts",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
@@ -26,6 +28,7 @@
     "tailwindcss": "^4.1.7",
     "typescript": "~5.8.3",
     "vite": "^6.3.5",
-    "vite-plugin-pwa": "^1.0.0"
+    "vite-plugin-pwa": "^1.0.0",
+    "vitest": "^4.1.11"
   }
 }
