@@ -4,7 +4,7 @@ import { chatStore, useChatMessages } from '../lib/chatStore';
 import { photoStore, usePhotoUrl } from '../lib/photoStore';
 import { recipeStore } from '../lib/recipeStore';
 import { streamChatReply, type CookingState } from '../lib/chatApi';
-import { encodeImageForChat } from '../lib/image';
+import { encodeImageForChat, type EncodedImage } from '../lib/image';
 import { formatQuantity } from '../lib/quantity';
 import type { ChatMessage, Ingredient, Recipe, RecipeDraft } from '../lib/types';
 
@@ -42,6 +42,27 @@ function ProposalCard({
   const navigate = useNavigate();
   const [applied, setApplied] = useState<string | null>(null);
 
+  const apply = async () => {
+    await recipeStore.applyDraft(recipe.id, proposal);
+    setApplied('Applied to this recipe ✓');
+  };
+
+  const saveAsVariant = async () => {
+    const created = await recipeStore.create(proposal);
+    setApplied('Saved as a new recipe ✓');
+    onNavigateAway();
+    navigate(`/recipe/${created.id}`);
+  };
+
+  // The diff is against a recipe that no longer exists in that form.
+  if (applied) {
+    return (
+      <div className="mt-2 rounded-xl border border-amber-200 bg-white p-3">
+        <p className="text-sm font-medium text-green-700">{applied}</p>
+      </div>
+    );
+  }
+
   const before = recipeLines(recipe);
   const after = recipeLines(proposal);
   const removedIngredients = before.ingredients.filter(
@@ -52,23 +73,6 @@ function ProposalCard({
   );
   const removedSteps = before.steps.filter((l) => !after.steps.includes(l));
   const addedSteps = after.steps.filter((l) => !before.steps.includes(l));
-
-  const apply = async () => {
-    await recipeStore.save({
-      ...proposal,
-      id: recipe.id,
-      createdAt: recipe.createdAt,
-      updatedAt: recipe.updatedAt,
-    });
-    setApplied('Applied to this recipe ✓');
-  };
-
-  const saveAsVariant = async () => {
-    const created = await recipeStore.create(proposal);
-    setApplied('Saved as a new recipe ✓');
-    onNavigateAway();
-    navigate(`/recipe/${created.id}`);
-  };
 
   return (
     <div className="mt-2 rounded-xl border border-amber-200 bg-white p-3">
@@ -97,26 +101,22 @@ function ProposalCard({
           <p className="text-stone-500">Metadata-only change.</p>
         )}
       </div>
-      {applied ? (
-        <p className="mt-2 text-sm font-medium text-green-700">{applied}</p>
-      ) : (
-        <div className="mt-2.5 flex gap-2">
-          <button
-            type="button"
-            onClick={() => void apply()}
-            className="flex-1 rounded-full bg-stone-800 py-2 text-sm font-medium text-white"
-          >
-            Apply
-          </button>
-          <button
-            type="button"
-            onClick={() => void saveAsVariant()}
-            className="flex-1 rounded-full border border-stone-300 py-2 text-sm font-medium text-stone-600"
-          >
-            Save as variant
-          </button>
-        </div>
-      )}
+      <div className="mt-2.5 flex gap-2">
+        <button
+          type="button"
+          onClick={() => void apply()}
+          className="flex-1 rounded-full bg-stone-800 py-2 text-sm font-medium text-white"
+        >
+          Apply
+        </button>
+        <button
+          type="button"
+          onClick={() => void saveAsVariant()}
+          className="flex-1 rounded-full border border-stone-300 py-2 text-sm font-medium text-stone-600"
+        >
+          Save as variant
+        </button>
+      </div>
     </div>
   );
 }
@@ -188,12 +188,17 @@ export default function ChatPanel({
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inFlight = useRef<AbortController | null>(null);
 
   const busy = streamingText !== null;
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages?.length, streamingText]);
+
+  // The sheet unmounts on close and on navigation; a reply nobody can read is
+  // still billed until the request is cancelled.
+  useEffect(() => () => inFlight.current?.abort(), []);
 
   const attachPhoto = async (file: File) => {
     const photoId = await photoStore.add(file);
@@ -205,8 +210,24 @@ export default function ChatPanel({
     if ((content === '' && pendingPhotos.length === 0) || busy) return;
 
     setError(null);
-    setDraft('');
+    setStreamingText('');
     const photos = pendingPhotos;
+
+    // Encode before writing the user message, so a photo we cannot read leaves
+    // the thread untouched instead of orphaning a question.
+    let images: EncodedImage[];
+    try {
+      images = await Promise.all(
+        photos.map((p) => encodeImageForChat(p.blob)),
+      );
+    } catch {
+      setStreamingText(null);
+      setPendingPhotos([]);
+      setError("That photo couldn't be read — it may not be a real image.");
+      return;
+    }
+
+    setDraft('');
     setPendingPhotos([]);
 
     const history = messages ?? [];
@@ -217,11 +238,10 @@ export default function ChatPanel({
       photoIds: photos.map((p) => p.photoId),
     });
 
-    setStreamingText('');
+    const controller = new AbortController();
+    inFlight.current = controller;
+    let streamed = '';
     try {
-      const images = await Promise.all(
-        photos.map((p) => encodeImageForChat(p.blob)),
-      );
       const reply = await streamChatReply({
         recipe,
         cookingState,
@@ -229,7 +249,11 @@ export default function ChatPanel({
           ...history.map((m) => ({ role: m.role, content: m.content })),
           { role: 'user' as const, content, images },
         ],
-        onDelta: setStreamingText,
+        onDelta: (textSoFar) => {
+          streamed = textSoFar;
+          setStreamingText(textSoFar);
+        },
+        signal: controller.signal,
       });
       await chatStore.append({
         recipeId: recipe.id,
@@ -240,8 +264,29 @@ export default function ChatPanel({
         proposedRecipe: reply.proposedRecipe,
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong.');
+      // Half an answer beats a question left hanging in the thread. An abort is
+      // the user's own doing, so it needs no bubble of its own and no error.
+      const partial = streamed.trim();
+      if (controller.signal.aborted) {
+        if (partial !== '') {
+          await chatStore.append({
+            recipeId: recipe.id,
+            role: 'assistant',
+            content: partial,
+          });
+        }
+      } else {
+        const message =
+          e instanceof Error ? e.message : 'Something went wrong.';
+        await chatStore.append({
+          recipeId: recipe.id,
+          role: 'assistant',
+          content: partial ? `${partial}\n\n⚠️ ${message}` : `⚠️ ${message}`,
+        });
+        setError(message);
+      }
     } finally {
+      inFlight.current = null;
       setStreamingText(null);
     }
   };

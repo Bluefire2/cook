@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './db';
-import type { Recipe } from './types';
+import type { Recipe, RecipeDraft } from './types';
 
 export const recipeStore = {
   list(): Promise<Recipe[]> {
@@ -13,6 +13,34 @@ export const recipeStore = {
 
   async save(recipe: Recipe): Promise<void> {
     await db.recipes.put({ ...recipe, updatedAt: Date.now() });
+  },
+
+  /**
+   * Merges a draft into the recipe with this id. Every field is named rather
+   * than spread because drafts come from the `update_recipe` tool, whose schema
+   * cannot express `sourceUrl` or `photoId` — a spread would blank them.
+   */
+  async applyDraft(id: string, draft: RecipeDraft): Promise<void> {
+    await db.transaction('rw', db.recipes, async () => {
+      const existing = await db.recipes.get(id);
+      if (!existing) throw new Error(`No recipe with id ${id}.`);
+      await db.recipes.put({
+        id: existing.id,
+        createdAt: existing.createdAt,
+        updatedAt: Date.now(),
+        title: draft.title,
+        description: draft.description,
+        servings: draft.servings,
+        prepMinutes: draft.prepMinutes,
+        cookMinutes: draft.cookMinutes,
+        ingredientSections: draft.ingredientSections,
+        steps: draft.steps,
+        tags: draft.tags,
+        notes: draft.notes,
+        sourceUrl: draft.sourceUrl ?? existing.sourceUrl,
+        photoId: draft.photoId ?? existing.photoId,
+      });
+    });
   },
 
   async create(
