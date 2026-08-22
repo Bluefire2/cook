@@ -77,7 +77,6 @@ function EditRecipe({ id }: { id: string }) {
       createdAt: recipe.createdAt,
       updatedAt: recipe.updatedAt,
       ...(recipe.sourceUrl !== undefined ? { sourceUrl: recipe.sourceUrl } : {}),
-      ...(recipe.photoId !== undefined ? { photoId: recipe.photoId } : {}),
     });
     navigate(`/recipe/${recipe.id}`, { replace: true });
   };

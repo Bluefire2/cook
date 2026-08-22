@@ -123,13 +123,16 @@ function ProposalCard({
 
 function PhotoThumb({ photoId }: { photoId: string }) {
   const url = usePhotoUrl(photoId);
-  if (!url) return null;
   return (
-    <img
-      src={url}
-      alt="Attached photo"
-      className="h-20 w-20 rounded-lg object-cover"
-    />
+    <div className="h-20 w-20 overflow-hidden rounded-lg bg-stone-100">
+      {url && (
+        <img
+          src={url}
+          alt="Attached photo"
+          className="h-full w-full object-cover"
+        />
+      )}
+    </div>
   );
 }
 
@@ -184,6 +187,9 @@ export default function ChatPanel({
   const [pendingPhotos, setPendingPhotos] = useState<
     { photoId: string; blob: Blob }[]
   >([]);
+  // Mirrored in a ref so the unmount cleanup, which closes over the first
+  // render, still knows what was left pending.
+  const pendingRef = useRef(pendingPhotos);
   const [streamingText, setStreamingText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -200,9 +206,36 @@ export default function ChatPanel({
   // still billed until the request is cancelled.
   useEffect(() => () => inFlight.current?.abort(), []);
 
+  // A blob is written on attach, but only a sent message references it. What is
+  // still pending when the sheet goes away is unreachable from then on.
+  useEffect(
+    () => () => {
+      for (const photo of pendingRef.current) {
+        void photoStore.remove(photo.photoId);
+      }
+    },
+    [],
+  );
+
+  const setPending = (photos: { photoId: string; blob: Blob }[]) => {
+    pendingRef.current = photos;
+    setPendingPhotos(photos);
+  };
+
   const attachPhoto = async (file: File) => {
     const photoId = await photoStore.add(file);
-    setPendingPhotos((prev) => [...prev, { photoId, blob: file }]);
+    setPending([...pendingRef.current, { photoId, blob: file }]);
+  };
+
+  const discardPending = async () => {
+    const photos = pendingRef.current;
+    setPending([]);
+    await Promise.all(photos.map((p) => photoStore.remove(p.photoId)));
+  };
+
+  const removePending = async (photoId: string) => {
+    setPending(pendingRef.current.filter((p) => p.photoId !== photoId));
+    await photoStore.remove(photoId);
   };
 
   const send = async () => {
@@ -222,13 +255,15 @@ export default function ChatPanel({
       );
     } catch {
       setStreamingText(null);
-      setPendingPhotos([]);
       setError("That photo couldn't be read — it may not be a real image.");
+      await discardPending();
       return;
     }
 
     setDraft('');
-    setPendingPhotos([]);
+    // Handed to the message below, so these stop being pending rather than
+    // getting discarded.
+    setPending([]);
 
     const history = messages ?? [];
     await chatStore.append({
@@ -345,7 +380,17 @@ export default function ChatPanel({
         {pendingPhotos.length > 0 && (
           <div className="flex gap-2 px-4 pb-1">
             {pendingPhotos.map((p) => (
-              <PhotoThumb key={p.photoId} photoId={p.photoId} />
+              <div key={p.photoId} className="relative">
+                <PhotoThumb photoId={p.photoId} />
+                <button
+                  type="button"
+                  aria-label="Remove photo"
+                  onClick={() => void removePending(p.photoId)}
+                  className="absolute -top-1.5 -right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-stone-800 text-xs text-white"
+                >
+                  ✕
+                </button>
+              </div>
             ))}
           </div>
         )}

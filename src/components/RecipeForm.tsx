@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { FormEvent, ReactElement, ReactNode } from 'react';
+import { encodeImageForStorage } from '../lib/image';
+import { photoStore, useObjectUrl, usePhotoUrl } from '../lib/photoStore';
 import { blankDraft } from '../lib/recipeDraft';
 import type { Ingredient, IngredientSection, RecipeDraft } from '../lib/types';
 
@@ -109,10 +111,14 @@ function toTags(text: string): string[] {
 /**
  * Optional fields are spread in only when present, so clearing one drops the
  * key instead of storing `undefined` in a record that gets fully replaced.
- * `sourceUrl` and `photoId` are carried through untouched because the form has
- * no UI for them.
+ * `sourceUrl` is carried through untouched because the form has no UI for it;
+ * `photoId` is passed in because it is only known once the blob is stored.
  */
-function toDraft(form: FormState, initial: RecipeDraft): RecipeDraft {
+function toDraft(
+  form: FormState,
+  initial: RecipeDraft,
+  photoId: string | undefined,
+): RecipeDraft {
   const description = form.description.trim();
   const notes = form.notes.trim();
   const prepMinutes = toNumber(form.prepMinutes);
@@ -136,7 +142,7 @@ function toDraft(form: FormState, initial: RecipeDraft): RecipeDraft {
       .map((text) => ({ text })),
     tags: toTags(form.tags),
     ...(notes !== '' ? { notes } : {}),
-    ...(initial.photoId !== undefined ? { photoId: initial.photoId } : {}),
+    ...(photoId !== undefined ? { photoId } : {}),
   };
 }
 
@@ -176,6 +182,73 @@ function Field({
   );
 }
 
+function PhotoField({
+  photoId,
+  picked,
+  onPick,
+  onRemove,
+}: {
+  photoId: string | undefined;
+  picked: File | undefined;
+  onPick: (file: File) => void;
+  onRemove: () => void;
+}): ReactElement {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const storedUrl = usePhotoUrl(picked ? undefined : photoId);
+  const pickedUrl = useObjectUrl(picked);
+  const url = pickedUrl ?? storedUrl;
+
+  return (
+    <div className="mt-3">
+      <span className="text-sm font-medium text-stone-600">Photo</span>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onPick(file);
+          e.target.value = '';
+        }}
+      />
+      {url === undefined ? (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className={`block ${addButtonClass}`}
+        >
+          + Photo
+        </button>
+      ) : (
+        <div className="mt-1">
+          <img
+            src={url}
+            alt=""
+            className="h-44 w-full rounded-xl object-cover shadow-sm"
+          />
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              className="rounded-full border border-stone-300 px-3 py-1.5 text-sm text-stone-600 active:bg-stone-100"
+            >
+              Replace
+            </button>
+            <button
+              type="button"
+              onClick={onRemove}
+              className="rounded-full border border-stone-300 px-3 py-1.5 text-sm text-stone-600 active:bg-stone-100"
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function RecipeForm({
   initial,
   submitLabel,
@@ -190,6 +263,9 @@ export default function RecipeForm({
   onCancel: () => void;
 }): ReactElement {
   const [form, setForm] = useState(() => fromDraft(initial));
+  const [photoId, setPhotoId] = useState(initial.photoId);
+  const [picked, setPicked] = useState<File>();
+  const [photoError, setPhotoError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const patch = (fields: Partial<FormState>) =>
@@ -235,8 +311,28 @@ export default function RecipeForm({
     event.preventDefault();
     if (!canSubmit) return;
     setBusy(true);
+    setPhotoError(null);
     try {
-      await onSubmit(toDraft(form, initial));
+      // A draft can only carry an id, so a picked file has to become a row
+      // before the caller sees it. Storing it here rather than on pick means
+      // abandoning the form writes nothing at all.
+      let stored: string | undefined;
+      if (picked) {
+        try {
+          stored = await photoStore.add(await encodeImageForStorage(picked));
+        } catch {
+          setPhotoError("That photo couldn't be read — try a different one.");
+          return;
+        }
+      }
+      try {
+        await onSubmit(toDraft(form, initial, stored ?? photoId));
+      } catch (e) {
+        // The recipe kept pointing at the old photo, so this one is already
+        // unreachable; the store drops the old one only on a save that stuck.
+        if (stored) await photoStore.remove(stored);
+        throw e;
+      }
     } finally {
       setBusy(false);
     }
@@ -272,6 +368,24 @@ export default function RecipeForm({
           className={inputClass}
         />
       </Field>
+
+      <PhotoField
+        photoId={photoId}
+        picked={picked}
+        onPick={(file) => {
+          setPhotoError(null);
+          setPicked(file);
+        }}
+        onRemove={() => {
+          setPicked(undefined);
+          setPhotoId(undefined);
+        }}
+      />
+      {photoError && (
+        <p className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">
+          {photoError}
+        </p>
+      )}
 
       <div className="mt-3 grid grid-cols-3 gap-2">
         <label className="block">

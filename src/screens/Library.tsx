@@ -1,7 +1,17 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
+
+function CardThumb({ photoId }: { photoId: string }) {
+  const url = usePhotoUrl(photoId);
+  return (
+    <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-stone-100">
+      {url && <img src={url} alt="" className="h-full w-full object-cover" />}
+    </div>
+  );
+}
 
 function Sheet({
   onClose,
@@ -81,26 +91,31 @@ export default function Library() {
             <li key={recipe.id} className="relative">
               <Link
                 to={`/recipe/${recipe.id}`}
-                className="block rounded-2xl border border-stone-200 bg-white p-4 pr-14 shadow-sm active:bg-stone-50"
+                className="flex gap-3 rounded-2xl border border-stone-200 bg-white p-4 pr-14 shadow-sm active:bg-stone-50"
               >
-                <h2 className="text-lg font-semibold">{recipe.title}</h2>
-                {recipe.description && (
-                  <p className="mt-1 line-clamp-2 text-sm text-stone-500">
-                    {recipe.description}
-                  </p>
+                {recipe.photoId !== undefined && (
+                  <CardThumb photoId={recipe.photoId} />
                 )}
-                {recipe.tags.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {recipe.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-lg font-semibold">{recipe.title}</h2>
+                  {recipe.description && (
+                    <p className="mt-1 line-clamp-2 text-sm text-stone-500">
+                      {recipe.description}
+                    </p>
+                  )}
+                  {recipe.tags.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {recipe.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </Link>
 
               <button

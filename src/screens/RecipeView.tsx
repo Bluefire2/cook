@@ -1,11 +1,28 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import ChatPanel from '../components/ChatPanel';
+import { usePhotoUrl } from '../lib/photoStore';
 import { useRecipe } from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
 import { useWakeLock } from '../lib/useWakeLock';
 import { useCookState } from '../lib/useCookState';
 import type { Ingredient } from '../lib/types';
+
+/**
+ * The source is whatever the user pasted on import, so it is only ever linked
+ * after it turns out to be an ordinary web address.
+ */
+function sourceLink(url: string | undefined): URL | undefined {
+  if (url === undefined) return undefined;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+      ? parsed
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function ingredientLabel(ing: Ingredient, scale: number): string {
   const parts = [
@@ -20,6 +37,7 @@ function ingredientLabel(ing: Ingredient, scale: number): string {
 export default function RecipeView() {
   const { id } = useParams<{ id: string }>();
   const recipe = useRecipe(id);
+  const photoUrl = usePhotoUrl(recipe?.photoId);
   useWakeLock();
 
   const {
@@ -46,13 +64,29 @@ export default function RecipeView() {
   }
 
   const scale = servings / recipe.servings;
+  const source = sourceLink(recipe.sourceUrl);
 
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
-        <Link to="/" className="text-sm text-stone-500">
-          &larr; Library
-        </Link>
+        <div className="flex items-center justify-between">
+          <Link to="/" className="text-sm text-stone-500">
+            &larr; Library
+          </Link>
+          <Link
+            to={`/recipe/${recipe.id}/edit`}
+            className="rounded-full px-3 py-1 text-sm text-stone-500"
+          >
+            Edit
+          </Link>
+        </div>
+        {photoUrl && (
+          <img
+            src={photoUrl}
+            alt=""
+            className="mt-3 h-52 w-full rounded-2xl object-cover shadow-sm"
+          />
+        )}
         <h1 className="mt-2 text-2xl font-bold">{recipe.title}</h1>
         {recipe.description && (
           <p className="mt-1 text-stone-500">{recipe.description}</p>
@@ -179,6 +213,20 @@ export default function RecipeView() {
             {recipe.notes}
           </p>
         </section>
+      )}
+
+      {source && (
+        <p className="mt-6 text-sm text-stone-500">
+          From{' '}
+          <a
+            href={source.href}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="underline"
+          >
+            {source.hostname}
+          </a>
+        </p>
       )}
 
       {!chatOpen && (
