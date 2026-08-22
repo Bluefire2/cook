@@ -91,6 +91,8 @@ a key.
 | `npm run dev:api` | The `api/` handlers on 3001; needs `.env.local` and Node ≥ 22.18 |
 | `npm run build` | `tsc -b` over the app/node/api tsconfigs, then `vite build` into `dist/` |
 | `npm run preview` | Serves the built `dist/` on 4173, for checking the PWA build |
+| `npm test` | Vitest once over `src/` and `api/` |
+| `npm run test:watch` | Vitest in watch mode |
 
 `npm run build` type-checks everything, including `api/`, which the dev servers
 do not — run it before deploying.

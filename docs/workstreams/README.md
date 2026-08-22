@@ -46,10 +46,27 @@ the batch. Waiting is cheaper.
 Exclusive. If a file is not listed against your workstream, you do not edit it,
 even for a one-line drive-by fix. Reading anything is fine.
 
-Each workstream runs in its own git worktree, so a stray edit cannot corrupt
-another agent's work — git would merge it. The rule exists to keep merges trivial
-and to stop two agents solving the same problem two different ways, not because
-the filesystem is shared. Follow it anyway.
+**This rule is load-bearing, not cosmetic.** Do not assume you have an isolated
+working directory. In the wave 1 run, all five agents were dispatched as
+`best-of-n-runner` subagents on the documented promise of "an isolated git
+worktree" each, and **none was created** — `git worktree list` showed a single
+tree and all five agents edited the same checkout of `main` concurrently. Nothing
+was lost, and the only reason is that the ownership sets are disjoint, so no agent
+ever wrote a file another agent was holding.
+
+Verify your situation before you start: run `git worktree list` and `git status`.
+If you see other agents' modifications in your working tree, you are sharing it.
+In that case:
+
+- Stage **by explicit path** when you commit. Never `git add -A`, `git add .`, or
+  `git commit -a` — you would sweep half-finished work from other agents into
+  your commit.
+- Never run `git checkout -- .`, `git stash`, `git reset --hard`, or `git clean`.
+  Those destroy other agents' uncommitted work irrecoverably. This is the one
+  mistake here that cannot be undone.
+- Avoid `npm ci` once others are working; it deletes and reinstalls the shared
+  `node_modules` underneath whoever is mid-build. Prefer `npm install` if you
+  genuinely need a dependency.
 
 | File | Wave 1 owner | Wave 2 owner |
 |---|---|---|
@@ -87,10 +104,12 @@ is the last one in, so it can take it.
 
 ## Running these in parallel
 
-**Agents must not share a working directory.** Local subagents inherit the
-parent's workspace root, so several of them editing this repo at once would
-overwrite each other's files with no git history to recover from. Isolation is
-mandatory, and git worktrees provide it:
+**Do not trust a subagent type's claim to isolate you.** The `best-of-n-runner`
+type advertises "an isolated git worktree" per agent; when wave 1 was dispatched
+that way, no worktree was created and all five agents shared one checkout of
+`main`. Provision worktrees **yourself**, confirm with `git worktree list`, and
+retarget each agent into its own directory — or use cloud agents, which get
+genuinely separate VMs. Either way, verify rather than assume:
 
 ```bash
 git worktree add ../cook-ws1 -b ws-1-cook-state
