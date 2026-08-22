@@ -1,19 +1,9 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import RecipeForm from '../components/RecipeForm';
 import { importRecipe, type ExtractedRecipe } from '../lib/importApi';
 import { recipeStore } from '../lib/recipeStore';
-import { formatQuantity } from '../lib/quantity';
-import type { Ingredient } from '../lib/types';
-
-function ingredientLabel(ing: Ingredient): string {
-  const parts = [
-    ing.quantity !== undefined ? formatQuantity(ing.quantity) : null,
-    ing.unit ?? null,
-    ing.item,
-  ].filter(Boolean);
-  const base = parts.join(' ');
-  return ing.note ? `${base} (${ing.note})` : base;
-}
+import type { RecipeDraft } from '../lib/types';
 
 export default function ImportScreen() {
   const navigate = useNavigate();
@@ -39,9 +29,8 @@ export default function ImportScreen() {
     }
   };
 
-  const save = async () => {
-    if (!preview) return;
-    const recipe = await recipeStore.create(preview);
+  const save = async (draft: RecipeDraft) => {
+    const recipe = await recipeStore.create(draft);
     navigate(`/recipe/${recipe.id}`, { replace: true });
   };
 
@@ -85,63 +74,15 @@ export default function ImportScreen() {
       ) : (
         <>
           <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Check the extraction, then save it to your library.
+            Anything the extraction got wrong, fix it here before saving.
           </div>
 
-          <h2 className="mt-4 text-xl font-bold">{preview.title}</h2>
-          {preview.description && (
-            <p className="mt-1 text-stone-500">{preview.description}</p>
-          )}
-          <p className="mt-1 text-sm text-stone-500">
-            Serves {preview.servings}
-            {preview.prepMinutes != null && ` · Prep ${preview.prepMinutes} min`}
-            {preview.cookMinutes != null && ` · Cook ${preview.cookMinutes} min`}
-          </p>
-
-          <h3 className="mt-4 font-semibold">Ingredients</h3>
-          {preview.ingredientSections.map((section, si) => (
-            <div key={si}>
-              {section.name && (
-                <h4 className="mt-2 text-sm font-medium tracking-wide text-stone-500 uppercase">
-                  {section.name}
-                </h4>
-              )}
-              <ul className="mt-1 flex flex-col gap-1">
-                {section.items.map((ing, ii) => (
-                  <li key={ii} className="rounded-lg bg-white px-3 py-1.5 text-sm shadow-sm">
-                    {ingredientLabel(ing)}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-
-          <h3 className="mt-4 font-semibold">Steps</h3>
-          <ol className="mt-1 flex flex-col gap-1">
-            {preview.steps.map((step, i) => (
-              <li key={i} className="flex gap-2 rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
-                <span className="font-semibold text-stone-400">{i + 1}</span>
-                {step.text}
-              </li>
-            ))}
-          </ol>
-
-          <div className="mt-5 flex gap-2">
-            <button
-              type="button"
-              onClick={() => setPreview(null)}
-              className="flex-1 rounded-full border border-stone-300 py-3 font-medium text-stone-600"
-            >
-              Discard
-            </button>
-            <button
-              type="button"
-              onClick={() => void save()}
-              className="flex-1 rounded-full bg-stone-800 py-3 font-medium text-white"
-            >
-              Save to library
-            </button>
-          </div>
+          <RecipeForm
+            initial={preview}
+            submitLabel="Save to library"
+            onSubmit={save}
+            onCancel={() => setPreview(null)}
+          />
         </>
       )}
     </div>
