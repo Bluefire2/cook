@@ -4,6 +4,7 @@ import ChatPanel from '../components/ChatPanel';
 import { useRecipe } from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
 import { useWakeLock } from '../lib/useWakeLock';
+import { useCookState } from '../lib/useCookState';
 import type { Ingredient } from '../lib/types';
 
 function ingredientLabel(ing: Ingredient, scale: number): string {
@@ -21,9 +22,15 @@ export default function RecipeView() {
   const recipe = useRecipe(id);
   useWakeLock();
 
-  const [servings, setServings] = useState<number | null>(null);
-  const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
-  const [currentStep, setCurrentStep] = useState(0);
+  const {
+    servings,
+    currentStep,
+    checkedKeys,
+    setServings,
+    setCurrentStep,
+    toggleChecked,
+    checkedItemNames,
+  } = useCookState(recipe);
   const [chatOpen, setChatOpen] = useState(false);
 
   if (recipe === undefined) return null;
@@ -38,17 +45,7 @@ export default function RecipeView() {
     );
   }
 
-  const effectiveServings = servings ?? recipe.servings;
-  const scale = effectiveServings / recipe.servings;
-
-  const toggleChecked = (key: string) => {
-    setChecked((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
+  const scale = servings / recipe.servings;
 
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
@@ -74,19 +71,19 @@ export default function RecipeView() {
             <button
               type="button"
               aria-label="Fewer servings"
-              disabled={effectiveServings <= 1}
-              onClick={() => setServings(effectiveServings - 1)}
+              disabled={servings <= 1}
+              onClick={() => setServings(servings - 1)}
               className="h-9 w-9 rounded-full text-lg text-stone-600 disabled:opacity-30"
             >
               −
             </button>
             <span className="min-w-16 text-center text-sm">
-              {effectiveServings} serving{effectiveServings === 1 ? '' : 's'}
+              {servings} serving{servings === 1 ? '' : 's'}
             </span>
             <button
               type="button"
               aria-label="More servings"
-              onClick={() => setServings(effectiveServings + 1)}
+              onClick={() => setServings(servings + 1)}
               className="h-9 w-9 rounded-full text-lg text-stone-600"
             >
               +
@@ -104,7 +101,7 @@ export default function RecipeView() {
             <ul className="mt-1 flex flex-col gap-1.5">
               {section.items.map((ing, ii) => {
                 const key = `${si}-${ii}`;
-                const isChecked = checked.has(key);
+                const isChecked = checkedKeys.has(key);
                 return (
                   <li key={key}>
                     <button
@@ -197,12 +194,9 @@ export default function RecipeView() {
         <ChatPanel
           recipe={recipe}
           cookingState={{
-            servings: effectiveServings,
+            servings,
             currentStep: currentStep + 1,
-            checkedIngredients: [...checked].map((key) => {
-              const [si, ii] = key.split('-').map(Number);
-              return recipe.ingredientSections[si].items[ii].item;
-            }),
+            checkedIngredients: checkedItemNames(recipe),
           }}
           onClose={() => setChatOpen(false)}
         />

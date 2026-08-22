@@ -1,10 +1,12 @@
 import Dexie, { type Table } from 'dexie';
 import type { ChatMessage, Photo, Recipe } from './types';
+import type { CookStateRow } from './useCookState';
 
 class CookDB extends Dexie {
   recipes!: Table<Recipe, string>;
   chatMessages!: Table<ChatMessage, string>;
   photos!: Table<Photo, string>;
+  cookState!: Table<CookStateRow, string>;
 
   constructor() {
     super('cook');
@@ -13,6 +15,10 @@ class CookDB extends Dexie {
       recipes: 'id, title, updatedAt, *tags',
       chatMessages: 'id, recipeId, createdAt',
       photos: 'id',
+    });
+    // Dexie carries the v1 tables forward, so only the addition is declared.
+    this.version(2).stores({
+      cookState: 'recipeId',
     });
   }
 }
