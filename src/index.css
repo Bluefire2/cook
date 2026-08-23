@@ -2,6 +2,35 @@
 
 @theme {
   --color-cream: #faf7f2;
+  --color-page: #faf7f2;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f5f5f4;
+  --color-ink: #292524;
+  --color-ink-muted: #78716c;
+  --color-ink-subtle: #a8a29e;
+  --color-line: #e7e5e4;
+  --color-line-strong: #d6d3d1;
+  --color-danger-bg: #fef2f2;
+  --color-danger: #dc2626;
+  --color-accent-soft: #fef3c7;
+  --color-success: #15803d;
+}
+
+@layer theme {
+  html.dark {
+    --color-page: #1c1917;
+    --color-surface: #292524;
+    --color-surface-muted: #44403c;
+    --color-ink: #f5f5f4;
+    --color-ink-muted: #a8a29e;
+    --color-ink-subtle: #78716c;
+    --color-line: #44403c;
+    --color-line-strong: #57534e;
+    --color-danger-bg: #450a0a;
+    --color-danger: #fca5a5;
+    --color-accent-soft: #78350f;
+    --color-success: #4ade80;
+  }
 }
 
 html {
@@ -9,8 +38,16 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+html.dark {
+  color-scheme: dark;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
 body {
-  @apply bg-cream text-stone-800 antialiased;
+  @apply bg-page text-ink antialiased;
   /* Respect iPhone safe areas (notch, home indicator) */
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);

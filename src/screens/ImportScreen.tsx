@@ -37,7 +37,7 @@ export default function ImportScreen() {
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
-        <Link to="/" className="text-sm text-stone-500">
+        <Link to="/" className="text-sm text-ink-muted">
           &larr; Library
         </Link>
         <h1 className="mt-2 text-2xl font-bold">Import recipe</h1>
@@ -50,10 +50,10 @@ export default function ImportScreen() {
             onChange={(e) => setInput(e.target.value)}
             rows={5}
             placeholder="Paste a recipe link, or the recipe text itself…"
-            className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-sm outline-none focus:border-stone-400"
+            className="w-full rounded-xl border border-line bg-surface px-4 py-3 shadow-sm outline-none focus:border-ink-subtle"
           />
           {error && (
-            <p className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">
+            <p className="mt-2 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
               {error}
             </p>
           )}
@@ -61,19 +61,19 @@ export default function ImportScreen() {
             type="button"
             onClick={() => void extract()}
             disabled={busy || input.trim() === ''}
-            className="mt-3 w-full rounded-full bg-stone-800 py-3 font-medium text-white disabled:opacity-40"
+            className="mt-3 w-full rounded-full bg-ink py-3 font-medium text-page disabled:opacity-40"
           >
             {busy ? 'Extracting…' : 'Extract recipe'}
           </button>
           {busy && (
-            <p className="mt-3 text-center text-sm text-stone-400">
+            <p className="mt-3 text-center text-sm text-ink-subtle">
               Reading the recipe — this takes a few seconds.
             </p>
           )}
         </>
       ) : (
         <>
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <div className="rounded-2xl border border-line bg-accent-soft px-4 py-3 text-sm text-ink">
             Anything the extraction got wrong, fix it here before saving.
           </div>
 

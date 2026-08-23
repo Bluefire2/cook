@@ -21,8 +21,8 @@ export default defineConfig({
         description: 'Personal recipe book with an AI cooking assistant',
         display: 'standalone',
         start_url: '/',
-        theme_color: '#faf7f2',
-        background_color: '#faf7f2',
+        theme_color: '#1c1917',
+        background_color: '#1c1917',
         icons: [
           { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },

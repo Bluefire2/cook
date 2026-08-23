@@ -54,7 +54,7 @@ export default function RecipeView() {
   if (recipe === undefined) return null;
   if (recipe === null) {
     return (
-      <div className="p-6 text-center text-stone-500">
+      <div className="p-6 text-center text-ink-muted">
         Recipe not found.{' '}
         <Link to="/" className="underline">
           Back to library
@@ -70,12 +70,12 @@ export default function RecipeView() {
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
         <div className="flex items-center justify-between">
-          <Link to="/" className="text-sm text-stone-500">
+          <Link to="/" className="text-sm text-ink-muted">
             &larr; Library
           </Link>
           <Link
             to={`/recipe/${recipe.id}/edit`}
-            className="rounded-full px-3 py-1 text-sm text-stone-500"
+            className="rounded-full px-3 py-1 text-sm text-ink-muted"
           >
             Edit
           </Link>
@@ -89,9 +89,9 @@ export default function RecipeView() {
         )}
         <h1 className="mt-2 text-2xl font-bold">{recipe.title}</h1>
         {recipe.description && (
-          <p className="mt-1 text-stone-500">{recipe.description}</p>
+          <p className="mt-1 text-ink-muted">{recipe.description}</p>
         )}
-        <p className="mt-2 text-sm text-stone-500">
+        <p className="mt-2 text-sm text-ink-muted">
           {recipe.prepMinutes != null && `Prep ${recipe.prepMinutes} min`}
           {recipe.prepMinutes != null && recipe.cookMinutes != null && ' · '}
           {recipe.cookMinutes != null && `Cook ${recipe.cookMinutes} min`}
@@ -101,13 +101,13 @@ export default function RecipeView() {
       <section>
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Ingredients</h2>
-          <div className="flex items-center gap-1 rounded-full border border-stone-200 bg-white">
+          <div className="flex items-center gap-1 rounded-full border border-line bg-surface">
             <button
               type="button"
               aria-label="Fewer servings"
               disabled={servings <= 1}
               onClick={() => setServings(servings - 1)}
-              className="h-9 w-9 rounded-full text-lg text-stone-600 disabled:opacity-30"
+              className="h-9 w-9 rounded-full text-lg text-ink-muted disabled:opacity-30"
             >
               −
             </button>
@@ -118,7 +118,7 @@ export default function RecipeView() {
               type="button"
               aria-label="More servings"
               onClick={() => setServings(servings + 1)}
-              className="h-9 w-9 rounded-full text-lg text-stone-600"
+              className="h-9 w-9 rounded-full text-lg text-ink-muted"
             >
               +
             </button>
@@ -128,7 +128,7 @@ export default function RecipeView() {
         {recipe.ingredientSections.map((section, si) => (
           <div key={si} className="mt-2">
             {section.name && (
-              <h3 className="mt-3 text-sm font-medium tracking-wide text-stone-500 uppercase">
+              <h3 className="mt-3 text-sm font-medium tracking-wide text-ink-muted uppercase">
                 {section.name}
               </h3>
             )}
@@ -142,15 +142,17 @@ export default function RecipeView() {
                       type="button"
                       onClick={() => toggleChecked(key)}
                       className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left shadow-sm transition-colors ${
-                        isChecked ? 'bg-stone-100 text-stone-400' : 'bg-white'
+                        isChecked
+                          ? 'bg-surface-muted text-ink-subtle'
+                          : 'bg-surface'
                       }`}
                     >
                       <span
                         aria-hidden
                         className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs ${
                           isChecked
-                            ? 'border-stone-300 bg-stone-300 text-white'
-                            : 'border-stone-300'
+                            ? 'border-line-strong bg-ink-subtle text-page'
+                            : 'border-line-strong'
                         }`}
                       >
                         {isChecked ? '✓' : ''}
@@ -180,15 +182,15 @@ export default function RecipeView() {
                   onClick={() => setCurrentStep(i === currentStep ? i + 1 : i)}
                   className={`flex w-full gap-3 rounded-xl px-3 py-3 text-left shadow-sm transition-colors ${
                     isCurrent
-                      ? 'bg-white ring-2 ring-amber-400'
+                      ? 'bg-surface ring-2 ring-amber-400'
                       : isDone
-                        ? 'bg-stone-100 text-stone-400'
-                        : 'bg-white'
+                        ? 'bg-surface-muted text-ink-subtle'
+                        : 'bg-surface'
                   }`}
                 >
                   <span
                     className={`font-semibold ${
-                      isCurrent ? 'text-amber-500' : 'text-stone-400'
+                      isCurrent ? 'text-amber-500' : 'text-ink-subtle'
                     }`}
                   >
                     {isDone ? '✓' : i + 1}
@@ -209,14 +211,14 @@ export default function RecipeView() {
       {recipe.notes && (
         <section className="mt-6">
           <h2 className="text-lg font-semibold">Notes</h2>
-          <p className="mt-2 rounded-lg bg-white px-3 py-3 text-stone-600 shadow-sm">
+          <p className="mt-2 rounded-lg bg-surface px-3 py-3 text-ink-muted shadow-sm">
             {recipe.notes}
           </p>
         </section>
       )}
 
       {source && (
-        <p className="mt-6 text-sm text-stone-500">
+        <p className="mt-6 text-sm text-ink-muted">
           From{' '}
           <a
             href={source.href}

@@ -1,17 +1,41 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark" style="background-color:#1c1917">
   <head>
     <meta charset="UTF-8" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#faf7f2" />
+    <meta name="theme-color" content="#1c1917" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Cook" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png" />
     <title>Cook</title>
+    <script>
+      (function () {
+        var theme = 'dark';
+        try {
+          if (localStorage.getItem('cook.theme') === 'light') {
+            theme = 'light';
+          }
+        } catch (e) {}
+        var bg = theme === 'light' ? '#faf7f2' : '#1c1917';
+        var root = document.documentElement;
+        root.classList.toggle('dark', theme === 'dark');
+        root.style.backgroundColor = bg;
+        var themeColor = document.querySelector('meta[name="theme-color"]');
+        if (themeColor) {
+          themeColor.setAttribute('content', bg);
+        }
+        var statusBar = document.querySelector(
+          'meta[name="apple-mobile-web-app-status-bar-style"]',
+        );
+        if (statusBar) {
+          statusBar.setAttribute('content', theme === 'dark' ? 'black' : 'default');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

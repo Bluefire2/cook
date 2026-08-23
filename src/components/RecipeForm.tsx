@@ -159,13 +159,13 @@ function moved<T>(list: T[], from: number, to: number): T[] {
 }
 
 const inputClass =
-  'w-full rounded-xl border border-stone-200 bg-white px-3 py-2.5 shadow-sm outline-none focus:border-stone-400';
+  'w-full rounded-xl border border-line bg-surface px-3 py-2.5 shadow-sm outline-none focus:border-ink-subtle';
 const cellClass =
-  'min-w-0 rounded-lg border border-stone-200 px-2 py-1.5 outline-none focus:border-stone-400';
+  'min-w-0 rounded-lg border border-line px-2 py-1.5 outline-none focus:border-ink-subtle';
 const iconButtonClass =
-  'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-stone-500 active:bg-stone-100 disabled:opacity-30';
+  'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-ink-muted active:bg-surface-muted disabled:opacity-30';
 const addButtonClass =
-  'mt-2 rounded-full border border-stone-300 px-3 py-1.5 text-sm text-stone-600 active:bg-stone-100';
+  'mt-2 rounded-full border border-line-strong px-3 py-1.5 text-sm text-ink-muted active:bg-surface-muted';
 
 function Field({
   label,
@@ -176,7 +176,7 @@ function Field({
 }): ReactElement {
   return (
     <label className="mt-3 block">
-      <span className="text-sm font-medium text-stone-600">{label}</span>
+      <span className="text-sm font-medium text-ink-muted">{label}</span>
       <span className="mt-1 block">{children}</span>
     </label>
   );
@@ -200,7 +200,7 @@ function PhotoField({
 
   return (
     <div className="mt-3">
-      <span className="text-sm font-medium text-stone-600">Photo</span>
+      <span className="text-sm font-medium text-ink-muted">Photo</span>
       <input
         ref={inputRef}
         type="file"
@@ -231,14 +231,14 @@ function PhotoField({
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
-              className="rounded-full border border-stone-300 px-3 py-1.5 text-sm text-stone-600 active:bg-stone-100"
+              className="rounded-full border border-line-strong px-3 py-1.5 text-sm text-ink-muted active:bg-surface-muted"
             >
               Replace
             </button>
             <button
               type="button"
               onClick={onRemove}
-              className="rounded-full border border-stone-300 px-3 py-1.5 text-sm text-stone-600 active:bg-stone-100"
+              className="rounded-full border border-line-strong px-3 py-1.5 text-sm text-ink-muted active:bg-surface-muted"
             >
               Remove
             </button>
@@ -382,14 +382,14 @@ export default function RecipeForm({
         }}
       />
       {photoError && (
-        <p className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">
+        <p className="mt-2 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
           {photoError}
         </p>
       )}
 
       <div className="mt-3 grid grid-cols-3 gap-2">
         <label className="block">
-          <span className="text-sm font-medium text-stone-600">Servings</span>
+          <span className="text-sm font-medium text-ink-muted">Servings</span>
           <input
             type="text"
             inputMode="numeric"
@@ -399,7 +399,7 @@ export default function RecipeForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm font-medium text-stone-600">Prep min</span>
+          <span className="text-sm font-medium text-ink-muted">Prep min</span>
           <input
             type="text"
             inputMode="numeric"
@@ -409,7 +409,7 @@ export default function RecipeForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm font-medium text-stone-600">Cook min</span>
+          <span className="text-sm font-medium text-ink-muted">Cook min</span>
           <input
             type="text"
             inputMode="numeric"
@@ -465,7 +465,7 @@ export default function RecipeForm({
               {section.items.map((item, ii) => (
                 <li
                   key={ii}
-                  className="rounded-xl border border-stone-200 bg-white p-2 shadow-sm"
+                  className="rounded-xl border border-line bg-surface p-2 shadow-sm"
                 >
                   <div className="flex gap-1.5">
                     <input
@@ -579,10 +579,10 @@ export default function RecipeForm({
           {form.steps.map((text, i) => (
             <li
               key={i}
-              className="rounded-xl border border-stone-200 bg-white p-2 shadow-sm"
+              className="rounded-xl border border-line bg-surface p-2 shadow-sm"
             >
               <div className="flex items-center justify-between">
-                <span className="pl-1 text-sm font-semibold text-stone-400">
+                <span className="pl-1 text-sm font-semibold text-ink-subtle">
                   {i + 1}
                 </span>
                 <div className="flex items-center gap-1.5">
@@ -654,14 +654,14 @@ export default function RecipeForm({
         <button
           type="button"
           onClick={onCancel}
-          className="flex-1 rounded-full border border-stone-300 py-3 font-medium text-stone-600"
+          className="flex-1 rounded-full border border-line-strong py-3 font-medium text-ink-muted"
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={!canSubmit}
-          className="flex-1 rounded-full bg-stone-800 py-3 font-medium text-white disabled:opacity-40"
+          className="flex-1 rounded-full bg-ink py-3 font-medium text-page disabled:opacity-40"
         >
           {submitLabel}
         </button>

@@ -57,8 +57,8 @@ function ProposalCard({
   // The diff is against a recipe that no longer exists in that form.
   if (applied) {
     return (
-      <div className="mt-2 rounded-xl border border-amber-200 bg-white p-3">
-        <p className="text-sm font-medium text-green-700">{applied}</p>
+      <div className="mt-2 rounded-xl border border-line bg-surface p-3">
+        <p className="text-sm font-medium text-success">{applied}</p>
       </div>
     );
   }
@@ -75,44 +75,44 @@ function ProposalCard({
   const addedSteps = after.steps.filter((l) => !before.steps.includes(l));
 
   return (
-    <div className="mt-2 rounded-xl border border-amber-200 bg-white p-3">
+    <div className="mt-2 rounded-xl border border-line bg-surface p-3">
       <p className="text-sm font-semibold">
         Proposed change{proposal.title !== recipe.title && `: ${proposal.title}`}
       </p>
       {proposal.servings !== recipe.servings && (
-        <p className="mt-1 text-sm text-stone-600">
+        <p className="mt-1 text-sm text-ink-muted">
           Serves {recipe.servings} → {proposal.servings}
         </p>
       )}
       <div className="mt-1.5 flex flex-col gap-0.5 text-sm">
         {removedIngredients.map((l) => (
-          <p key={`ri-${l}`} className="text-red-500 line-through">{l}</p>
+          <p key={`ri-${l}`} className="text-danger line-through">{l}</p>
         ))}
         {addedIngredients.map((l) => (
-          <p key={`ai-${l}`} className="text-green-700">+ {l}</p>
+          <p key={`ai-${l}`} className="text-success">+ {l}</p>
         ))}
         {removedSteps.map((l) => (
-          <p key={`rs-${l}`} className="text-red-500 line-through">{l}</p>
+          <p key={`rs-${l}`} className="text-danger line-through">{l}</p>
         ))}
         {addedSteps.map((l) => (
-          <p key={`as-${l}`} className="text-green-700">+ {l}</p>
+          <p key={`as-${l}`} className="text-success">+ {l}</p>
         ))}
         {removedIngredients.length + addedIngredients.length + removedSteps.length + addedSteps.length === 0 && (
-          <p className="text-stone-500">Metadata-only change.</p>
+          <p className="text-ink-muted">Metadata-only change.</p>
         )}
       </div>
       <div className="mt-2.5 flex gap-2">
         <button
           type="button"
           onClick={() => void apply()}
-          className="flex-1 rounded-full bg-stone-800 py-2 text-sm font-medium text-white"
+          className="flex-1 rounded-full bg-ink py-2 text-sm font-medium text-page"
         >
           Apply
         </button>
         <button
           type="button"
           onClick={() => void saveAsVariant()}
-          className="flex-1 rounded-full border border-stone-300 py-2 text-sm font-medium text-stone-600"
+          className="flex-1 rounded-full border border-line-strong py-2 text-sm font-medium text-ink-muted"
         >
           Save as variant
         </button>
@@ -124,7 +124,7 @@ function ProposalCard({
 function PhotoThumb({ photoId }: { photoId: string }) {
   const url = usePhotoUrl(photoId);
   return (
-    <div className="h-20 w-20 overflow-hidden rounded-lg bg-stone-100">
+    <div className="h-20 w-20 overflow-hidden rounded-lg bg-surface-muted">
       {url && (
         <img
           src={url}
@@ -150,7 +150,7 @@ function MessageBubble({
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
         className={`max-w-[85%] rounded-2xl px-3.5 py-2 whitespace-pre-wrap ${
-          isUser ? 'bg-amber-100' : 'bg-stone-100'
+          isUser ? 'bg-accent-soft' : 'bg-surface-muted'
         }`}
       >
         {message.photoIds && message.photoIds.length > 0 && (
@@ -334,13 +334,13 @@ export default function ChatPanel({
         onClick={onClose}
         className="flex-1 bg-black/20"
       />
-      <div className="flex h-[75dvh] flex-col rounded-t-3xl bg-white shadow-2xl md:mx-auto md:w-full md:max-w-xl">
-        <header className="flex items-center justify-between border-b border-stone-100 px-4 py-3">
+      <div className="flex h-[75dvh] flex-col rounded-t-3xl bg-surface shadow-2xl md:mx-auto md:w-full md:max-w-xl">
+        <header className="flex items-center justify-between border-b border-line px-4 py-3">
           <h2 className="font-semibold">Assistant</h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full px-3 py-1 text-sm text-stone-500"
+            className="rounded-full px-3 py-1 text-sm text-ink-muted"
           >
             Close
           </button>
@@ -358,18 +358,18 @@ export default function ChatPanel({
             ))}
             {streamingText !== null && (
               <div className="flex justify-start">
-                <div className="max-w-[85%] rounded-2xl bg-stone-100 px-3.5 py-2 whitespace-pre-wrap">
+                <div className="max-w-[85%] rounded-2xl bg-surface-muted px-3.5 py-2 whitespace-pre-wrap">
                   {streamingText === '' ? '…' : streamingText}
                 </div>
               </div>
             )}
             {error && (
-              <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">
+              <p className="rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
                 {error}
               </p>
             )}
             {(messages ?? []).length === 0 && streamingText === null && (
-              <p className="py-8 text-center text-sm text-stone-400">
+              <p className="py-8 text-center text-sm text-ink-subtle">
                 Ask anything about this recipe — substitutions, technique,
                 timing — or send a photo of how it's going.
               </p>
@@ -386,7 +386,7 @@ export default function ChatPanel({
                   type="button"
                   aria-label="Remove photo"
                   onClick={() => void removePending(p.photoId)}
-                  className="absolute -top-1.5 -right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-stone-800 text-xs text-white"
+                  className="absolute -top-1.5 -right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-ink text-xs text-page"
                 >
                   ✕
                 </button>
@@ -395,7 +395,7 @@ export default function ChatPanel({
           </div>
         )}
 
-        <div className="flex items-end gap-2 border-t border-stone-100 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
+        <div className="flex items-end gap-2 border-t border-line px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
           <input
             ref={fileInputRef}
             type="file"
@@ -411,7 +411,7 @@ export default function ChatPanel({
             type="button"
             aria-label="Attach photo"
             onClick={() => fileInputRef.current?.click()}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-stone-100 text-lg"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-muted text-lg"
           >
             📷
           </button>
@@ -426,13 +426,13 @@ export default function ChatPanel({
             }}
             rows={1}
             placeholder="Ask the assistant…"
-            className="max-h-32 flex-1 resize-none rounded-2xl border border-stone-200 px-3.5 py-2 outline-none focus:border-stone-400"
+            className="max-h-32 flex-1 resize-none rounded-2xl border border-line bg-page px-3.5 py-2 outline-none focus:border-ink-subtle"
           />
           <button
             type="button"
             onClick={() => void send()}
             disabled={busy}
-            className="h-10 shrink-0 rounded-full bg-stone-800 px-4 font-medium text-white disabled:opacity-40"
+            className="h-10 shrink-0 rounded-full bg-ink px-4 font-medium text-page disabled:opacity-40"
           >
             Send
           </button>

@@ -20,7 +20,7 @@ function Screen({
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
-        <Link to={backTo} className="text-sm text-stone-500">
+        <Link to={backTo} className="text-sm text-ink-muted">
           &larr; {backLabel}
         </Link>
         <h1 className="mt-2 text-2xl font-bold">{heading}</h1>
@@ -58,7 +58,7 @@ function EditRecipe({ id }: { id: string }) {
   if (recipe === undefined) return null;
   if (recipe === null) {
     return (
-      <div className="p-6 text-center text-stone-500">
+      <div className="p-6 text-center text-ink-muted">
         Recipe not found.{' '}
         <Link to="/" className="underline">
           Back to library
