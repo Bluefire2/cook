@@ -17,6 +17,31 @@ async function deleteReplacedPhoto(
   }
 }
 
+/**
+ * `put` replaces the whole record, so an explicit `undefined` would sit in
+ * IndexedDB as a key the editor never writes. Drop those keys so apply and
+ * save leave the same shape.
+ */
+export function compactRecipe(recipe: Recipe): Recipe {
+  const next: Recipe = {
+    id: recipe.id,
+    createdAt: recipe.createdAt,
+    updatedAt: recipe.updatedAt,
+    title: recipe.title,
+    servings: recipe.servings,
+    ingredientSections: recipe.ingredientSections,
+    steps: recipe.steps,
+    tags: recipe.tags,
+  };
+  if (recipe.description !== undefined) next.description = recipe.description;
+  if (recipe.sourceUrl !== undefined) next.sourceUrl = recipe.sourceUrl;
+  if (recipe.prepMinutes !== undefined) next.prepMinutes = recipe.prepMinutes;
+  if (recipe.cookMinutes !== undefined) next.cookMinutes = recipe.cookMinutes;
+  if (recipe.notes !== undefined) next.notes = recipe.notes;
+  if (recipe.photoId !== undefined) next.photoId = recipe.photoId;
+  return next;
+}
+
 export const recipeStore = {
   list(): Promise<Recipe[]> {
     return db.recipes.orderBy('updatedAt').reverse().toArray();
@@ -29,8 +54,9 @@ export const recipeStore = {
   async save(recipe: Recipe): Promise<void> {
     await db.transaction('rw', [db.recipes, db.photos], async () => {
       const previous = await db.recipes.get(recipe.id);
-      await db.recipes.put({ ...recipe, updatedAt: Date.now() });
-      await deleteReplacedPhoto(previous?.photoId, recipe.photoId);
+      const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
+      await db.recipes.put(next);
+      await deleteReplacedPhoto(previous?.photoId, next.photoId);
     });
   },
 
@@ -44,7 +70,7 @@ export const recipeStore = {
       const existing = await db.recipes.get(id);
       if (!existing) throw new Error(`No recipe with id ${id}.`);
       const photoId = draft.photoId ?? existing.photoId;
-      await db.recipes.put({
+      const next = compactRecipe({
         id: existing.id,
         createdAt: existing.createdAt,
         updatedAt: Date.now(),
@@ -60,7 +86,8 @@ export const recipeStore = {
         sourceUrl: draft.sourceUrl ?? existing.sourceUrl,
         photoId,
       });
-      await deleteReplacedPhoto(existing.photoId, photoId);
+      await db.recipes.put(next);
+      await deleteReplacedPhoto(existing.photoId, next.photoId);
     });
   },
 
@@ -68,12 +95,12 @@ export const recipeStore = {
     data: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>,
   ): Promise<Recipe> {
     const now = Date.now();
-    const recipe: Recipe = {
+    const recipe = compactRecipe({
       ...data,
       id: crypto.randomUUID(),
       createdAt: now,
       updatedAt: now,
-    };
+    });
     await db.recipes.add(recipe);
     return recipe;
   },

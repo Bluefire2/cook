@@ -1,10 +1,35 @@
 import { db } from './db';
 import { recipeStore } from './recipeStore';
 
+const SEEDED_KEY = 'cook.hasSeeded';
+
+/**
+ * First launch only. A user who deletes their last recipe must be able to
+ * keep an empty library — `count === 0` is not the same as "never launched."
+ */
+export function shouldSeed(
+  recipeCount: number,
+  alreadySeeded: boolean,
+): boolean {
+  return recipeCount === 0 && !alreadySeeded;
+}
+
+function hasSeeded(): boolean {
+  return localStorage.getItem(SEEDED_KEY) !== null;
+}
+
+function markSeeded(): void {
+  localStorage.setItem(SEEDED_KEY, '1');
+}
+
 /** Adds a sample recipe on first launch so the app never starts empty. */
 export async function seedIfEmpty(): Promise<void> {
   const count = await db.recipes.count();
-  if (count > 0) return;
+  if (count > 0) {
+    markSeeded();
+    return;
+  }
+  if (!shouldSeed(count, hasSeeded())) return;
 
   await recipeStore.create({
     title: 'Spaghetti al Pomodoro',
@@ -37,4 +62,5 @@ export async function seedIfEmpty(): Promise<void> {
     ],
     tags: ['pasta', 'italian', 'weeknight'],
   });
+  markSeeded();
 }

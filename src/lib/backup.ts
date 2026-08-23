@@ -1,4 +1,5 @@
 import { db } from './db';
+import type { CookStateRow } from './useCookState';
 import type { ChatMessage, Recipe } from './types';
 
 interface BackupPhoto {
@@ -10,11 +11,13 @@ interface BackupPhoto {
 
 interface BackupFile {
   app: 'cook';
-  version: 1;
+  version: 1 | 2;
   exportedAt: number;
   recipes: Recipe[];
   chatMessages: ChatMessage[];
   photos: BackupPhoto[];
+  /** Present from v2. Older files omit it. */
+  cookState?: CookStateRow[];
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -30,18 +33,20 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 
 export async function exportLibrary(): Promise<Blob> {
-  const [recipes, chatMessages, photos] = await Promise.all([
+  const [recipes, chatMessages, photos, cookState] = await Promise.all([
     db.recipes.toArray(),
     db.chatMessages.toArray(),
     db.photos.toArray(),
+    db.cookState.toArray(),
   ]);
 
   const backup: BackupFile = {
     app: 'cook',
-    version: 1,
+    version: 2,
     exportedAt: Date.now(),
     recipes,
     chatMessages,
+    cookState,
     photos: await Promise.all(
       photos.map(async (p) => ({
         id: p.id,
@@ -74,11 +79,18 @@ export async function importLibrary(file: Blob): Promise<number> {
 
   await db.transaction(
     'rw',
-    [db.recipes, db.chatMessages, db.photos],
+    [db.recipes, db.chatMessages, db.photos, db.cookState],
     async () => {
       await db.recipes.bulkPut(backup.recipes);
       await db.chatMessages.bulkPut(backup.chatMessages ?? []);
       await db.photos.bulkPut(photos);
+      if (backup.cookState) {
+        await db.cookState.bulkPut(backup.cookState);
+      } else {
+        // v1 files have no progress. Drop leftover rows for overwritten ids
+        // so restored recipes do not inherit this device's old ticks.
+        await db.cookState.bulkDelete(backup.recipes.map((r) => r.id));
+      }
     },
   );
 
