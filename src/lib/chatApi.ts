@@ -1,5 +1,6 @@
 import { settings } from './settings';
 import type { EncodedImage } from './image';
+import { normalizeRecipeDraft } from './recipeShape';
 import type { Recipe, RecipeDraft } from './types';
 
 export interface OutgoingMessage {
@@ -18,6 +19,8 @@ export interface ChatReply {
   text: string;
   /** Present when the assistant proposed a recipe modification. */
   proposedRecipe?: RecipeDraft;
+  /** The stream ended without its terminator, so the reply is cut off. */
+  truncated: boolean;
 }
 
 /**
@@ -63,14 +66,18 @@ export async function streamChatReply(params: {
     params.onDelta(raw.split('\x1E')[0]);
   }
 
-  const [text, proposalJson] = raw.split('\x1E');
+  // A function killed by the platform looks exactly like a clean `done` to the reader —
+  // only the trailing separator distinguishes a complete reply from a cut-off one.
+  const parts = raw.split('\x1E');
+  const complete = parts.length >= 3;
+  const text = parts[0];
   let proposedRecipe: RecipeDraft | undefined;
-  if (proposalJson) {
+  if (complete && parts[1]) {
     try {
-      proposedRecipe = JSON.parse(proposalJson) as RecipeDraft;
+      proposedRecipe = normalizeRecipeDraft(JSON.parse(parts[1]));
     } catch {
       // Truncated/malformed proposal — keep the text reply.
     }
   }
-  return { text, proposedRecipe };
+  return { text, proposedRecipe, truncated: !complete };
 }

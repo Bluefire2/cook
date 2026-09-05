@@ -91,7 +91,7 @@ a key.
 | `npm run dev:api` | The `api/` handlers on 3001; needs `.env.local` and Node ≥ 22.18 |
 | `npm run build` | `tsc -b` over the app/node/api tsconfigs, then `vite build` into `dist/` |
 | `npm run preview` | Serves the built `dist/` on 4173, for checking the PWA build |
-| `npm test` | Vitest once over `src/` and `api/` |
+| `npm test` | Vitest once over `src/` |
 | `npm run test:watch` | Vitest in watch mode |
 
 `npm run build` type-checks everything, including `api/`, which the dev servers
@@ -105,8 +105,8 @@ and in the Vercel project's environment settings for production.
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` | yes | Read implicitly by `new Anthropic()` in both handlers, so it is never named in the calling code. |
-| `APP_PASSWORD` | yes | Shared secret compared against the `x-app-password` header on both endpoints. Must match what you saved in the app's Settings screen. If it is unset on the server, every request 401s. |
-| `CHAT_MODEL` | no | Model id for both endpoints. Defaults to `claude-sonnet-4-5`. |
+| `APP_PASSWORD` | yes | Shared secret compared against the `x-app-password` header on both endpoints. Must match what you saved in the app's Settings screen. Unset **or blank** on the server makes every request 401. |
+| `CHAT_MODEL` | no | Model id for both endpoints. Defaults to `claude-sonnet-4-5`. Must be a real model id, or comment the line out — a bare `CHAT_MODEL=` is read as `''` by `--env-file`, which defeats the default. |
 
 No `VITE_`-prefixed variable exists anywhere in the app, and none should. Vite
 inlines `VITE_*` values into the client bundle, so prefixing the Anthropic key
@@ -136,7 +136,7 @@ api/import.ts             URL fetch, JSON-LD extraction, Claude extraction
 scripts/dev-api-server.ts local stand-in for the Vercel functions
 src/App.tsx               flat routes, no layout wrapper
 src/screens/              Library, RecipeView, ImportScreen, Settings
-src/components/           ChatPanel.tsx and its subcomponents
+src/components/           ChatPanel.tsx, ErrorBoundary.tsx, and subcomponents
 src/lib/                  types, db, the three stores, small helpers
 ```
 
@@ -154,17 +154,20 @@ Two details that are easy to trip over:
   Vercel transpiles each `api/` entrypoint in isolation and cannot import a
   sibling helper. The two copies must stay in sync, and neither has a
   compile-time relationship to the `RecipeDraft` type.
-- `/api/chat` streams **plain text**, then appends any proposed recipe update
-  as JSON after an ASCII Record Separator (`0x1E`). That is why there is no SSE
-  framing: the client splits the stream on `\x1E`, renders the left side as it
-  arrives, and parses the right side as a proposal.
+- `/api/chat` streams **plain text**, then a Record Separator (`0x1E`), then
+  any proposal JSON (or empty), then a final `0x1E` that marks a clean end.
+  That is why there is no SSE framing: the client splits on `\x1E`, renders the
+  text part as it arrives, parses the proposal when present, and treats a
+  missing final separator as a cut-off reply.
 
 ## Your data
 
 Recipes, chat messages, and photos are stored in IndexedDB under the database
 name `cook`, on one device only. Nothing is uploaded; recipe text and any
 photos you send the assistant are passed through to Anthropic at request time
-but never stored server-side.
+but never stored server-side. Unreferenced photo blobs are swept at startup;
+chat photos are downscaled when you attach them and are written to IndexedDB
+only when the message is sent.
 
 Settings has **Export library** / **Import backup**, which write and read a
 single JSON file containing every recipe, message, and photo (photos as base64).

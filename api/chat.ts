@@ -75,7 +75,12 @@ export interface ChatRequestBody {
   cookingState?: unknown;
 }
 
-const MODEL = process.env.CHAT_MODEL ?? 'claude-sonnet-4-5';
+// `??` is wrong here: `node --env-file` turns a bare `CHAT_MODEL=` into `''`, which is not nullish.
+const MODEL = process.env.CHAT_MODEL || 'claude-sonnet-4-5';
+
+// A turn that triggers update_recipe streams a text reply and then the complete recipe JSON —
+// the slowest response this app produces, so Vercel's 10s default can kill it.
+export const maxDuration = 60;
 
 function systemPrompt(recipe: unknown, cookingState: unknown): string {
   return [
@@ -123,7 +128,9 @@ function toAnthropicMessages(
 }
 
 export async function POST(req: Request): Promise<Response> {
-  if (req.headers.get('x-app-password') !== process.env.APP_PASSWORD) {
+  // A set-but-blank server password would match the '' that settings.getPassword() returns
+  // for a client that never saved one, turning the deployment into an open proxy.
+  if (!process.env.APP_PASSWORD || req.headers.get('x-app-password') !== process.env.APP_PASSWORD) {
     return new Response('Unauthorized', { status: 401 });
   }
 
@@ -146,8 +153,8 @@ export async function POST(req: Request): Promise<Response> {
     ],
   });
 
-  // Plain text streams as-is; if the model proposed a recipe update, it is
-  // appended after an ASCII Record Separator (0x1E) as a JSON payload.
+  // Plain text streams as-is, then a separator (0x1E), then any proposal JSON, then a
+  // final separator that marks a clean end. Fewer than three parts means the stream was cut off.
   const encoder = new TextEncoder();
   const readable = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -161,11 +168,11 @@ export async function POST(req: Request): Promise<Response> {
             const toolUse = final.content.find(
               (b) => b.type === 'tool_use' && b.name === 'update_recipe',
             );
-            if (toolUse && toolUse.type === 'tool_use') {
-              controller.enqueue(
-                encoder.encode('\x1E' + JSON.stringify(toolUse.input)),
-              );
-            }
+            const proposal =
+              toolUse && toolUse.type === 'tool_use'
+                ? JSON.stringify(toolUse.input)
+                : '';
+            controller.enqueue(encoder.encode(`\x1E${proposal}\x1E`));
             controller.close();
           } catch (err) {
             controller.error(err);

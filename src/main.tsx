@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
+import { photoStore } from './lib/photoStore';
 import { seedIfEmpty } from './lib/seed';
 import { settings } from './lib/settings';
 import { applyTheme } from './lib/theme';
@@ -9,7 +10,10 @@ import './index.css';
 
 applyTheme(settings.getTheme());
 
-void seedIfEmpty();
+// Orphaned blobs from older builds or a crash mid-send — see photoStore.
+void seedIfEmpty()
+  .then(() => photoStore.sweepUnreferenced())
+  .catch((err) => console.error(err));
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

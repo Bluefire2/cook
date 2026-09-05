@@ -23,7 +23,15 @@ export const chatStore = {
   },
 
   async clearForRecipe(recipeId: string): Promise<void> {
-    await db.chatMessages.where('recipeId').equals(recipeId).delete();
+    await db.transaction('rw', [db.chatMessages, db.photos], async () => {
+      const messages = await db.chatMessages
+        .where('recipeId')
+        .equals(recipeId)
+        .toArray();
+      await db.chatMessages.where('recipeId').equals(recipeId).delete();
+      // Nothing else references these, so they go with the messages or never.
+      await db.photos.bulkDelete(messages.flatMap((m) => m.photoIds ?? []));
+    });
   },
 };
 

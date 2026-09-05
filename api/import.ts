@@ -61,7 +61,8 @@ interface ImportRequestBody {
   text?: string;
 }
 
-const MODEL = process.env.CHAT_MODEL ?? 'claude-sonnet-4-5';
+// `??` is wrong here: `node --env-file` turns a bare `CHAT_MODEL=` into `''`, which is not nullish.
+const MODEL = process.env.CHAT_MODEL || 'claude-sonnet-4-5';
 
 const MAX_SOURCE_CHARS = 60000;
 
@@ -104,7 +105,9 @@ export function extractRecipeSource(html: string): string {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  if (req.headers.get('x-app-password') !== process.env.APP_PASSWORD) {
+  // A set-but-blank server password would match the '' that settings.getPassword() returns
+  // for a client that never saved one, turning the deployment into an open proxy.
+  if (!process.env.APP_PASSWORD || req.headers.get('x-app-password') !== process.env.APP_PASSWORD) {
     return new Response('Unauthorized', { status: 401 });
   }
 
@@ -112,9 +115,26 @@ export async function POST(req: Request): Promise<Response> {
 
   let source = body.text?.trim() ?? '';
   if (body.url) {
+    let parsed: URL;
+    try {
+      parsed = new URL(body.url);
+    } catch {
+      return Response.json(
+        { error: 'That does not look like a web address.' },
+        { status: 422 },
+      );
+    }
+    // Scheme check only (matches RecipeView's http/https allowlist); does not block private or link-local destinations.
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return Response.json(
+        { error: 'Only http and https URLs are supported.' },
+        { status: 422 },
+      );
+    }
+
     let page: Response;
     try {
-      page = await fetch(body.url, {
+      page = await fetch(parsed.href, {
         headers: {
           'User-Agent':
             'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',

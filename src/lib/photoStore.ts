@@ -17,6 +17,29 @@ export const photoStore = {
   async remove(id: string): Promise<void> {
     await db.photos.delete(id);
   },
+
+  /**
+   * Deletes photo blobs nothing references. Store-on-send is the primary leak
+   * fix; the age window only avoids deleting a blob another tab wrote
+   * milliseconds ago and has not yet referenced from a message.
+   */
+  async sweepUnreferenced(olderThanMs = 5 * 60 * 1000): Promise<number> {
+    const cutoff = Date.now() - olderThanMs;
+    return db.transaction('rw', [db.recipes, db.chatMessages, db.photos], async () => {
+      const referenced = new Set<string>();
+      for (const recipe of await db.recipes.toArray()) {
+        if (recipe.photoId) referenced.add(recipe.photoId);
+      }
+      for (const message of await db.chatMessages.toArray()) {
+        for (const id of message.photoIds ?? []) referenced.add(id);
+      }
+      const toDelete = (await db.photos.toArray())
+        .filter((p) => !referenced.has(p.id) && p.createdAt <= cutoff)
+        .map((p) => p.id);
+      await db.photos.bulkDelete(toDelete);
+      return toDelete.length;
+    });
+  },
 };
 
 /**

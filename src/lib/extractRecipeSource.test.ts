@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractRecipeSource } from './import';
+import { extractRecipeSource } from '../../api/import';
 
 const ldBlock = (json: string) =>
   `<script type="application/ld+json">${json}</script>`;
