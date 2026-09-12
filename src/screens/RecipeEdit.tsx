@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
 import { blankDraft } from '../lib/recipeDraft';
 import { recipeStore, useRecipe } from '../lib/recipeStore';
+import { backLink } from '../lib/uiClasses';
 import type { RecipeDraft } from '../lib/types';
 
 function Screen({
@@ -20,7 +21,7 @@ function Screen({
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
-        <Link to={backTo} className="text-sm text-ink-muted">
+        <Link to={backTo} className={backLink}>
           &larr; {backLabel}
         </Link>
         <h1 className="mt-2 text-2xl font-bold">{heading}</h1>
@@ -60,7 +61,7 @@ function EditRecipe({ id }: { id: string }) {
     return (
       <div className="p-6 text-center text-ink-muted">
         Recipe not found.{' '}
-        <Link to="/" className="underline">
+        <Link to="/" className="underline hover:text-ink">
           Back to library
         </Link>
       </div>

@@ -4,6 +4,15 @@ import { encodeImageForStorage } from '../lib/image';
 import { photoStore, useObjectUrl, usePhotoUrl } from '../lib/photoStore';
 import { blankDraft } from '../lib/recipeDraft';
 import type { Ingredient, IngredientSection, RecipeDraft } from '../lib/types';
+import {
+  addBtn,
+  addBtnDanger,
+  cellClass,
+  iconBtn,
+  inputClass,
+  primaryBtn,
+  secondaryBtn,
+} from '../lib/uiClasses';
 
 interface ItemFields {
   quantity: string;
@@ -158,15 +167,6 @@ function moved<T>(list: T[], from: number, to: number): T[] {
   return next;
 }
 
-const inputClass =
-  'w-full rounded-xl border border-line bg-surface px-3 py-2.5 shadow-sm outline-none focus:border-ink-subtle';
-const cellClass =
-  'min-w-0 rounded-lg border border-line px-2 py-1.5 outline-none focus:border-ink-subtle';
-const iconButtonClass =
-  'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-ink-muted active:bg-surface-muted disabled:opacity-30';
-const addButtonClass =
-  'mt-2 rounded-full border border-line-strong px-3 py-1.5 text-sm text-ink-muted active:bg-surface-muted';
-
 function Field({
   label,
   children,
@@ -216,7 +216,7 @@ function PhotoField({
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          className={`block ${addButtonClass}`}
+          className={`mt-2 block ${addBtn}`}
         >
           + Photo
         </button>
@@ -231,14 +231,14 @@ function PhotoField({
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
-              className="rounded-full border border-line-strong px-3 py-1.5 text-sm text-ink-muted active:bg-surface-muted"
+              className={addBtn}
             >
               Replace
             </button>
             <button
               type="button"
               onClick={onRemove}
-              className="rounded-full border border-line-strong px-3 py-1.5 text-sm text-ink-muted active:bg-surface-muted"
+              className={addBtnDanger}
             >
               Remove
             </button>
@@ -454,7 +454,7 @@ export default function RecipeForm({
                       sections.filter((_, i) => i !== si),
                     )
                   }
-                  className={iconButtonClass}
+                  className={iconBtn}
                 >
                   ✕
                 </button>
@@ -516,7 +516,7 @@ export default function RecipeForm({
                       aria-label="Move ingredient up"
                       disabled={ii === 0}
                       onClick={() => moveItem(si, ii, ii - 1)}
-                      className={iconButtonClass}
+                      className={iconBtn}
                     >
                       ↑
                     </button>
@@ -525,7 +525,7 @@ export default function RecipeForm({
                       aria-label="Move ingredient down"
                       disabled={ii === section.items.length - 1}
                       onClick={() => moveItem(si, ii, ii + 1)}
-                      className={iconButtonClass}
+                      className={iconBtn}
                     >
                       ↓
                     </button>
@@ -538,7 +538,7 @@ export default function RecipeForm({
                           items: s.items.filter((_, i) => i !== ii),
                         }))
                       }
-                      className={iconButtonClass}
+                      className={iconBtn}
                     >
                       ✕
                     </button>
@@ -552,7 +552,7 @@ export default function RecipeForm({
               onClick={() =>
                 patchSection(si, (s) => ({ ...s, items: [...s.items, blankItem()] }))
               }
-              className={addButtonClass}
+              className={`mt-2 block ${addBtn}`}
             >
               + Ingredient
             </button>
@@ -567,7 +567,7 @@ export default function RecipeForm({
               { name: '', items: [blankItem()] },
             ])
           }
-          className={addButtonClass}
+          className={`mt-2 block ${addBtn}`}
         >
           + Section
         </button>
@@ -591,7 +591,7 @@ export default function RecipeForm({
                     aria-label={`Move step ${i + 1} up`}
                     disabled={i === 0}
                     onClick={() => patchSteps((steps) => moved(steps, i, i - 1))}
-                    className={iconButtonClass}
+                    className={iconBtn}
                   >
                     ↑
                   </button>
@@ -600,7 +600,7 @@ export default function RecipeForm({
                     aria-label={`Move step ${i + 1} down`}
                     disabled={i === form.steps.length - 1}
                     onClick={() => patchSteps((steps) => moved(steps, i, i + 1))}
-                    className={iconButtonClass}
+                    className={iconBtn}
                   >
                     ↓
                   </button>
@@ -610,7 +610,7 @@ export default function RecipeForm({
                     onClick={() =>
                       patchSteps((steps) => steps.filter((_, j) => j !== i))
                     }
-                    className={iconButtonClass}
+                    className={iconBtn}
                   >
                     ✕
                   </button>
@@ -634,7 +634,7 @@ export default function RecipeForm({
         <button
           type="button"
           onClick={() => patchSteps((steps) => [...steps, ''])}
-          className={addButtonClass}
+          className={`mt-2 block ${addBtn}`}
         >
           + Step
         </button>
@@ -654,14 +654,14 @@ export default function RecipeForm({
         <button
           type="button"
           onClick={onCancel}
-          className="flex-1 rounded-full border border-line-strong py-3 font-medium text-ink-muted"
+          className={`${secondaryBtn} flex-1 py-3`}
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={!canSubmit}
-          className="flex-1 rounded-full bg-ink py-3 font-medium text-page disabled:opacity-40"
+          className={`${primaryBtn} flex-1 py-3`}
         >
           {submitLabel}
         </button>

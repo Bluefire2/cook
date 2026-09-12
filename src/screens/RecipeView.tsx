@@ -4,6 +4,7 @@ import ChatPanel from '../components/ChatPanel';
 import { usePhotoUrl } from '../lib/photoStore';
 import { useRecipe } from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
+import { backLink, ghostBtn } from '../lib/uiClasses';
 import { useWakeLock } from '../lib/useWakeLock';
 import { useCookState } from '../lib/useCookState';
 import type { Ingredient } from '../lib/types';
@@ -56,7 +57,7 @@ export default function RecipeView() {
     return (
       <div className="p-6 text-center text-ink-muted">
         Recipe not found.{' '}
-        <Link to="/" className="underline">
+        <Link to="/" className="underline hover:text-ink">
           Back to library
         </Link>
       </div>
@@ -70,13 +71,10 @@ export default function RecipeView() {
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
         <div className="flex items-center justify-between">
-          <Link to="/" className="text-sm text-ink-muted">
+          <Link to="/" className={backLink}>
             &larr; Library
           </Link>
-          <Link
-            to={`/recipe/${recipe.id}/edit`}
-            className="rounded-full px-3 py-1 text-sm text-ink-muted"
-          >
+          <Link to={`/recipe/${recipe.id}/edit`} className={ghostBtn}>
             Edit
           </Link>
         </div>
@@ -107,7 +105,7 @@ export default function RecipeView() {
               aria-label="Fewer servings"
               disabled={servings <= 1}
               onClick={() => setServings(servings - 1)}
-              className="h-9 w-9 rounded-full text-lg text-ink-muted disabled:opacity-30"
+              className="h-9 w-9 rounded-full text-lg text-ink-muted hover:bg-surface-muted active:bg-surface-muted disabled:opacity-30"
             >
               −
             </button>
@@ -118,7 +116,7 @@ export default function RecipeView() {
               type="button"
               aria-label="More servings"
               onClick={() => setServings(servings + 1)}
-              className="h-9 w-9 rounded-full text-lg text-ink-muted"
+              className="h-9 w-9 rounded-full text-lg text-ink-muted hover:bg-surface-muted active:bg-surface-muted"
             >
               +
             </button>
@@ -143,8 +141,8 @@ export default function RecipeView() {
                       onClick={() => toggleChecked(key)}
                       className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left shadow-sm transition-colors ${
                         isChecked
-                          ? 'bg-surface-muted text-ink-subtle'
-                          : 'bg-surface'
+                          ? 'bg-surface-muted text-ink-subtle hover:bg-surface active:bg-surface'
+                          : 'bg-surface hover:bg-surface-muted active:bg-surface-muted'
                       }`}
                     >
                       <span
@@ -185,7 +183,7 @@ export default function RecipeView() {
                       ? 'bg-surface ring-2 ring-amber-400'
                       : isDone
                         ? 'bg-surface-muted text-ink-subtle'
-                        : 'bg-surface'
+                        : 'bg-surface hover:bg-surface-muted active:bg-surface-muted'
                   }`}
                 >
                   <span
@@ -224,7 +222,7 @@ export default function RecipeView() {
             href={source.href}
             target="_blank"
             rel="noreferrer noopener"
-            className="underline"
+            className="underline hover:text-ink"
           >
             {source.hostname}
           </a>
@@ -235,7 +233,7 @@ export default function RecipeView() {
         <button
           type="button"
           onClick={() => setChatOpen(true)}
-          className="fixed right-5 bottom-8 z-10 flex h-14 items-center gap-2 rounded-full bg-amber-500 px-5 font-medium text-white shadow-lg active:bg-amber-600"
+          className="fixed right-5 bottom-8 z-10 flex h-14 items-center gap-2 rounded-full bg-amber-500 px-5 font-medium text-white shadow-lg hover:bg-amber-600 active:bg-amber-600"
         >
           Ask
         </button>

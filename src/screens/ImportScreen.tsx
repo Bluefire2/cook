@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
 import { importRecipe, type ExtractedRecipe } from '../lib/importApi';
 import { recipeStore } from '../lib/recipeStore';
+import { backLink, inputFocus, primaryBtn } from '../lib/uiClasses';
 import type { RecipeDraft } from '../lib/types';
 
 export default function ImportScreen() {
@@ -37,7 +38,7 @@ export default function ImportScreen() {
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
-        <Link to="/" className="text-sm text-ink-muted">
+        <Link to="/" className={backLink}>
           &larr; Library
         </Link>
         <h1 className="mt-2 text-2xl font-bold">Import recipe</h1>
@@ -50,7 +51,7 @@ export default function ImportScreen() {
             onChange={(e) => setInput(e.target.value)}
             rows={5}
             placeholder="Paste a recipe link, or the recipe text itself…"
-            className="w-full rounded-xl border border-line bg-surface px-4 py-3 shadow-sm outline-none focus:border-ink-subtle"
+            className={`w-full rounded-xl border border-line bg-surface px-4 py-3 shadow-sm ${inputFocus}`}
           />
           {error && (
             <p className="mt-2 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
@@ -61,7 +62,7 @@ export default function ImportScreen() {
             type="button"
             onClick={() => void extract()}
             disabled={busy || input.trim() === ''}
-            className="mt-3 w-full rounded-full bg-ink py-3 font-medium text-page disabled:opacity-40"
+            className={`${primaryBtn} mt-3 w-full py-3`}
           >
             {busy ? 'Extracting…' : 'Extract recipe'}
           </button>

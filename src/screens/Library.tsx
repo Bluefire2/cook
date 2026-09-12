@@ -1,8 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
+import {
+  dangerBtn,
+  ghostBtn,
+  inputClass,
+  menuItem,
+  menuItemDanger,
+  primaryBtn,
+  secondaryBtn,
+} from '../lib/uiClasses';
 
 function CardThumb({ photoId }: { photoId: string }) {
   const url = usePhotoUrl(photoId);
@@ -25,8 +34,9 @@ function Sheet({
       <button
         type="button"
         aria-label="Dismiss"
+        tabIndex={-1}
         onClick={onClose}
-        className="flex-1 bg-black/20"
+        className="flex-1 bg-black/40"
       />
       <div className="rounded-t-3xl bg-surface px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl md:mx-auto md:w-full md:max-w-xl">
         {children}
@@ -41,6 +51,8 @@ export default function Library() {
   const [menuId, setMenuId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const firstActionRef = useRef<HTMLAnchorElement>(null);
 
   const q = query.trim().toLowerCase();
   const recipes =
@@ -59,14 +71,39 @@ export default function Library() {
     await recipeStore.remove(id);
   };
 
+  useEffect(() => {
+    if (!menuId) return;
+    firstActionRef.current?.focus({ preventScroll: true });
+  }, [menuId]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (menuId !== null) {
+        event.preventDefault();
+        setMenuId(null);
+        menuTriggerRef.current?.focus();
+        return;
+      }
+      if (pendingDeleteId !== null) {
+        event.preventDefault();
+        setPendingDeleteId(null);
+        return;
+      }
+      if (addOpen) {
+        event.preventDefault();
+        setAddOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [menuId, pendingDeleteId, addOpen]);
+
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="flex items-center justify-between py-4">
         <h1 className="text-2xl font-bold">Cook</h1>
-        <Link
-          to="/settings"
-          className="rounded-full px-3 py-1 text-sm text-ink-muted"
-        >
+        <Link to="/settings" className={ghostBtn}>
           Settings
         </Link>
       </header>
@@ -76,7 +113,7 @@ export default function Library() {
         placeholder="Search recipes…"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        className="mb-4 w-full rounded-xl border border-line bg-surface px-4 py-2.5 shadow-sm outline-none focus:border-ink-subtle"
+        className={`${inputClass} mb-4`}
       />
 
       {recipes === undefined ? null : recipes.length === 0 ? (
@@ -91,7 +128,7 @@ export default function Library() {
             <li key={recipe.id} className="relative">
               <Link
                 to={`/recipe/${recipe.id}`}
-                className="flex gap-3 rounded-2xl border border-line bg-surface p-4 pr-14 shadow-sm active:bg-surface-muted"
+                className="flex gap-3 rounded-2xl border border-line bg-surface p-4 pr-14 shadow-sm hover:border-line-strong hover:bg-surface-muted active:bg-surface-muted"
               >
                 {recipe.photoId !== undefined && (
                   <CardThumb photoId={recipe.photoId} />
@@ -121,19 +158,26 @@ export default function Library() {
               <button
                 type="button"
                 aria-label={`Actions for ${recipe.title}`}
-                onClick={() =>
-                  setMenuId(menuId === recipe.id ? null : recipe.id)
-                }
-                className="absolute top-2 right-2 flex h-11 w-11 items-center justify-center rounded-full text-xl leading-none text-ink-subtle active:bg-surface-muted"
+                aria-expanded={menuId === recipe.id}
+                onClick={(event) => {
+                  menuTriggerRef.current = event.currentTarget;
+                  setMenuId(menuId === recipe.id ? null : recipe.id);
+                }}
+                className="absolute top-2 right-2 flex h-11 w-11 items-center justify-center rounded-full text-xl leading-none text-ink-subtle hover:bg-surface-muted active:bg-surface-muted"
               >
                 ⋯
               </button>
 
               {menuId === recipe.id && (
-                <div className="absolute top-13 right-3 z-20 w-40 overflow-hidden rounded-xl border border-line bg-surface shadow-xl">
+                <div
+                  role="group"
+                  aria-label={`Actions for ${recipe.title}`}
+                  className="absolute top-13 right-3 z-20 w-40 overflow-hidden rounded-xl border border-line bg-surface shadow-xl"
+                >
                   <Link
                     to={`/recipe/${recipe.id}/edit`}
-                    className="block px-4 py-3 active:bg-surface-muted"
+                    ref={firstActionRef}
+                    className={menuItem}
                   >
                     Edit
                   </Link>
@@ -143,7 +187,7 @@ export default function Library() {
                       setMenuId(null);
                       setPendingDeleteId(recipe.id);
                     }}
-                    className="block w-full border-t border-line px-4 py-3 text-left text-danger active:bg-surface-muted"
+                    className={`${menuItemDanger} border-t border-line`}
                   >
                     Delete
                   </button>
@@ -158,6 +202,7 @@ export default function Library() {
         <button
           type="button"
           aria-label="Close menu"
+          tabIndex={-1}
           onClick={() => setMenuId(null)}
           className="fixed inset-0 z-10"
         />
@@ -167,7 +212,7 @@ export default function Library() {
         type="button"
         aria-label="Add recipe"
         onClick={() => setAddOpen(true)}
-        className="fixed right-5 bottom-8 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-3xl leading-none text-page shadow-lg active:opacity-90"
+        className="fixed right-5 bottom-8 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-3xl leading-none text-page shadow-lg hover:opacity-90 active:opacity-90"
       >
         +
       </button>
@@ -177,20 +222,20 @@ export default function Library() {
           <h2 className="text-lg font-semibold">Add a recipe</h2>
           <Link
             to="/import"
-            className="mt-3 block rounded-full bg-ink py-3 text-center font-medium text-page"
+            className={`${primaryBtn} mt-3 block py-3 text-center`}
           >
             Import from a link or text
           </Link>
           <Link
             to="/recipe/new"
-            className="mt-2 block rounded-full border border-line-strong py-3 text-center font-medium text-ink-muted"
+            className={`${secondaryBtn} mt-2 block py-3 text-center`}
           >
             Write one from scratch
           </Link>
           <button
             type="button"
             onClick={() => setAddOpen(false)}
-            className="mt-2 w-full py-2.5 text-sm text-ink-muted"
+            className="mt-2 w-full py-2.5 text-sm text-ink-muted hover:text-ink"
           >
             Cancel
           </button>
@@ -208,14 +253,14 @@ export default function Library() {
           <button
             type="button"
             onClick={() => void remove(pendingDelete.id)}
-            className="mt-3 w-full rounded-full bg-red-600 py-3 font-medium text-white active:bg-red-700"
+            className={`${dangerBtn} mt-3 w-full py-3`}
           >
             Delete
           </button>
           <button
             type="button"
             onClick={() => setPendingDeleteId(null)}
-            className="mt-2 w-full rounded-full border border-line-strong py-3 font-medium text-ink-muted"
+            className={`${secondaryBtn} mt-2 w-full py-3`}
           >
             Cancel
           </button>

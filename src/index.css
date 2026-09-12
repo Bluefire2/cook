@@ -12,6 +12,8 @@
   --color-line-strong: #d6d3d1;
   --color-danger-bg: #fef2f2;
   --color-danger: #dc2626;
+  --color-danger-fill: #dc2626;
+  --color-danger-fill-hover: #b91c1c;
   --color-accent-soft: #fef3c7;
   --color-success: #15803d;
 }
@@ -44,6 +46,15 @@ html.dark {
 
 button:not(:disabled) {
   cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+:where(a, button):focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
 }
 
 body {
