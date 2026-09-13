@@ -68,7 +68,7 @@ export async function importLibrary(
 ): Promise<{ imported: number; skipped: number }> {
   const backup = JSON.parse(await file.text()) as BackupFile;
   if (backup.app !== 'cook' || !Array.isArray(backup.recipes)) {
-    throw new Error("That file doesn't look like a Cook backup.");
+    throw new Error("That file doesn't look like a Sous backup.");
   }
 
   const recipes = backup.recipes.filter(isUsableRecipe);

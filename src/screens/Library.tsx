@@ -102,7 +102,7 @@ export default function Library() {
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="flex items-center justify-between py-4">
-        <h1 className="text-2xl font-bold">Cook</h1>
+        <h1 className="text-2xl font-bold">Sous</h1>
         <Link to="/settings" className={ghostBtn}>
           Settings
         </Link>

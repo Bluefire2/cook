@@ -16,8 +16,8 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {
-        name: 'Cook',
-        short_name: 'Cook',
+        name: 'Sous',
+        short_name: 'Sous',
         description: 'Personal recipe book with an AI cooking assistant',
         display: 'standalone',
         start_url: '/',

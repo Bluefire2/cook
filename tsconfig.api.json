@@ -10,6 +10,7 @@
     "moduleDetection": "force",
     "noEmit": true,
     "types": ["node"],
+    "erasableSyntaxOnly": true,
 
     "strict": true,
     "noUnusedLocals": true,
