@@ -1,33 +1,33 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI, Type, type Schema } from '@google/genai';
 
 // NOTE: Duplicated in api/chat.ts. Vercel's function runtime transpiles
 // each api/ entrypoint in isolation and cannot import sibling helper files,
 // so the schema must live inline. Keep both copies in sync.
-const RECIPE_SCHEMA: Anthropic.Tool.InputSchema = {
-  type: 'object',
+const RECIPE_SCHEMA: Schema = {
+  type: Type.OBJECT,
   properties: {
-    title: { type: 'string' },
-    description: { type: 'string', description: 'One or two sentences.' },
-    servings: { type: 'number' },
-    prepMinutes: { type: 'number' },
-    cookMinutes: { type: 'number' },
+    title: { type: Type.STRING },
+    description: { type: Type.STRING, description: 'One or two sentences.' },
+    servings: { type: Type.NUMBER },
+    prepMinutes: { type: Type.NUMBER },
+    cookMinutes: { type: Type.NUMBER },
     ingredientSections: {
-      type: 'array',
+      type: Type.ARRAY,
       description:
         'Use a single unnamed section unless the recipe clearly has component groups like "Sauce" and "Dough".',
       items: {
-        type: 'object',
+        type: Type.OBJECT,
         properties: {
-          name: { type: 'string' },
+          name: { type: Type.STRING },
           items: {
-            type: 'array',
+            type: Type.ARRAY,
             items: {
-              type: 'object',
+              type: Type.OBJECT,
               properties: {
-                quantity: { type: 'number', description: 'e.g. 0.5 for ½' },
-                unit: { type: 'string', description: 'e.g. g, tbsp, cup' },
-                item: { type: 'string', description: 'The ingredient itself' },
-                note: { type: 'string', description: 'e.g. "thinly sliced"' },
+                quantity: { type: Type.NUMBER, description: 'e.g. 0.5 for ½' },
+                unit: { type: Type.STRING, description: 'e.g. g, tbsp, cup' },
+                item: { type: Type.STRING, description: 'The ingredient itself' },
+                note: { type: Type.STRING, description: 'e.g. "thinly sliced"' },
               },
               required: ['item'],
             },
@@ -37,19 +37,19 @@ const RECIPE_SCHEMA: Anthropic.Tool.InputSchema = {
       },
     },
     steps: {
-      type: 'array',
+      type: Type.ARRAY,
       items: {
-        type: 'object',
-        properties: { text: { type: 'string' } },
+        type: Type.OBJECT,
+        properties: { text: { type: Type.STRING } },
         required: ['text'],
       },
     },
     tags: {
-      type: 'array',
-      items: { type: 'string' },
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
       description: '2-4 short lowercase tags like "pasta", "weeknight".',
     },
-    notes: { type: 'string', description: 'Tips or variations worth keeping.' },
+    notes: { type: Type.STRING, description: 'Tips or variations worth keeping.' },
   },
   required: ['title', 'servings', 'ingredientSections', 'steps', 'tags'],
 };
@@ -62,7 +62,7 @@ interface ImportRequestBody {
 }
 
 // `??` is wrong here: `node --env-file` turns a bare `CHAT_MODEL=` into `''`, which is not nullish.
-const MODEL = process.env.CHAT_MODEL || 'claude-sonnet-4-5';
+const MODEL = process.env.CHAT_MODEL || 'gemini-3.7-flash';
 
 const MAX_SOURCE_CHARS = 60000;
 
@@ -164,41 +164,35 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  const anthropic = new Anthropic();
-  const result = await anthropic.messages.create({
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const result = await ai.models.generateContent({
     model: MODEL,
-    max_tokens: 4096,
-    tools: [
-      {
-        name: 'save_recipe',
-        description:
-          'Save the recipe extracted from the source material in structured form.',
-        input_schema: RECIPE_SCHEMA,
-      },
-    ],
-    tool_choice: { type: 'tool', name: 'save_recipe' },
-    messages: [
-      {
-        role: 'user',
-        content:
-          'Extract the recipe from the source material below and save it. ' +
-          'Convert fractions to decimals for quantities. Keep step texts ' +
-          'faithful to the original but trim fluff. If the source contains ' +
-          'no recipe, save a recipe with the title "NOT_A_RECIPE".\n\n' +
-          `Source material:\n${source}`,
-      },
-    ],
+    contents:
+      'Extract the recipe from the source material below and save it. ' +
+      'Convert fractions to decimals for quantities. Keep step texts ' +
+      'faithful to the original but trim fluff. If the source contains ' +
+      'no recipe, save a recipe with the title "NOT_A_RECIPE".\n\n' +
+      `Source material:\n${source}`,
+    config: {
+      maxOutputTokens: 4096,
+      responseMimeType: 'application/json',
+      responseSchema: RECIPE_SCHEMA,
+    },
   });
 
-  const toolUse = result.content.find((b) => b.type === 'tool_use');
-  if (!toolUse || toolUse.type !== 'tool_use') {
+  let recipe: { title?: string };
+  try {
+    const parsed: unknown = JSON.parse(result.text ?? '');
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new Error('not an object');
+    }
+    recipe = parsed as { title?: string };
+  } catch {
     return Response.json(
       { error: 'Extraction failed — no structured result.' },
       { status: 502 },
     );
   }
-
-  const recipe = toolUse.input as { title?: string };
   if (recipe.title === 'NOT_A_RECIPE') {
     return Response.json(
       { error: "Couldn't find a recipe in that content." },

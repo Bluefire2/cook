@@ -1,33 +1,33 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI, Type, type Content, type Part, type Schema } from '@google/genai';
 
 // NOTE: Duplicated in api/import.ts. Vercel's function runtime transpiles
 // each api/ entrypoint in isolation and cannot import sibling helper files,
 // so the schema must live inline. Keep both copies in sync.
-const RECIPE_SCHEMA: Anthropic.Tool.InputSchema = {
-  type: 'object',
+const RECIPE_SCHEMA: Schema = {
+  type: Type.OBJECT,
   properties: {
-    title: { type: 'string' },
-    description: { type: 'string', description: 'One or two sentences.' },
-    servings: { type: 'number' },
-    prepMinutes: { type: 'number' },
-    cookMinutes: { type: 'number' },
+    title: { type: Type.STRING },
+    description: { type: Type.STRING, description: 'One or two sentences.' },
+    servings: { type: Type.NUMBER },
+    prepMinutes: { type: Type.NUMBER },
+    cookMinutes: { type: Type.NUMBER },
     ingredientSections: {
-      type: 'array',
+      type: Type.ARRAY,
       description:
         'Use a single unnamed section unless the recipe clearly has component groups like "Sauce" and "Dough".',
       items: {
-        type: 'object',
+        type: Type.OBJECT,
         properties: {
-          name: { type: 'string' },
+          name: { type: Type.STRING },
           items: {
-            type: 'array',
+            type: Type.ARRAY,
             items: {
-              type: 'object',
+              type: Type.OBJECT,
               properties: {
-                quantity: { type: 'number', description: 'e.g. 0.5 for ½' },
-                unit: { type: 'string', description: 'e.g. g, tbsp, cup' },
-                item: { type: 'string', description: 'The ingredient itself' },
-                note: { type: 'string', description: 'e.g. "thinly sliced"' },
+                quantity: { type: Type.NUMBER, description: 'e.g. 0.5 for ½' },
+                unit: { type: Type.STRING, description: 'e.g. g, tbsp, cup' },
+                item: { type: Type.STRING, description: 'The ingredient itself' },
+                note: { type: Type.STRING, description: 'e.g. "thinly sliced"' },
               },
               required: ['item'],
             },
@@ -37,19 +37,19 @@ const RECIPE_SCHEMA: Anthropic.Tool.InputSchema = {
       },
     },
     steps: {
-      type: 'array',
+      type: Type.ARRAY,
       items: {
-        type: 'object',
-        properties: { text: { type: 'string' } },
+        type: Type.OBJECT,
+        properties: { text: { type: Type.STRING } },
         required: ['text'],
       },
     },
     tags: {
-      type: 'array',
-      items: { type: 'string' },
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
       description: '2-4 short lowercase tags like "pasta", "weeknight".',
     },
-    notes: { type: 'string', description: 'Tips or variations worth keeping.' },
+    notes: { type: Type.STRING, description: 'Tips or variations worth keeping.' },
   },
   required: ['title', 'servings', 'ingredientSections', 'steps', 'tags'],
 };
@@ -76,7 +76,7 @@ export interface ChatRequestBody {
 }
 
 // `??` is wrong here: `node --env-file` turns a bare `CHAT_MODEL=` into `''`, which is not nullish.
-const MODEL = process.env.CHAT_MODEL || 'claude-sonnet-4-5';
+const MODEL = process.env.CHAT_MODEL || 'gemini-3.7-flash';
 
 // A turn that triggers update_recipe streams a text reply and then the complete recipe JSON —
 // the slowest response this app produces, so Vercel's 10s default can kill it.
@@ -107,23 +107,17 @@ function systemPrompt(recipe: unknown, cookingState: unknown): string {
   ].join('\n');
 }
 
-function toAnthropicMessages(
-  messages: ChatRequestMessage[],
-): Anthropic.MessageParam[] {
+function toGeminiContents(messages: ChatRequestMessage[]): Content[] {
   return messages.map((m) => {
+    const role = m.role === 'assistant' ? 'model' : 'user';
     if (m.role === 'user' && m.images && m.images.length > 0) {
-      const blocks: Anthropic.ContentBlockParam[] = m.images.map((img) => ({
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: img.mediaType as 'image/jpeg',
-          data: img.base64,
-        },
+      const parts: Part[] = m.images.map((img) => ({
+        inlineData: { mimeType: img.mediaType, data: img.base64 },
       }));
-      if (m.content) blocks.push({ type: 'text', text: m.content });
-      return { role: 'user', content: blocks };
+      if (m.content) parts.push({ text: m.content });
+      return { role, parts };
     }
-    return { role: m.role, content: m.content };
+    return { role, parts: [{ text: m.content }] };
   });
 }
 
@@ -135,22 +129,30 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const body = (await req.json()) as ChatRequestBody;
-  const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const abort = new AbortController();
 
-  const stream = anthropic.messages.stream({
+  const stream = await ai.models.generateContentStream({
     model: MODEL,
-    max_tokens: 4096,
-    system: systemPrompt(body.recipe, body.cookingState),
-    messages: toAnthropicMessages(body.messages),
-    tools: [
-      {
-        name: 'update_recipe',
-        description:
-          'Propose a modified version of the recipe the user is viewing. ' +
-          'Pass the complete updated recipe.',
-        input_schema: RECIPE_SCHEMA,
-      },
-    ],
+    contents: toGeminiContents(body.messages),
+    config: {
+      abortSignal: abort.signal,
+      systemInstruction: systemPrompt(body.recipe, body.cookingState),
+      maxOutputTokens: 4096,
+      tools: [
+        {
+          functionDeclarations: [
+            {
+              name: 'update_recipe',
+              description:
+                'Propose a modified version of the recipe the user is viewing. ' +
+                'Pass the complete updated recipe.',
+              parameters: RECIPE_SCHEMA,
+            },
+          ],
+        },
+      ],
+    },
   });
 
   // Plain text streams as-is, then a separator (0x1E), then any proposal JSON, then a
@@ -158,31 +160,30 @@ export async function POST(req: Request): Promise<Response> {
   const encoder = new TextEncoder();
   const readable = new ReadableStream<Uint8Array>({
     start(controller) {
-      stream.on('text', (delta) => {
-        controller.enqueue(encoder.encode(delta));
-      });
-      stream.on('end', () => {
-        void (async () => {
-          try {
-            const final = await stream.finalMessage();
-            const toolUse = final.content.find(
-              (b) => b.type === 'tool_use' && b.name === 'update_recipe',
+      void (async () => {
+        try {
+          let proposalArgs: Record<string, unknown> | undefined;
+          for await (const chunk of stream) {
+            if (chunk.text) controller.enqueue(encoder.encode(chunk.text));
+            const update = chunk.functionCalls?.find(
+              (call) => call.name === 'update_recipe' && call.args,
             );
-            const proposal =
-              toolUse && toolUse.type === 'tool_use'
-                ? JSON.stringify(toolUse.input)
-                : '';
-            controller.enqueue(encoder.encode(`\x1E${proposal}\x1E`));
-            controller.close();
-          } catch (err) {
-            controller.error(err);
+            if (update?.args) proposalArgs = update.args;
           }
-        })();
-      });
-      stream.on('error', (err) => controller.error(err));
+          const proposal = proposalArgs ? JSON.stringify(proposalArgs) : '';
+          controller.enqueue(encoder.encode(`\x1E${proposal}\x1E`));
+          controller.close();
+        } catch (err) {
+          if (abort.signal.aborted) {
+            controller.close();
+            return;
+          }
+          controller.error(err);
+        }
+      })();
     },
     cancel() {
-      stream.abort();
+      abort.abort();
     },
   });
 
