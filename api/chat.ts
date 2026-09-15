@@ -25,7 +25,11 @@ const RECIPE_SCHEMA: Schema = {
               type: Type.OBJECT,
               properties: {
                 quantity: { type: Type.NUMBER, description: 'e.g. 0.5 for ½' },
-                unit: { type: Type.STRING, description: 'e.g. g, tbsp, cup' },
+                unit: {
+                  type: Type.STRING,
+                  description:
+                    'Prefer one of: piece, tsp, tbsp, cup, ml, l, g, kg, oz, lb. Use "piece" for countable items when a unit reads naturally; omit the unit entirely for items counted without one. If none of these fit, use a short lowercase unit.',
+                },
                 item: { type: Type.STRING, description: 'The ingredient itself' },
                 note: { type: Type.STRING, description: 'e.g. "thinly sliced"' },
               },

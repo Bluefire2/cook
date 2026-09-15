@@ -4,6 +4,7 @@ import { encodeImageForStorage } from '../lib/image';
 import { photoStore, useObjectUrl, usePhotoUrl } from '../lib/photoStore';
 import { blankDraft } from '../lib/recipeDraft';
 import type { Ingredient, IngredientSection, RecipeDraft } from '../lib/types';
+import { COMMON_UNITS, CUSTOM_UNIT, resolveUnit, unitChoice, type UnitChoice } from '../lib/units';
 import {
   addBtn,
   addBtnDanger,
@@ -167,6 +168,10 @@ function moved<T>(list: T[], from: number, to: number): T[] {
   return next;
 }
 
+function unitKey(sectionIndex: number, itemIndex: number): string {
+  return `${sectionIndex}-${itemIndex}`;
+}
+
 function Field({
   label,
   children,
@@ -267,6 +272,12 @@ export default function RecipeForm({
   const [picked, setPicked] = useState<File>();
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // resolveUnit(CUSTOM_UNIT, '') is undefined, so without this positional
+  // "row is in custom mode" set, a custom row whose text is empty (or exactly
+  // a listed unit) would snap back to — and hide the text field mid-typing.
+  const [customUnits, setCustomUnits] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
 
   const patch = (fields: Partial<FormState>) =>
     setForm((prev) => ({ ...prev, ...fields }));
@@ -291,11 +302,45 @@ export default function RecipeForm({
       ),
     }));
 
-  const moveItem = (sectionIndex: number, from: number, to: number) =>
+  // customUnits keys are positional, so every structural edit (move, remove
+  // ingredient, remove section) must remap them exactly the way it moves the
+  // rows — otherwise a Custom… row's state would jump to a neighbour. The
+  // remap returns the key's new position, or null to drop it.
+  const remapCustomUnits = (
+    remap: (
+      sectionIndex: number,
+      itemIndex: number,
+    ) => readonly [number, number] | null,
+  ) =>
+    setCustomUnits((prev) => {
+      const next = new Set<string>();
+      for (const key of prev) {
+        const dash = key.indexOf('-');
+        const mapped = remap(
+          Number(key.slice(0, dash)),
+          Number(key.slice(dash + 1)),
+        );
+        if (mapped !== null) next.add(unitKey(mapped[0], mapped[1]));
+      }
+      return next;
+    });
+
+  const moveItem = (sectionIndex: number, from: number, to: number) => {
+    // moved() is bounds-guarded and only adjacent moves exist, so a real move
+    // is exactly a swap; the positional custom-mode flags swap with it.
+    if (to >= 0 && to < form.sections[sectionIndex].items.length) {
+      remapCustomUnits((si, ii) => {
+        if (si !== sectionIndex) return [si, ii];
+        if (ii === from) return [si, to];
+        if (ii === to) return [si, from];
+        return [si, ii];
+      });
+    }
     patchSection(sectionIndex, (section) => ({
       ...section,
       items: moved(section.items, from, to),
     }));
+  };
 
   const patchSteps = (next: (steps: string[]) => string[]) =>
     setForm((prev) => ({ ...prev, steps: next(prev.steps) }));
@@ -344,7 +389,11 @@ export default function RecipeForm({
       onKeyDown={(e) => {
         // Enter in any of these one-line fields would submit the whole recipe;
         // saving is explicit and only the button does it.
-        if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
+        if (
+          e.key === 'Enter' &&
+          (e.target instanceof HTMLInputElement ||
+            e.target instanceof HTMLSelectElement)
+        ) {
           e.preventDefault();
         }
       }}
@@ -449,11 +498,15 @@ export default function RecipeForm({
                 <button
                   type="button"
                   aria-label={`Remove section ${si + 1}`}
-                  onClick={() =>
+                  onClick={() => {
                     patchSections((sections) =>
                       sections.filter((_, i) => i !== si),
-                    )
-                  }
+                    );
+                    remapCustomUnits((s, i) => {
+                      if (s === si) return null;
+                      return [s > si ? s - 1 : s, i];
+                    });
+                  }}
                   className={iconBtn}
                 >
                   ✕
@@ -462,89 +515,145 @@ export default function RecipeForm({
             )}
 
             <ul className="mt-2 flex flex-col gap-2">
-              {section.items.map((item, ii) => (
-                <li
-                  key={ii}
-                  className="rounded-xl border border-line bg-surface p-2 shadow-sm"
-                >
-                  <div className="flex gap-1.5">
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      aria-label="Quantity"
-                      value={item.quantity}
-                      onChange={(e) =>
-                        patchItem(si, ii, { quantity: e.target.value })
-                      }
-                      placeholder="1"
-                      className={`w-14 ${cellClass}`}
-                    />
-                    <input
-                      type="text"
-                      aria-label="Unit"
-                      value={item.unit}
-                      onChange={(e) =>
-                        patchItem(si, ii, { unit: e.target.value })
-                      }
-                      placeholder="cup"
-                      className={`w-16 ${cellClass}`}
-                    />
-                    <input
-                      type="text"
-                      aria-label="Ingredient"
-                      value={item.item}
-                      onChange={(e) =>
-                        patchItem(si, ii, { item: e.target.value })
-                      }
-                      placeholder="flour"
-                      className={`flex-1 ${cellClass}`}
-                    />
-                  </div>
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      aria-label="Ingredient note"
-                      value={item.note}
-                      onChange={(e) =>
-                        patchItem(si, ii, { note: e.target.value })
-                      }
-                      placeholder="note, e.g. finely chopped"
-                      className={`flex-1 text-sm ${cellClass}`}
-                    />
-                    <button
-                      type="button"
-                      aria-label="Move ingredient up"
-                      disabled={ii === 0}
-                      onClick={() => moveItem(si, ii, ii - 1)}
-                      className={iconBtn}
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Move ingredient down"
-                      disabled={ii === section.items.length - 1}
-                      onClick={() => moveItem(si, ii, ii + 1)}
-                      className={iconBtn}
-                    >
-                      ↓
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Remove ingredient"
-                      onClick={() =>
-                        patchSection(si, (s) => ({
-                          ...s,
-                          items: s.items.filter((_, i) => i !== ii),
-                        }))
-                      }
-                      className={iconBtn}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </li>
-              ))}
+              {section.items.map((item, ii) => {
+                const key = unitKey(si, ii);
+                const choice = customUnits.has(key)
+                  ? CUSTOM_UNIT
+                  : unitChoice(item.unit);
+                return (
+                  <li
+                    key={ii}
+                    className="rounded-xl border border-line bg-surface p-2 shadow-sm"
+                  >
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        aria-label="Quantity"
+                        value={item.quantity}
+                        onChange={(e) =>
+                          patchItem(si, ii, { quantity: e.target.value })
+                        }
+                        placeholder="1"
+                        className={`w-14 ${cellClass}`}
+                      />
+                      <select
+                        aria-label="Unit"
+                        value={choice}
+                        onChange={(e) => {
+                          const next = e.target.value as UnitChoice;
+                          // One uniform call: — clears, a listed unit writes
+                          // itself, Custom… carries the current text through.
+                          patchItem(si, ii, {
+                            unit: resolveUnit(next, item.unit) ?? '',
+                          });
+                          setCustomUnits((prev) => {
+                            const updated = new Set(prev);
+                            if (next === CUSTOM_UNIT) {
+                              updated.add(key);
+                            } else {
+                              updated.delete(key);
+                            }
+                            return updated;
+                          });
+                        }}
+                        className={`w-24 ${cellClass} bg-surface text-ink`}
+                      >
+                        <option value="">—</option>
+                        {COMMON_UNITS.map((u) => (
+                          <option key={u} value={u}>
+                            {u}
+                          </option>
+                        ))}
+                        <option value={CUSTOM_UNIT}>Custom…</option>
+                      </select>
+                      <input
+                        type="text"
+                        aria-label="Ingredient"
+                        value={item.item}
+                        onChange={(e) =>
+                          patchItem(si, ii, { item: e.target.value })
+                        }
+                        placeholder="flour"
+                        className={`flex-1 ${cellClass}`}
+                      />
+                    </div>
+                    {choice === CUSTOM_UNIT && (
+                      <div className="mt-1.5 flex gap-1.5">
+                        <input
+                          type="text"
+                          aria-label="Custom unit"
+                          placeholder="unit"
+                          value={item.unit}
+                          onChange={(e) => {
+                            // Raw value, untrimmed — trimming per keystroke
+                            // makes a space impossible to type; toIngredient
+                            // trims on submit. Pinning the key keeps a
+                            // resolver-entered custom row (e.g. a stored
+                            // 'knob') in custom mode when an edit makes the
+                            // text empty or exactly a listed unit.
+                            patchItem(si, ii, { unit: e.target.value });
+                            setCustomUnits((prev) => {
+                              const updated = new Set(prev);
+                              updated.add(key);
+                              return updated;
+                            });
+                          }}
+                          className={`w-24 ${cellClass}`}
+                        />
+                      </div>
+                    )}
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        aria-label="Ingredient note"
+                        value={item.note}
+                        onChange={(e) =>
+                          patchItem(si, ii, { note: e.target.value })
+                        }
+                        placeholder="note, e.g. finely chopped"
+                        className={`flex-1 text-sm ${cellClass}`}
+                      />
+                      <button
+                        type="button"
+                        aria-label="Move ingredient up"
+                        disabled={ii === 0}
+                        onClick={() => moveItem(si, ii, ii - 1)}
+                        className={iconBtn}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Move ingredient down"
+                        disabled={ii === section.items.length - 1}
+                        onClick={() => moveItem(si, ii, ii + 1)}
+                        className={iconBtn}
+                      >
+                        ↓
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Remove ingredient"
+                        onClick={() => {
+                          patchSection(si, (s) => ({
+                            ...s,
+                            items: s.items.filter((_, i) => i !== ii),
+                          }));
+                          remapCustomUnits((s, i) => {
+                            if (s !== si || i < ii) return [s, i];
+                            if (i === ii) return null;
+                            return [s, i - 1];
+                          });
+                        }}
+                        className={iconBtn}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
 
             <button
