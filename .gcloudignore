@@ -1,0 +1,11 @@
+node_modules
+dist
+dev-dist
+.git
+.github
+.vercel
+docs
+*.tsbuildinfo
+.env*
+*.local
+.DS_Store

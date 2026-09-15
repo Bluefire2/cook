@@ -727,12 +727,19 @@ D='sha256:PASTE_THE_DIGEST_FROM_STEP_6'
 IMG=europe-west1-docker.pkg.dev/cooking-assistant-508423/sous/sous@$D
 gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
 docker pull "$IMG"
-docker run --rm "$IMG" node -e "const fs=require('node:fs');console.log('GEMINI',!!process.env.GEMINI_API_KEY,'APP_PW',!!process.env.APP_PASSWORD,'envfiles',fs.readdirSync('/app').filter(f=>f.startsWith('.env')))"
-docker history --no-trunc "$IMG" | grep -E 'GEMINI_API_KEY|APP_PASSWORD' || echo "no secrets in image history"
+docker run --rm "$IMG" node -e 'const fs=require("node:fs");console.log("GEMINI",Boolean(process.env.GEMINI_API_KEY),"APP_PW",Boolean(process.env.APP_PASSWORD),"envfiles",fs.readdirSync("/app").filter(f=>f.startsWith(".env")))'
+docker history --no-trunc "$IMG" | grep -E 'GEMINI_API_KEY|APP_PASSWORD' || echo "CLEAN - no secrets in image history"
 ```
 
 (Cloud Shell is bash, so `grep` and `$VAR` are correct there — unlike every
 other command block in this plan, which is PowerShell.)
+
+**Do not write `!!process.env.X` in the bash block.** Interactive bash runs
+history expansion before anything else, and `!!` expands to the previous
+command — it will splice `docker pull …` into the middle of the JavaScript and
+fail with a `SyntaxError`. Double quotes do not suppress it; only single quotes
+do. Hence `Boolean(...)` inside a single-quoted script above. (The PowerShell
+`docker` block in step 3 can keep `!!`, which is not special there.)
 
 Address the image **by digest, not by the `v1` tag**. The tag is mutable and
 can be repointed by a later build, so a tag-based check can inspect something
@@ -1171,17 +1178,43 @@ which blocks any step:
 4. Automate build + deploy in GitHub Actions, or keep it a manual two-command
    release?
 
+## Deploy record
+
+Filled in as the operational steps run, so a later diagnosis can tell which
+image a revision came from.
+
+| What | Value |
+|---|---|
+| Project number | `62867274312` |
+| Billing account | `01313D-F10695-715C9B` (enabled) |
+| Account running gcloud | `chernyshov.k@gmail.com`, `kyrylo.lol` confirmed in `gcloud domains list-user-verified` |
+| Artifact Registry | `europe-west1` repo `sous`, DOCKER, STANDARD |
+| First build | `0c7a9722-e800-44b1-9889-7ea5d980dc46`, SUCCESS in 1m36s |
+| Image digest (`v1`) | `sha256:b2796c7f23f8e6bdaa69be503178bc5c79d3654952a04fa6ea181db48a1c9ec6` |
+| Image secret scan | PASS in Cloud Shell \u2014 `GEMINI false APP_PW false envfiles []`, no layer-history hits |
+| Container Node | v22.20.0 (satisfies the 22.18+ type-stripping requirement) |
+| Live URL | `https://sous.kyrylo.lol` (mapping Ready, CertificateProvisioned) |
+| First revision | `sous-00001-zj7` |
+| Current revision | `sous-00002-vjq` (`GEMINI_API_KEY` replaced from `.env.local` after Git Bash paste corrupted the first value) |
+
+Note: `gcloud` is not on PATH on the dev machine. It lives at
+`C:\Users\chern\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd`
+(a second copy is under `C:\Program Files (x86)\…`), and the machine's default
+project is `match-cal-507107` \u2014 so **every** command must pass
+`--project=cooking-assistant-508423` explicitly. Docker is not installed
+locally at all, which is why the image scan runs in Cloud Shell.
+
 ## Status
 
-- [ ] 1. [core] Verify GCP project billing, enable APIs, create the AR repo *(operational)*
+- [x] 1. [core] Verify GCP project billing, enable APIs, create the AR repo *(operational)*
 - [x] 2. [core] `scripts/server.ts` — API routes, static `dist/`, SPA fallback, streaming *(repo)*
 - [x] 3. [core] `Dockerfile`, `.dockerignore`, `.gcloudignore` *(repo)*
 - [x] 4. [ui] User-facing strings become "Sous" *(repo)*
 - [x] 5. [core] README and `.env.example`: Cloud Run, not Vercel *(repo)*
-- [ ] 6. [core] Build and push the image *(operational)*
-- [ ] 7. [core] Deploy the Cloud Run service *(operational)*
-- [ ] 8. [core] Verify the `*.run.app` URL before mapping *(operational)*
-- [ ] 9. [core] Create the domain mapping *(operational)*
-- [ ] 10. [core] Cloudflare CNAME, grey cloud *(operational)*
-- [ ] 11. [core] Wait for `CertificateProvisioned=True` *(operational)*
-- [ ] 12. [core] End-state check on https://sous.kyrylo.lol *(operational)*
+- [x] 6. [core] Build and push the image *(operational)*
+- [x] 7. [core] Deploy the Cloud Run service *(operational)*
+- [x] 8. [core] Verify the `*.run.app` URL before mapping *(operational)*
+- [x] 9. [core] Create the domain mapping *(operational)*
+- [x] 10. [core] Cloudflare CNAME, grey cloud *(operational)*
+- [x] 11. [core] Wait for `CertificateProvisioned=True` *(operational)*
+- [x] 12. [core] End-state check on https://sous.kyrylo.lol *(operational)*
