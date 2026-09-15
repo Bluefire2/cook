@@ -87,21 +87,15 @@ require_gcloud() {
 # Reads one env var back off the deployed service. Must never fail: on the first
 # deploy there is no service to read, and under `set -e` a failing command
 # substitution would abort the script with no output at all.
+# Single-line node -e: a multiline script inside $(...) prints nothing under
+# Git Bash (see strip_controls) — and this function's whole output is captured
+# in $(...) by resolve_secret, so a multiline script here silently reads nothing.
 read_deployed_env() {
   local json
   json="$(gcloud run services describe "$SERVICE_NAME" --region="$REGION" \
     --project="$PROJECT" --format=json 2>/dev/null)" || return 0
   [[ -n "$json" ]] || return 0
-  printf '%s' "$json" | node -e '
-    let s = "";
-    process.stdin.on("data", (d) => (s += d)).on("end", () => {
-      try {
-        const env = JSON.parse(s).spec.template.spec.containers[0].env || [];
-        const hit = env.find((e) => e.name === process.argv[1]);
-        if (hit && typeof hit.value === "string") process.stdout.write(hit.value);
-      } catch {}
-    });
-  ' "$1" || return 0
+  printf '%s' "$json" | node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{const env=JSON.parse(s).spec.template.spec.containers[0].env||[];const hit=env.find((e)=>e.name===process.argv[1]);if(hit&&typeof hit.value==="string")process.stdout.write(hit.value);}catch{}});' "$1" || return 0
 }
 
 # Git Bash `read -rs` + Windows paste can prefix a C0 control (STX #x0002 is the
