@@ -1,14 +1,14 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { exportLibrary, importLibrary } from '../lib/backup';
+import { signInHref, signOut, useSession } from '../lib/session';
 import { settings, type Theme } from '../lib/settings';
 import { applyTheme } from '../lib/theme';
-import { backLink, inputClass, primaryBtn, secondaryBtn } from '../lib/uiClasses';
+import { backLink, primaryBtn, secondaryBtn } from '../lib/uiClasses';
 
 export default function Settings() {
-  const [password, setPassword] = useState(settings.getPassword());
+  const { user, status: sessionStatus } = useSession();
   const [theme, setTheme] = useState(settings.getTheme());
-  const [saved, setSaved] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [statusKind, setStatusKind] = useState<'ok' | 'err' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -54,33 +54,59 @@ export default function Settings() {
         <h1 className="mt-2 text-2xl font-bold">Settings</h1>
       </header>
 
-      <label className="block">
-        <span className="text-sm font-medium text-ink-muted">App password</span>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => {
-            setPassword(e.target.value);
-            setSaved(false);
-          }}
-          placeholder="Password for the assistant API"
-          className={`mt-1 ${inputClass}`}
-        />
-      </label>
-      <p className="mt-1.5 text-sm text-ink-muted">
-        Must match the APP_PASSWORD configured on the server. Stored only on
-        this device.
-      </p>
-      <button
-        type="button"
-        onClick={() => {
-          settings.setPassword(password);
-          setSaved(true);
-        }}
-        className={`${primaryBtn} mt-3 px-5 py-3`}
-      >
-        {saved ? 'Saved ✓' : 'Save'}
-      </button>
+      {sessionStatus !== 'loading' && (
+        <>
+          <h2 className="mt-2 text-lg font-semibold">Account</h2>
+          {sessionStatus === 'signedOut' && (
+            <>
+              <p className="mt-1 text-sm text-ink-muted">
+                Sign in with Google to identify yourself, so chat and recipe
+                import can run as you.
+              </p>
+              <a
+                href={signInHref('/settings')}
+                className={`${primaryBtn} mt-3 inline-block px-4 py-2.5`}
+              >
+                Sign in with Google
+              </a>
+              <p className="mt-2 text-sm text-ink-muted">
+                Recipes on this device stay on this device.
+              </p>
+            </>
+          )}
+          {sessionStatus === 'signedIn' && user && (
+            <>
+              <div className="mt-3 flex items-center gap-3">
+                <span className="min-w-0 flex-1 truncate text-sm">
+                  {user.email}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void signOut()}
+                  className={`${secondaryBtn} shrink-0 px-4 py-2.5`}
+                >
+                  Sign out
+                </button>
+              </div>
+              <p className="mt-2 text-sm text-ink-muted">
+                Recipes stay on this device.
+              </p>
+            </>
+          )}
+          {sessionStatus === 'offline' && (
+            <>
+              {user && (
+                <span className="mt-3 block truncate text-sm">
+                  {user.email}
+                </span>
+              )}
+              <p className="mt-1 text-sm text-ink-muted">
+                Offline — sign-in is unavailable until you're back online.
+              </p>
+            </>
+          )}
+        </>
+      )}
 
       <h2 className="mt-8 text-lg font-semibold">Appearance</h2>
       <div className="mt-3 flex gap-2">
@@ -140,6 +166,25 @@ export default function Settings() {
           {status}
         </p>
       )}
+
+      <footer className="mt-8">
+        <a
+          href="/privacy"
+          target="_blank"
+          rel="noreferrer"
+          className={`${backLink} inline-block py-3 pr-4`}
+        >
+          Privacy
+        </a>
+        <a
+          href="/terms"
+          target="_blank"
+          rel="noreferrer"
+          className={`${backLink} inline-block py-3`}
+        >
+          Terms
+        </a>
+      </footer>
     </div>
   );
 }

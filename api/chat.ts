@@ -1,4 +1,125 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { GoogleGenAI, Type, type Content, type Part, type Schema } from '@google/genai';
+
+// NOTE: Duplicated in api/import.ts and server/session.ts. Vercel's function
+// runtime transpiles each api/ entrypoint in isolation and cannot import
+// sibling helper files, so the check must live inline. Keep all three in sync.
+
+const SESSION_COOKIE_NAME = 'sous_session';
+
+function parseAllowedEmails(raw: string): Set<string> {
+  const out = new Set<string>();
+  for (const part of raw.split(',')) {
+    const email = part.trim().toLowerCase();
+    if (email !== '') {
+      out.add(email);
+    }
+  }
+  return out;
+}
+
+function isEmailAllowed(email: string, raw: string): boolean {
+  if (raw.trim() === '') {
+    return false;
+  }
+  const normalized = email.trim().toLowerCase();
+  if (normalized === '') {
+    return false;
+  }
+  return parseAllowedEmails(raw).has(normalized);
+}
+
+function readSessionCookie(req: Request): string | null {
+  const header = req.headers.get('cookie');
+  if (!header) {
+    return null;
+  }
+  for (const part of header.split(';')) {
+    const trimmed = part.trim();
+    if (trimmed === '') {
+      continue;
+    }
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) {
+      continue;
+    }
+    const key = trimmed.slice(0, eq).trim();
+    if (key !== SESSION_COOKIE_NAME) {
+      continue;
+    }
+    return trimmed.slice(eq + 1);
+  }
+  return null;
+}
+
+export function sessionSub(req: Request): string | null {
+  const secret = process.env.SESSION_SECRET;
+  if (secret === undefined || secret.trim() === '') {
+    return null;
+  }
+  const token = readSessionCookie(req);
+  if (token === null) {
+    return null;
+  }
+  const dot = token.indexOf('.');
+  if (dot === -1 || token.indexOf('.', dot + 1) !== -1) {
+    return null;
+  }
+  const payloadPart = token.slice(0, dot);
+  const sigPart = token.slice(dot + 1);
+  if (sigPart === '' || /[^A-Za-z0-9_-]/.test(sigPart)) {
+    return null;
+  }
+  const actual = Buffer.from(sigPart, 'base64url');
+  if (actual.toString('base64url') !== sigPart) {
+    return null;
+  }
+  const expected = createHmac('sha256', secret).update(payloadPart).digest();
+  if (expected.length !== actual.length) {
+    return null;
+  }
+  if (!timingSafeEqual(expected, actual)) {
+    return null;
+  }
+  if (payloadPart === '' || /[^A-Za-z0-9_-]/.test(payloadPart)) {
+    return null;
+  }
+  const payloadBuf = Buffer.from(payloadPart, 'base64url');
+  if (payloadBuf.toString('base64url') !== payloadPart) {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payloadBuf.toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    return null;
+  }
+  const row = parsed as {
+    v?: unknown;
+    sub?: unknown;
+    email?: unknown;
+    exp?: unknown;
+  };
+  if (row.v !== 1) {
+    return null;
+  }
+  if (typeof row.sub !== 'string' || row.sub === '') {
+    return null;
+  }
+  if (typeof row.email !== 'string') {
+    return null;
+  }
+  if (typeof row.exp !== 'number' || row.exp <= Date.now()) {
+    return null;
+  }
+  if (!isEmailAllowed(row.email, process.env.ALLOWED_EMAILS ?? '')) {
+    return null;
+  }
+  return row.sub;
+}
 
 // NOTE: Duplicated in api/import.ts. Vercel's function runtime transpiles
 // each api/ entrypoint in isolation and cannot import sibling helper files,
@@ -126,9 +247,7 @@ function toGeminiContents(messages: ChatRequestMessage[]): Content[] {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  // A set-but-blank server password would match the '' that settings.getPassword() returns
-  // for a client that never saved one, turning the deployment into an open proxy.
-  if (!process.env.APP_PASSWORD || req.headers.get('x-app-password') !== process.env.APP_PASSWORD) {
+  if (sessionSub(req) === null) {
     return new Response('Unauthorized', { status: 401 });
   }
 

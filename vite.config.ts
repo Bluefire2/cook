@@ -15,6 +15,9 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      workbox: {
+        navigateFallbackDenylist: [/^\/api\//, /^\/privacy$/, /^\/terms$/],
+      },
       manifest: {
         name: 'Sous',
         short_name: 'Sous',

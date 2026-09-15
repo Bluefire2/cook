@@ -1,5 +1,5 @@
-import { settings } from './settings';
 import type { EncodedImage } from './image';
+import { invalidateSession } from './session';
 import { normalizeRecipeDraft } from './recipeShape';
 import type { Recipe, RecipeDraft } from './types';
 
@@ -37,9 +37,9 @@ export async function streamChatReply(params: {
 }): Promise<ChatReply> {
   const response = await fetch('/api/chat', {
     method: 'POST',
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
-      'x-app-password': settings.getPassword(),
     },
     body: JSON.stringify({
       messages: params.messages,
@@ -50,7 +50,8 @@ export async function streamChatReply(params: {
   });
 
   if (response.status === 401) {
-    throw new Error('Wrong or missing app password — set it in Settings.');
+    invalidateSession();
+    throw new Error('Please sign in again — your session expired.');
   }
   if (!response.ok || !response.body) {
     throw new Error(`Assistant request failed (${response.status}).`);

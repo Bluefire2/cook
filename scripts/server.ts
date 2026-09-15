@@ -5,7 +5,8 @@
  *   node --env-file=.env.local scripts/server.ts
  *
  * `createRequestListener({ staticRoot: null })` is the API-only listener used
- * by `scripts/dev-api-server.ts`.
+ * by `scripts/dev-api-server.ts`. With `staticRoot: null`, `/privacy` and
+ * `/terms` return 404 on this port; Vite serves `public/` on :5173 in dev.
  *
  * Requires Node 22.18+ for native TypeScript type stripping.
  */
@@ -18,10 +19,34 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { POST as chatPost } from '../api/chat.ts';
 import { POST as importPost } from '../api/import.ts';
+import {
+  authCallbackGoogle,
+  authSession,
+  authSignout,
+  authStart,
+} from '../server/auth.ts';
+import { redirectUri } from '../server/env.ts';
 
-const apiHandlers: Record<string, (req: Request) => Promise<Response>> = {
-  '/api/chat': chatPost,
-  '/api/import': importPost,
+type ApiHandler = (req: Request) => Promise<Response>;
+
+interface ApiRoute {
+  method: string;
+  path: string;
+  handler: ApiHandler;
+}
+
+const apiRoutes: ApiRoute[] = [
+  { method: 'POST', path: '/api/chat', handler: chatPost },
+  { method: 'POST', path: '/api/import', handler: importPost },
+  { method: 'GET', path: '/api/auth/start', handler: authStart },
+  { method: 'GET', path: '/api/auth/callback/google', handler: authCallbackGoogle },
+  { method: 'GET', path: '/api/auth/session', handler: authSession },
+  { method: 'POST', path: '/api/auth/signout', handler: authSignout },
+];
+
+const LEGAL_HTML: Record<string, string> = {
+  '/privacy': '/privacy.html',
+  '/terms': '/terms.html',
 };
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -43,9 +68,26 @@ const NO_CACHE_NAMES = new Set([
   'sw.js',
   'registerSW.js',
   'manifest.webmanifest',
+  'privacy.html',
+  'terms.html',
 ]);
 
+let loggedRedirectUri = false;
+
+function logRedirectUriOnce(): void {
+  if (loggedRedirectUri) {
+    return;
+  }
+  loggedRedirectUri = true;
+  try {
+    console.log(`OAuth redirect URI: ${redirectUri()}`);
+  } catch {
+    // PUBLIC_ORIGIN may be unset in API-only dev without full auth env.
+  }
+}
+
 export function createRequestListener(options: { staticRoot: string | null }) {
+  logRedirectUriOnce();
   const staticRoot = options.staticRoot === null ? null : resolve(options.staticRoot);
 
   return (nodeReq: IncomingMessage, nodeRes: ServerResponse) => {
@@ -92,6 +134,16 @@ async function handleRequest(
       return;
     }
 
+    const legalRelative = LEGAL_HTML[decodedPath];
+    if (legalRelative !== undefined) {
+      const legalPath = resolveContained(staticRoot, legalRelative);
+      if (legalPath !== null && (await serveIfFile(nodeRes, legalPath, decodedPath, method))) {
+        return;
+      }
+      sendText(nodeReq, nodeRes, 404, 'Not found');
+      return;
+    }
+
     const filePath = resolveContained(staticRoot, decodedPath);
     if (filePath === null) {
       sendText(nodeReq, nodeRes, 400, 'Bad request');
@@ -127,18 +179,43 @@ async function handleRequest(
   }
 }
 
+function matchApiRoute(pathname: string, method: string): ApiHandler | 'wrongMethod' | null {
+  let pathMatched = false;
+  for (const route of apiRoutes) {
+    if (route.path === pathname) {
+      pathMatched = true;
+      if (route.method === method) {
+        return route.handler;
+      }
+    }
+  }
+  if (pathMatched) {
+    return 'wrongMethod';
+  }
+
+  const photosPrefix = '/api/photos/';
+  if (pathname.startsWith(photosPrefix)) {
+    const rest = pathname.slice(photosPrefix.length);
+    if (rest !== '' && !rest.includes('/')) {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 async function handleApi(
   nodeReq: IncomingMessage,
   nodeRes: ServerResponse,
   pathname: string,
   method: string,
 ): Promise<void> {
-  const handler = apiHandlers[pathname];
-  if (!handler) {
+  const match = matchApiRoute(pathname, method);
+  if (match === null) {
     sendText(nodeReq, nodeRes, 404, 'Not found');
     return;
   }
-  if (method !== 'POST') {
+  if (match === 'wrongMethod') {
     sendText(nodeReq, nodeRes, 405, 'Method not allowed');
     return;
   }
@@ -150,16 +227,23 @@ async function handleApi(
   const request = new Request(`${origin}${nodeReq.url ?? pathname}`, {
     method: nodeReq.method,
     headers: nodeReq.headers as Record<string, string>,
-    body: Readable.toWeb(nodeReq) as ReadableStream,
-    duplex: 'half',
+    body: method === 'GET' || method === 'HEAD' ? undefined : (Readable.toWeb(nodeReq) as ReadableStream),
+    duplex: method === 'GET' || method === 'HEAD' ? undefined : 'half',
   });
 
-  const response = await handler(request);
+  const response = await match(request);
   nodeRes.statusCode = response.status;
+  const setCookies = response.headers.getSetCookie();
   response.headers.forEach((value, key) => {
-    if (key.toLowerCase() === 'content-length') return;
+    const lower = key.toLowerCase();
+    if (lower === 'content-length' || lower === 'set-cookie') {
+      return;
+    }
     nodeRes.setHeader(key, value);
   });
+  if (setCookies.length > 0) {
+    nodeRes.setHeader('Set-Cookie', setCookies);
+  }
   nodeRes.flushHeaders();
 
   if (!response.body) {

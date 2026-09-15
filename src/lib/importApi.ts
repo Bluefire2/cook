@@ -1,4 +1,4 @@
-import { settings } from './settings';
+import { invalidateSession } from './session';
 import type { RecipeDraft } from './types';
 
 export type ExtractedRecipe = RecipeDraft;
@@ -9,15 +9,16 @@ export async function importRecipe(params: {
 }): Promise<ExtractedRecipe> {
   const response = await fetch('/api/import', {
     method: 'POST',
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
-      'x-app-password': settings.getPassword(),
     },
     body: JSON.stringify(params),
   });
 
   if (response.status === 401) {
-    throw new Error('Wrong or missing app password — set it in Settings.');
+    invalidateSession();
+    throw new Error('Please sign in again — your session expired.');
   }
   const data = (await response.json().catch(() => null)) as
     | { recipe?: ExtractedRecipe; error?: string }

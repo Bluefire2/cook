@@ -16,6 +16,7 @@ ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY api ./api
+COPY server ./server
 COPY scripts ./scripts
 COPY package.json ./
 EXPOSE 8080

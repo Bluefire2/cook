@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { streamChatReply } from './chatApi';
+import * as session from './session';
 import type { Recipe } from './types';
-
-const store = new Map<string, string>();
 
 const RECIPE: Recipe = {
   id: 'r1',
@@ -27,27 +26,8 @@ function streamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
   });
 }
 
-beforeEach(() => {
-  store.clear();
-  globalThis.localStorage = {
-    getItem: (key) => store.get(key) ?? null,
-    setItem: (key, value) => {
-      store.set(key, value);
-    },
-    removeItem: (key) => {
-      store.delete(key);
-    },
-    clear: () => {
-      store.clear();
-    },
-    key: (index) => [...store.keys()][index] ?? null,
-    get length() {
-      return store.size;
-    },
-  };
-});
-
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -186,6 +166,7 @@ describe('streamChatReply', () => {
   });
 
   it('rejects unauthorized and server error responses', async () => {
+    const invalidateSpy = vi.spyOn(session, 'invalidateSession').mockImplementation(() => {});
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('Unauthorized', { status: 401 })),
@@ -193,7 +174,8 @@ describe('streamChatReply', () => {
 
     await expect(
       streamChatReply({ messages: [], recipe: RECIPE, onDelta: () => {} }),
-    ).rejects.toThrow('Wrong or missing app password');
+    ).rejects.toThrow('Please sign in again — your session expired.');
+    expect(invalidateSpy).toHaveBeenCalled();
 
     vi.stubGlobal(
       'fetch',
