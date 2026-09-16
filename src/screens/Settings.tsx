@@ -14,6 +14,7 @@ export default function Settings() {
   const [status, setStatus] = useState<string | null>(null);
   const [statusKind, setStatusKind] = useState<'ok' | 'err' | null>(null);
   const [confirmResync, setConfirmResync] = useState(false);
+  const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const chooseTheme = (next: Theme) => {
@@ -46,6 +47,28 @@ export default function Settings() {
     } catch (e) {
       setStatus(e instanceof Error ? e.message : 'Import failed.');
       setStatusKind('err');
+    }
+  };
+
+  const doSync = async () => {
+    setBusy(true);
+    try {
+      await sync();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doResync = async () => {
+    setBusy(true);
+    try {
+      await resyncFromServer();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -147,28 +170,38 @@ export default function Settings() {
           <div className="mt-3 flex gap-2">
             <button
               type="button"
-              onClick={() => void sync()}
-              disabled={syncStatus.status === 'syncing'}
+              onClick={() => void doSync()}
+              disabled={busy || syncStatus.status === 'syncing'}
               className={`${secondaryBtn} flex-1 py-2.5`}
             >
-              {syncStatus.status === 'error' ? 'Try again' : 'Sync now'}
+              {busy
+                ? 'Syncing…'
+                : syncStatus.status === 'error'
+                  ? 'Try again'
+                  : 'Sync now'}
             </button>
           </div>
           <button
             type="button"
+            disabled={busy || syncStatus.status === 'syncing'}
             onClick={() => {
+              if (busy) {
+                return;
+              }
               if (!confirmResync) {
                 setConfirmResync(true);
                 return;
               }
               setConfirmResync(false);
-              void resyncFromServer();
+              void doResync();
             }}
-            className="mt-3 text-sm text-ink-muted underline-offset-2 hover:underline"
+            className="mt-3 text-sm text-ink-muted underline-offset-2 hover:underline disabled:opacity-40"
           >
-            {confirmResync
-              ? 'Resync from server? This does not delete anything.'
-              : 'Resync from server'}
+            {busy
+              ? 'Resyncing…'
+              : confirmResync
+                ? 'Resync from server? This does not delete anything.'
+                : 'Resync from server'}
           </button>
         </>
       )}

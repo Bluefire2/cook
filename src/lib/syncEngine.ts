@@ -7,6 +7,23 @@ import { invalidateSession } from './session';
 import type { ChatMessage, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 
+export type SyncOutcome = 'ok' | 'error' | 'offline' | 'signedOut' | 'skipped';
+
+export interface SyncResult {
+  outcome: SyncOutcome;
+  /** Outbox ops the server reported applied:true. photo.put is never included. */
+  pushed: number;
+  /** Rows written into Dexie from server data that differ from what was stored. */
+  applied: number;
+}
+
+export type SyncFinishedListener = (result: SyncResult) => void;
+
+export interface SyncToastSpec {
+  kind: 'success' | 'error';
+  message: string;
+}
+
 export type SyncStatus =
   | 'idle'
   | 'syncing'
@@ -36,6 +53,7 @@ let lastVisibilitySync = 0;
 
 type SyncListener = () => void;
 const listeners = new Set<SyncListener>();
+const finishedListeners = new Set<SyncFinishedListener>();
 
 let snapshot: SyncStatusSnapshot = {
   status: 'idle',
@@ -45,8 +63,29 @@ let snapshot: SyncStatusSnapshot = {
 
 function emit(): void {
   for (const listener of listeners) {
-    listener();
+    try {
+      listener();
+    } catch (err) {
+      console.error(err);
+    }
   }
+}
+
+function emitSyncFinished(result: SyncResult): void {
+  for (const listener of finishedListeners) {
+    try {
+      listener(result);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+}
+
+export function onSyncFinished(listener: SyncFinishedListener): () => void {
+  finishedListeners.add(listener);
+  return () => {
+    finishedListeners.delete(listener);
+  };
 }
 
 function setSnapshot(partial: Partial<SyncStatusSnapshot>): void {
@@ -126,6 +165,90 @@ export function mergePullCursor(
   return { ...prev, ...next };
 }
 
+/** Pure. Key-order-insensitive deep compare. Never call on a row holding a Blob. */
+export function recordsEqual(a: unknown, b: unknown): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (a === null || b === null || a === undefined || b === undefined) {
+    return a === b;
+  }
+  if (typeof a !== typeof b) {
+    return false;
+  }
+  if (typeof a !== 'object') {
+    return false;
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) {
+      return false;
+    }
+    for (let i = 0; i < a.length; i++) {
+      if (!recordsEqual(a[i], b[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return false;
+  }
+  const objA = a as Record<string, unknown>;
+  const objB = b as Record<string, unknown>;
+  const keys = new Set([...Object.keys(objA), ...Object.keys(objB)]);
+  for (const key of keys) {
+    const valA = key in objA ? objA[key] : undefined;
+    const valB = key in objB ? objB[key] : undefined;
+    if (valA === undefined && valB === undefined) {
+      continue;
+    }
+    if (!recordsEqual(valA, valB)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Pure. Maps drain + pull results to the one result for the run. */
+export function resolveSyncResult(
+  drain: { outcome: 'ok' | 'stop' | 'signedOut'; pushed: number; applied: number },
+  pull: { outcome: 'ok' | 'error' | 'signedOut'; applied: number } | null,
+): SyncResult {
+  const pushed = drain.pushed;
+  const applied = drain.applied + (pull?.applied ?? 0);
+  if (drain.outcome === 'signedOut') {
+    return { outcome: 'signedOut', pushed, applied };
+  }
+  if (pull === null) {
+    return { outcome: 'error', pushed, applied };
+  }
+  if (pull.outcome === 'signedOut') {
+    return { outcome: 'signedOut', pushed, applied };
+  }
+  if (pull.outcome === 'error' || drain.outcome === 'stop') {
+    return { outcome: 'error', pushed, applied };
+  }
+  return { outcome: 'ok', pushed, applied };
+}
+
+/** Pure. The single source of truth for "should we toast, and with what". */
+export function decideSyncToast(result: SyncResult): SyncToastSpec | null {
+  if (result.outcome === 'error') {
+    return { kind: 'error', message: "Couldn't sync" };
+  }
+  if (
+    result.outcome === 'offline' ||
+    result.outcome === 'signedOut' ||
+    result.outcome === 'skipped'
+  ) {
+    return null;
+  }
+  if (result.pushed + result.applied > 0) {
+    return { kind: 'success', message: 'Synced' };
+  }
+  return null;
+}
+
 export function shouldEnqueueUnsyncedLibrary(args: {
   lastSyncedAt: unknown;
   pendingCount: number;
@@ -202,8 +325,22 @@ export async function confirmMigration(): Promise<void> {
   } catch {
     return;
   }
+  if (typeof parsedSub !== 'string' || parsedSub === '') {
+    return;
+  }
   await wipeForAccountSwitch(parsedSub);
-  await runSyncInner(parsedSub);
+  try {
+    await runSyncInner(parsedSub);
+  } catch (err) {
+    console.error(err);
+    let pendingCount = snapshot.pendingCount;
+    try {
+      pendingCount = await db.outbox.count();
+    } catch (countErr) {
+      console.error(countErr);
+    }
+    setSnapshot({ status: 'error', pendingCount });
+  }
 }
 
 function normalizeRecipeChange(raw: Record<string, unknown>): Recipe | 'tombstone' {
@@ -248,7 +385,8 @@ function normalizeCookStateChange(
   };
 }
 
-async function applyPullPage(changes: PullResponse['changes']): Promise<void> {
+async function applyPullPage(changes: PullResponse['changes']): Promise<number> {
+  let applied = 0;
   await db.transaction(
     'rw',
     [db.recipes, db.chatMessages, db.photos, db.cookState, db.syncMeta],
@@ -274,11 +412,21 @@ async function applyPullPage(changes: PullResponse['changes']): Promise<void> {
               photoIds.add(pid);
             }
           }
+          const cookRow = await db.cookState.get(id);
+          const photoRows = await db.photos.bulkGet([...photoIds]);
+          const hadPhoto = photoRows.some((row) => row !== undefined);
+          if (existing || messages.length > 0 || cookRow !== undefined || hadPhoto) {
+            applied++;
+          }
           await db.recipes.delete(id);
           await db.chatMessages.where('recipeId').equals(id).delete();
           await db.cookState.delete(id);
           await db.photos.bulkDelete([...photoIds]);
         } else {
+          const existing = await db.recipes.get(id);
+          if (!existing || !recordsEqual(existing, normalized)) {
+            applied++;
+          }
           await db.recipes.put(normalized);
         }
       }
@@ -287,8 +435,16 @@ async function applyPullPage(changes: PullResponse['changes']): Promise<void> {
         const id = raw.id as string;
         const normalized = normalizeChatChange(raw);
         if (normalized === 'tombstone') {
+          const existing = await db.chatMessages.get(id);
+          if (existing !== undefined) {
+            applied++;
+          }
           await db.chatMessages.delete(id);
         } else {
+          const existing = await db.chatMessages.get(id);
+          if (!existing || !recordsEqual(existing, normalized)) {
+            applied++;
+          }
           await db.chatMessages.put(normalized);
         }
       }
@@ -297,8 +453,16 @@ async function applyPullPage(changes: PullResponse['changes']): Promise<void> {
         const recipeId = (raw.recipeId ?? raw.id) as string;
         const normalized = normalizeCookStateChange(raw);
         if (normalized === 'tombstone') {
+          const existing = await db.cookState.get(recipeId);
+          if (existing !== undefined) {
+            applied++;
+          }
           await db.cookState.delete(recipeId);
         } else {
+          const existing = await db.cookState.get(recipeId);
+          if (!existing || !recordsEqual(existing, normalized)) {
+            applied++;
+          }
           await db.cookState.put(normalized);
         }
       }
@@ -306,6 +470,10 @@ async function applyPullPage(changes: PullResponse['changes']): Promise<void> {
       for (const raw of changes.photos) {
         const id = raw.id as string;
         if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
+          const existing = await db.photos.get(id);
+          if (existing !== undefined) {
+            applied++;
+          }
           await db.photos.delete(id);
           remoteSet.delete(id);
         } else {
@@ -316,26 +484,35 @@ async function applyPullPage(changes: PullResponse['changes']): Promise<void> {
       await writeSyncMeta(REMOTE_PHOTOS_KEY, [...remoteSet]);
     },
   );
+  return applied;
 }
 
-async function applyServerCurrent(kind: string, current: Record<string, unknown>): Promise<void> {
+async function applyServerCurrent(kind: string, current: Record<string, unknown>): Promise<boolean> {
   if (kind === 'recipe.put') {
-    await db.recipes.put(compactRecipe(current as unknown as Recipe));
-    return;
+    const normalized = compactRecipe(current as unknown as Recipe);
+    const existing = await db.recipes.get(normalized.id);
+    await db.recipes.put(normalized);
+    return !existing || !recordsEqual(existing, normalized);
   }
   if (kind === 'chat.put') {
     const normalized = normalizeChatChange(current);
-    if (normalized !== 'tombstone') {
-      await db.chatMessages.put(normalized);
+    if (normalized === 'tombstone') {
+      return false;
     }
-    return;
+    const existing = await db.chatMessages.get(normalized.id);
+    await db.chatMessages.put(normalized);
+    return !existing || !recordsEqual(existing, normalized);
   }
   if (kind === 'cookState.put') {
     const normalized = normalizeCookStateChange(current);
-    if (normalized !== 'tombstone') {
-      await db.cookState.put(normalized);
+    if (normalized === 'tombstone') {
+      return false;
     }
+    const existing = await db.cookState.get(normalized.recipeId);
+    await db.cookState.put(normalized);
+    return !existing || !recordsEqual(existing, normalized);
   }
+  return false;
 }
 
 async function enqueueUnsyncedLibraryIfNeeded(): Promise<void> {
@@ -400,15 +577,21 @@ async function enqueueUnsyncedLibraryIfNeeded(): Promise<void> {
   );
 }
 
-async function drainOutbox(): Promise<'ok' | 'stop' | 'signedOut'> {
+async function drainOutbox(): Promise<{
+  outcome: 'ok' | 'stop' | 'signedOut';
+  pushed: number;
+  applied: number;
+}> {
+  let pushed = 0;
+  let applied = 0;
   while (true) {
     const rows = await db.outbox.orderBy('seq').toArray();
     if (rows.length === 0) {
-      return 'ok';
+      return { outcome: 'ok', pushed, applied };
     }
     const { pushRows } = splitDrainBatch(rows);
     if (pushRows.length === 0) {
-      return 'ok';
+      return { outcome: 'ok', pushed, applied };
     }
     const batch = pushRows.slice(0, MAX_DRAIN_OPS);
 
@@ -427,12 +610,12 @@ async function drainOutbox(): Promise<'ok' | 'stop' | 'signedOut'> {
           await db.outbox.update(row.seq, { attempts: row.attempts + 1 });
         }
       }
-      return 'stop';
+      return { outcome: 'stop', pushed, applied };
     }
 
     if (response.status === 401) {
       invalidateSession();
-      return 'signedOut';
+      return { outcome: 'signedOut', pushed, applied };
     }
 
     if (!response.ok) {
@@ -441,7 +624,7 @@ async function drainOutbox(): Promise<'ok' | 'stop' | 'signedOut'> {
           await db.outbox.update(row.seq, { attempts: row.attempts + 1 });
         }
       }
-      return 'stop';
+      return { outcome: 'stop', pushed, applied };
     }
 
     const body = (await response.json()) as PushResponse;
@@ -452,13 +635,18 @@ async function drainOutbox(): Promise<'ok' | 'stop' | 'signedOut'> {
         continue;
       }
       if (shouldDropOutboxResult(result)) {
+        if (result.applied) {
+          pushed++;
+        }
         if (row.seq !== undefined) {
           await db.outbox.delete(row.seq);
         }
         continue;
       }
       if (result.current) {
-        await applyServerCurrent(row.kind, result.current);
+        if (await applyServerCurrent(row.kind, result.current)) {
+          applied++;
+        }
         if (row.seq !== undefined) {
           await db.outbox.delete(row.seq);
         }
@@ -469,85 +657,95 @@ async function drainOutbox(): Promise<'ok' | 'stop' | 'signedOut'> {
         await db.outbox.update(row.seq, { attempts });
       }
       if (attempts > MAX_DRAIN_ATTEMPTS) {
-        return 'stop';
+        return { outcome: 'stop', pushed, applied };
       }
-      return 'stop';
+      return { outcome: 'stop', pushed, applied };
     }
 
     if (batch.length < MAX_DRAIN_OPS) {
-      return 'ok';
+      return { outcome: 'ok', pushed, applied };
     }
   }
 }
 
-async function pullAll(): Promise<void> {
-  let cursor = ((await readSyncMeta(CURSOR_KEY)) as PullCursor | undefined) ?? {};
-  while (true) {
-    const cursorBefore = JSON.stringify(cursor);
-    const params = new URLSearchParams();
-    if (Object.keys(cursor).length > 0) {
-      params.set('cursor', encodePullCursor(cursor));
+async function pullAll(): Promise<{
+  outcome: 'ok' | 'error' | 'signedOut';
+  applied: number;
+}> {
+  let applied = 0;
+  try {
+    let cursor = ((await readSyncMeta(CURSOR_KEY)) as PullCursor | undefined) ?? {};
+    while (true) {
+      const cursorBefore = JSON.stringify(cursor);
+      const params = new URLSearchParams();
+      if (Object.keys(cursor).length > 0) {
+        params.set('cursor', encodePullCursor(cursor));
+      }
+      const response = await fetch(`/api/sync/pull?${params.toString()}`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (response.status === 401) {
+        invalidateSession();
+        setSnapshot({ status: 'signedOut' });
+        return { outcome: 'signedOut', applied };
+      }
+      if (!response.ok) {
+        console.error(`pull failed: ${response.status}`);
+        return { outcome: 'error', applied };
+      }
+      const page = (await response.json()) as PullResponse;
+      applied += await applyPullPage(page.changes);
+      cursor = mergePullCursor(cursor, page.cursor ?? {});
+      await writeSyncMeta(CURSOR_KEY, cursor);
+      const cursorAfter = JSON.stringify(cursor);
+      if (page.hasMore && cursorAfter === cursorBefore) {
+        console.error('pull cursor did not advance');
+        return { outcome: 'error', applied };
+      }
+      if (!page.hasMore) {
+        break;
+      }
     }
-    const response = await fetch(`/api/sync/pull?${params.toString()}`, {
-      credentials: 'same-origin',
-      cache: 'no-store',
-    });
-    if (response.status === 401) {
-      invalidateSession();
-      setSnapshot({ status: 'signedOut' });
-      return;
-    }
-    if (!response.ok) {
-      throw new Error(`pull failed: ${response.status}`);
-    }
-    const page = (await response.json()) as PullResponse;
-    await applyPullPage(page.changes);
-    cursor = mergePullCursor(cursor, page.cursor ?? {});
-    await writeSyncMeta(CURSOR_KEY, cursor);
-    const cursorAfter = JSON.stringify(cursor);
-    if (page.hasMore && cursorAfter === cursorBefore) {
-      throw new Error('pull cursor did not advance');
-    }
-    if (!page.hasMore) {
-      break;
-    }
+    await writeSyncMeta(LAST_SYNCED_KEY, Date.now());
+    return { outcome: 'ok', applied };
+  } catch (err) {
+    console.error(err);
+    return { outcome: 'error', applied };
   }
-  await writeSyncMeta(LAST_SYNCED_KEY, Date.now());
 }
 
-async function runSyncInner(sub: string): Promise<void> {
+async function runSyncInner(sub: string): Promise<SyncResult> {
   await enqueueUnsyncedLibraryIfNeeded();
   const pendingCount = await db.outbox.count();
   setSnapshot({ pendingCount, status: 'syncing' });
 
   if (!navigator.onLine) {
     setSnapshot({ status: 'offline', pendingCount });
-    return;
+    return { outcome: 'offline', pushed: 0, applied: 0 };
   }
 
-  const drainResult = await drainOutbox();
-  if (drainResult === 'signedOut') {
+  const drain = await drainOutbox();
+  if (drain.outcome === 'signedOut') {
     setSnapshot({ status: 'signedOut', pendingCount: await db.outbox.count() });
-    return;
+    return resolveSyncResult(drain, null);
   }
 
-  try {
-    await pullAll();
-  } catch {
-    setSnapshot({
-      status: 'error',
-      pendingCount: await db.outbox.count(),
-    });
-    return;
+  const pull = await pullAll();
+
+  if (pull.outcome === 'signedOut') {
+    return resolveSyncResult(drain, pull);
   }
 
   const lastSyncedAt = (await readSyncMeta(LAST_SYNCED_KEY)) as number | null;
+  const ok = drain.outcome !== 'stop' && pull.outcome === 'ok';
   setSnapshot({
-    status: drainResult === 'stop' ? 'error' : 'idle',
+    status: ok ? 'idle' : 'error',
     pendingCount: await db.outbox.count(),
     lastSyncedAt: typeof lastSyncedAt === 'number' ? lastSyncedAt : null,
   });
   void sub;
+  return resolveSyncResult(drain, pull);
 }
 
 async function withLock(run: () => Promise<void>): Promise<void> {
@@ -587,48 +785,74 @@ async function withLock(run: () => Promise<void>): Promise<void> {
   }
 }
 
-export async function sync(): Promise<void> {
+async function runOnce(): Promise<SyncResult> {
+  let result: SyncResult = { outcome: 'skipped', pushed: 0, applied: 0 };
+  try {
+    const sessionRaw = localStorage.getItem('cook.session');
+    if (!sessionRaw) {
+      setSnapshot({ status: 'signedOut' });
+      return { outcome: 'signedOut', pushed: 0, applied: 0 };
+    }
+    let sub: string;
+    try {
+      sub = (JSON.parse(sessionRaw) as { sub: string }).sub;
+    } catch {
+      setSnapshot({ status: 'signedOut' });
+      return { outcome: 'signedOut', pushed: 0, applied: 0 };
+    }
+    if (typeof sub !== 'string' || sub === '') {
+      setSnapshot({ status: 'signedOut' });
+      return { outcome: 'signedOut', pushed: 0, applied: 0 };
+    }
+
+    const ownerUid = localStorage.getItem(OWNER_UID_KEY);
+    const rowCount = await userRowCount();
+    const decision = syncOwnershipDecision(ownerUid, sub, rowCount);
+
+    if (decision === 'needsMigration') {
+      setSnapshot({ status: 'needsMigration', pendingCount: await db.outbox.count() });
+      return result;
+    }
+
+    if (decision === 'wipe-and-pull') {
+      await wipeForAccountSwitch(sub);
+    } else if (decision === 'claim-and-pull') {
+      localStorage.setItem(OWNER_UID_KEY, sub);
+    }
+
+    await withLock(async () => {
+      result = await runSyncInner(sub);
+    });
+    return result;
+  } catch (err) {
+    console.error(err);
+    let pendingCount = snapshot.pendingCount;
+    try {
+      pendingCount = await db.outbox.count();
+    } catch (countErr) {
+      console.error(countErr);
+    }
+    setSnapshot({ status: 'error', pendingCount });
+    return { outcome: 'error', pushed: 0, applied: 0 };
+  }
+}
+
+export function sync(): Promise<void> {
   if (inFlight) {
     return inFlight;
   }
-  inFlight = (async () => {
-    try {
-      const sessionRaw = localStorage.getItem('cook.session');
-      if (!sessionRaw) {
-        setSnapshot({ status: 'signedOut' });
-        return;
-      }
-      let sub: string;
-      try {
-        sub = (JSON.parse(sessionRaw) as { sub: string }).sub;
-      } catch {
-        setSnapshot({ status: 'signedOut' });
-        return;
-      }
-
-      const ownerUid = localStorage.getItem(OWNER_UID_KEY);
-      const rowCount = await userRowCount();
-      const decision = syncOwnershipDecision(ownerUid, sub, rowCount);
-
-      if (decision === 'needsMigration') {
-        setSnapshot({ status: 'needsMigration', pendingCount: await db.outbox.count() });
-        return;
-      }
-
-      if (decision === 'wipe-and-pull') {
-        await wipeForAccountSwitch(sub);
-      } else if (decision === 'claim-and-pull') {
-        localStorage.setItem(OWNER_UID_KEY, sub);
-      }
-
-      await withLock(async () => {
-        await runSyncInner(sub);
-      });
-    } finally {
+  const run = (async () => {
+    const result = await runOnce();
+    emitSyncFinished(result);
+  })();
+  inFlight = run;
+  const clear = () => {
+    if (inFlight === run) {
       inFlight = null;
     }
-  })();
-  return inFlight;
+  };
+  void run.then(clear, clear);
+  return run;
 }
 
 export function triggerSyncAfterSession(_sub: string): void {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  decideSyncToast,
   mergePullCursor,
+  recordsEqual,
+  resolveSyncResult,
   shouldDropOutboxResult,
   shouldEnqueueUnsyncedLibrary,
   splitDrainBatch,
@@ -103,5 +106,148 @@ describe('mergePullCursor', () => {
       recipes: [1, 'a'],
       chatMessages: [2, 'b'],
     });
+  });
+});
+
+describe('recordsEqual', () => {
+  it('compares objects regardless of key order', () => {
+    expect(recordsEqual({ a: 1, b: 2 }, { b: 2, a: 1 })).toBe(true);
+  });
+
+  it('treats absent keys and explicit undefined as equal', () => {
+    expect(recordsEqual({ a: 1 }, { a: 1, b: undefined })).toBe(true);
+    expect(recordsEqual({ b: undefined, a: 1 }, { a: 1 })).toBe(true);
+  });
+
+  it('compares nested objects deeply', () => {
+    const inner = { title: 'Soup', ingredients: [{ name: 'salt' }] };
+    expect(
+      recordsEqual({ proposedRecipe: inner }, { proposedRecipe: { ...inner } }),
+    ).toBe(true);
+    expect(
+      recordsEqual(
+        { proposedRecipe: inner },
+        { proposedRecipe: { title: 'Soup', ingredients: [{ name: 'pepper' }] } },
+      ),
+    ).toBe(false);
+  });
+
+  it('compares arrays by index and length', () => {
+    expect(recordsEqual({ checkedKeys: ['a', 'b'] }, { checkedKeys: ['a', 'b'] })).toBe(true);
+    expect(recordsEqual({ checkedKeys: ['a', 'b'] }, { checkedKeys: ['b', 'a'] })).toBe(false);
+    expect(recordsEqual({ checkedKeys: ['a'] }, { checkedKeys: ['a', 'b'] })).toBe(false);
+  });
+
+  it('distinguishes scalars and extra keys', () => {
+    expect(recordsEqual({ a: 1 }, { a: 2 })).toBe(false);
+    expect(recordsEqual({ a: 1 }, { a: 1, extra: true })).toBe(false);
+  });
+
+  it('distinguishes null, undefined, and zero', () => {
+    expect(recordsEqual(null, null)).toBe(true);
+    expect(recordsEqual(undefined, undefined)).toBe(true);
+    expect(recordsEqual(0, 0)).toBe(true);
+    expect(recordsEqual(null, undefined)).toBe(false);
+    expect(recordsEqual(undefined, 0)).toBe(false);
+    expect(recordsEqual(null, 0)).toBe(false);
+  });
+});
+
+describe('resolveSyncResult', () => {
+  it('maps drain signedOut with null pull', () => {
+    expect(
+      resolveSyncResult({ outcome: 'signedOut', pushed: 2, applied: 1 }, null),
+    ).toEqual({ outcome: 'signedOut', pushed: 2, applied: 1 });
+  });
+
+  it('maps pull signedOut with summed counts', () => {
+    expect(
+      resolveSyncResult(
+        { outcome: 'ok', pushed: 0, applied: 0 },
+        { outcome: 'signedOut', applied: 4 },
+      ),
+    ).toEqual({ outcome: 'signedOut', pushed: 0, applied: 4 });
+  });
+
+  it('maps pull error with summed counts', () => {
+    expect(
+      resolveSyncResult(
+        { outcome: 'ok', pushed: 1, applied: 2 },
+        { outcome: 'error', applied: 3 },
+      ),
+    ).toEqual({ outcome: 'error', pushed: 1, applied: 5 });
+  });
+
+  it('maps drain stop with pull ok to error', () => {
+    expect(
+      resolveSyncResult(
+        { outcome: 'stop', pushed: 1, applied: 0 },
+        { outcome: 'ok', applied: 2 },
+      ),
+    ).toEqual({ outcome: 'error', pushed: 1, applied: 2 });
+  });
+
+  it('maps drain stop with pull signedOut to signedOut', () => {
+    expect(
+      resolveSyncResult(
+        { outcome: 'stop', pushed: 1, applied: 0 },
+        { outcome: 'signedOut', applied: 2 },
+      ),
+    ).toEqual({ outcome: 'signedOut', pushed: 1, applied: 2 });
+  });
+
+  it('maps all ok with summed counts', () => {
+    expect(
+      resolveSyncResult(
+        { outcome: 'ok', pushed: 2, applied: 1 },
+        { outcome: 'ok', applied: 3 },
+      ),
+    ).toEqual({ outcome: 'ok', pushed: 2, applied: 4 });
+  });
+
+  it('maps null pull without signedOut drain to error', () => {
+    expect(
+      resolveSyncResult({ outcome: 'ok', pushed: 0, applied: 0 }, null),
+    ).toEqual({ outcome: 'error', pushed: 0, applied: 0 });
+  });
+});
+
+describe('decideSyncToast', () => {
+  it('shows success when ok and pushed', () => {
+    expect(decideSyncToast({ outcome: 'ok', pushed: 1, applied: 0 })).toEqual({
+      kind: 'success',
+      message: 'Synced',
+    });
+  });
+
+  it('shows success when ok and applied', () => {
+    expect(decideSyncToast({ outcome: 'ok', pushed: 0, applied: 3 })).toEqual({
+      kind: 'success',
+      message: 'Synced',
+    });
+  });
+
+  it('shows nothing for ok with zero movement', () => {
+    expect(decideSyncToast({ outcome: 'ok', pushed: 0, applied: 0 })).toBeNull();
+  });
+
+  it('shows error for failure even with zero counts', () => {
+    expect(decideSyncToast({ outcome: 'error', pushed: 0, applied: 0 })).toEqual({
+      kind: 'error',
+      message: "Couldn't sync",
+    });
+  });
+
+  it('shows error for failure even with non-zero counts', () => {
+    expect(decideSyncToast({ outcome: 'error', pushed: 2, applied: 3 })).toEqual({
+      kind: 'error',
+      message: "Couldn't sync",
+    });
+  });
+
+  it('shows nothing for offline, signedOut, and skipped', () => {
+    expect(decideSyncToast({ outcome: 'offline', pushed: 0, applied: 0 })).toBeNull();
+    expect(decideSyncToast({ outcome: 'signedOut', pushed: 1, applied: 0 })).toBeNull();
+    expect(decideSyncToast({ outcome: 'skipped', pushed: 0, applied: 0 })).toBeNull();
   });
 });
