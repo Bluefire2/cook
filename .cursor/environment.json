@@ -1,0 +1,20 @@
+{
+  "name": "Sous",
+  "install": "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; nvm use default >/dev/null 2>&1 || nvm use node >/dev/null 2>&1; node --version; npm ci; [ -f .env.local ] || printf 'PUBLIC_ORIGIN=http://localhost:5173\\nSESSION_SECRET=dev-local-only-not-a-real-secret\\nGOOGLE_CLOUD_PROJECT=cooking-assistant-508423\\nGEMINI_API_KEY=\\nAUTH_GOOGLE_ID=\\nAUTH_GOOGLE_SECRET=\\nALLOWED_EMAILS=\\n' > .env.local",
+  "terminals": [
+    {
+      "name": "vite",
+      "command": "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; nvm use default >/dev/null 2>&1 || nvm use node >/dev/null 2>&1; npm run dev",
+      "description": "Vite SPA dev server on http://localhost:5173 (proxies /api to :3001)."
+    },
+    {
+      "name": "dev-api",
+      "command": "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; nvm use default >/dev/null 2>&1 || nvm use node >/dev/null 2>&1; npm run dev:api",
+      "description": "Hand-written Node API server on :3001 (chat/import/auth/sync). Needs Node >=22.18 for TS stripping. Restart after editing server/ or scripts/server.ts."
+    }
+  ],
+  "ports": [
+    { "name": "Vite dev server", "port": 5173 },
+    { "name": "API dev server", "port": 3001 }
+  ]
+}
