@@ -37,6 +37,7 @@ may fail. Use `http://localhost:5173`.
 
 ```
 npm test          # Vitest over src/ and server/
+npm run test:import  # live Gemini paste-to-recipe evals; needs GEMINI_API_KEY
 npm run build     # tsc -b && vite build — the only type gate on server/
 ```
 
@@ -183,6 +184,11 @@ invent other OAuth workarounds.
 Unit tests cover **pure** logic only. There is no fake-indexeddb, no Firestore
 emulator in CI, no GCS mock, no DOM testing library — do not add them for one
 feature.
+
+Live paste-to-recipe evals are `npm run test:import` (`src/**/*.eval.ts`,
+`vitest.eval.config.ts`). They call Gemini against fixtures in `evals/import/`
+and need `GEMINI_API_KEY` from `.env.local` (same as `dev:api`). Do not fold
+them into `npm test` or CI.
 
 UI and layout changes: exercise the flow in the browser (not a screenshot).
 Vite + `dev:api`, signed in at `localhost:5173`. Check other routes that share

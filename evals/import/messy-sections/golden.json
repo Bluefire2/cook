@@ -1,0 +1,37 @@
+{
+  "title": "Weeknight focaccia",
+  "description": "A same-day focaccia with rosemary and flaky salt.",
+  "servings": 4,
+  "prepMinutes": 20,
+  "cookMinutes": 25,
+  "ingredientSections": [
+    {
+      "name": "Dough",
+      "items": [
+        { "quantity": 500, "unit": "g", "item": "bread flour" },
+        { "quantity": 400, "unit": "ml", "item": "lukewarm water" },
+        { "quantity": 7, "unit": "g", "item": "instant yeast", "note": "one packet" },
+        { "quantity": 2, "unit": "tsp", "item": "fine salt" },
+        { "quantity": 3, "unit": "tbsp", "item": "olive oil" }
+      ]
+    },
+    {
+      "name": "Topping",
+      "items": [
+        { "quantity": 0.5, "unit": "cup", "item": "olive oil", "note": "for the pan and dimples" },
+        { "quantity": 2, "unit": "tbsp", "item": "fresh rosemary", "note": "chopped" },
+        { "quantity": 1, "unit": "tsp", "item": "flaky salt" }
+      ]
+    }
+  ],
+  "steps": [
+    { "text": "Mix the flour, water, yeast, salt, and 3 tablespoons of olive oil in a bowl until a shaggy sticky dough forms." },
+    { "text": "Cover and let rise until doubled, 45–60 minutes." },
+    { "text": "Oil a 9x13 pan with most of the remaining olive oil. Turn the dough into the pan and stretch it toward the corners. If it springs back, wait 10 minutes and stretch again." },
+    { "text": "Dimple the surface with wet fingers, drizzle the remaining oil, and sprinkle rosemary and flaky salt." },
+    { "text": "Bake at 220°C / 425°F until deep golden, 20–25 minutes." },
+    { "text": "Cool 10 minutes in the pan, then lift out and tear." }
+  ],
+  "tags": ["bread", "focaccia", "weeknight"],
+  "notes": "Leftovers make sandwiches the next day."
+}
