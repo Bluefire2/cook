@@ -23,6 +23,7 @@ import {
   signSession,
   verifyOauthTx,
 } from './session.ts';
+import { upsertUser as upsertUserDoc } from './store.ts';
 
 let oauthClient: OAuth2Client | null = null;
 
@@ -53,8 +54,12 @@ function timingSafeEqualString(a: string, b: string): boolean {
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
-async function upsertUser(_sub: string, _email: string, _name: string | undefined): Promise<void> {
-  // TODO(step 13): merge users/{sub} in Firestore when server/store.ts exists.
+async function upsertUser(sub: string, email: string, name: string | undefined): Promise<void> {
+  try {
+    await upsertUserDoc(sub, { email, name });
+  } catch (err) {
+    console.error('upsertUser failed (sign-in continues):', err);
+  }
 }
 
 export async function authStart(req: Request): Promise<Response> {

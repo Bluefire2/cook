@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './db';
+import { enqueue } from './outbox';
 
 export const photoStore = {
   async add(blob: Blob): Promise<string> {
@@ -15,7 +16,14 @@ export const photoStore = {
   },
 
   async remove(id: string): Promise<void> {
-    await db.photos.delete(id);
+    const at = Date.now();
+    await db.transaction('rw', [db.photos, db.outbox], async (tx) => {
+      await db.photos.delete(id);
+      await enqueue(tx, {
+        kind: 'photo.delete',
+        payload: { id, updatedAt: at },
+      });
+    });
   },
 
   /**

@@ -1,0 +1,122 @@
+import { describe, expect, it } from 'vitest';
+import {
+  chunkByCost,
+  chunkForBatch,
+  compareMutation,
+  decodePullCursor,
+  encodePullCursor,
+  isUuid,
+  messageIdsToClearAtBoundary,
+  validatePushOp,
+} from './store.ts';
+
+describe('compareMutation', () => {
+  it('rejects stale puts', () => {
+    expect(
+      compareMutation({ updatedAt: 10 }, 5, 'put'),
+    ).toEqual({ allow: false, reason: 'stale' });
+  });
+
+  it('allows equal-timestamp idempotent puts on live docs', () => {
+    expect(compareMutation({ updatedAt: 5 }, 5, 'put')).toEqual({
+      allow: true,
+      undeleting: false,
+    });
+  });
+
+  it('tombstone wins against put at equal timestamp', () => {
+    expect(
+      compareMutation({ updatedAt: 5, deletedAt: 5 }, 5, 'put'),
+    ).toEqual({ allow: false, reason: 'already-deleted' });
+  });
+
+  it('allows un-delete only when client is strictly newer', () => {
+    expect(
+      compareMutation({ updatedAt: 5, deletedAt: 5 }, 6, 'put'),
+    ).toEqual({ allow: true, undeleting: true });
+  });
+
+  it('rejects stale tombstones', () => {
+    expect(
+      compareMutation({ updatedAt: 10 }, 5, 'tombstone'),
+    ).toEqual({ allow: false, reason: 'stale' });
+  });
+});
+
+describe('pull cursor', () => {
+  it('round-trips per-collection cursors', () => {
+    const cursor = {
+      recipes: [100, '11111111-1111-4111-8111-111111111111'] as [number, string],
+    };
+    const encoded = encodePullCursor(cursor);
+    expect(decodePullCursor(encoded)).toEqual(cursor);
+  });
+
+  it('treats garbage as empty', () => {
+    expect(decodePullCursor('not-json')).toEqual({});
+  });
+});
+
+describe('chunkForBatch', () => {
+  it('splits into chunks of at most maxSize', () => {
+    expect(chunkForBatch([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+  });
+});
+
+describe('chunkByCost', () => {
+  it('keeps photo tombstone+gcsDeletes pairs under the write cap', () => {
+    const jobs = [
+      { kind: 'chatMessages' },
+      { kind: 'photos' },
+      { kind: 'photos' },
+    ];
+    expect(
+      chunkByCost(jobs, (job) => (job.kind === 'photos' ? 2 : 1), 3),
+    ).toEqual([
+      [{ kind: 'chatMessages' }, { kind: 'photos' }],
+      [{ kind: 'photos' }],
+    ]);
+  });
+});
+
+describe('validatePushOp', () => {
+  it('accepts a minimal recipe.put', () => {
+    const result = validatePushOp({
+      kind: 'recipe.put',
+      payload: {
+        id: '11111111-1111-4111-8111-111111111111',
+        title: 'T',
+        servings: 1,
+        ingredientSections: [],
+        steps: [],
+        tags: [],
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects unknown kinds via caller', () => {
+    expect(validatePushOp({ kind: 'photo.put', payload: {} }).ok).toBe(false);
+  });
+});
+
+describe('messageIdsToClearAtBoundary', () => {
+  it('includes messages at exactly createdAt === at', () => {
+    const ids = messageIdsToClearAtBoundary(
+      [
+        { id: 'a', createdAt: 10 },
+        { id: 'b', createdAt: 11 },
+      ],
+      10,
+    );
+    expect(ids).toEqual(['a']);
+  });
+});
+
+describe('isUuid', () => {
+  it('accepts lowercase uuid', () => {
+    expect(isUuid('11111111-1111-4111-8111-111111111111')).toBe(true);
+  });
+});

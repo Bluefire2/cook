@@ -1,7 +1,9 @@
 import { db } from './db';
+import { OWNER_UID_KEY } from './cacheOwner';
 import { recipeStore } from './recipeStore';
 
 const SEEDED_KEY = 'cook.hasSeeded';
+const SESSION_CACHE_KEY = 'cook.session';
 
 /**
  * First launch only. A user who deletes their last recipe must be able to
@@ -22,8 +24,20 @@ function markSeeded(): void {
   localStorage.setItem(SEEDED_KEY, '1');
 }
 
+function hasSessionOrOwner(): boolean {
+  if (localStorage.getItem(OWNER_UID_KEY)) {
+    return true;
+  }
+  return localStorage.getItem(SESSION_CACHE_KEY) !== null;
+}
+
 /** Adds a sample recipe on first launch so the app never starts empty. */
 export async function seedIfEmpty(): Promise<void> {
+  if (hasSessionOrOwner()) {
+    markSeeded();
+    return;
+  }
+
   const count = await db.recipes.count();
   if (count > 0) {
     markSeeded();

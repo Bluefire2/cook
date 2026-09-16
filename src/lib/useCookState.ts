@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './db';
+import { enqueue } from './outbox';
 import type { Recipe } from './types';
 
 export interface CookState {
@@ -65,12 +66,17 @@ const cookStateStore = {
     recipe: Recipe,
     change: (prev: Progress) => Progress,
   ): Promise<void> {
-    await db.transaction('rw', db.cookState, async () => {
+    await db.transaction('rw', [db.cookState, db.outbox], async (tx) => {
       const prev = progressFor(await db.cookState.get(recipe.id), recipe);
-      await db.cookState.put({
+      const next = {
         ...change(prev),
         recipeId: recipe.id,
         recipeUpdatedAt: recipe.updatedAt,
+      };
+      await db.cookState.put(next);
+      await enqueue(tx, {
+        kind: 'cookState.put',
+        payload: { ...next, updatedAt: Date.now() },
       });
     });
   },

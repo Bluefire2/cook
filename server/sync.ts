@@ -1,0 +1,240 @@
+import { sessionFrom } from './session.ts';
+import {
+  cascadeRecipeDelete,
+  clearChatForRecipe,
+  compactRecipeFields,
+  decodePullCursor,
+  isKnownPushKind,
+  listChangedSince,
+  putDoc,
+  tombstoneDoc,
+  type PullCursor,
+  type StoreKind,
+  validatePushOp,
+} from './store.ts';
+
+const STORE_KINDS: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos'];
+
+const MAX_PUSH_OPS = 50;
+const MAX_PUSH_BYTES = 1_000_000;
+
+function unauthorized(): Response {
+  return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+    status: 401,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
+function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<string, unknown> {
+  const deletedAt = doc.deletedAt;
+  if (deletedAt !== undefined && deletedAt !== null) {
+    return { id: doc.id, deletedAt };
+  }
+  const copy = { ...doc };
+  delete copy.serverUpdatedAt;
+  delete copy.deletedAt;
+  if (kind === 'recipes') {
+    return compactRecipeFields(copy);
+  }
+  if (kind === 'photos') {
+    return {
+      id: copy.id,
+      recipeId: copy.recipeId,
+      contentType: copy.contentType,
+      size: copy.size,
+      createdAt: copy.createdAt,
+    };
+  }
+  return copy;
+}
+
+function mergeCursors(prev: PullCursor, kind: StoreKind, cursor: [number, string] | null): PullCursor {
+  const next = { ...prev };
+  if (cursor) {
+    next[kind] = cursor;
+  }
+  return next;
+}
+
+export async function syncPull(req: Request): Promise<Response> {
+  const session = sessionFrom(req);
+  if (!session) {
+    return unauthorized();
+  }
+
+  const url = new URL(req.url);
+  const limitRaw = url.searchParams.get('limit');
+  let limit = 200;
+  if (limitRaw !== null) {
+    const parsed = Number(limitRaw);
+    if (Number.isFinite(parsed)) {
+      limit = Math.min(500, Math.max(1, Math.floor(parsed)));
+    }
+  }
+
+  const cursor = decodePullCursor(url.searchParams.get('cursor'));
+
+  const changes: Record<StoreKind, Record<string, unknown>[]> = {
+    recipes: [],
+    chatMessages: [],
+    cookState: [],
+    photos: [],
+  };
+
+  let nextCursor: PullCursor = { ...cursor };
+  let hasMore = false;
+
+  for (const kind of STORE_KINDS) {
+    const page = await listChangedSince(session.sub, kind, cursor[kind], limit);
+    changes[kind] = page.docs.map((doc) => docToChange(kind, doc));
+    nextCursor = mergeCursors(nextCursor, kind, page.cursor);
+    if (page.hasMore) {
+      hasMore = true;
+    }
+  }
+
+  return jsonResponse({
+    user: { sub: session.sub, email: session.email },
+    changes,
+    cursor: nextCursor,
+    hasMore,
+  });
+}
+
+export type PushResult = {
+  index: number;
+  applied: boolean;
+  reason?: string;
+  current?: Record<string, unknown>;
+};
+
+export async function applyPushOp(
+  uid: string,
+  op: { kind: string; payload: unknown },
+): Promise<{ applied: boolean; reason?: string; current?: Record<string, unknown> }> {
+  if (!isKnownPushKind(op.kind)) {
+    return { applied: false, reason: 'unknown' };
+  }
+  const validated = validatePushOp(op);
+  if (!validated.ok) {
+    return { applied: false, reason: 'invalid' };
+  }
+  const { kind, payload } = validated.op;
+
+  switch (kind) {
+    case 'recipe.put': {
+      const body = payload as Record<string, unknown>;
+      const id = body.id as string;
+      const updatedAt = body.updatedAt as number;
+      const compact = compactRecipeFields(body);
+      return putDoc(uid, 'recipes', id, compact, updatedAt);
+    }
+    case 'recipe.delete': {
+      const body = payload as { id: string; updatedAt: number };
+      await cascadeRecipeDelete(uid, body.id, body.updatedAt);
+      return { applied: true };
+    }
+    case 'chat.put': {
+      const body = payload as Record<string, unknown>;
+      const id = body.id as string;
+      const createdAt = body.createdAt;
+      if (typeof createdAt !== 'number' || !Number.isFinite(createdAt)) {
+        return { applied: false, reason: 'invalid' };
+      }
+      const messageBody = { ...body, updatedAt: createdAt };
+      return putDoc(uid, 'chatMessages', id, messageBody, createdAt);
+    }
+    case 'chat.clearForRecipe': {
+      const body = payload as { recipeId: string; at: number };
+      await clearChatForRecipe(uid, body.recipeId, body.at);
+      return { applied: true };
+    }
+    case 'cookState.put': {
+      const body = payload as Record<string, unknown>;
+      const recipeId = body.recipeId as string;
+      const updatedAt = body.updatedAt as number;
+      return putDoc(uid, 'cookState', recipeId, body, updatedAt);
+    }
+    case 'photo.delete': {
+      const body = payload as { id: string; updatedAt: number };
+      return tombstoneDoc(uid, 'photos', body.id, body.updatedAt);
+    }
+    default:
+      return { applied: false, reason: 'unknown' };
+  }
+}
+
+export async function syncPush(req: Request): Promise<Response> {
+  const session = sessionFrom(req);
+  if (!session) {
+    return unauthorized();
+  }
+
+  let raw: string;
+  try {
+    raw = await req.text();
+  } catch {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+
+  if (raw.length > MAX_PUSH_BYTES) {
+    return jsonResponse({ error: 'Payload too large; batch your ops' }, 413);
+  }
+
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+
+  if (!body || typeof body !== 'object' || !Array.isArray((body as { ops?: unknown }).ops)) {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+
+  const ops = (body as { ops: unknown[] }).ops;
+  if (ops.length > MAX_PUSH_OPS) {
+    return jsonResponse({ error: 'Too many ops; batch your requests' }, 413);
+  }
+
+  const uid = session.sub;
+
+  const results: PushResult[] = [];
+  for (let index = 0; index < ops.length; index++) {
+    const op = ops[index];
+    if (!op || typeof op !== 'object') {
+      results.push({ index, applied: false, reason: 'invalid' });
+      continue;
+    }
+    const record = op as Record<string, unknown>;
+    if (record.uid !== undefined || record.sub !== undefined) {
+      // ignored — uid comes only from session
+    }
+    const kind = record.kind;
+    const payload = record.payload;
+    const outcome = await applyPushOp(uid, { kind: kind as string, payload });
+    results.push({
+      index,
+      applied: outcome.applied,
+      reason: outcome.reason,
+      current: outcome.current,
+    });
+  }
+
+  return jsonResponse({ results });
+}
+
+export { encodePullCursor, decodePullCursor } from './store.ts';

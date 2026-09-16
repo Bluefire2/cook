@@ -1,12 +1,20 @@
 import Dexie, { type Table } from 'dexie';
 import type { ChatMessage, Photo, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
+import type { OutboxRow } from './outbox';
+
+export interface SyncMetaRow {
+  key: string;
+  value: unknown;
+}
 
 class CookDB extends Dexie {
   recipes!: Table<Recipe, string>;
   chatMessages!: Table<ChatMessage, string>;
   photos!: Table<Photo, string>;
   cookState!: Table<CookStateRow, string>;
+  outbox!: Table<OutboxRow, number>;
+  syncMeta!: Table<SyncMetaRow, string>;
 
   constructor() {
     super('cook');
@@ -20,12 +28,16 @@ class CookDB extends Dexie {
     this.version(2).stores({
       cookState: 'recipeId',
     });
+    this.version(3).stores({
+      outbox: '++seq',
+      syncMeta: 'key',
+    });
   }
 }
 
 /**
  * Internal to the data-access layer. UI code must go through the stores
  * (recipeStore/chatStore/photoStore), never touch the db directly — this keeps
- * a future migration to server storage contained to the stores.
+ * a future migration to server storage contained to the stores and syncEngine.
  */
 export const db = new CookDB();

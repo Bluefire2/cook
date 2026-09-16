@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './db';
+import { enqueue } from './outbox';
 import type { ChatMessage } from './types';
 
 export const chatStore = {
@@ -18,19 +19,44 @@ export const chatStore = {
       id: crypto.randomUUID(),
       createdAt: Date.now(),
     };
-    await db.chatMessages.add(message);
+    await db.transaction('rw', [db.chatMessages, db.photos, db.outbox], async (tx) => {
+      for (const photoId of message.photoIds ?? []) {
+        const photo = await db.photos.get(photoId);
+        await enqueue(tx, {
+          kind: 'photo.put',
+          payload: {
+            id: photoId,
+            recipeId: message.recipeId,
+            updatedAt: photo?.createdAt ?? Date.now(),
+          },
+        });
+      }
+      await db.chatMessages.add(message);
+      await enqueue(tx, { kind: 'chat.put', payload: message });
+    });
     return message;
   },
 
   async clearForRecipe(recipeId: string): Promise<void> {
-    await db.transaction('rw', [db.chatMessages, db.photos], async () => {
+    const at = Date.now();
+    await db.transaction('rw', [db.chatMessages, db.photos, db.outbox], async (tx) => {
       const messages = await db.chatMessages
         .where('recipeId')
         .equals(recipeId)
         .toArray();
       await db.chatMessages.where('recipeId').equals(recipeId).delete();
-      // Nothing else references these, so they go with the messages or never.
-      await db.photos.bulkDelete(messages.flatMap((m) => m.photoIds ?? []));
+      const photoIds = messages.flatMap((m) => m.photoIds ?? []);
+      await db.photos.bulkDelete(photoIds);
+      await enqueue(tx, {
+        kind: 'chat.clearForRecipe',
+        payload: { recipeId, at },
+      });
+      for (const id of photoIds) {
+        await enqueue(tx, {
+          kind: 'photo.delete',
+          payload: { id, updatedAt: at },
+        });
+      }
     });
   },
 };

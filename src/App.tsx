@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
+import AccountGate from './components/AccountGate';
 import Library from './screens/Library';
 import RecipeView from './screens/RecipeView';
 import RecipeEdit from './screens/RecipeEdit';
@@ -9,6 +10,7 @@ import Settings from './screens/Settings';
 export default function App() {
   return (
     <ErrorBoundary>
+      <AccountGate />
       <Routes>
         <Route path="/" element={<Library />} />
         <Route path="/recipe/new" element={<RecipeEdit />} />

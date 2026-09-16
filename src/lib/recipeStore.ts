@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './db';
+import { enqueue } from './outbox';
 import type { Recipe, RecipeDraft } from './types';
 
 /**
@@ -9,11 +10,16 @@ import type { Recipe, RecipeDraft } from './types';
  * unreferenced one cannot just be left behind.
  */
 async function deleteReplacedPhoto(
+  tx: import('dexie').Transaction,
   before: string | undefined,
   after: string | undefined,
 ): Promise<void> {
   if (before !== undefined && before !== after) {
     await db.photos.delete(before);
+    await enqueue(tx, {
+      kind: 'photo.delete',
+      payload: { id: before, updatedAt: Date.now() },
+    });
   }
 }
 
@@ -42,6 +48,24 @@ export function compactRecipe(recipe: Recipe): Recipe {
   return next;
 }
 
+async function enqueueRecipePhotoOps(
+  tx: import('dexie').Transaction,
+  recipe: Recipe,
+): Promise<void> {
+  await enqueue(tx, { kind: 'recipe.put', payload: recipe });
+  if (recipe.photoId !== undefined) {
+    const photo = await db.photos.get(recipe.photoId);
+    await enqueue(tx, {
+      kind: 'photo.put',
+      payload: {
+        id: recipe.photoId,
+        recipeId: recipe.id,
+        updatedAt: photo?.createdAt ?? Date.now(),
+      },
+    });
+  }
+}
+
 export const recipeStore = {
   list(): Promise<Recipe[]> {
     return db.recipes.orderBy('updatedAt').reverse().toArray();
@@ -52,11 +76,12 @@ export const recipeStore = {
   },
 
   async save(recipe: Recipe): Promise<void> {
-    await db.transaction('rw', [db.recipes, db.photos], async () => {
+    await db.transaction('rw', [db.recipes, db.photos, db.outbox], async (tx) => {
       const previous = await db.recipes.get(recipe.id);
       const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
       await db.recipes.put(next);
-      await deleteReplacedPhoto(previous?.photoId, next.photoId);
+      await deleteReplacedPhoto(tx, previous?.photoId, next.photoId);
+      await enqueueRecipePhotoOps(tx, next);
     });
   },
 
@@ -66,7 +91,7 @@ export const recipeStore = {
    * cannot express `sourceUrl` or `photoId` — a spread would blank them.
    */
   async applyDraft(id: string, draft: RecipeDraft): Promise<void> {
-    await db.transaction('rw', [db.recipes, db.photos], async () => {
+    await db.transaction('rw', [db.recipes, db.photos, db.outbox], async (tx) => {
       const existing = await db.recipes.get(id);
       if (!existing) throw new Error(`No recipe with id ${id}.`);
       const photoId = draft.photoId ?? existing.photoId;
@@ -87,7 +112,8 @@ export const recipeStore = {
         photoId,
       });
       await db.recipes.put(next);
-      await deleteReplacedPhoto(existing.photoId, next.photoId);
+      await deleteReplacedPhoto(tx, existing.photoId, next.photoId);
+      await enqueueRecipePhotoOps(tx, next);
     });
   },
 
@@ -101,20 +127,29 @@ export const recipeStore = {
       createdAt: now,
       updatedAt: now,
     });
-    await db.recipes.add(recipe);
+    await db.transaction('rw', [db.recipes, db.photos, db.outbox], async (tx) => {
+      await db.recipes.add(recipe);
+      await enqueueRecipePhotoOps(tx, recipe);
+    });
     return recipe;
   },
 
   async remove(id: string): Promise<void> {
+    const at = Date.now();
     await db.transaction(
       'rw',
-      [db.recipes, db.chatMessages, db.photos, db.cookState],
-      async () => {
+      [db.recipes, db.chatMessages, db.photos, db.cookState, db.outbox],
+      async (tx) => {
         const recipe = await db.recipes.get(id);
         const messages = await db.chatMessages
           .where('recipeId')
           .equals(id)
           .toArray();
+
+        await enqueue(tx, {
+          kind: 'recipe.delete',
+          payload: { id, updatedAt: at },
+        });
 
         await db.recipes.delete(id);
         await db.chatMessages.where('recipeId').equals(id).delete();

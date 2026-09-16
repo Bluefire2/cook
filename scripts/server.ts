@@ -26,6 +26,7 @@ import {
   authStart,
 } from '../server/auth.ts';
 import { redirectUri } from '../server/env.ts';
+import { syncPull, syncPush } from '../server/sync.ts';
 
 type ApiHandler = (req: Request) => Promise<Response>;
 
@@ -42,6 +43,8 @@ const apiRoutes: ApiRoute[] = [
   { method: 'GET', path: '/api/auth/callback/google', handler: authCallbackGoogle },
   { method: 'GET', path: '/api/auth/session', handler: authSession },
   { method: 'POST', path: '/api/auth/signout', handler: authSignout },
+  { method: 'GET', path: '/api/sync/pull', handler: syncPull },
+  { method: 'POST', path: '/api/sync/push', handler: syncPush },
 ];
 
 const LEGAL_HTML: Record<string, string> = {

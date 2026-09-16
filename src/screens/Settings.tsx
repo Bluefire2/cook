@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { exportLibrary, importLibrary } from '../lib/backup';
+import { notifyImportComplete, resyncFromServer, sync, useSyncStatus } from '../lib/syncEngine';
 import { signInHref, signOut, useSession } from '../lib/session';
 import { settings, type Theme } from '../lib/settings';
 import { applyTheme } from '../lib/theme';
@@ -8,9 +9,11 @@ import { backLink, primaryBtn, secondaryBtn } from '../lib/uiClasses';
 
 export default function Settings() {
   const { user, status: sessionStatus } = useSession();
+  const syncStatus = useSyncStatus();
   const [theme, setTheme] = useState(settings.getTheme());
   const [status, setStatus] = useState<string | null>(null);
   const [statusKind, setStatusKind] = useState<'ok' | 'err' | null>(null);
+  const [confirmResync, setConfirmResync] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const chooseTheme = (next: Theme) => {
@@ -39,11 +42,24 @@ export default function Settings() {
             : ''),
       );
       setStatusKind(skipped > 0 ? 'err' : 'ok');
+      notifyImportComplete();
     } catch (e) {
       setStatus(e instanceof Error ? e.message : 'Import failed.');
       setStatusKind('err');
     }
   };
+
+  const syncedLabel = (() => {
+    const at = syncStatus.lastSyncedAt;
+    if (at === null) {
+      return 'Never synced';
+    }
+    const minutes = Math.round((Date.now() - at) / 60_000);
+    if (minutes < 1) {
+      return 'Synced just now';
+    }
+    return `Synced ${minutes} min ago`;
+  })();
 
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
@@ -60,8 +76,7 @@ export default function Settings() {
           {sessionStatus === 'signedOut' && (
             <>
               <p className="mt-1 text-sm text-ink-muted">
-                Sign in with Google to identify yourself, so chat and recipe
-                import can run as you.
+                Sign in with Google so your recipes follow you across devices.
               </p>
               <a
                 href={signInHref('/settings')}
@@ -70,7 +85,8 @@ export default function Settings() {
                 Sign in with Google
               </a>
               <p className="mt-2 text-sm text-ink-muted">
-                Recipes on this device stay on this device.
+                Recipes already on this device stay on this device until you
+                add them to your account.
               </p>
             </>
           )}
@@ -89,7 +105,7 @@ export default function Settings() {
                 </button>
               </div>
               <p className="mt-2 text-sm text-ink-muted">
-                Recipes stay on this device.
+                Recipes stay cached on this device.
               </p>
             </>
           )}
@@ -105,6 +121,55 @@ export default function Settings() {
               </p>
             </>
           )}
+        </>
+      )}
+
+      {sessionStatus === 'signedIn' && (
+        <>
+          <h2 className="mt-8 text-lg font-semibold">Sync</h2>
+          <p className="mt-1 text-sm text-ink-muted">{syncedLabel}</p>
+          {syncStatus.pendingCount > 0 && (
+            <p className="mt-1 text-sm text-ink-muted">
+              {syncStatus.pendingCount} change
+              {syncStatus.pendingCount === 1 ? '' : 's'} waiting to upload
+            </p>
+          )}
+          {syncStatus.status === 'offline' && (
+            <p className="mt-1 text-sm text-ink-muted">
+              Offline — changes upload when you're back on.
+            </p>
+          )}
+          {syncStatus.status === 'error' && (
+            <p className="mt-1 text-sm text-danger">
+              Couldn't sync. Check your connection and try again.
+            </p>
+          )}
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={() => void sync()}
+              disabled={syncStatus.status === 'syncing'}
+              className={`${secondaryBtn} flex-1 py-2.5`}
+            >
+              {syncStatus.status === 'error' ? 'Try again' : 'Sync now'}
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (!confirmResync) {
+                setConfirmResync(true);
+                return;
+              }
+              setConfirmResync(false);
+              void resyncFromServer();
+            }}
+            className="mt-3 text-sm text-ink-muted underline-offset-2 hover:underline"
+          >
+            {confirmResync
+              ? 'Resync from server? This does not delete anything.'
+              : 'Resync from server'}
+          </button>
         </>
       )}
 
@@ -129,8 +194,9 @@ export default function Settings() {
 
       <h2 className="mt-8 text-lg font-semibold">Backup</h2>
       <p className="mt-1 text-sm text-ink-muted">
-        Recipes live only on this device. Export a backup file now and then,
-        so a lost phone doesn't mean a lost library.
+        {sessionStatus === 'signedIn'
+          ? 'Recipes sync to your account. An export is still the way to move a library between accounts or keep an offline copy.'
+          : "Recipes live only on this device. Export a backup file now and then, so a lost phone doesn't mean a lost library."}
       </p>
       <div className="mt-3 flex gap-2">
         <button

@@ -1,7 +1,8 @@
 import { db } from './db';
+import { enqueue } from './outbox';
 import { isUsableRecipe } from './recipeShape';
 import type { CookStateRow } from './useCookState';
-import type { ChatMessage } from './types';
+import type { ChatMessage, Recipe } from './types';
 
 interface BackupPhoto {
   id: string;
@@ -62,6 +63,26 @@ export async function exportLibrary(): Promise<Blob> {
   return new Blob([JSON.stringify(backup)], { type: 'application/json' });
 }
 
+function attributePhotos(
+  recipes: Recipe[],
+  chatMessages: ChatMessage[],
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const recipe of recipes) {
+    if (recipe.photoId !== undefined && !map.has(recipe.photoId)) {
+      map.set(recipe.photoId, recipe.id);
+    }
+  }
+  for (const message of chatMessages) {
+    for (const photoId of message.photoIds ?? []) {
+      if (!map.has(photoId)) {
+        map.set(photoId, message.recipeId);
+      }
+    }
+  }
+  return map;
+}
+
 /** Merges a backup into the library (existing ids get overwritten). */
 export async function importLibrary(
   file: Blob,
@@ -73,6 +94,8 @@ export async function importLibrary(
 
   const recipes = backup.recipes.filter(isUsableRecipe);
   const skipped = backup.recipes.length - recipes.length;
+  const chatMessages = backup.chatMessages ?? [];
+  const photoAttribution = attributePhotos(recipes, chatMessages);
 
   const photos = await Promise.all(
     (backup.photos ?? []).map(async (p) => ({
@@ -86,10 +109,10 @@ export async function importLibrary(
 
   await db.transaction(
     'rw',
-    [db.recipes, db.chatMessages, db.photos, db.cookState],
-    async () => {
+    [db.recipes, db.chatMessages, db.photos, db.cookState, db.outbox],
+    async (tx) => {
       await db.recipes.bulkPut(recipes);
-      await db.chatMessages.bulkPut(backup.chatMessages ?? []);
+      await db.chatMessages.bulkPut(chatMessages);
       await db.photos.bulkPut(photos);
       if (backup.cookState) {
         await db.cookState.bulkPut(backup.cookState);
@@ -97,6 +120,32 @@ export async function importLibrary(
         // v1 files have no progress. Drop leftover rows for overwritten ids
         // so restored recipes do not inherit this device's old ticks.
         await db.cookState.bulkDelete(recipes.map((r) => r.id));
+      }
+
+      for (const recipe of recipes) {
+        await enqueue(tx, { kind: 'recipe.put', payload: recipe });
+      }
+      for (const [photoId, recipeId] of photoAttribution) {
+        const photo = photos.find((p) => p.id === photoId);
+        await enqueue(tx, {
+          kind: 'photo.put',
+          payload: {
+            id: photoId,
+            recipeId,
+            updatedAt: photo?.createdAt ?? Date.now(),
+          },
+        });
+      }
+      for (const message of chatMessages) {
+        await enqueue(tx, { kind: 'chat.put', payload: message });
+      }
+      if (backup.cookState) {
+        for (const row of backup.cookState) {
+          await enqueue(tx, {
+            kind: 'cookState.put',
+            payload: { ...row, updatedAt: Date.now() },
+          });
+        }
       }
     },
   );

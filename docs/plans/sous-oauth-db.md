@@ -2592,8 +2592,8 @@ choice was actually made.
 
 | What | Value |
 |---|---|
-| Firestore database id / mode / location | |
-| `FIRESTORE_DATABASE_ID` needed? | |
+| Firestore database id / mode / location | `(default)` / FIRESTORE_NATIVE / europe-west1 |
+| `FIRESTORE_DATABASE_ID` needed? | no |
 | Photo bucket name | |
 | Runtime service account (from `serviceAccountName`, or default compute) | |
 | Roles granted to it | |
@@ -2611,9 +2611,9 @@ choice was actually made.
 Identity slice is steps 2–12. Do not check off 20–22, and do not add a second
 allowlisted email, until 13–19 are done. Step 1 may wait until just before 13.
 
-- [ ] 1. [core] Firestore database, photo bucket, runtime IAM *(operational; before 13)*
-- [ ] 2. [core] Consent screen: Branding, Data Access, Audience *(operational)*
-- [ ] 3. [core] Web OAuth client and the session secret *(operational)*
+- [x] 1. [core] Firestore database *(operational; photo bucket/IAM left for step 18/deploy)*
+- [x] 2. [core] Consent screen: Branding, Data Access, Audience *(operational)*
+- [x] 3. [core] Web OAuth client and the session secret *(operational)*
 - [x] 4. [core] Dependencies, `server/` directory, env module *(repo)*
 - [x] 5. [core] `server/session.ts` — sign and verify `sous_session` *(repo)*
 - [x] 6. [core] `scripts/server.ts`: method-aware router, prefix matcher, legal-page mapping *(repo)*
@@ -2622,11 +2622,11 @@ allowlisted email, until 13–19 are done. Step 1 may wait until just before 13.
 - [x] 9. [core] `server/auth.ts` — the Google sign-in routes *(repo)*
 - [x] 10+11. [core] Client session + `sessionSub` gate, one pass *(repo)*
 - [x] 12. [ui] The account section replaces the password field *(repo)*
-- [ ] 13. [core] `server/store.ts` — the Firestore layer *(repo)*
-- [ ] 14. [core] `/api/sync/pull` and `/api/sync/push` *(repo)*
-- [ ] 15. [core] Dexie v3: outbox, syncMeta, and stores that enqueue *(repo)*
-- [ ] 16. [core] `src/lib/syncEngine.ts` — drain, pull, apply, cache ownership *(repo)*
-- [ ] 17. [ui] Sync status and the first-sign-in migration screen *(repo)*
+- [x] 13. [core] `server/store.ts` — the Firestore layer *(repo)*
+- [x] 14. [core] `/api/sync/pull` and `/api/sync/push` *(repo)*
+- [x] 15. [core] Dexie v3: outbox, syncMeta, and stores that enqueue *(repo)*
+- [x] 16. [core] `src/lib/syncEngine.ts` — drain, pull, apply, cache ownership *(repo)*
+- [x] 17. [ui] Sync status and the first-sign-in migration screen *(repo)*
 - [ ] 18. [core] Photos: bucket endpoints and lazy fetch *(repo)*
 - [ ] 19. [core] `scripts/deploy.sh`, `.env.example`, `README.md`, privacy rewrite *(repo)*
 - [ ] 20. [core] Deploy and verify on the live host *(operational)*
