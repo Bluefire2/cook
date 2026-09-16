@@ -3,6 +3,22 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './db';
 import { enqueue } from './outbox';
 
+const ensureLocalInFlight = new Map<string, Promise<void>>();
+
+async function ensureLocalOnce(id: string): Promise<void> {
+  if (await db.photos.get(id)) return;
+  try {
+    const res = await fetch(`/api/photos/${encodeURIComponent(id)}`, {
+      credentials: 'same-origin',
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    await db.photos.put({ id, blob, createdAt: Date.now() });
+  } catch {
+    // missing thumb stays the empty box
+  }
+}
+
 export const photoStore = {
   async add(blob: Blob): Promise<string> {
     const id = crypto.randomUUID();
@@ -13,6 +29,17 @@ export const photoStore = {
   async getBlob(id: string): Promise<Blob | undefined> {
     const photo = await db.photos.get(id);
     return photo?.blob;
+  },
+
+  ensureLocal(id: string): Promise<void> {
+    let pending = ensureLocalInFlight.get(id);
+    if (!pending) {
+      pending = ensureLocalOnce(id).finally(() => {
+        ensureLocalInFlight.delete(id);
+      });
+      ensureLocalInFlight.set(id, pending);
+    }
+    return pending;
   },
 
   async remove(id: string): Promise<void> {
@@ -83,5 +110,8 @@ export function usePhotoUrl(id: string | undefined): string | undefined {
     async () => (id ? photoStore.getBlob(id) : undefined),
     [id],
   );
+  useEffect(() => {
+    if (id) void photoStore.ensureLocal(id);
+  }, [id]);
   return useObjectUrl(blob);
 }

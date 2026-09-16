@@ -11,7 +11,7 @@ export type SyncOutcome = 'ok' | 'error' | 'offline' | 'signedOut' | 'skipped';
 
 export interface SyncResult {
   outcome: SyncOutcome;
-  /** Outbox ops the server reported applied:true. photo.put is never included. */
+  /** Outbox ops applied on the server, including successful photo POSTs (200). */
   pushed: number;
   /** Rows written into Dexie from server data that differ from what was stored. */
   applied: number;
@@ -132,20 +132,85 @@ export function syncOwnershipDecision(
 
 export function splitDrainBatch(rows: OutboxRow[]): {
   pushRows: OutboxRow[];
-  skippedPhotoPutSeqs: number[];
+  photoPutRows: OutboxRow[];
 } {
   const pushRows: OutboxRow[] = [];
-  const skippedPhotoPutSeqs: number[] = [];
+  const photoPutRows: OutboxRow[] = [];
   for (const row of rows) {
     if (row.kind === 'photo.put') {
-      if (row.seq !== undefined) {
-        skippedPhotoPutSeqs.push(row.seq);
-      }
+      photoPutRows.push(row);
       continue;
     }
     pushRows.push(row);
   }
-  return { pushRows, skippedPhotoPutSeqs };
+  return { pushRows, photoPutRows };
+}
+
+/** Smallest uploads first so large bodies do not fill both concurrency slots. */
+export function orderPhotoPutsLargestLast(
+  rows: OutboxRow[],
+  sizeById: Map<string, number>,
+): OutboxRow[] {
+  return [...rows].sort((a, b) => {
+    const idA = (a.payload as { id: string }).id;
+    const idB = (b.payload as { id: string }).id;
+    const sizeA = sizeById.get(idA) ?? 0;
+    const sizeB = sizeById.get(idB) ?? 0;
+    if (sizeA !== sizeB) {
+      return sizeA - sizeB;
+    }
+    return (a.seq ?? 0) - (b.seq ?? 0);
+  });
+}
+
+export function shouldParkPhotoPut(status: number, attempts: number): boolean {
+  if (status === 503) {
+    return false;
+  }
+  return attempts > MAX_DRAIN_ATTEMPTS;
+}
+
+/** Rows past the attempt cap are not POSTed again on visibility sync. */
+export function isPhotoPutRowParked(row: OutboxRow): boolean {
+  return shouldParkPhotoPut(400, row.attempts);
+}
+
+function isTerminalPhotoPut409(error: string | undefined): boolean {
+  return error === 'recipe-deleted' || error === 'already-deleted';
+}
+
+function networkErrorLooksUnavailable(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /unavailable|503|bucket|gcs/i.test(msg);
+}
+
+const PHOTO_UPLOAD_JPEG = 'image/jpeg';
+const PHOTO_UPLOAD_PNG = 'image/png';
+
+async function resolvePhotoUploadContentType(
+  blob: Blob,
+): Promise<'image/jpeg' | 'image/png' | null> {
+  const declared = blob.type;
+  if (declared === PHOTO_UPLOAD_JPEG || declared === PHOTO_UPLOAD_PNG) {
+    return declared;
+  }
+  if (declared !== '' && declared !== 'application/octet-stream') {
+    return null;
+  }
+  const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+  if (
+    head.length >= 4 &&
+    head[0] === 0x89 &&
+    head[1] === 0x50 &&
+    head[2] === 0x4e &&
+    head[3] === 0x47
+  ) {
+    return PHOTO_UPLOAD_PNG;
+  }
+  if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) {
+    return PHOTO_UPLOAD_JPEG;
+  }
+  return PHOTO_UPLOAD_JPEG;
 }
 
 export function shouldDropOutboxResult(result: {
@@ -577,6 +642,170 @@ async function enqueueUnsyncedLibraryIfNeeded(): Promise<void> {
   );
 }
 
+type PhotoPutPayload = { id: string; recipeId: string; updatedAt: number };
+
+async function postPhotoPutRow(
+  row: OutboxRow,
+): Promise<
+  | { kind: 'done'; pushed: boolean }
+  | { kind: 'signedOut' }
+  | { kind: 'stop' }
+  | { kind: 'retry' }
+  | { kind: 'parked' }
+  | { kind: 'failed' }
+> {
+  if (isPhotoPutRowParked(row)) {
+    return { kind: 'parked' };
+  }
+
+  const payload = row.payload as PhotoPutPayload;
+  const local = await db.photos.get(payload.id);
+  if (!local) {
+    if (row.seq !== undefined) {
+      await db.outbox.delete(row.seq);
+    }
+    return { kind: 'done', pushed: false };
+  }
+
+  const contentType = await resolvePhotoUploadContentType(local.blob);
+  if (contentType === null) {
+    if (row.seq !== undefined) {
+      await db.outbox.delete(row.seq);
+    }
+    return { kind: 'done', pushed: false };
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`/api/photos/${encodeURIComponent(payload.id)}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': contentType,
+        'x-photo-updated-at': String(payload.updatedAt),
+        'x-recipe-id': payload.recipeId,
+      },
+      body: local.blob,
+    });
+  } catch (err) {
+    if (networkErrorLooksUnavailable(err)) {
+      return { kind: 'retry' };
+    }
+    const attempts = row.attempts + 1;
+    if (row.seq !== undefined) {
+      await db.outbox.update(row.seq, { attempts });
+    }
+    if (shouldParkPhotoPut(500, attempts)) {
+      return { kind: 'parked' };
+    }
+    return { kind: 'stop' };
+  }
+
+  if (response.status === 401) {
+    invalidateSession();
+    return { kind: 'signedOut' };
+  }
+
+  if (response.status === 200) {
+    if (row.seq !== undefined) {
+      await db.outbox.delete(row.seq);
+    }
+    return { kind: 'done', pushed: true };
+  }
+
+  if (response.status === 503) {
+    return { kind: 'retry' };
+  }
+
+  if (response.status === 409) {
+    let error: string | undefined;
+    try {
+      const body = (await response.json()) as { error?: string };
+      error = body.error;
+    } catch {
+      error = undefined;
+    }
+    if (isTerminalPhotoPut409(error)) {
+      if (row.seq !== undefined) {
+        await db.outbox.delete(row.seq);
+      }
+      return { kind: 'done', pushed: false };
+    }
+  }
+
+  if (
+    response.status === 400 ||
+    response.status === 413 ||
+    response.status === 409 ||
+    (response.status >= 400 && response.status < 600)
+  ) {
+    const attempts = row.attempts + 1;
+    if (row.seq !== undefined) {
+      await db.outbox.update(row.seq, { attempts });
+    }
+    if (shouldParkPhotoPut(response.status, attempts)) {
+      return { kind: 'parked' };
+    }
+    return { kind: 'failed' };
+  }
+
+  return { kind: 'retry' };
+}
+
+async function drainPhotoPutBatch(
+  photoPutRows: OutboxRow[],
+): Promise<{ outcome: 'ok' | 'stop' | 'signedOut'; pushed: number }> {
+  const sizeById = new Map<string, number>();
+  for (const row of photoPutRows) {
+    const id = (row.payload as PhotoPutPayload).id;
+    const local = await db.photos.get(id);
+    if (local) {
+      sizeById.set(id, local.blob.size);
+    }
+  }
+  const activeRows = photoPutRows.filter((row) => !isPhotoPutRowParked(row));
+  if (activeRows.length === 0) {
+    return { outcome: 'ok', pushed: 0 };
+  }
+  const ordered = orderPhotoPutsLargestLast(activeRows, sizeById);
+  let pushed = 0;
+  let index = 0;
+  let stop = false;
+  let signedOut = false;
+
+  async function worker(): Promise<void> {
+    while (!stop && !signedOut) {
+      const i = index;
+      index += 1;
+      if (i >= ordered.length) {
+        return;
+      }
+      const result = await postPhotoPutRow(ordered[i]);
+      if (result.kind === 'signedOut') {
+        signedOut = true;
+        return;
+      }
+      if (result.kind === 'stop') {
+        stop = true;
+        return;
+      }
+      if (result.kind === 'done' && result.pushed) {
+        pushed += 1;
+      }
+    }
+  }
+
+  await Promise.all([worker(), worker()]);
+
+  if (signedOut) {
+    return { outcome: 'signedOut', pushed };
+  }
+  if (stop) {
+    return { outcome: 'stop', pushed };
+  }
+  return { outcome: 'ok', pushed };
+}
+
 async function drainOutbox(): Promise<{
   outcome: 'ok' | 'stop' | 'signedOut';
   pushed: number;
@@ -589,9 +818,11 @@ async function drainOutbox(): Promise<{
     if (rows.length === 0) {
       return { outcome: 'ok', pushed, applied };
     }
-    const { pushRows } = splitDrainBatch(rows);
+    const { pushRows, photoPutRows } = splitDrainBatch(rows);
     if (pushRows.length === 0) {
-      return { outcome: 'ok', pushed, applied };
+      const photoDrain = await drainPhotoPutBatch(photoPutRows);
+      pushed += photoDrain.pushed;
+      return { outcome: photoDrain.outcome, pushed, applied };
     }
     const batch = pushRows.slice(0, MAX_DRAIN_OPS);
 
@@ -662,9 +893,7 @@ async function drainOutbox(): Promise<{
       return { outcome: 'stop', pushed, applied };
     }
 
-    if (batch.length < MAX_DRAIN_OPS) {
-      return { outcome: 'ok', pushed, applied };
-    }
+    continue;
   }
 }
 

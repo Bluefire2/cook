@@ -2594,9 +2594,9 @@ choice was actually made.
 |---|---|
 | Firestore database id / mode / location | `(default)` / FIRESTORE_NATIVE / europe-west1 |
 | `FIRESTORE_DATABASE_ID` needed? | no |
-| Photo bucket name | |
-| Runtime service account (from `serviceAccountName`, or default compute) | |
-| Roles granted to it | |
+| Photo bucket name | `sous-photos-cooking-assistant-508423` |
+| Runtime service account (from `serviceAccountName`, or default compute) | `62867274312-compute@developer.gserviceaccount.com` |
+| Roles granted to it | `roles/datastore.user` (project), `roles/storage.objectAdmin` (bucket) |
 | OAuth client id (last 6 chars only) | |
 | Redirect URIs registered | |
 | `SESSION_SECRET` stored in password manager | |

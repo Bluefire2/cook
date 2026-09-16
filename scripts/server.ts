@@ -26,6 +26,7 @@ import {
   authStart,
 } from '../server/auth.ts';
 import { redirectUri } from '../server/env.ts';
+import { photosGet, photosPost } from '../server/photos.ts';
 import { syncPull, syncPush } from '../server/sync.ts';
 
 type ApiHandler = (req: Request) => Promise<Response>;
@@ -200,7 +201,13 @@ function matchApiRoute(pathname: string, method: string): ApiHandler | 'wrongMet
   if (pathname.startsWith(photosPrefix)) {
     const rest = pathname.slice(photosPrefix.length);
     if (rest !== '' && !rest.includes('/')) {
-      return null;
+      if (method === 'POST') {
+        return photosPost;
+      }
+      if (method === 'GET' || method === 'HEAD') {
+        return photosGet;
+      }
+      return 'wrongMethod';
     }
   }
 

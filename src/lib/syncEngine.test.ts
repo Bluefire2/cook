@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   decideSyncToast,
   mergePullCursor,
+  isPhotoPutRowParked,
+  orderPhotoPutsLargestLast,
   recordsEqual,
   resolveSyncResult,
   shouldDropOutboxResult,
   shouldEnqueueUnsyncedLibrary,
+  shouldParkPhotoPut,
   splitDrainBatch,
   syncOwnershipDecision,
 } from './syncEngine';
@@ -42,14 +45,65 @@ describe('splitDrainBatch', () => {
     expect(splitDrainBatch(rows).pushRows.map((row) => row.seq)).toEqual([2]);
   });
 
-  it('skips photo.put without counting toward push batch', () => {
+  it('separates photo.put for a later drain phase without filling the push batch', () => {
     const rows: OutboxRow[] = [
       { seq: 1, kind: 'photo.put', payload: { id: 'p', recipeId: 'r', updatedAt: 1 }, enqueuedAt: 1, attempts: 0 },
       { seq: 2, kind: 'recipe.put', payload: {} as OutboxRow['payload'], enqueuedAt: 1, attempts: 0 },
     ];
-    const { pushRows, skippedPhotoPutSeqs } = splitDrainBatch(rows);
+    const { pushRows, photoPutRows } = splitDrainBatch(rows);
     expect(pushRows).toHaveLength(1);
-    expect(skippedPhotoPutSeqs).toEqual([1]);
+    expect(photoPutRows.map((row) => row.seq)).toEqual([1]);
+  });
+});
+
+describe('orderPhotoPutsLargestLast', () => {
+  it('uploads smaller photos before larger ones', () => {
+    const rows: OutboxRow[] = [
+      { seq: 1, kind: 'photo.put', payload: { id: 'big', recipeId: 'r', updatedAt: 1 }, enqueuedAt: 1, attempts: 0 },
+      { seq: 2, kind: 'photo.put', payload: { id: 'small', recipeId: 'r', updatedAt: 1 }, enqueuedAt: 1, attempts: 0 },
+    ];
+    const sizeById = new Map([
+      ['big', 2_000_000],
+      ['small', 100],
+    ]);
+    expect(orderPhotoPutsLargestLast(rows, sizeById).map((row) => row.seq)).toEqual([2, 1]);
+  });
+
+  it('treats missing sizes as zero', () => {
+    const rows: OutboxRow[] = [
+      { seq: 1, kind: 'photo.put', payload: { id: 'known', recipeId: 'r', updatedAt: 1 }, enqueuedAt: 1, attempts: 0 },
+      { seq: 2, kind: 'photo.put', payload: { id: 'missing', recipeId: 'r', updatedAt: 1 }, enqueuedAt: 1, attempts: 0 },
+    ];
+    const sizeById = new Map([['known', 500]]);
+    expect(orderPhotoPutsLargestLast(rows, sizeById).map((row) => row.seq)).toEqual([2, 1]);
+  });
+});
+
+describe('shouldParkPhotoPut', () => {
+  it('never parks 503 regardless of attempts', () => {
+    expect(shouldParkPhotoPut(503, 0)).toBe(false);
+    expect(shouldParkPhotoPut(503, 10)).toBe(false);
+  });
+
+  it('parks other errors only after more than five attempts', () => {
+    expect(shouldParkPhotoPut(400, 5)).toBe(false);
+    expect(shouldParkPhotoPut(400, 6)).toBe(true);
+    expect(shouldParkPhotoPut(413, 6)).toBe(true);
+    expect(shouldParkPhotoPut(500, 6)).toBe(true);
+  });
+});
+
+describe('isPhotoPutRowParked', () => {
+  it('matches shouldParkPhotoPut for non-503 failures', () => {
+    const row: OutboxRow = {
+      seq: 1,
+      kind: 'photo.put',
+      payload: { id: 'p', recipeId: 'r', updatedAt: 1 },
+      enqueuedAt: 1,
+      attempts: 6,
+    };
+    expect(isPhotoPutRowParked(row)).toBe(true);
+    expect(isPhotoPutRowParked({ ...row, attempts: 5 })).toBe(false);
   });
 });
 
