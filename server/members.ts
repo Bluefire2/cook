@@ -459,6 +459,10 @@ export async function applyDecision(
 
   await getStoreFirestore().runTransaction(async (tx) => {
     const reqSnap = await tx.get(requestRef);
+    // Revoke needs the existing member snapshot to keep approvedAt/approvedBy.
+    // Firestore forbids reads after writes in a transaction, so this get must
+    // happen before any set — even when the transition later refuses.
+    const memSnap = action === 'revoke' ? await tx.get(memberRef) : null;
     let existing: AccessRequestRecord | null = null;
     if (reqSnap.exists) {
       existing = parseAccessRequestDoc(reqSnap.data(), sub);
@@ -471,17 +475,14 @@ export async function applyDecision(
     tx.set(requestRef, transition.request);
     if (transition.member !== null) {
       let memberBody = transition.member;
-      if (action === 'revoke') {
-        const memSnap = await tx.get(memberRef);
-        if (memSnap.exists) {
-          const mem = parseMemberDoc(memSnap.data(), sub);
-          if (mem !== null) {
-            memberBody = {
-              ...transition.member,
-              approvedAt: mem.approvedAt,
-              approvedBy: mem.approvedBy,
-            };
-          }
+      if (memSnap?.exists) {
+        const mem = parseMemberDoc(memSnap.data(), sub);
+        if (mem !== null) {
+          memberBody = {
+            ...transition.member,
+            approvedAt: mem.approvedAt,
+            approvedBy: mem.approvedBy,
+          };
         }
       }
       tx.set(memberRef, memberBody);
