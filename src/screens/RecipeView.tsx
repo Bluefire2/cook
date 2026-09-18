@@ -52,7 +52,11 @@ export default function RecipeView() {
   } = useCookState(recipe);
   const [chatOpen, setChatOpen] = useState(false);
 
-  if (recipe === undefined) return null;
+  if (recipe === undefined) {
+    return (
+      <div className="p-6 text-center text-ink-muted">Loading recipe…</div>
+    );
+  }
   if (recipe === null) {
     return (
       <div className="p-6 text-center text-ink-muted">

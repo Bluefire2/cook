@@ -66,8 +66,8 @@
     <p>
       Your recipes, chat messages, cooking progress, and attached photos are
       stored in Google Cloud (Firestore and Cloud Storage) in the
-      <code>europe-west1</code> region. Each device you use keeps a copy of
-      that data in IndexedDB so the app can work offline.
+      <code>europe-west1</code> region. They are loaded into this browser
+      while you are signed in. There is no on-device recipe database.
     </p>
     <p>
       No password and no Google refresh token is stored — the app only ever
@@ -139,8 +139,7 @@
       Sign out to drop the session cookie when the network request succeeds. If
       you sign out while offline, the cached profile is cleared from this
       browser, but the HttpOnly cookie may remain until it expires or a later
-      sign-out succeeds. Clearing this site's browser data removes the on-device
-      cache on that device only; your library in Google Cloud remains until you
+      sign-out succeeds. Your library in Google Cloud remains until you
       request account deletion.
     </p>
 

@@ -1,0 +1,4 @@
+https://www.seriouseats.com/all-american-beef-stew-recipe
+# Live fetch from this environment returns HTTP 402. page.html is the
+# 2024-01-15 Wayback original-bytes snapshot:
+# https://web.archive.org/web/20240115020217id_/https://www.seriouseats.com/all-american-beef-stew-recipe

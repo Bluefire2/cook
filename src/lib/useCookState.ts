@@ -1,7 +1,6 @@
-import { useCallback, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from './db';
-import { enqueue } from './outbox';
+import { useCallback, useMemo, useSyncExternalStore } from 'react';
+import { getCook, getSnapshot, subscribe, upsertCook } from './libraryMemory';
+import { pushOps } from './remote';
 import type { Recipe } from './types';
 
 export interface CookState {
@@ -18,7 +17,7 @@ export interface CookStateApi extends CookState {
   checkedItemNames: (recipe: Recipe) => string[];
 }
 
-/** One row per recipe. `Set` is not a valid IndexedDB value, hence `string[]`. */
+/** One row per recipe. `Set` is not JSON, hence `string[]`. */
 export interface CookStateRow {
   recipeId: string;
   servings: number;
@@ -54,41 +53,37 @@ function progressFor(
 }
 
 const cookStateStore = {
-  get(recipeId: string): Promise<CookStateRow | undefined> {
-    return db.cookState.get(recipeId);
+  get(recipeId: string): CookStateRow | undefined {
+    return getCook(recipeId);
   },
 
-  /**
-   * Read-modify-write in one transaction so two taps in quick succession
-   * cannot both build on the same pre-tap row.
-   */
   async update(
     recipe: Recipe,
     change: (prev: Progress) => Progress,
   ): Promise<void> {
-    await db.transaction('rw', [db.cookState, db.outbox], async (tx) => {
-      const prev = progressFor(await db.cookState.get(recipe.id), recipe);
-      const next = {
-        ...change(prev),
-        recipeId: recipe.id,
-        recipeUpdatedAt: recipe.updatedAt,
-      };
-      await db.cookState.put(next);
-      await enqueue(tx, {
-        kind: 'cookState.put',
-        payload: { ...next, updatedAt: Date.now() },
-      });
-    });
+    const prev = progressFor(getCook(recipe.id), recipe);
+    const next: CookStateRow = {
+      ...change(prev),
+      recipeId: recipe.id,
+      recipeUpdatedAt: recipe.updatedAt,
+    };
+    upsertCook(next);
+    const result = await pushOps([
+      { kind: 'cookState.put', payload: { ...next, updatedAt: Date.now() } },
+    ]);
+    if (result !== 'ok') {
+      if (getCook(recipe.id) === next) {
+        // leave optimistic row; refresh will reconcile
+      }
+    }
   },
 };
 
 /** Persisted per recipe. Resets when the recipe's shape changes. */
 export function useCookState(recipe: Recipe | null | undefined): CookStateApi {
+  const snap = useSyncExternalStore(subscribe, getSnapshot);
   const recipeId = recipe?.id;
-  const row = useLiveQuery(
-    () => (recipeId ? cookStateStore.get(recipeId) : undefined),
-    [recipeId],
-  );
+  const row = recipeId ? snap.cook.get(recipeId) : undefined;
 
   const { servings, currentStep, checkedKeys } = progressFor(row, recipe);
   const checkedSet = useMemo(() => new Set(checkedKeys), [checkedKeys]);

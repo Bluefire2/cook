@@ -230,6 +230,50 @@ export function extractRecipeSource(html: string): string {
     .slice(0, MAX_SOURCE_CHARS);
 }
 
+export type GenerateRecipeResult =
+  | { status: 'ok'; recipe: Record<string, unknown> }
+  | { status: 'not_a_recipe' }
+  | { status: 'parse_error' };
+
+/**
+ * Structured Gemini extraction used by POST /api/import (text and URL paths).
+ * Kept in this file because Vercel cannot import api/ siblings.
+ */
+export async function generateRecipeFromSource(
+  source: string,
+): Promise<GenerateRecipeResult> {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const result = await ai.models.generateContent({
+    model: MODEL,
+    contents:
+      'Extract the recipe from the source material below and save it. ' +
+      'Convert fractions to decimals for quantities. Keep step texts ' +
+      'faithful to the original but trim fluff. If the source contains ' +
+      'no recipe, save a recipe with the title "NOT_A_RECIPE".\n\n' +
+      `Source material:\n${source}`,
+    config: {
+      maxOutputTokens: 4096,
+      responseMimeType: 'application/json',
+      responseSchema: RECIPE_SCHEMA,
+    },
+  });
+
+  let recipe: { title?: string };
+  try {
+    const parsed: unknown = JSON.parse(result.text ?? '');
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new Error('not an object');
+    }
+    recipe = parsed as { title?: string };
+  } catch {
+    return { status: 'parse_error' };
+  }
+  if (recipe.title === 'NOT_A_RECIPE') {
+    return { status: 'not_a_recipe' };
+  }
+  return { status: 'ok', recipe: recipe as Record<string, unknown> };
+}
+
 export async function POST(req: Request, ctx?: { authorizedSub?: string }): Promise<Response> {
   const authorized =
     typeof ctx?.authorizedSub === 'string' && ctx.authorizedSub !== ''
@@ -292,41 +336,19 @@ export async function POST(req: Request, ctx?: { authorizedSub?: string }): Prom
     );
   }
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const result = await ai.models.generateContent({
-    model: MODEL,
-    contents:
-      'Extract the recipe from the source material below and save it. ' +
-      'Convert fractions to decimals for quantities. Keep step texts ' +
-      'faithful to the original but trim fluff. If the source contains ' +
-      'no recipe, save a recipe with the title "NOT_A_RECIPE".\n\n' +
-      `Source material:\n${source}`,
-    config: {
-      maxOutputTokens: 4096,
-      responseMimeType: 'application/json',
-      responseSchema: RECIPE_SCHEMA,
-    },
-  });
-
-  let recipe: { title?: string };
-  try {
-    const parsed: unknown = JSON.parse(result.text ?? '');
-    if (typeof parsed !== 'object' || parsed === null) {
-      throw new Error('not an object');
-    }
-    recipe = parsed as { title?: string };
-  } catch {
+  const extracted = await generateRecipeFromSource(source);
+  if (extracted.status === 'parse_error') {
     return Response.json(
       { error: 'Extraction failed — no structured result.' },
       { status: 502 },
     );
   }
-  if (recipe.title === 'NOT_A_RECIPE') {
+  if (extracted.status === 'not_a_recipe') {
     return Response.json(
       { error: "Couldn't find a recipe in that content." },
       { status: 422 },
     );
   }
 
-  return Response.json({ recipe: { ...recipe, sourceUrl: body.url } });
+  return Response.json({ recipe: { ...extracted.recipe, sourceUrl: body.url } });
 }

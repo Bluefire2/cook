@@ -173,7 +173,7 @@ function MessageBubble({
   onNavigateAway: () => void;
 }) {
   const isUser = message.role === 'user';
-  // Rows persisted before normalization are already in IndexedDB; re-check at
+  // Rows persisted before normalization may still exist; re-check at
   // render so a malformed proposal degrades to the plain text bubble instead
   // of throwing inside recipeLines on every render.
   const proposal = message.proposedRecipe
@@ -256,7 +256,7 @@ export default function ChatPanel({
 
   const attachPhoto = async (file: File) => {
     try {
-      // The originals are several megabytes and the IndexedDB quota is finite,
+      // The originals are several megabytes; downscale before attach.
       // and exportLibrary re-encodes every stored blob as base64 — same intent
       // as RecipeForm.
       const stored = await encodeImageForStorage(file);
