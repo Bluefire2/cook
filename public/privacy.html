@@ -73,6 +73,14 @@
       No password and no Google refresh token is stored — the app only ever
       asks Google who you are.
     </p>
+    <p>
+      If you complete Google sign-in but are not a member, and you press
+      Request access, Sous stores your email address, Google display name,
+      Google account id (<code>sub</code>) and the request timestamps in
+      Firestore (<code>europe-west1</code>) so the owner can decide. No
+      recipe library and no <code>users/{sub}</code> document is created for
+      a person who is not admitted.
+    </p>
 
     <h2>What it is used for</h2>
     <p>
@@ -93,7 +101,11 @@
     <p>
       Recipe text, your chat messages and any photo you send the assistant are
       passed to Google's Gemini API at request time to produce a reply. Recipe
-      import fetches the URL you paste. Hosting is on Google Cloud. Nothing
+      import fetches the URL you paste. If you press Request access, the
+      notification email to the owner is sent through Resend and contains
+      your email address, display name and the time of the request; it
+      includes no one-click approval link — approval only ever happens on the
+      owner's own signed-in screen. Hosting is on Google Cloud. Nothing
       else.
     </p>
 
@@ -103,11 +115,25 @@
       attached photos from your stored library.
     </p>
     <p>
+      Access records are kept as follows. A pending access request is kept
+      until the owner decides it. A declined request is kept indefinitely,
+      until it is deleted by hand, because that record is what stops a repeat
+      request from notifying the owner again. An approved request is likewise
+      kept indefinitely — it is what the owner's admin screen lists. A
+      membership record lasts as long as the person has access; revoking
+      access sets its status to <code>revoked</code> rather than deleting it,
+      so a revoked person still has a row. There is no automated purge job:
+      none of these records is deleted on a schedule.
+    </p>
+    <p>
       To delete all data stored for your account, email
       <a href="mailto:chernyshov.k@gmail.com">chernyshov.k@gmail.com</a>
       from the same address you use to sign in. There is no in-app delete-account
-      button. Revoking Sous's access from your Google account permissions page
-      signs you out but does not by itself delete your stored recipes.
+      button. A deletion request covers all of it: your access-request record,
+      your membership record, and your stored library — recipes, chat
+      messages, cooking progress and photos — and deleting these also removes
+      your access. Revoking Sous's access from your Google account permissions
+      page signs you out but does not by itself delete your stored recipes.
     </p>
     <p>
       Sign out to drop the session cookie when the network request succeeds. If
@@ -119,7 +145,9 @@
 
     <h2>Access</h2>
     <p>
-      Sous is invitation-only: only allow-listed email addresses can sign in.
+      Sous is invitation-only: signing in is limited to allow-listed email
+      addresses and to accounts the owner has approved from an access
+      request. Requesting access does not grant it.
     </p>
 
     <h2>Contact</h2>

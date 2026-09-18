@@ -111,6 +111,20 @@ export default function Settings() {
                   Sign out
                 </button>
               </div>
+              {user.isOwner === true && (
+                <>
+                  <p className="mt-4 text-sm text-ink-muted">
+                    Review requests from people who want in — approving gives
+                    them their own empty library.
+                  </p>
+                  <Link
+                    to="/admin"
+                    className={`${secondaryBtn} mt-2 inline-block px-4 py-2.5`}
+                  >
+                    Invitations
+                  </Link>
+                </>
+              )}
             </>
           )}
           {sessionStatus === 'offline' && (

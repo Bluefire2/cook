@@ -26,6 +26,9 @@ import {
   authStart,
 } from '../server/auth.ts';
 import { redirectUri } from '../server/env.ts';
+import { adminDecisionPost, adminRequestsGet } from '../server/admin.ts';
+import { accessRequestPost } from '../server/access.ts';
+import { withMembership } from '../server/membership.ts';
 import { photosGet, photosPost } from '../server/photos.ts';
 import { syncPull, syncPush } from '../server/sync.ts';
 
@@ -38,8 +41,11 @@ interface ApiRoute {
 }
 
 const apiRoutes: ApiRoute[] = [
-  { method: 'POST', path: '/api/chat', handler: chatPost },
-  { method: 'POST', path: '/api/import', handler: importPost },
+  { method: 'POST', path: '/api/chat', handler: withMembership(chatPost) },
+  { method: 'POST', path: '/api/import', handler: withMembership(importPost) },
+  { method: 'POST', path: '/api/access-request', handler: accessRequestPost },
+  { method: 'GET', path: '/api/admin/requests', handler: adminRequestsGet },
+  { method: 'POST', path: '/api/admin/decision', handler: adminDecisionPost },
   { method: 'GET', path: '/api/auth/start', handler: authStart },
   { method: 'GET', path: '/api/auth/callback/google', handler: authCallbackGoogle },
   { method: 'GET', path: '/api/auth/session', handler: authSession },

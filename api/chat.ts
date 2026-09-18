@@ -1,9 +1,10 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { GoogleGenAI, Type, type Content, type Part, type Schema } from '@google/genai';
 
-// NOTE: Duplicated in api/import.ts and server/session.ts. Vercel's function
-// runtime transpiles each api/ entrypoint in isolation and cannot import
-// sibling helper files, so the check must live inline. Keep all three in sync.
+// NOTE: Duplicated in api/import.ts and server/session.ts + server/allowlist.ts.
+// This inline copy is the Vercel gate and must stay in sync with those files.
+// On Cloud Run it is bypassed by an explicit authorizedSub argument after
+// requireMember passed in scripts/server.ts; server/membership.ts is authoritative.
 
 const SESSION_COOKIE_NAME = 'sous_session';
 
@@ -246,8 +247,12 @@ function toGeminiContents(messages: ChatRequestMessage[]): Content[] {
   });
 }
 
-export async function POST(req: Request): Promise<Response> {
-  if (sessionSub(req) === null) {
+export async function POST(req: Request, ctx?: { authorizedSub?: string }): Promise<Response> {
+  const authorized =
+    typeof ctx?.authorizedSub === 'string' && ctx.authorizedSub !== ''
+      ? ctx.authorizedSub
+      : sessionSub(req);
+  if (authorized === null) {
     return new Response('Unauthorized', { status: 401 });
   }
 

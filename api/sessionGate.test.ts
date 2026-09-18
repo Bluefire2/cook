@@ -101,5 +101,13 @@ for (const { name, fn } of runners) {
       });
       expect(fn(reqWithCookie(token))).toBeNull();
     });
+
+    it('returns null when only x-sous-user header is present', () => {
+      const req = new Request('http://localhost/api/chat', {
+        method: 'POST',
+        headers: { 'x-sous-user': 'user-sub' },
+      });
+      expect(fn(req)).toBeNull();
+    });
   });
 }
