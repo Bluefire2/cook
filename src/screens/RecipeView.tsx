@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import ChatPanel from '../components/ChatPanel';
 import { usePhotoUrl } from '../lib/photoStore';
 import { useRecipe } from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
+import { sync } from '../lib/syncEngine';
 import { backLink, ghostBtn } from '../lib/uiClasses';
 import { useWakeLock } from '../lib/useWakeLock';
 import { useCookState } from '../lib/useCookState';
@@ -52,8 +53,28 @@ export default function RecipeView() {
   } = useCookState(recipe);
   const [chatOpen, setChatOpen] = useState(false);
 
+  /**
+   * A link from the Chrome extension is the first this device hears of a recipe
+   * that was saved on the server, so an id missing from the cache means "pull
+   * and see", not "gone". Settled is tracked as the id it settled for: React
+   * Router reuses this element across an id change, and the neutral state has
+   * to be the initial one or not-found paints for a frame first.
+   */
+  const [settledId, setSettledId] = useState<string | undefined>(undefined);
+  const lookedUpId = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (recipe !== null || id === undefined || lookedUpId.current === id) return;
+    lookedUpId.current = id;
+    void sync().finally(() => setSettledId(id));
+  }, [recipe, id]);
+
   if (recipe === undefined) return null;
   if (recipe === null) {
+    if (settledId !== id) {
+      return (
+        <div className="p-6 text-center text-ink-muted">Looking for this recipe…</div>
+      );
+    }
     return (
       <div className="p-6 text-center text-ink-muted">
         Recipe not found.{' '}
