@@ -361,7 +361,7 @@ export default function ChatPanel({
         });
       }
     } catch (err) {
-      if (controller.signal.aborted) {
+      if (!mountedRef.current || controller.signal.aborted) {
         return;
       }
       setError(
@@ -371,7 +371,9 @@ export default function ChatPanel({
       if (sttAbort.current === controller) {
         sttAbort.current = null;
       }
-      setTranscribing(false);
+      if (mountedRef.current) {
+        setTranscribing(false);
+      }
       finishingRef.current = false;
     }
   };
