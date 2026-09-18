@@ -1,88 +1,82 @@
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from './db';
-import { enqueue } from './outbox';
+import { useMemo, useSyncExternalStore } from 'react';
+import {
+  dropPhoto,
+  getPendingBlob,
+  getRecipe,
+  getSnapshot,
+  listRecipes,
+  markPhotoRemote,
+  removeRecipeLocal,
+  subscribe,
+  upsertRecipe,
+} from './libraryMemory';
+import { postPhoto, pushOps } from './remote';
+import { compactRecipe } from './compactRecipe';
 import type { Recipe, RecipeDraft } from './types';
 
-/**
- * Called inside the transaction that rewrote the reference, so a save that
- * rolls back keeps its blob instead of leaving a recipe pointing at nothing.
- * Photos are the only thing here big enough to exhaust a device's quota, so an
- * unreferenced one cannot just be left behind.
- */
-async function deleteReplacedPhoto(
-  tx: import('dexie').Transaction,
+export { compactRecipe };
+
+async function uploadPhotoIfNeeded(
+  photoId: string | undefined,
+  recipeId: string,
+  updatedAt: number,
+): Promise<void> {
+  if (photoId === undefined) {
+    return;
+  }
+  const blob = getPendingBlob(photoId);
+  if (!blob) {
+    return;
+  }
+  const result = await postPhoto(photoId, recipeId, updatedAt, blob);
+  if (result !== 'ok') {
+    throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the photo.");
+  }
+  markPhotoRemote(photoId);
+}
+
+async function deletePhotoIfReplaced(
   before: string | undefined,
   after: string | undefined,
 ): Promise<void> {
-  if (before !== undefined && before !== after) {
-    await db.photos.delete(before);
-    await enqueue(tx, {
-      kind: 'photo.delete',
-      payload: { id: before, updatedAt: Date.now() },
-    });
+  if (before === undefined || before === after) {
+    return;
   }
-}
-
-/**
- * `put` replaces the whole record, so an explicit `undefined` would sit in
- * IndexedDB as a key the editor never writes. Drop those keys so apply and
- * save leave the same shape.
- */
-export function compactRecipe(recipe: Recipe): Recipe {
-  const next: Recipe = {
-    id: recipe.id,
-    createdAt: recipe.createdAt,
-    updatedAt: recipe.updatedAt,
-    title: recipe.title,
-    servings: recipe.servings,
-    ingredientSections: recipe.ingredientSections,
-    steps: recipe.steps,
-    tags: recipe.tags,
-  };
-  if (recipe.description !== undefined) next.description = recipe.description;
-  if (recipe.sourceUrl !== undefined) next.sourceUrl = recipe.sourceUrl;
-  if (recipe.prepMinutes !== undefined) next.prepMinutes = recipe.prepMinutes;
-  if (recipe.cookMinutes !== undefined) next.cookMinutes = recipe.cookMinutes;
-  if (recipe.notes !== undefined) next.notes = recipe.notes;
-  if (recipe.photoId !== undefined) next.photoId = recipe.photoId;
-  return next;
-}
-
-async function enqueueRecipePhotoOps(
-  tx: import('dexie').Transaction,
-  recipe: Recipe,
-): Promise<void> {
-  await enqueue(tx, { kind: 'recipe.put', payload: recipe });
-  if (recipe.photoId !== undefined) {
-    const photo = await db.photos.get(recipe.photoId);
-    await enqueue(tx, {
-      kind: 'photo.put',
-      payload: {
-        id: recipe.photoId,
-        recipeId: recipe.id,
-        updatedAt: photo?.createdAt ?? Date.now(),
-      },
-    });
+  const at = Date.now();
+  const result = await pushOps([{ kind: 'photo.delete', payload: { id: before, updatedAt: at } }]);
+  if (result === 'ok') {
+    dropPhoto(before);
   }
 }
 
 export const recipeStore = {
-  list(): Promise<Recipe[]> {
-    return db.recipes.orderBy('updatedAt').reverse().toArray();
+  list(): Recipe[] {
+    return listRecipes();
   },
 
-  get(id: string): Promise<Recipe | undefined> {
-    return db.recipes.get(id);
+  get(id: string): Recipe | undefined {
+    return getRecipe(id);
   },
 
   async save(recipe: Recipe): Promise<void> {
-    await db.transaction('rw', [db.recipes, db.photos, db.outbox], async (tx) => {
-      const previous = await db.recipes.get(recipe.id);
-      const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
-      await db.recipes.put(next);
-      await deleteReplacedPhoto(tx, previous?.photoId, next.photoId);
-      await enqueueRecipePhotoOps(tx, next);
-    });
+    const previous = getRecipe(recipe.id);
+    const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
+    upsertRecipe(next);
+    try {
+      await uploadPhotoIfNeeded(next.photoId, next.id, next.updatedAt);
+      const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
+      if (result !== 'ok') {
+        throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
+      }
+      await deletePhotoIfReplaced(previous?.photoId, next.photoId);
+    } catch (err) {
+      if (previous) {
+        upsertRecipe(previous);
+      } else {
+        removeRecipeLocal(next.id);
+      }
+      throw err;
+    }
   },
 
   /**
@@ -91,30 +85,37 @@ export const recipeStore = {
    * cannot express `sourceUrl` or `photoId` — a spread would blank them.
    */
   async applyDraft(id: string, draft: RecipeDraft): Promise<void> {
-    await db.transaction('rw', [db.recipes, db.photos, db.outbox], async (tx) => {
-      const existing = await db.recipes.get(id);
-      if (!existing) throw new Error(`No recipe with id ${id}.`);
-      const photoId = draft.photoId ?? existing.photoId;
-      const next = compactRecipe({
-        id: existing.id,
-        createdAt: existing.createdAt,
-        updatedAt: Date.now(),
-        title: draft.title,
-        description: draft.description,
-        servings: draft.servings,
-        prepMinutes: draft.prepMinutes,
-        cookMinutes: draft.cookMinutes,
-        ingredientSections: draft.ingredientSections,
-        steps: draft.steps,
-        tags: draft.tags,
-        notes: draft.notes,
-        sourceUrl: draft.sourceUrl ?? existing.sourceUrl,
-        photoId,
-      });
-      await db.recipes.put(next);
-      await deleteReplacedPhoto(tx, existing.photoId, next.photoId);
-      await enqueueRecipePhotoOps(tx, next);
+    const existing = getRecipe(id);
+    if (!existing) throw new Error(`No recipe with id ${id}.`);
+    const photoId = draft.photoId ?? existing.photoId;
+    const next = compactRecipe({
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: Date.now(),
+      title: draft.title,
+      description: draft.description,
+      servings: draft.servings,
+      prepMinutes: draft.prepMinutes,
+      cookMinutes: draft.cookMinutes,
+      ingredientSections: draft.ingredientSections,
+      steps: draft.steps,
+      tags: draft.tags,
+      notes: draft.notes,
+      sourceUrl: draft.sourceUrl ?? existing.sourceUrl,
+      photoId,
     });
+    upsertRecipe(next);
+    try {
+      await uploadPhotoIfNeeded(next.photoId, next.id, next.updatedAt);
+      const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
+      if (result !== 'ok') {
+        throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
+      }
+      await deletePhotoIfReplaced(existing.photoId, next.photoId);
+    } catch (err) {
+      upsertRecipe(existing);
+      throw err;
+    }
   },
 
   async create(
@@ -127,52 +128,53 @@ export const recipeStore = {
       createdAt: now,
       updatedAt: now,
     });
-    await db.transaction('rw', [db.recipes, db.photos, db.outbox], async (tx) => {
-      await db.recipes.add(recipe);
-      await enqueueRecipePhotoOps(tx, recipe);
-    });
+    upsertRecipe(recipe);
+    try {
+      await uploadPhotoIfNeeded(recipe.photoId, recipe.id, recipe.updatedAt);
+      const result = await pushOps([{ kind: 'recipe.put', payload: recipe }]);
+      if (result !== 'ok') {
+        throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
+      }
+    } catch (err) {
+      removeRecipeLocal(recipe.id);
+      throw err;
+    }
     return recipe;
   },
 
   async remove(id: string): Promise<void> {
+    const previous = getRecipe(id);
     const at = Date.now();
-    await db.transaction(
-      'rw',
-      [db.recipes, db.chatMessages, db.photos, db.cookState, db.outbox],
-      async (tx) => {
-        const recipe = await db.recipes.get(id);
-        const messages = await db.chatMessages
-          .where('recipeId')
-          .equals(id)
-          .toArray();
-
-        await enqueue(tx, {
-          kind: 'recipe.delete',
-          payload: { id, updatedAt: at },
-        });
-
-        await db.recipes.delete(id);
-        await db.chatMessages.where('recipeId').equals(id).delete();
-        await db.cookState.delete(id);
-        // Nothing else references these, so they go with the recipe or never.
-        await db.photos.bulkDelete([
-          ...(recipe?.photoId !== undefined ? [recipe.photoId] : []),
-          ...messages.flatMap((m) => m.photoIds ?? []),
-        ]);
-      },
-    );
+    removeRecipeLocal(id);
+    const result = await pushOps([{ kind: 'recipe.delete', payload: { id, updatedAt: at } }]);
+    if (result !== 'ok') {
+      if (previous) {
+        upsertRecipe(previous);
+      }
+      throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't delete the recipe.");
+    }
   },
 };
 
 /** Reactive list of all recipes, newest first. `undefined` while loading. */
 export function useRecipes(): Recipe[] | undefined {
-  return useLiveQuery(() => recipeStore.list(), []);
+  const snap = useSyncExternalStore(subscribe, getSnapshot);
+  return useMemo(() => {
+    if (!snap.loaded) {
+      return undefined;
+    }
+    return listRecipes();
+  }, [snap]);
 }
 
 /** Reactive single recipe. `undefined` while loading, `null` if not found. */
 export function useRecipe(id: string | undefined): Recipe | null | undefined {
-  return useLiveQuery(
-    async () => (id ? ((await recipeStore.get(id)) ?? null) : null),
-    [id],
-  );
+  const snap = useSyncExternalStore(subscribe, getSnapshot);
+  if (!snap.loaded) {
+    return undefined;
+  }
+  if (!id) {
+    return null;
+  }
+  return snap.recipes.get(id) ?? null;
 }

@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
+import { useSession } from '../lib/session';
+import { useSyncStatus } from '../lib/syncEngine';
 import {
   dangerBtn,
   ghostBtn,
@@ -47,6 +49,8 @@ function Sheet({
 
 export default function Library() {
   const allRecipes = useRecipes();
+  const { status: sessionStatus } = useSession();
+  const syncStatus = useSyncStatus();
   const [query, setQuery] = useState('');
   const [menuId, setMenuId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -116,10 +120,16 @@ export default function Library() {
         className={`${inputClass} mb-4`}
       />
 
-      {recipes === undefined ? null : recipes.length === 0 ? (
+      {recipes === undefined ? (
+        <p className="py-12 text-center text-ink-muted">Loading recipes…</p>
+      ) : recipes.length === 0 ? (
         <p className="py-12 text-center text-ink-muted">
           {q === ''
-            ? 'No recipes yet. Import your first one!'
+            ? sessionStatus === 'signedOut'
+              ? 'Sign in from Settings to load your recipes.'
+              : syncStatus.status === 'error'
+                ? "Couldn't load your recipes. Try Refresh in Settings."
+                : 'No recipes yet. Import your first one!'
             : 'No recipes match your search.'}
         </p>
       ) : (
@@ -208,14 +218,16 @@ export default function Library() {
         />
       )}
 
-      <button
-        type="button"
-        aria-label="Add recipe"
-        onClick={() => setAddOpen(true)}
-        className="fixed right-5 bottom-8 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-3xl leading-none text-page shadow-lg hover:opacity-90 active:opacity-90"
-      >
-        +
-      </button>
+      {sessionStatus === 'signedIn' && (
+        <button
+          type="button"
+          aria-label="Add recipe"
+          onClick={() => setAddOpen(true)}
+          className="fixed right-5 bottom-8 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-3xl leading-none text-page shadow-lg hover:opacity-90 active:opacity-90"
+        >
+          +
+        </button>
+      )}
 
       {addOpen && (
         <Sheet onClose={() => setAddOpen(false)}>

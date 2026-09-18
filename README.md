@@ -9,9 +9,9 @@ Live at <https://sous.kyrylo.lol>.
 The app is called Sous; the repo, database, and directories are still `cook`.
 
 Sign in with Google. Recipes, chat history, cooking progress, and photos live
-in your account (Firestore and Cloud Storage in `europe-west1`) and are cached
-in IndexedDB on each device so the app keeps working offline. The server also
-talks to Gemini on your behalf when you use chat or import.
+in your account (Firestore and Cloud Storage in `europe-west1`). The app loads
+them when you are signed in. The server also talks to Gemini on your behalf
+when you use chat or import.
 
 ## Installing it on a phone
 
@@ -19,24 +19,17 @@ talks to Gemini on your behalf when you use chat or import.
 2. Share → **Add to Home Screen**.
 3. Open the installed app, go to **Settings**, and **Sign in with Google**.
 
-Until you sign in, the library, recipe view, and search all work from the local
-cache, but chat and import need a session.
+Until you sign in, the library is empty. Chat and import need a session.
 
-IndexedDB is per-origin, so a home-screen install from the old Vercel origin
-keeps its own separate library. **Export library** on the old origin, then
-**Import backup** on this one. Chat and import on the Vercel origin return
-**401** by design — that deployment has no session cookie.
-
-Installing matters for more than convenience: iOS may evict storage for a site
-that is only bookmarked, and the home-screen app is what keeps the library
-around. Export a backup from Settings occasionally regardless — see
-[Your data](#your-data).
+The old Vercel origin keeps a separate copy of the app. **Export library**
+there, then **Import backup** here. Chat and import on the Vercel origin
+return **401** by design — that deployment has no session cookie.
 
 ## Stack
 
 - Vite 6 + React 19 + TypeScript 5.8, React Router 7
 - Tailwind CSS v4 through `@tailwindcss/vite` — there is no `tailwind.config.js`
-- Dexie 4 (IndexedDB) plus `dexie-react-hooks` for all persistence
+- In-memory library after pull; Firestore/GCS via `server/`
 - `google-auth-library`, `@google-cloud/firestore`, and `@google-cloud/storage`
   on the Node server; OAuth, sync, and photos live in `server/`. The two
   `POST(req: Request)` handlers in `api/` call Gemini via `@google/genai` and
@@ -95,9 +88,8 @@ it the process exits immediately with `node: .env.local: not found`.
 Both servers hot-reload their own side of things; the API server does not watch
 `server/` or `api/`, so restart `npm run dev:api` after editing those.
 
-A first launch in an empty browser profile seeds one sample recipe
-([`src/lib/seed.ts`](src/lib/seed.ts)), so you can check the UI before you have
-a key.
+A first launch in an empty browser profile shows an empty library until you
+sign in.
 
 ### Local development
 
@@ -112,7 +104,7 @@ gcloud auth application-default set-quota-project cooking-assistant-508423
 
 Opt-outs: set `FIRESTORE_EMULATOR_HOST` to use the emulator instead of
 Firestore, or leave `PHOTO_BUCKET` unset in `.env.local` to keep photo upload
-off (`/api/photos` returns 503 and outbox rows stay until the bucket is set).
+off (`/api/photos` returns 503 until the bucket is set).
 
 ## Commands
 
@@ -146,7 +138,7 @@ the full map).
 | `ALLOWED_EMAILS` | yes | Comma-separated allowlist. **Unset or empty ⇒ nobody can sign in** (fail-closed). |
 | `PUBLIC_ORIGIN` | yes | Origin used to build the OAuth redirect URI. Local: `http://localhost:5173`. Production: `https://sous.kyrylo.lol`. |
 | `GOOGLE_CLOUD_PROJECT` | yes | `cooking-assistant-508423` for Firestore. |
-| `PHOTO_BUCKET` | no | GCS bucket name for recipe and chat photos. Unset ⇒ photo sync off (503, outbox kept). |
+| `PHOTO_BUCKET` | no | GCS bucket name for recipe and chat photos. Unset ⇒ photo upload returns 503. |
 | `CHAT_MODEL` | no | Model id for both Gemini endpoints. Defaults to `gemini-3.7-flash`. A bare `CHAT_MODEL=` is read as `''` by `--env-file`, which defeats the default — comment the line out instead. |
 
 No `VITE_`-prefixed variable exists anywhere in the app, and none should. Vite
@@ -155,16 +147,12 @@ would publish it to every browser that loads the app.
 
 ## Sync
 
-Firestore is the source of truth; IndexedDB is a per-device cache. Changes use
-last-write-wins on `updatedAt`. Deletes are **tombstones**, not hard removes, so
-other devices can still apply them. Local edits enqueue rows in the outbox;
-[`src/lib/syncEngine.ts`](src/lib/syncEngine.ts) pushes and pulls when you are
-signed in (on sign-in, when the tab becomes visible, when the device goes
-online, after backup import, and from **Sync now** in Settings). Recipe and chat
-photos upload to Cloud Storage in the background; other devices fetch blobs
-lazily into IndexedDB when a thumbnail is shown. If this device had recipes
-before the account was linked, Settings offers **Export library** then
-**Import backup** to migrate without wiping the cache.
+Firestore is the source of truth. The client pulls into memory on sign-in,
+when the tab becomes visible, when the device goes online, and from **Refresh**
+in Settings. Writes `POST /api/sync/push` immediately. Changes use
+last-write-wins on `updatedAt`. Deletes are **tombstones**, not hard removes.
+Photos upload to Cloud Storage; other devices fetch blobs for the current
+session when a thumbnail is shown.
 
 ## Deployment
 
@@ -203,7 +191,7 @@ last segment has no `.`. A missing file-like path 404s instead of returning
 HTML.
 
 The Vercel deployment at <https://cook-seven-mu.vercel.app> still exists and
-is untouched. It keeps its own copy of the env vars and its own IndexedDB.
+is untouched. Chat and import there return 401.
 
 ## How it's put together
 
@@ -220,16 +208,13 @@ Dockerfile                multi-stage image; CMD node scripts/server.ts
 src/App.tsx               flat routes, no layout wrapper
 src/screens/              Library, RecipeView, ImportScreen, Settings
 src/components/           ChatPanel.tsx, ErrorBoundary.tsx, and subcomponents
-src/lib/                  types, db, stores, syncEngine, small helpers
+src/lib/                  types, stores, in-memory library, small helpers
 ```
 
 The one rule to keep: **UI code goes through the stores in `src/lib/`
-(`recipeStore`, `chatStore`, `photoStore`) and never touches `db` directly.**
-[`src/lib/syncEngine.ts`](src/lib/syncEngine.ts) is the only other module that
-uses `db` and `fetch`. [`src/lib/db.ts`](src/lib/db.ts) explains why at the
-export. Screens read through `useLiveQuery`-backed hooks and write through store
-methods; the live queries re-fire on their own, so there is no cache
-invalidation anywhere and no global store.
+(`recipeStore`, `chatStore`, `photoStore`) and never calls `fetch` for library
+data.** [`src/lib/syncEngine.ts`](src/lib/syncEngine.ts) and
+[`src/lib/remote.ts`](src/lib/remote.ts) own pull/push/photo HTTP.
 
 Two details that are easy to trip over:
 
@@ -248,17 +233,17 @@ Two details that are easy to trip over:
 
 Your Google account id, email, and display name are stored server-side so sync
 knows who you are. Recipes, chat messages, cooking progress, and attached photos
-are stored in Google Cloud (Firestore and Cloud Storage in `europe-west1`), with
-a copy cached in IndexedDB on each device. There is no app password and no
+are stored in Google Cloud (Firestore and Cloud Storage in `europe-west1`).
+They are loaded into the browser while you are signed in. There is no app
+password and no
 Google refresh token. Chat and import send recipe text (and any photos you
 attach) to Gemini at request time; that traffic is not stored as a separate
 library on the server beyond what sync already keeps.
 
 Settings has **Export library** / **Import backup**, which write and read a
 single JSON file containing every recipe, message, and photo (photos as base64).
-Use export before migrating an old on-device library into your account, and
-occasionally as a personal backup. Importing merges into the existing library,
-overwriting entries that share an id.
+Use export as a personal backup or to move recipes between accounts. Importing
+merges into the account library, overwriting entries that share an id.
 
 To delete all cloud data for the account, email **chernyshov.k@gmail.com** from
 the signed-in address (there is no in-app delete-account button). Revoking

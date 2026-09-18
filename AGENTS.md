@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Guidance for agents working in this repo. The product is **Sous**; the npm
-package, Dexie database, backup marker, and directories are still named
+package, backup marker, and directories are still named
 `cook`.
 
 ## What this is
@@ -49,17 +49,18 @@ can sit until `npm run build` or a container start.
 ```
 UI (screens, components)
   → stores (recipeStore / chatStore / photoStore / useCookState)
-  → Dexie `cook`  and  syncEngine (the only modules that touch `db` and fetch)
+  → in-memory library + syncEngine/remote (the only modules that fetch)
 ```
 
-`syncEngine` is the only client module allowed to import both `db` and
-`fetch`. Screens must not `fetch`. Do not add fields to `Recipe`,
+`syncEngine` and `remote` are the only client modules allowed to `fetch` for
+library data. Screens must not `fetch`. Do not add fields to `Recipe`,
 `ChatMessage`, or `CookStateRow` — `compactRecipe` strips unknown keys, and
 `src/lib/recipeStore.test.ts` asserts the exact key set. That test is a
 schema lock; do not "fix" it by expanding the allow-list.
 
-Dexie database name is **`cook`**. Versions 1–3 `stores()` declarations are
-history. **Do not edit v1/v2/v3.** Add a new version if a table must change.
+The recipe library is **not** stored in IndexedDB. On boot, `discardLegacyCookDb`
+deletes the old Dexie database named `cook` if it is still present. Backups
+still use `app: 'cook'` and `cook-backup-` filenames.
 
 ## Auth
 
@@ -81,41 +82,23 @@ not 3001). Production: `https://sous.kyrylo.lol/api/auth/callback/google`.
 
 ## Sync
 
-Server is source of truth (Firestore `users/{uid}/…`). IndexedDB is a cache.
-LWW on client `updatedAt`; **tombstones**, never hard-deletes (a missing doc
-is invisible to another device's cursor). `uid` comes only from the session —
-ignore `uid`/`sub` in bodies.
+Server is source of truth (Firestore `users/{uid}/…`). The client holds the
+library **in memory** after a pull. LWW on `updatedAt`; **tombstones**, never
+hard-deletes (a missing doc is invisible to another device's cursor). `uid`
+comes only from the session — ignore `uid`/`sub` in bodies.
 
-Sync runs on sign-in, `online`, tab-visible (≥30s debounce), after backup
-import, and on demand. **No polling timer.**
+Pull runs on sign-in, `online`, tab-visible (≥30s debounce), and Refresh in
+Settings. Writes go through `POST /api/sync/push` immediately. **No polling
+timer. No outbox. No AccountGate.**
 
-Ownership (`cook.ownerUid`):
+`photoStore.add(blob)` keeps the bytes in memory until the parent recipe/chat
+write POSTs `/api/photos/:id`. `usePhotoUrl` fetches the blob for the session
+(not IndexedDB).
 
-| owner vs sub | rows | action |
-| --- | --- | --- |
-| equal | — | sync |
-| different | — | wipe cache, pull (no prompt) |
-| absent | empty | claim, pull |
-| absent | present | `needsMigration` — never wipe, never push |
-
-`AccountGate` is the export-first screen for that last row. Do not toast over
-it. `confirmMigration()` calls `runSyncInner` directly so it cannot join an
-unrelated in-flight `sync()`.
-
-`photoStore.add(blob)` is **local-only**. Parent writes enqueue `photo.put`.
-`sweepUnreferenced` is cache eviction and **must not enqueue** (that would
-delete server photos other devices still need). `getBlob` is a pure local
-read (used from `useLiveQuery`); do not fetch inside it.
-
-**Today** `splitDrainBatch` still skips `photo.put` (no `/api/photos` yet).
-That skip is superseded by `docs/plans/photos-and-deploy-docs.md`. Until that
-lands, pending photo rows and a non-zero Settings count are expected.
-
-Toasts (`SyncToast`): "Synced" only when a run actually pushed or applied a
-**material** change; failures show "Couldn't sync". No-op app-open syncs stay
-silent. `sync()` is deliberately **not** `async`; do not put
-`finally { inFlight = null }` inside the IIFE — that wedges sync after a
-signed-out run. See `docs/plans/sync-toast.md`.
+Toasts (`SyncToast`): refresh errors show "Couldn't refresh". No-op app-open
+pulls stay silent. `sync()` returns a Promise so Settings can await Refresh.
+Clear `inFlight` in `.then`/`.catch` on that Promise, not with `finally`
+inside the IIFE — that wedges sync after a signed-out run.
 
 ## Cloud and deploy
 
@@ -148,8 +131,7 @@ Docker is not installed locally; image builds run on Cloud Build.
 
 ## Do not touch
 
-- Dexie name `cook`, v1/v2/v3 `stores()`, `app: 'cook'` backups,
-  `cook-backup-` filenames
+- `app: 'cook'` backups, `cook-backup-` filenames
 - `vercel.json`, Vercel env, or `https://cook-seven-mu.vercel.app` (chat/import
   401 there is intended)
 - Dockerfile Node pin, multi-stage shape, or `CMD` (only `COPY server` was
@@ -170,9 +152,10 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | --- | --- |
 | `docs/plans/sous-oauth-db.md` | Parent. Identity + sync (1–17) done. |
 | `docs/plans/sync-toast.md` | Done (`b4b43b6`). |
-| `docs/plans/photos-and-deploy-docs.md` | **Next repo slice:** steps 18–19 (GCS photos, deploy.sh, README, legal rewrite). |
-| `docs/plans/deploy-and-end-state.md` | Steps 20–22 (production deploy, consent In production, two-device / iOS PWA check). Forbidden until 18–19 land. |
-| `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan (resync vs in-flight pull, Dexie lease ownership, malformed 200 push bodies). |
+| `docs/plans/photos-and-deploy-docs.md` | Done (GCS photos, deploy.sh, README, legal rewrite). |
+| `docs/plans/deploy-and-end-state.md` | Production cutover (`sous-00004-mpx`) and consent In production done. |
+| `docs/plans/server-backed-library.md` | **This slice:** drop IndexedDB; in-memory library over pull/push. |
+| `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
@@ -195,7 +178,6 @@ guard — run it against Cloud Run after a production deploy, not only locally.
 
 ## Product copy
 
-Settings and `/privacy` `/terms` currently still describe identity-first /
-device-only storage in places. Step 19 rewrites legal pages for Firestore +
-GCS **before** any public Branding URL is filled. Do not ship consent
-Homepage/Privacy/Terms URLs until that rewrite is in `dist/`.
+`/privacy` and `/terms` describe Firestore + GCS and that there is no
+on-device recipe database. Theme preference and `cook.session` stay in
+localStorage. Do not describe IndexedDB, offline edits, or a local library.
