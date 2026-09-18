@@ -41,7 +41,8 @@ into this slice.
 
 **Need from you:** accept the Web Speech API default (plus a privacy-page
 sentence about the *browser* speech service), or reject it in favour of a
-Sous-side Gemini STT slice.
+Sous-side Gemini STT slice. The expanded comparison and pause notes below
+are the rest of this question — they do not add a third option.
 
 ### BLOCKING 2 — Does a finished utterance send, or only fill the box?
 
@@ -67,6 +68,145 @@ explicit. A follow-up can add auto-send once dictation quality is trusted.
   control the whole time.
 - **Dedicated “voice mode” screen.** Plan is a mic control in the existing
   composer, not a full-screen overlay. Say so if you wanted a mode you enter.
+
+## How the two STT paths differ
+
+Same product either way: mic on the Ask composer, transcript becomes
+`draft` / `ChatMessage.content`, assistant output stays text. The split is
+**who transcribes, and what we control**.
+
+### A — Browser Web Speech API (recommended default)
+
+The page constructs `SpeechRecognition` / `webkitSpeechRecognition`, calls
+`start()` from the mic tap, and writes `onresult` transcripts into the
+textarea. Sous never sees the recording.
+
+| | |
+| --- | --- |
+| **Who hears the audio** | The browser’s speech engine. Chrome / Android Chrome send it to Google’s *browser* speech service (not `/api/chat`, not Gemini). Safari / iOS can do on-device recognition after a permission / language-pack grant. |
+| **What Sous stores** | The resulting text, as a normal chat message. |
+| **Live text while speaking** | Yes (`interimResults`). Words appear as you talk. |
+| **Latency** | Low. Partials stream in; no extra Sous round-trip. |
+| **New backend** | None. No `/api/stt`, no audio MIME handling, no size cap on our server. |
+| **Dependencies / GCP** | None. Does not add Cloud Speech-to-Text, extra OAuth scopes, or a second Gemini call. |
+| **Legal** | One privacy sentence: on some browsers the *browser* sends mic audio to its speech service. Sous does not upload the recording. |
+| **iOS PWA** | Partial and flaky (sessions die, first tap can miss, `continuous` is unreliable). Same class of risk as iOS standalone OAuth. |
+| **Firefox** | Treat as unsupported; hide the mic. |
+| **Cost to us** | $0. (Chrome’s speech service is on Google’s side, not billed on `GEMINI_API_KEY`.) |
+| **Code size** | Small: helper + ChatPanel mic. Fits this slice. |
+
+Kitchen noise can still produce a bad transcript; the user edits the box
+(if BLOCKING 2 stays fill-then-Send).
+
+### B — Sous-side STT (`MediaRecorder` → `POST /api/stt` → Gemini)
+
+The page records a clip with `getUserMedia` + `MediaRecorder`. On stop it
+POSTs the blob to a new session-authenticated route under `server/` (client
+helper next to `chatApi.ts`, not a screen `fetch`). The handler sends the
+audio to the **already configured** Gemini API as `inlineData` (same
+pattern as chat photos) and returns text. That fills `draft`.
+
+This is **not** Cloud Speech-to-Text and adds **no OAuth scopes**. It *does*
+send a new kind of payload (audio) through Sous to Gemini. AGENTS.md’s
+“no extra Google APIs” is about identity / new GCP products; Gemini audio
+would still be a product + legal change.
+
+| | |
+| --- | --- |
+| **Who hears the audio** | Sous (briefly, in the request) then Gemini. We would retain or discard the blob in the handler — default: transcribe and drop, never write audio to Firestore/GCS. |
+| **What Sous stores** | Text only, same as A, unless we later choose to keep clips (out of scope). |
+| **Live text while speaking** | No in v1. The box stays empty (or shows “Transcribing…”) until the clip is done *and* Gemini answers. Streaming STT is a later complication. |
+| **Latency** | Higher. Speak → stop → upload → Gemini → text. A 8s question plus model time, not word-by-word. |
+| **New backend** | Yes: `server/` route, auth, allowlist, body size limit, MIME (`audio/webm` vs iOS `audio/mp4`), errors. Duplicate the session check if a Vercel `api/` copy is required — chat already has that pain. |
+| **Legal** | Rewrite Third parties: Sous *does* receive microphone audio and passes it to Gemini. Stronger than A. `terms.html` may need a line too. |
+| **iOS PWA** | Recording via `getUserMedia` is the well-trodden path (we already attach photos from the camera). Reliability is better than Web Speech on iPhone; it is not free (autoplay / audio-session quirks, but we are not playing TTS). |
+| **Firefox** | Works (MediaRecorder is there). Mic would show. |
+| **Cost to us** | Gemini audio tokens per utterance, on top of the later chat turn. |
+| **Code size** | A second slice: server + client recorder + silence gate + privacy. Do not mix into the Web Speech steps. |
+
+Chat photos already go device → Sous → Gemini as `inlineData`. Path B is
+that pattern for sound. Path A never puts the sound on our server.
+
+### What does *not* change between A and B
+
+- Ask still lives only in `ChatPanel`.
+- Replies stay text. No TTS.
+- `ChatMessage` schema unchanged.
+- `/api/chat` framing (`0x1E`) unchanged.
+- Fill-vs-auto-send (BLOCKING 2) is independent: either path can fill the
+  box or call `send()` once we have a final string.
+
+Pick A unless you need (1) a pause length we own, (2) iPhone reliability
+as a day-one requirement, (3) Firefox, or (4) audio that only Gemini (via
+Sous) may see — not Chrome’s separate speech service.
+
+## End-of-utterance pause — can we tune it?
+
+Two different “done”s:
+
+1. **This spoken span is over** (stop listening / mark the transcript
+   final). That is the pause question.
+2. **Send the chat message.** That is BLOCKING 2 and is a tap (or
+   auto-send) *after* (1). Tuning the pause never sends by itself unless
+   we also choose auto-send.
+
+### Path A (Web Speech API): not really
+
+The spec exposes `lang`, `continuous`, `interimResults`, `maxAlternatives`.
+There is **no** `silenceTimeout` / `pauseMs` / endpointing attribute.
+`speechend` is a notification that the engine already decided speech
+stopped; it is not a knob.
+
+What the engine does:
+
+- `continuous: false` (this plan’s default): after a short, **browser-
+  defined** quiet period it finalizes one result and ends the session.
+  Chrome’s gap is often ~1s; iOS is jumpy and can cut mid-thought. We
+  cannot set 400ms vs 2s.
+- `continuous: true`: it keeps listening until `stop()` / `abort()` or
+  the engine dies. Pause length still is not ours.
+
+Workaround we *could* add later, still on path A: `continuous: true`,
+reset a timer on every `onresult`, and `stop()` after **N ms with no new
+transcript**. That N is ours (e.g. 1500ms). Limits:
+
+- It measures **no new words**, not true silence. A thinking pause with
+  no interim is “done”; extractor-hood noise that the engine turns into
+  junk words **resets** the timer.
+- iOS `continuous` is the flaky mode. A pause timer that depends on it
+  is a poor cooking-phone bet.
+- The engine may still `speechend` / `onend` on *its* schedule before N.
+
+So: **no first-class tunable pause on path A.** Tap-to-stop is the
+reliable “I’m done” (already in the plan). A software gap-timer is a
+best-effort extra, not a setting we should advertise.
+
+If BLOCKING 2 stays fill-then-Send, a too-short engine pause is annoying
+but recoverable: listening drops, text stays in the box, tap mic to
+continue, tap Send when ready. If BLOCKING 2 is auto-send, a too-short
+pause **sends an unfinished question** — much worse, and we cannot
+lengthen the engine’s VAD.
+
+### Path B (Sous recorder): yes
+
+We own the clip. After `getUserMedia`, an `AnalyserNode` (or a time
+since last loud RMS) can treat “level below threshold for **P ms**” as
+end-of-utterance, then stop `MediaRecorder` and POST. **P is our
+constant** (and could become a setting later). Tap-to-stop still wins
+if they finish sooner.
+
+Typical cooking default: P ≈ 1200–2000ms so “wait — is it 350 or 375?”
+does not cut the sentence. Threshold needs a floor so a fridge hum does
+not look like speech.
+
+Trade: no live captions while that pause is elapsing; transcription
+starts only after we decide the clip ended.
+
+### Plan implication
+
+v1 on path A: **do not promise a pause control.** Done = tap mic again
+(or the engine’s own `onend`). If a tunable pause is a requirement for
+shipping, that is a vote for path B, not a Web Speech tweak.
 
 ## Goal
 
@@ -320,9 +460,10 @@ Do not retitle other rows. Do not start photos/deploy/end-state work here.
 
 ## Deferred
 
-- **Sous-side STT (`/api/stt` + Gemini / Whisper)** if Web Speech is too
-  flaky on the user’s iPhone or privacy forbids Chromium’s speech service.
-  Needs a new plan, legal rewrite, and a client helper next to `chatApi.ts`.
+- **Sous-side STT (`/api/stt` + Gemini)** if Web Speech is too flaky on
+  the user’s iPhone, privacy forbids Chromium’s speech service, or we
+  need a pause length we own (see “End-of-utterance pause”). Needs a new
+  plan, legal rewrite, and a client helper next to `chatApi.ts`.
 - **iOS `getUserMedia` warmup** if the first tap after opening Ask never
   fires `onresult`.
 - **Auto-send** if BLOCKING 2 stays “fill”.
