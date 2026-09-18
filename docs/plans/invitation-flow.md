@@ -2,8 +2,13 @@
 
 Parent: `docs/plans/sous-oauth-db.md`. Successor slice to
 `docs/plans/photos-and-deploy-docs.md` (18–19, landed) and
-`docs/plans/deploy-and-end-state.md` (20–22, partly landed — see
-**Ordering** and Open Questions).
+`docs/plans/deploy-and-end-state.md` (steps 1–4 landed — the consent screen is
+**In production**; 5–7 still pending, see **Ordering**).
+
+Standing product briefing this plan must not contradict:
+`docs/handoff-invitation-only.md`. Every fail-closed rule it states is
+preserved here; step 12 extends that document to describe the new mechanism
+rather than letting it contradict the code.
 
 This plan turns the dead-end invitation-only 403 into a request flow, adds a
 Firestore-backed dynamic membership set on top of the `ALLOWED_EMAILS`
@@ -22,7 +27,9 @@ decline. It deploys straight to production at the end. There is no staging.
    gets their **own empty library** (`users/{sub}/…`). No shared or household
    library exists and none is invented.
 5. Removing a member takes effect within a bounded, documented 60 seconds —
-   not at 90-day cookie expiry.
+   not at 90-day cookie expiry. Removing an address from `ALLOWED_EMAILS`
+   still takes effect on the very next request, uncached, exactly as
+   `docs/handoff-invitation-only.md` requires.
 
 ## Why this is not trivial
 
@@ -75,6 +82,16 @@ decline. It deploys straight to production at the end. There is no staging.
 - `server/allowlist.ts` `isAllowed`: blank/whitespace raw ⇒ `false`;
   `emailVerified !== true` ⇒ `false`; missing/blank email ⇒ `false`; otherwise
   case-insensitive, trimmed set membership. Blank never means allow-all.
+- `docs/handoff-invitation-only.md` states those same four rules under
+  **Fail-closed rules (do not invert)**, plus: no second gate (`APP_PASSWORD`
+  was removed because a shared password keeps working after someone is dropped
+  from the list); the allowlist is re-parsed on **every** protected request,
+  not only at cookie issue; removing an email must take effect on the next
+  request, not at 90-day cookie expiry; and the ban on a client-supplied
+  `x-sous-user` header quoted verbatim in **D6**. It also contains two
+  statements that this feature makes actively wrong — see **D7** and step 12.
+  The file is **untracked in git** and was already lost once to a stash; step
+  12 commits it.
 - `server/session.ts` exports `signSession`/`verifySession` (`v: 1`),
   `signOauthTx`/`verifyOauthTx` (`v: 'oauth'`, 10-minute `exp`),
   `randomToken`, `readCookie`, the cookie builders, `readSession`,
@@ -141,16 +158,23 @@ Made while planning, with reasons:
 - **D4. Membership is keyed by Google `sub`, not email.** The 403 moment gives
   a verified `sub`; `sessionSub` in `api/` already returns `sub`; sync already
   keys `users/{uid}` on `sub`. `sub` is stable across a Google email change,
-  so **an approved member whose email changes keeps access** and their stored
-  `email`/`name` fields refresh on the next sign-in (display only). The cost:
+  so **an approved member whose email changes keeps access**. Their stored
+  `email`/`name` are display-only, and are refreshed on each member sign-in by
+  the explicit `touchMemberIdentity` write in **step 4** — on both
+  `members/{sub}` and `accessRequests/{sub}`, because `/admin` reads the former
+  for approved rows and the latter for pending and denied ones. Nothing
+  refreshes them implicitly: `upsertUser` only writes `users/{sub}`, so without
+  that call `/admin` would keep displaying a stale address indefinitely and the
+  owner could revoke the wrong person. The cost:
   the owner can only approve identities that have **already requested** —
   there is no "invite an email address that has never signed in". That is out
   of scope and recorded below.
 - **D5. Two new top-level Firestore collections**, not subcollections of
   `users/{uid}`: the admin screen has to *list* requests across identities, and
-  a subcollection would need a collection-group query. Each list is a single
-  `.get()` with `.limit(200)`, sorted and split in memory, so **no composite
-  index** is required. Nothing under `users/` changes.
+  a subcollection would need a collection-group query. Listing is **one query
+  per status** (`where('status','==',…).limit(201)`, no `orderBy`, sorted in
+  memory — see step 2), which the automatic single-field index covers, so **no
+  composite index** is required. Nothing under `users/` changes.
   - `accessRequests/{sub}`: `{ sub, email, name?, status:
     'pending'|'approved'|'denied', createdAt, updatedAt, requestCount,
     lastRequestAt, lastNotifiedAt?, decidedAt?, decidedBy? }`
@@ -159,27 +183,57 @@ Made while planning, with reasons:
   - `accessRequestMeta/notifications`: `{ day: 'YYYY-MM-DD', count }` — the
     only global inbox bound.
 - **D6. The `api/` landmine is resolved with an explicit in-process argument,
-  not an env flag and not a trusted header.** `api/chat.ts` and
-  `api/import.ts` gain an **optional second parameter**:
+  not an env flag and not a trusted header.**
+
+  `docs/handoff-invitation-only.md`, **Fail-closed rules (do not invert)**,
+  final paragraph, verbatim:
+
+  > The Vercel copies of `api/chat.ts` and `api/import.ts` re-check the
+  > allowlist inline. Do not replace that with a client-supplied `x-sous-user`
+  > header.
+
+  This design satisfies that rule on both of its clauses, and the distinction
+  is the single most important thing for a future reader not to misread:
+  1. **The Vercel copies keep re-checking the allowlist inline.** The inline
+     `sessionSub` in both files — HMAC, `v === 1`, `exp`, and
+     `isEmailAllowed(row.email, process.env.ALLOWED_EMAILS ?? '')` — is not
+     edited, not weakened, and not made conditional on any environment
+     variable. On Vercel it is still the only gate, and with no
+     `SESSION_SECRET` there it still returns `null` for every request.
+  2. **Nothing is client-supplied.** The bypass is a second *function
+     argument* passed in-process by `scripts/server.ts` after
+     `requireMember` has already returned `ok`. It is not a header, not a
+     cookie, not a query parameter, and not any other part of the HTTP
+     request — there is no wire representation for an HTTP client to set, so
+     there is nothing to strip or to forget to strip. A header-based design
+     is what the rule bans, and it is banned for the right reason: it would
+     have to be scrubbed on every entry path and would be one missed scrub
+     away from an open Gemini proxy.
+
+  Step 3's architecture-lock test asserts that the string `x-sous-user` never
+  appears in `api/` or `server/`, so the banned mechanism cannot be
+  reintroduced later under cover of this decision, and step 5's Verify probes
+  that exact header name against the live route.
+
+  `api/chat.ts` and `api/import.ts` gain an **optional second parameter**:
   `export async function POST(req: Request, ctx?: { authorizedSub?: string })`.
   When `typeof ctx?.authorizedSub === 'string' && ctx.authorizedSub !== ''`
   the handler skips its inline `sessionSub(req)`; otherwise it runs exactly as
   today. `scripts/server.ts` wraps both handlers so Cloud Run calls
   `chatPost(req, { authorizedSub: access.sub })` **after** `requireMember`
-  has passed. Why this shape:
-  - No HTTP client can synthesize a second function argument, so there is no
-    header or cookie to forge. A trusted-header design would have to be
-    stripped on every entry path and would be one missed strip away from an
-    open Gemini proxy.
+  has passed. Why this shape, beyond the two clauses above:
   - Vercel invokes the exported handler with the request only; if its runtime
     ever passes a second context object, `authorizedSub` is `undefined` and
     the inline `sessionSub` still runs. Fail-closed by default.
   - `@google-cloud/firestore` stays out of `api/` entirely — the membership
     read happens in `server/membership.ts`, which Vercel never loads.
-  - `api/sessionGate.test.ts` keeps **all seven existing vectors unchanged**
-    (they test `sessionSub`, which is untouched). One new assertion is added:
+  - `api/sessionGate.test.ts` keeps **every existing vector unchanged** (they
+    test `sessionSub`, which is untouched) — six per handler as the file
+    stands today, run against both exported `sessionSub`s — including
+    `'returns null when email was removed from allowlist'` — the vector that
+    is the handoff doc's rule in executable form. One new assertion is added:
     `sessionSub` is still the only gate the `api/` file applies to a bare
-    request. No vector is weakened.
+    request, header or no header. No vector is weakened.
   - The three-copies comment in both `api/` files is rewritten to say: this
     inline copy is the **Vercel** gate and must stay in sync with
     `server/session.ts` + `server/allowlist.ts`; on Cloud Run it is bypassed
@@ -192,11 +246,22 @@ Made while planning, with reasons:
   `isAllowed(email, true, allowedEmails())`. No new env var; it already has
   exactly the fail-closed semantics wanted, it is already in `deploy.sh` and
   `.env.example`, and today it holds exactly the owner. Consequence, to be
-  written into `.env.example`, `README.md` and `AGENTS.md` in capitals:
+  written into `.env.example`, `README.md`, `AGENTS.md` and
+  `docs/handoff-invitation-only.md` in capitals:
   **anyone added to `ALLOWED_EMAILS` becomes an admin** — approve ordinary
   people through `/admin`, never by editing that variable. If that is ever
   unwanted, the revert is a separate `ADMIN_EMAILS` var plus two lines in
   `deploy.sh`; not done now to avoid a fourth deploy key.
+
+  This makes two existing statements in `docs/handoff-invitation-only.md`
+  actively wrong rather than merely incomplete, which is why step 12 is not
+  optional. Under **Why (product)**: "Adding a second allowlisted email is one
+  env value and one redeploy; that person gets **their own empty library**."
+  And the whole **If you need a second person** section: "Set `ALLOWED_EMAILS`
+  to a comma-separated list, redeploy…". A future agent following those
+  instructions literally would hand an ordinary member administrative power
+  over the member list, and would do it by redeploy when no redeploy is needed
+  any more. Both passages are rewritten in step 12 to point at `/admin`.
 - **D8. The Request access artefact is a new signed token family**,
   `signAccessRequestTx` / `verifyAccessRequestTx` in `server/session.ts`,
   payload `{ v: 'accessreq', sub, email, name?, iat, exp }`, `exp = iat + 10
@@ -223,20 +288,54 @@ Made while planning, with reasons:
   preflight. `POST /api/access-request` needs no cookie at all — its authority
   is the signed token — so a cross-site submission could at most create the
   *token holder's own* request. No hidden CSRF token is added anywhere.
-- **D11. Membership cache: 60-second in-process TTL, positive and negative,
+- **D11. Membership cache: 60-second in-process TTL, positive only,
   keyed by `sub`.** Rationale: a first library load on a new device issues one
   `GET /api/photos/:id` per photo, and an uncached design would add one
   Firestore document read to each. The **owner never reads Firestore at all**
   (the `ALLOWED_EMAILS` check short-circuits first), so this cost and this
-  staleness only exist for members. Explicit trade-off: **revocation takes
+  staleness only exist for members.
+
+  The cache is therefore **tier-specific, and the older tier keeps its exact
+  guarantee**. `docs/handoff-invitation-only.md` requires that the allowlist be
+  "re-parsed on **every** protected request … not only at cookie issue" and
+  that "removing an email must take effect on the next request, not at 90-day
+  cookie expiry". That stays literally true: `isAllowed(email, true,
+  allowedEmails())` is re-evaluated from `process.env` on every protected
+  request with **no caching whatsoever**, so removing an address from
+  `ALLOWED_EMAILS` still takes effect on the very next request. Only the
+  **new** Firestore tier — which that document does not describe, because it
+  does not exist yet — carries a bound. Explicit trade-off: **revocation takes
   effect within at most 60 seconds per running container instance** (Cloud Run
   is `min-instances=0 --max-instances=4`, so up to four caches), instead of
   AGENTS.md's "next request". Revocation path: the owner presses Remove access
   → Firestore write is immediate → the serving instance drops its own cache
   entry → other instances expire within 60 s. There is no cross-instance
-  flush and none is added (no pub/sub, no polling). Only **definite** outcomes
-  are cached; a Firestore error caches nothing, so a transient blip cannot
-  lock a member out for a minute.
+  flush and none is added (no pub/sub, no polling). Setting the TTL to 0
+  restores "next request" exactly, at one Firestore read per protected request
+  per member; the constant is one line so that choice stays reversible.
+
+  **Only an `active` member is ever cached. Nothing else is, in any form.**
+  This is the asymmetry that makes the bound acceptable, and it is not
+  negotiable:
+  - absent (no `members/{sub}` doc), `status` not `active`, and a document
+    that fails validation (**step 3**) are **never** cached;
+  - a Firestore throw is **never** cached;
+  - so a **newly approved** requester is admitted on the **very next
+    request** — there is no negative entry to wait out, and the plan's "sign
+    in again once approved" copy (**D14**) is therefore literally true;
+  - and a transient Firestore blip can never lock a member out for a minute.
+
+  A negative cache would buy one Firestore read per denied request while
+  making approval feel broken for up to a minute, and the denied population
+  is exactly one document read — not worth it. Revocation, which *is* bounded
+  at 60 s, is the owner's own deliberate action and the `/admin` copy says so;
+  approval is the path a stranger is waiting on. Step 3 unit-tests both
+  directions: approval visible on the next lookup, revocation visible after
+  the TTL.
+
+  Nothing here is a second gate in the `APP_PASSWORD` sense the handoff doc
+  warns against: membership is per-identity and revocable, there is no shared
+  secret, and the step-6 request token grants no access at all (**D8**).
 - **D12. Firestore read throws ⇒ deny, with 503 and never a 401.** Fail closed
   means no data is served and Gemini is not called; it must not mean "you are
   signed out", because a 401 makes the client wipe its cached session and
@@ -263,8 +362,20 @@ Made while planning, with reasons:
   Resend account and makes a Resend outage non-fatal. The result page never
   claims an email was sent.
 - **D16. Dedupe, throttle and cap.** Per identity (`sub`): one document,
-  upserted. A second press within **24 h** of the last notification records
-  `lastRequestAt` and sends **no** email. After `requestCount >= 5` no further
+  upserted. Three independent limits, because they stop three different
+  things — inbox spam, **write** spam, and a global blast radius:
+  - a **60-second write throttle** per identity (`shouldPersistRequest`, step
+    2): a replayed token inside that window costs one read and **no write and
+    no transaction** at all. This is what stops a single valid 10-minute token
+    from being replayed into unbounded Firestore writes;
+  - the 24-hour renotify window and the `requestCount >= 5` ceiling below,
+    which bound the **email**;
+  - the daily global cap below, which is read **only** when a notification is
+    already otherwise due, so quiet and throttled presses never contend on that
+    one shared document.
+
+  A second press within **24 h** of the last notification records
+  `lastRequestAt` (if the write throttle allows) and sends **no** email. After `requestCount >= 5` no further
   notification is ever sent for that identity. `status: 'denied'` never
   notifies again and shows the same neutral copy as a fresh request (no
   "you were rejected" disclosure, no inbox vector). Globally,
@@ -274,22 +385,29 @@ Made while planning, with reasons:
 
 ## Ordering against `deploy-and-end-state.md`
 
-**Independent, not blocked — with one verification caveat.** All repo work and
-all local verification in this plan work regardless of the consent screen's
-publication state. The caveat is step 13: to exercise the 403 by hand you need
-a **second Google account that can complete consent**. If the consent screen is
-**In production**, any Google account can; if it is still **Testing**, add that
-second account to the OAuth client's **test users** list (a console change, no
-redeploy, reversible) — do not work around it in code.
+**Independent, not blocked.** `docs/plans/deploy-and-end-state.md` Status shows
+steps **1–4 ticked**: the rollback target is recorded, the Phase 2 revision is
+deployed, the live probes and streaming oracle passed, and the Branding URLs
+are filled with the Audience **In production**.
+`docs/handoff-invitation-only.md` agrees ("Google Auth Platform Audience is
+**In production**") and adds that a non-listed account completing consent and
+landing on the 403 is "the intended shape of **published but private**".
 
-Where it sits: run this plan **after** `deploy-and-end-state` steps 5–7
-(two-device sync, installed iOS PWA sign-in, migration gate + Deploy record).
-Those steps validate the single-account sync path that this plan then widens to
-more people, and a production deploy in the middle of them muddies their
-results. That is a sequencing preference, not a technical dependency.
+Consequence for this plan: **any** second Google account can complete consent
+and reach the 403, so step 14 needs no OAuth console change and nobody has to
+be added to a test-users list. The 403 that step 7 replaces is already live in
+production today.
 
-See Open Questions: that plan file is **not in the working tree** and the only
-copy in git shows its steps 1–4 already ticked, which contradicts the brief.
+Still pending in that cutover, and unchanged by this plan: step 5 (desktop +
+second-device sync), step 6 (installed iOS PWA sign-in), step 7 (migration
+gate, Vercel leftover, Deploy record).
+
+Where this plan sits: run it **after** those three. They validate the
+single-account sync path that this plan then widens to more people, and a
+production deploy in the middle of them muddies their results. That is a
+sequencing preference, not a technical dependency — no step below depends on
+any of them. If step 6 observes the iOS standalone cookie-jar failure, that
+stops *that* plan for a GIS `id_token` plan, not this one.
 
 ## Files to change
 
@@ -297,10 +415,10 @@ copy in git shows its steps 1–4 already ticked, which contradicts the brief.
 | --- | --- |
 | `server/env.ts` | New getters: `resendApiKey()` (`null` when unset), `mailFrom()`, `ownerNotifyEmail()`. |
 | `server/mail.ts` | **New.** `sendMail({subject, text})` → Resend `POST https://api.resend.com/emails`, bearer token, 10 s `AbortSignal.timeout`, returns `boolean`. Logs status codes only, never the key or the body. |
-| `server/members.ts` | **New.** Firestore accessors for `members/`, `accessRequests/`, `accessRequestMeta/` + the pure decisions `nextRequestState`, `shouldNotify`, `nextNotificationCounter`, `decisionTransition`. |
-| `server/members.test.ts` | **New.** Pure only: request state machine, 24 h renotify, `requestCount` cap, denied-never-notifies, daily counter rollover, decision transitions. |
-| `server/membership.ts` | **New.** Pure `accessDecision({email, emailVerified, allowedRaw, member})` → `'owner'|'member'|'denied'`; async `requireMember(req)`, `requireOwner(req)`, `withMembership(handler)`; the 60 s TTL cache with `clearMembershipCache(sub)`. |
-| `server/membership.test.ts` | **New.** Pure `accessDecision` table (blank list, unverified email, blank email, revoked member, owner-when-Firestore-absent) + cache TTL with an injected clock + the architecture-lock assertions. |
+| `server/members.ts` | **New.** Firestore accessors for `members/`, `accessRequests/`, `accessRequestMeta/` (`readMember` via `parseMemberDoc`, `recordAccessRequest`, `listAccessRequests` as three per-status queries, `applyDecision`, `touchMemberIdentity`) + the pure decisions `nextRequestState`, `shouldPersistRequest`, `nextNotificationCounter`, `decisionTransition`, `isValidSubParam`. |
+| `server/members.test.ts` | **New.** Pure only: request state machine, 24 h renotify, `requestCount` cap, denied-never-notifies, the 60 s write throttle, `nextRequestState` idempotence, daily counter rollover, decision transitions. |
+| `server/membership.ts` | **New.** Pure `parseMemberDoc(raw, sub)` and `accessDecision({email, emailVerified, allowedRaw, member})` → `'owner'|'member'|'denied'`; async `accessAllows(identity)` (never throws — for the callback), `requireMember(req)`, `requireOwner(req)`, `withMembership(handler)`; the **positive-only** 60 s TTL cache with `clearMembershipCache(sub)`; the shared 401/503 response helpers and `readBoundedText(req, limit)`. |
+| `server/membership.test.ts` | **New.** Pure `accessDecision` table (blank list, unverified email, blank email, revoked member, owner-when-Firestore-absent), the `parseMemberDoc` rejection table, cache TTL with an injected clock in **both** directions (approval visible immediately, revocation after the TTL) + the six architecture-lock assertions over production sources only. |
 | `server/session.ts` | Add `signAccessRequestTx`/`verifyAccessRequestTx` (`v:'accessreq'`, 10 min). Remove the `isAllowed` call and the `allowedEmails` import from `readSession` (it becomes cryptographic-only, with a doc comment saying so). **Delete `sessionFrom`.** |
 | `server/session.test.ts` | Replace the "unusable when allowlist misses" case with an `ok`-regardless-of-email case plus a comment pointing at `requireMember`; drop the `sessionFrom` import; add accessreq round-trip, expiry, and cross-family rejection. |
 | `server/auth.ts` | Callback: `isAllowed` → `await accessAllows(...)`; 503 page on a Firestore error; 403 page gains the request form. `authSession`: membership re-check (401/503/clear-cookie) and `isOwner` in the body. |
@@ -321,6 +439,7 @@ copy in git shows its steps 1–4 already ticked, which contradicts the brief.
 | `scripts/deploy.sh` | `resolve_optional_secret RESEND_API_KEY`; `MAIL_FROM` + `OWNER_NOTIFY_EMAIL` into the `fixed` map; all three into the `keys` array with `RESEND_API_KEY` marked optional. |
 | `README.md` | Invitation flow, `/admin`, env table, the admin warning. |
 | `AGENTS.md` | Auth section: dynamic membership, `sub` keying, the 60 s revocation bound, 401-vs-503 rule, the `api/` argument bypass, new env vars, plan table row. |
+| `docs/handoff-invitation-only.md` | Extend to the two-tier model; rewrite the two passages **D7** contradicts; repoint the code citations. Currently **untracked** — commit it. |
 | `public/privacy.html` | Access-request data, Resend as subprocessor, retention and deletion of pending/denied requests; rewrite the "Access" section. |
 | `public/terms.html` | "What Sous is" — invitation **by request and approval**. |
 | `docs/plans/invitation-flow.md` | Tick Status as steps land. |
@@ -338,24 +457,26 @@ env, the Dockerfile, `package.json` (no new dependency, `name` unchanged).
 Read bottom-to-top. Each line is blocked by everything under it.
 
 ```
-14. Production deploy + live verification            [operational]
-    └─ 13. Local end-to-end by hand, two accounts
-        └─ 12. privacy.html / terms.html             [ui]
-            └─ 11. .env.example, deploy.sh, README, AGENTS.md
-                └─ 10. /admin screen + Settings entry [ui]
-                    └─ 9. src/lib/adminApi.ts + isOwner
-                        └─ 8. Admin API (owner-only)
-                            └─ 7. 403 + result page markup   [ui]
-                                └─ 6. Token + POST /api/access-request
-                                    └─ 5. Chat/import gate (the landmine)
-                                        └─ 4. Cut protected routes to the gate
-                                            └─ 3. server/membership.ts
-                                                └─ 2. server/members.ts
-                                                    └─ 1. server/mail.ts + env
+15. Production deploy + live verification            [operational]
+    └─ 14. Local end-to-end by hand, two accounts
+        └─ 13. privacy.html / terms.html             [ui]
+            └─ 12. handoff-invitation-only.md
+                └─ 11. .env.example, deploy.sh, README, AGENTS.md
+                    └─ 10. /admin screen + Settings entry [ui]
+                        └─ 9. src/lib/adminApi.ts + isOwner
+                            └─ 8. Admin API (owner-only)
+                                └─ 7. 403 + result page markup   [ui]
+                                    └─ 6. Token + POST /api/access-request
+                                        └─ 5. Chat/import gate (the landmine)
+                                            └─ 4. Cut routes to the gate
+                                                └─ 3. server/membership.ts
+                                                    └─ 2. server/members.ts
+                                                        └─ 1. mail.ts + env
 ```
 
-Steps 7, 10 and 12 are `[ui]`. Everything else is `[core]`. Step 14 is
-operational `[core]`.
+Steps 7, 10 and 13 are `[ui]`. Everything else is `[core]`. Step 15 is
+operational `[core]`. Steps 11–13 are all documentation and copy, and all
+three land **before** the hand verification and the deploy.
 
 ## Assumptions
 
@@ -434,13 +555,27 @@ inside this step. A hang means the timeout is missing.
 Pure, exported, unit-tested (no Firestore, no clock of its own — `now` is a
 parameter):
 
-- `nextRequestState(existing, identity, now)` → `{ doc, notify: boolean }`
-  implementing **D16**: absent ⇒ create `pending` + notify; `pending` and
-  `now - lastNotifiedAt >= 24 h` and `requestCount < 5` ⇒ bump + notify;
-  `pending` otherwise ⇒ record `lastRequestAt`, no notify; `approved` ⇒ record
-  only, no notify; `denied` ⇒ record only, **never** notify.
+- `nextRequestState(existing, identity, now)` →
+  `{ write: boolean; doc; notify: boolean }` implementing **D16**: absent ⇒
+  create `pending`, `write`, notify; `pending` and
+  `now - lastNotifiedAt >= 24 h` and `requestCount < 5` ⇒ bump, `write`,
+  notify; `pending` otherwise ⇒ `write` only if the quiet-window rule below
+  allows it, never notify; `approved` ⇒ no write, no notify; `denied` ⇒ no
+  write, **never** notify.
+- `shouldPersistRequest(existing, now)` → `boolean` — **the write throttle,
+  and the fix for token replay.** `false` when a document already exists and
+  `now - lastRequestAt < 60_000`. A valid 10-minute token can otherwise be
+  replayed indefinitely, and while it grants no access (**D8**) each replay
+  would previously have cost a Firestore **transaction** with two document
+  writes: an unauthenticated write-amplification DoS against the owner's own
+  quota and bill, from a single stranger holding one token. With the throttle,
+  a replay flood costs **one read** and returns the same page. `requestCount`
+  therefore counts *throttled* presses, not raw submissions, which is also the
+  number the owner actually wants to see.
 - `nextNotificationCounter(counter, now)` → `{ counter, allowed: boolean }` —
-  UTC-day rollover, cap 20.
+  UTC-day rollover, cap 20. **Consulted only when `notify` is already true**
+  (see `recordAccessRequest`), so a quiet or throttled press never reads or
+  writes it.
 - `decisionTransition(existing, action, ownerSub, now)` for
   `'approve'|'deny'|'revoke'` → the `members/{sub}` and `accessRequests/{sub}`
   bodies, or a refusal reason (`'unknown-request'`, `'self'`).
@@ -449,25 +584,71 @@ parameter):
 Async accessors on `getStoreFirestore()` from `server/store.ts` (which is not
 modified):
 
-- `readMember(sub)` → `{ status } | null`; throws on a Firestore error.
-- `recordAccessRequest(identity, now)` → one `runTransaction` reading
-  `accessRequests/{sub}` **and** `accessRequestMeta/notifications`, applying
-  both pure decisions, writing both docs, and returning
+- `readMember(sub)` → `MemberRecord | null`, via `parseMemberDoc(snap.data(),
+  sub)` from step 3 — a malformed document returns `null`, never a partially
+  trusted object. Throws only on a genuine Firestore error, which callers map
+  to `unknown`/503.
+- `recordAccessRequest(identity, now)` →
   `{ outcome: 'recorded'|'already-pending'|'already-approved'|'recorded-quiet',
-  notify: boolean }`.
-- `listAccessRequests()` → `accessRequests` `.limit(200)` and `members`
-  `.limit(200)`, one `.get()` each, merged and split into pending / approved /
-  denied in memory, each sorted by `createdAt` descending, plus
-  `truncated: boolean`.
+  notify: boolean }`, in **two phases**, so the common abuse case never opens a
+  transaction and never touches shared state:
+  1. A plain `.get()` of `accessRequests/{sub}`. If `shouldPersistRequest` is
+     `false`, return the matching quiet outcome **immediately** — no
+     transaction, no write, and crucially **no read of
+     `accessRequestMeta/notifications`**. That document is global to the whole
+     app, so touching it on every replay would serialize unrelated requesters
+     against one another and burn transaction retries on contention; a replay
+     flood must not be able to slow down or fail a *different* person's first
+     genuine request.
+  2. Otherwise one `runTransaction` that re-reads `accessRequests/{sub}`,
+     applies `nextRequestState`, and reads and writes
+     `accessRequestMeta/notifications` **only if that result has
+     `notify: true`**. The re-read inside the transaction is what makes two
+     simultaneous presses idempotent; the throttle in phase 1 is only an
+     optimisation and is never the correctness argument.
+- `listAccessRequests()` → **three** `accessRequests` queries, one per status:
+  `.where('status','==', s).limit(201)` for `'pending'`, `'approved'` and
+  `'denied'`, with **no `orderBy`** (a `where` on one field plus an `orderBy`
+  on another is exactly what would demand a composite index), each sorted by
+  `createdAt` descending **in memory**, each truncated to 200 with its own
+  `truncated` flag, returned as `{ pending, approved, denied, truncated }`
+  where `truncated` is the OR of the three.
+
+  Why not one `.limit(200)` over the whole collection split in memory: that
+  cannot compute `truncated` (200 returned rows are indistinguishable from
+  exactly 200 existing rows — hence fetching **201** and reporting on the
+  overflow), and worse, without an ordering guarantee a growing pile of old
+  `denied` records can crowd every actionable `pending` request out of the
+  window. The owner would then see an empty Pending list while people wait,
+  with nothing on screen indicating anything was dropped. Per-status queries
+  make each list independently complete to 200, and the automatic single-field
+  index on `status` covers them with no index to create. If Pending ever
+  genuinely exceeds 200, that is a product problem, not a paging problem, and
+  the `truncated` flag surfaces it in the UI (**step 10**).
 - `applyDecision(sub, action, ownerSub, now)` → one `runTransaction`.
 
 No `where` + `orderBy` on different fields anywhere, so no composite index.
 
 **Verify:** `npm test` — the new `server/members.test.ts` covers every branch
-of all four pure functions, including a second press at 23 h 59 m (no notify)
-and at 24 h 01 m (notify), `requestCount = 5` (no notify ever again), a denied
+of all five pure functions: a second press at 23 h 59 m (no notify) and at
+24 h 01 m (notify), `requestCount = 5` (no notify ever again), a denied
 identity pressing twice, the counter rolling over at UTC midnight, and
-`decisionTransition` refusing `ownerSub === sub`. `npm run build` clean.
+`decisionTransition` refusing `ownerSub === sub`. Plus, for the replay fix:
+
+- `shouldPersistRequest` ⇒ `false` for an existing document at
+  `lastRequestAt + 59_999` and `true` at `+ 60_000`, and `true` when
+  `existing` is `null`;
+- `nextRequestState` is **idempotent** for a fixed `existing` and `now` —
+  called twice it returns the same `doc` and the same `notify`, which is the
+  property the in-transaction re-read relies on;
+- `nextRequestState` returns `notify: false` for every `approved` and every
+  `denied` input, so the counter is never consulted on those paths;
+- an `approved` or `denied` existing document yields `write: false`.
+
+True concurrency and contention cannot be unit-tested here (there is no
+Firestore emulator and this plan does not add one), so the replay behaviour is
+additionally verified by hand in step 6 with a rapid-fire loop against the real
+collection. `npm run build` clean.
 
 **Failure handling:** if Firestore returns `FAILED_PRECONDITION` asking for an
 index, a query used `where` + `orderBy` on different fields — drop the
@@ -478,17 +659,48 @@ index, a query used `where` + `orderBy` on different fields — drop the
 Pure:
 
 ```
+export interface MemberRecord {
+  sub: string;
+  status: 'active' | 'revoked';
+  approvedAt: number;
+  approvedBy: string;
+}
+
+parseMemberDoc(raw: unknown, expectedSub: string): MemberRecord | null
+
 accessDecision(input: {
   email: string; emailVerified: boolean;
-  allowedRaw: string; member: { status: string } | null;
+  allowedRaw: string; member: MemberRecord | null;
 }): 'owner' | 'member' | 'denied'
 ```
 
-Order: `isAllowed(email, emailVerified, allowedRaw)` ⇒ `'owner'`; else
-`emailVerified !== true` ⇒ `'denied'`; else `member?.status === 'active'` ⇒
-`'member'`; else `'denied'`. The owner branch is first and deliberately does
-**not** consult `member`, which is what keeps the owner working when Firestore
-is down (**D12**).
+`parseMemberDoc` is the **only** way a Firestore document becomes a
+`MemberRecord`, and it is strict — a partially written, hand-edited or
+half-migrated document must not authorize anybody. It returns `null` unless
+**every** one of these holds:
+
+- `raw` is a non-null object;
+- `raw.sub` is a non-empty string **and `=== expectedSub`** (a document whose
+  body disagrees with its own document id is corrupt, not a member);
+- `raw.status` is exactly `'active'` or exactly `'revoked'` — no other string,
+  no missing field, no truthiness test;
+- `raw.approvedAt` is a finite number `> 0`;
+- `raw.approvedBy` is a non-empty string.
+
+A `null` from `parseMemberDoc` is treated exactly like an absent document:
+denied, and never cached (**D11**). It is never treated as `unknown`/503 —
+a malformed document is a definite "not a member", not an outage. `readMember`
+logs the `sub` and the reason once when it rejects a document, so a corrupt
+record is diagnosable without reading the whole collection.
+
+Order in `accessDecision`: `isAllowed(email, emailVerified, allowedRaw)` ⇒
+`'owner'`; else `emailVerified !== true` ⇒ `'denied'`; else
+`member !== null && member.status === 'active'` ⇒ `'member'`; else `'denied'`.
+Note what this is **not**: there is no `member?.status === 'active'` on a raw
+document anywhere in the codebase, because `{ status: 'active' }` with no
+`sub`, no `approvedAt` and no `approvedBy` would satisfy that test. The owner
+branch is first and deliberately does **not** consult `member`, which is what
+keeps the owner working when Firestore is down (**D12**).
 
 Async:
 
@@ -511,31 +723,91 @@ Async:
   `membershipUnavailable()` (503 JSON `{error:'Membership unavailable'}`),
   both `Cache-Control: no-store`.
 
-Cache: module-level `Map<string, { active: boolean; at: number }>`, TTL
-60_000 ms, `map.clear()` when `size > 500`. The TTL is exercised through an
+Cache: module-level `Map<string, number>` — `sub` → the ms timestamp at which
+an **`active`** membership was confirmed. There is deliberately no boolean and
+no room for one: **only active members are stored** (**D11**), so a cache miss
+is indistinguishable from "never cached" and always costs one Firestore read.
+TTL 60_000 ms; `map.clear()` when `size > 500`. The TTL is exercised through an
 injected `now` parameter on the internal lookup so it is testable without
 timers.
+
+Also exported, for the OAuth callback, which has no session cookie yet:
+
+```
+accessAllows(identity: {
+  sub: string; email: string; emailVerified: boolean;
+}): Promise<'owner' | 'member' | 'denied' | 'unknown'>
+```
+
+This is the function `server/auth.ts` calls in step 4, and it is the same
+decision as `requireMember` with the identity taken from the verified id-token
+instead of from a cookie. It **never throws**: a Firestore failure resolves to
+`'unknown'`. That is not a stylistic choice — `authCallbackGoogle` wraps its
+whole body in a `try { … } catch { return respond(400, 'Sign-in failed') }`,
+so a thrown Firestore error would surface as a **400 "Sign-in failed"** and the
+503 branch in **D12** would be dead code. Returning a discriminated value keeps
+the outage visible. `'owner'` short-circuits before any Firestore read, so the
+owner can still sign in while Firestore is down; a positive `'member'`
+populates the same cache `requireMember` reads.
 
 `server/membership.test.ts` also carries the **architecture lock**, in the
 spirit of `src/lib/recipeStore.test.ts`: read the sources under
 `server/` and `scripts/server.ts` with `node:fs` (resolved from
 `import.meta.url`, not `process.cwd()`) and assert
 
+**The scan covers production sources only** — every `.ts` under `server/`,
+`api/` and `scripts/` **except** files matching `*.test.ts`. This exclusion is
+load-bearing, not tidiness: the test files necessarily *contain* the very
+strings being banned (this file asserts on `x-sous-user`, and
+`api/sessionGate.test.ts` probes that exact header), so a naive repo-wide scan
+can never pass. Assert, over production sources:
+
 1. `readSession` is referenced only in `server/session.ts`,
    `server/membership.ts` and `server/auth.ts`;
-2. the identifier `sessionFrom` appears nowhere in the repo's `server/` or
-   `scripts/`;
-3. `api/chat.ts` and `api/import.ts` contain no `@google-cloud` substring.
+2. the identifier `sessionFrom` appears nowhere;
+3. `api/chat.ts` and `api/import.ts` contain no `@google-cloud` substring;
+4. the string `x-sous-user` appears nowhere;
+5. `scripts/server.ts` contains both `withMembership(chatPost)` and
+   `withMembership(importPost)`, and contains **no** bare `handler: chatPost`
+   or `handler: importPost` registration;
+6. the identifier `authorizedSub` appears in exactly three production files —
+   `api/chat.ts`, `api/import.ts` and `server/membership.ts` — and nowhere
+   else.
 
 Assertion 3 is the guard for "no Firestore in a Vercel function bundle".
+Assertion 4 is the guard for the handoff doc's banned header (**D6**): the
+argument bypass must never drift into a header bypass, and a future agent who
+reaches for one trips a test that names the rule. Assertions **5 and 6** are
+the guard for the gate itself, and they are the ones that matter most: the
+whole design rests on `authorizedSub` being reachable *only* from
+`withMembership`, so a future route registered against the bare handler (which
+would still 401 correctly on Vercel's inline check, and so would look fine in
+casual testing) or a new caller that mints its own `authorizedSub` is caught by
+a failing test rather than by a member reporting a 401 — or worse, by nobody.
 
-**Verify:** `npm test` — the `accessDecision` table covers blank
-`ALLOWED_EMAILS` (⇒ `denied`, never allow-all), whitespace-only
-`ALLOWED_EMAILS`, `emailVerified: false` with an active member (⇒ `denied`),
-blank email, `member.status: 'revoked'`, `member: null` for a non-owner, and
-owner-with-`member: null`. Cache: two lookups inside 60 s hit once; at 60 001
-ms it re-reads; an error path leaves the map empty. The three lock assertions
-pass. `npm run build` clean.
+**Verify:** `npm test` — and the table must include every one of these:
+
+- `accessDecision`: blank `ALLOWED_EMAILS` (⇒ `denied`, never allow-all),
+  whitespace-only `ALLOWED_EMAILS`, `emailVerified: false` with an active
+  member (⇒ `denied`), blank email, `status: 'revoked'`, `member: null` for a
+  non-owner, and owner-with-`member: null`.
+- `parseMemberDoc` ⇒ `null` for: `null`, a string, `{}`,
+  `{ status: 'active' }` (**the malformed-authorization case — this must
+  deny**), `{ sub: 'other', status: 'active', approvedAt: 1, approvedBy: 'x' }`
+  (id mismatch), `status: 'ACTIVE'`, `status: 'pending'`, `approvedAt: '1'`,
+  `approvedAt: 0`, `approvedAt: NaN`, and `approvedBy: ''`. It returns a
+  record only for a fully-formed document, and that record then decides
+  `'member'`.
+- Cache, through the injected clock: two lookups inside 60 s read Firestore
+  **once**; at 60 001 ms it re-reads; a revoked member is still admitted until
+  the TTL expires and denied after it (the documented bound); and — the
+  **approval** direction — a lookup that found no document, then an approval,
+  then a second lookup **re-reads and returns `member`** with no wait, proving
+  nothing negative was cached. A Firestore throw leaves the map empty and
+  yields `unknown`, and a following successful lookup is not poisoned.
+- All **six** lock assertions pass, scanning production sources only.
+
+`npm run build` clean.
 
 **Failure handling:** if the lock test fails on assertion 1 after a later step,
 that step added a route that skipped the gate — fix the route, do not widen the
@@ -555,13 +827,32 @@ Then, in one pass so nothing is left unguarded:
   existing 401 body, `unknown` ⇒ 503. `uid` still comes only from the session.
 - `server/photos.ts` `photosGet`, `photosPost`: same, keeping the existing
   `photoBucket() === null` 503 ahead of it.
-- `server/auth.ts` `authCallbackGoogle`: replace `isAllowed(...)` with the
-  owner-or-member check. Owner ⇒ unchanged path. Member ⇒ `upsertUser` + cookie
-  exactly as today. Denied ⇒ the 403 page (markup in step 7). Firestore threw
-  ⇒ a **503** page, not the 403 (**D12**). `upsertUser` must still run only
-  **after** a positive decision, so a refused identity never creates
-  `users/{sub}`. Every branch keeps going through `respond()` so `sous_oauth`
-  is always cleared and `Response.redirect()` is never used.
+- `server/auth.ts` `authCallbackGoogle`: replace `isAllowed(...)` with
+  `await accessAllows({ sub, email, emailVerified: payload.email_verified })`
+  from step 3, switching on its four outcomes. `'owner'` ⇒ unchanged path.
+  `'member'` ⇒ `upsertUser` + cookie exactly as today. `'denied'` ⇒ the 403
+  page (markup in step 7). `'unknown'` ⇒ a **503** page, not the 403
+  (**D12**) — a member must never be told they are uninvited because a read
+  failed. Because `accessAllows` returns `'unknown'` instead of throwing, this
+  branch is reachable at all: the surrounding
+  `try { … } catch { respond(400, 'Sign-in failed') }` would otherwise
+  swallow a Firestore error into a generic 400 and the 503 page would be dead
+  code. `upsertUser` must still run only **after** a positive decision, so a
+  refused identity never creates `users/{sub}`. Every branch keeps going
+  through `respond()` so `sous_oauth` is always cleared and
+  `Response.redirect()` is never used.
+- **Refresh the stored display identity on a member sign-in (D4).** On
+  `'member'`, alongside `upsertUser`, call
+  `touchMemberIdentity(sub, { email, name })` (new in `server/members.ts`):
+  a merge-write of `email`, `name` and `lastSeenAt` onto `members/{sub}` **and**
+  of `email`/`name` onto `accessRequests/{sub}`. Without it, `sub`-keyed
+  membership means a member who changes their Google address keeps access
+  (correct) while `/admin` keeps showing the **old** address forever
+  (misleading — the owner could revoke the wrong person). Wrap it exactly like
+  the existing `upsertUser` helper: `try/catch`, log, and **never** fail the
+  sign-in over it. `/admin` displays the `accessRequests/{sub}` record for
+  pending and denied rows and the `members/{sub}` record for approved rows, so
+  both are refreshed here.
 - `server/auth.ts` `authSession`: after `readSession` is `ok`, re-check
   membership. `denied` ⇒ clear the session cookie and return
   `{user: null}` (this is what signs a revoked member out). `unknown` ⇒ **503,
@@ -613,15 +904,23 @@ and register `withMembership(chatPost)` / `withMembership(importPost)` in
 `apiRoutes` instead of the bare handlers. The `ApiHandler` type stays
 `(req: Request) => Promise<Response>`.
 
-`api/sessionGate.test.ts`: leave all seven vectors as they are and add one
-assertion that a request carrying an `x-sous-uid`-style header (or any header)
-still yields `null` from `sessionSub` — documenting that the Cloud Run bypass
-is an argument, not anything a client can send.
+`api/sessionGate.test.ts`: leave every existing vector exactly as it is (six
+per handler; **count them before editing** rather than trusting this number)
+and add one assertion that a request carrying an `x-sous-user` header — the
+header
+`docs/handoff-invitation-only.md` explicitly bans (**D6**) — still yields
+`null` from `sessionSub`, documenting that the Cloud Run bypass is an
+argument and that no header is trusted by either file.
 
 **Verify:** `npm test` (all previously passing `sessionGate` vectors still
-green). `npm run build`. Restart `dev:api`. As the owner, one chat turn streams
-and one URL import works. `node -e "fetch('http://localhost:3001/api/chat',{method:'POST',headers:{'content-type':'application/json','x-sous-uid':'1'},body:'{}'}).then(r=>console.log(r.status))"`
-⇒ **401**. Step 13 proves an approved non-owner member also gets chat and
+green, including the removed-from-allowlist one) — and step 3's lock
+assertions **5 and 6** now bite for the first time, because the registrations
+they describe only exist after this step: confirm they fail if you temporarily
+restore a bare `handler: chatPost`, then put the wrapper back. `npm run build`.
+Restart `dev:api`. As the owner, one chat turn streams and one URL import works.
+`node -e "fetch('http://localhost:3001/api/chat',{method:'POST',headers:{'content-type':'application/json','x-sous-user':'1'},body:'{}'}).then(r=>console.log(r.status))"`
+⇒ **401**, and the same with `x-sous-user` set to the owner's real `sub` ⇒
+**401**. Step 14 proves an approved non-owner member also gets chat and
 import; this step's own gate check is that a **signed-out** request is 401 and
 an owner request streams. Confirm the chat response still has no
 `content-length` and no `content-encoding`.
@@ -637,10 +936,32 @@ open Gemini proxy.
 
 `server/access.ts` — `accessRequestPost(req)`:
 
-1. Reject `Content-Length > 4096` with 413 and a body larger than 4096 bytes
-   after reading with 413.
-2. Require `Content-Type: application/x-www-form-urlencoded`; parse with
-   `new URLSearchParams(await req.text())` (no `formData()`, no multipart).
+1. Require `Content-Type: application/x-www-form-urlencoded` (415 otherwise),
+   then read the body with the **bounded reader** below. A `Content-Length`
+   header above 4096 is rejected with 413 before reading, but that check is
+   only a fast path — it is not the cap, because the header is attacker-
+   supplied and absent entirely under `Transfer-Encoding: chunked`.
+2. Parse the returned string with `new URLSearchParams(text)` — no
+   `formData()`, no multipart.
+
+The reader lives in `server/membership.ts` beside the other shared response
+helpers and is used by **both** this route and the admin POST in step 8:
+
+```
+readBoundedText(req: Request, limit: number): Promise<string | null>
+```
+
+It pulls from `req.body!.getReader()`, accumulating byte lengths, and as soon as
+the running total exceeds `limit` it calls `reader.cancel()` and returns `null`
+(the caller replies 413). It decodes with a single `TextDecoder` over the
+collected chunks. `await req.text()` followed by a length check is **not** a
+cap and must not be used on either route: `text()` buffers the entire body into
+memory *first*, so an unauthenticated caller — `POST /api/access-request` needs
+no cookie — can make the container allocate an arbitrary amount of memory and
+be OOM-killed while every check still "passes" afterwards. On Cloud Run with
+`--max-instances=4` that is a cheap denial of service against the whole app.
+The admin POST applies the same reader, but **after** `requireOwner` has
+passed, so an unauthenticated caller never reaches it at all.
 3. `verifyAccessRequestTx(params.get('t') ?? '', Date.now())`; `null` ⇒ the
    "link expired" page, **400**.
 4. `recordAccessRequest({ sub, email, name }, Date.now())`.
@@ -665,6 +986,19 @@ doc appears in the Firestore console; immediately again ⇒ 200 with no new
 email (check `lastNotifiedAt` did not move); with a garbage token ⇒ 400; with a
 token whose `exp` is in the past ⇒ 400; with a **session** token in the `t`
 field ⇒ 400; with a 5 KB body ⇒ 413; `GET /api/access-request` ⇒ 405.
+
+Two more, both aimed at the fixes above:
+
+- **Replay flood.** Submit the *same* valid token 20 times in a tight loop.
+  Expect: 20 × 200, exactly **one** `accessRequests/{sub}` document,
+  `requestCount` incremented **at most once** (the throttle window is 60 s),
+  `lastNotifiedAt` unchanged after the first, exactly one email, and — check
+  this explicitly in the Firestore console — `accessRequestMeta/notifications`
+  `count` incremented **exactly once**, not 20 times.
+- **Unbounded body.** Send a chunked request with **no `Content-Length`** and
+  more than 4 KB of payload:
+  `node -e "const b=new ReadableStream({start(c){c.enqueue(new Uint8Array(2_000_000));c.close()}});fetch('http://localhost:3001/api/access-request',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:b,duplex:'half'}).then(r=>console.log(r.status))"`
+  ⇒ **413**, and `dev:api` must still be alive and serving afterwards.
 
 **Failure handling:** a session token accepted as a request token ⇒
 `verifyAccessRequestTx` is not checking `v === 'accessreq'`; stop and fix
@@ -717,7 +1051,7 @@ ServiceWorker)").
 
 **Failure handling:** the SPA shell appears instead of these pages ⇒ the path
 is not under `/api/` or the route table was bypassed. A display name renders as
-HTML ⇒ escaping is missing; fix before step 14.
+HTML ⇒ escaping is missing; fix before step 15.
 
 ### 8. [core] Admin API, owner-only and enforced server-side
 
@@ -729,7 +1063,9 @@ HTML ⇒ escaping is missing; fix before step 14.
   `{ pending, approved, denied, truncated }` with
   `Cache-Control: no-store`. A Firestore error ⇒ 503.
 - `POST /api/admin/decision` → `requireOwner` first, before reading the body.
-  Require `Content-Type: application/json` (**D10**), cap the body at 4 KB,
+  Require `Content-Type: application/json` (**D10**), then read the body with
+  `readBoundedText(req, 4096)` from step 6 — the same bounded reader, never
+  `await req.text()` — replying 413 on `null`. Then
   parse `{ sub, action }`, validate `sub` with `isValidSubParam` and `action`
   against `'approve'|'deny'|'revoke'`, refuse `sub === session.sub` with 409
   `'self'`, then `applyDecision(...)`, then `clearMembershipCache(sub)` on this
@@ -745,7 +1081,7 @@ matcher, no path parameters.
 `members/{sub}` doc with `status: 'active'`. With **no** cookie ⇒ 401 on both.
 With `action: 'nope'` ⇒ 400; with a 5 KB body ⇒ 413; with
 `Content-Type: text/plain` ⇒ 415; with the owner's own `sub` ⇒ 409.
-`GET /api/admin/decision` ⇒ 405. Step 13 covers the member-gets-403 case with
+`GET /api/admin/decision` ⇒ 405. Step 14 covers the member-gets-403 case with
 a real second session.
 
 **Failure handling:** a non-owner reaching 200 ⇒ `requireOwner` is being
@@ -815,6 +1151,10 @@ copy, `text-danger` for errors):
   the lists come back from the POST response.
 - Empty states in plain sentences, e.g. "No pending requests." Not an icon,
   not a spinner-forever.
+- When the response has `truncated: true`, one `text-ink-muted` line above the
+  lists saying only the most recent 200 in a section are shown. Silently
+  dropping rows is what step 2 changed the queries to avoid; the flag must not
+  then be dropped in the UI.
 - Errors render as one `text-danger` line from the thrown message, including
   the 403 case, so a non-owner who navigates to `/admin` directly sees "This
   account can't manage invitations." and nothing else. The screen must render
@@ -873,9 +1213,25 @@ screen, not by editing this variable.
 
 1. Add `resolve_optional_secret RESEND_API_KEY "RESEND_API_KEY (blank to
    disable notification email)"` — a copy of `resolve_secret` that does **not**
-   `die` on an empty value. `resolve_secret` and `resolve_session_secret` are
-   otherwise untouched; `SESSION_SECRET` still may not be regenerated on a
-   failed describe.
+   `die` on an empty value. It keeps the same precedence (environment → the
+   deployed service via `read_deployed_env` → interactive prompt), and it keeps
+   `strip_controls` and the non-printable warning.
+
+   **It must also provide a way to remove an already-deployed key**, which a
+   plain copy of `resolve_secret` cannot: once `RESEND_API_KEY` is on the
+   service, the read-back step finds it on every subsequent run, so pressing
+   Enter at the prompt would silently reuse it and the key could never be
+   turned off. So: if the environment variable `SOUS_DISABLE_RESEND` is
+   non-empty, skip resolution entirely, leave `RESEND_API_KEY` unset, and
+   `info` that notification email is being disabled — the key is then omitted
+   from the YAML, and because `--env-vars-file` replaces the **whole** map,
+   omission is exactly what deletes it from the service. Document that one-liner
+   (`SOUS_DISABLE_RESEND=1 bash scripts/deploy.sh`) in `README.md`. An empty
+   answer at the prompt on a **first** deploy also just leaves it unset, which
+   is the documented "no Resend account yet" path (**D15**).
+
+   `resolve_secret` and `resolve_session_secret` are otherwise untouched;
+   `SESSION_SECRET` still may not be regenerated on a failed describe.
 2. In the single-line `node -e`: add `MAIL_FROM` and `OWNER_NOTIFY_EMAIL` to
    the `fixed` map (they are not secrets), add all three names to the `keys`
    array, and introduce `const optional=new Set(["RESEND_API_KEY"])` so an
@@ -895,20 +1251,130 @@ unknown** rule; the **60-second** revocation bound; and that `api/chat.ts` /
 inline `sessionSub` remains the Vercel gate. In **Cloud and deploy**, the three
 new env vars. In **Plans**, a row for this file.
 
-**Verify:** `bash -n scripts/deploy.sh` clean.
-`node -e` the env-map line in isolation with `RESEND_API_KEY` unset and
-confirm it writes a YAML file containing the other nine keys and no
-`RESEND_API_KEY` line; with it set, ten lines. Diff `.env.example`'s key list
-against the keys present in `.env.local` **without printing any value**.
+**Verify:** `bash -n scripts/deploy.sh` clean. Then check the env map by
+**exact name set**, not by counting lines — a count is what lets a swap hide.
+The map today holds **eight** keys (`GEMINI_API_KEY`, `AUTH_GOOGLE_ID`,
+`AUTH_GOOGLE_SECRET`, `SESSION_SECRET`, `ALLOWED_EMAILS`, `PUBLIC_ORIGIN`,
+`GOOGLE_CLOUD_PROJECT`, `PHOTO_BUCKET`); this step makes it **ten** required
+(`MAIL_FROM`, `OWNER_NOTIFY_EMAIL`) and **eleven** when `RESEND_API_KEY` is
+set.
+
+Run the `node -e` env-map line in isolation against a throwaway `$ENV_FILE`
+with dummy values, and compare the YAML's key set against that expected list
+with a sorted diff — every required name present, no name lost, and
+`RESEND_API_KEY` present only when it was set:
+
+- `RESEND_API_KEY` unset ⇒ **ten** keys, no `RESEND_API_KEY:` line;
+- `RESEND_API_KEY` set ⇒ **eleven**;
+- `SOUS_DISABLE_RESEND=1` with a key still on the service ⇒ **ten**, proving
+  the key is actually removable;
+- any *required* value empty ⇒ still `process.exit(2)`, so a missing
+  `SESSION_SECRET` or `ALLOWED_EMAILS` remains a hard failure and never a
+  silently shortened map.
+
+Print **names only** throughout — never a value. Diff `.env.example`'s key list
+against the keys present in `.env.local` the same way, without printing values.
 `Select-String -Path scripts/deploy.sh -Pattern 'set-env-vars'` prints
 nothing. Both dev servers still boot from the existing `.env.local`.
 
 **Failure handling:** if the `keys` array and the `resolve_*` calls disagree,
 the next deploy either dies at `process.exit(2)` or silently drops a variable
-— re-read both places before step 14. If `node -e` prints nothing under Git
+— re-read both places before step 15. If `node -e` prints nothing under Git
 Bash, it was written across multiple lines; it must stay one line.
 
-### 12. [ui] Privacy and terms
+### 12. [core] `docs/handoff-invitation-only.md` — extend the briefing, commit it
+
+This file is the standing "why Sous is invitation-only" briefing for a later
+agent, and after step 4 it describes a mechanism that no longer exists. Left
+alone it would tell a future reader to reject the Firestore `members`
+collection as exactly the kind of change it forbids, and to grant admin rights
+by editing an env var. **Extending the mechanism, not loosening the policy** —
+every fail-closed rule in the document survives verbatim or strengthened, and
+nothing in this step relaxes a single one.
+
+Edits, section by section:
+
+- **Header / code citations.** Keep the opening prohibition ("Do not 'open' the
+  app by emptying `ALLOWED_EMAILS`, treating a blank list as allow-all, or
+  leaving OAuth in Testing") **unchanged**. Repoint the `Code:` line:
+  `server/session.ts` is no longer where the per-request re-check lives — name
+  `server/membership.ts` (`accessDecision`, `requireMember`, `requireOwner`),
+  `server/members.ts`, and `server/allowlist.ts`, and add
+  `docs/plans/invitation-flow.md` beside the parent plan.
+- **What "invitation-only" means.** Keep the In-production / published-but-
+  private framing and the 403 description. Add the second tier: admission is
+  now `ALLOWED_EMAILS` (owner/bootstrap, fail-closed, **and the admin
+  authority**) **or** an `active` record in Firestore `members/{sub}` written
+  by the owner from `/admin`. State that a non-member still gets exactly the
+  same 403 with no `sous_session` and the same `sign-in refused:` log line —
+  only now that page also offers **Request access**, and that approval is
+  effective with **no redeploy**.
+- **Why (product).** Replace "Adding a second allowlisted email is one env
+  value and one redeploy" with: a second person requests access from the 403,
+  the owner approves at `/admin`, and no redeploy is involved. Keep "Libraries
+  are keyed by Google `sub`, not a shared household account", "that person
+  gets **their own empty library**", and "No shared library is designed" —
+  those are still true and still binding.
+- **Why (billing and data).** Keep the whole argument. Strengthen it: the gate
+  in front of `GEMINI_API_KEY` and `users/{uid}/…` is now two tiers, so both
+  must fail closed, and the `/admin` screen is the only way to widen the
+  second one. Keep the `deploy.sh` / `--env-vars-file` paragraph as is, and
+  note that `MAIL_FROM`, `OWNER_NOTIFY_EMAIL` and the optional
+  `RESEND_API_KEY` joined that map.
+- **Why not Google Testing instead.** Unchanged.
+- **Fail-closed rules (do not invert).** Keep all four `server/allowlist.ts`
+  rules, the empty-list-is-not-allow-all warning, and the no-second-gate
+  paragraph, **verbatim**. Keep the `x-sous-user` ban **verbatim** and add one
+  sentence: on Cloud Run the inline check is bypassed by an explicit
+  in-process function argument from `scripts/server.ts` after
+  `requireMember` passed — not by anything on the wire — and
+  `server/membership.test.ts` asserts the banned header name appears nowhere
+  (**D6**). Then add the new tier's rules:
+  - a `members/{sub}` doc that is absent, or whose `status` is not `active`,
+    denies;
+  - `email_verified === true` is still required, and is checked in the
+    callback before any token or cookie exists;
+  - a Firestore read that **throws** denies — with **503**, never 401, so a
+    blip does not sign anyone out (**D12**);
+  - `ALLOWED_EMAILS` is still re-parsed on **every** protected request with
+    **no cache**, so removing an owner still takes effect on the next request;
+    the Firestore tier is cached for at most **60 seconds** per container
+    instance, which is the one documented bound on revocation (**D11**).
+- **If you need a second person.** Rewrite the section body: point at `/admin`,
+  and warn that adding an ordinary person to `ALLOWED_EMAILS` makes them an
+  **administrator** who can approve and remove members (**D7**). Keep "Do not
+  invent household sharing, a shared `uid`, or a 'fix' that makes blank mean
+  everyone" and "Unverified Google emails stay denied" **verbatim**.
+- Add a short **Access requests** section: what is stored for a non-member
+  (email, display name, `sub`, timestamps in top-level `accessRequests/{sub}`,
+  and nothing under `users/`), that the notification email carries **no
+  approval power** (**D3**), and the dedupe/throttle/cap numbers (**D16**).
+
+Then **commit the file**. It has never been committed, `git log --all` finds
+nothing for it, and it has already been lost once to a stash — which is the
+only reason this plan had to reconstruct its rules from the code. A briefing
+that exists only in an uncommitted working tree cannot do its job.
+
+**Verify:** read the revised document straight through and check that (a) every
+one of the four `server/allowlist.ts` rules, the empty-list warning, the
+no-second-gate paragraph and the `x-sous-user` ban still appear; (b) no
+sentence tells a reader to admit an ordinary member by editing
+`ALLOWED_EMAILS` or by redeploying; (c) the `Code:` citations name files that
+exist after step 4 —
+`node -e "for (const f of ['server/membership.ts','server/members.ts','server/allowlist.ts']) console.log(f, require('node:fs').existsSync(f))"`
+prints `true` three times; (d) `git status --short` no longer lists
+`docs/handoff-invitation-only.md` as untracked after the commit. Cross-read it
+against `AGENTS.md` from step 11 and confirm the two agree on the tiers, the
+admin rule and the 60-second bound.
+
+**Failure handling:** if any fail-closed rule reads weaker than the original,
+revert that paragraph to the original wording and re-apply only the additive
+sentence — this step may not become the loophole the document warns about. If
+`AGENTS.md` and this file disagree on the revocation bound or on who is an
+admin, fix both before step 15; a future agent reading one and not the other
+is exactly the failure this step exists to prevent.
+
+### 13. [ui] Privacy and terms
 
 `public/privacy.html` — keep the existing document structure, inline styles and
 tone; bump "Last updated":
@@ -922,10 +1388,18 @@ tone; bump "Last updated":
 - **Third parties** gains Resend as the email subprocessor for the owner's
   notification, naming what is in that email (the requester's email address
   and display name) and that no one-click approval link is included.
-- **Retention and deletion** gains: pending requests are kept until decided;
-  declined requests are kept for up to 12 months so a repeat request does not
-  re-notify; either can be deleted sooner on request to the contact address.
-  There is no automated purge job.
+- **Retention and deletion** gains: pending requests are kept until decided,
+  and a declined request is kept **indefinitely, until it is deleted by hand**,
+  because that record is what stops a repeat press from re-notifying
+  (**D16**). Either can be deleted on request to the contact address. State
+  plainly that **there is no automated purge job** — do **not** write "kept for
+  up to 12 months" or any other period. Nothing in this plan deletes an
+  access-request document on a schedule, so a stated retention period would be
+  a promise the code does not keep, in the one document that is supposed to be
+  legally accurate. The manual process is one line, and belongs in `README.md`
+  in step 11 so it is findable: delete the `accessRequests/{sub}` document (and
+  `members/{sub}` if present) in the Firestore console. If a real retention
+  window is ever wanted, it needs a scheduled job and its own plan.
 - **Access** is rewritten: Sous is invitation-only; sign-in is limited to
   allow-listed addresses and to accounts the owner has approved from a request;
   requesting access does not grant it.
@@ -940,20 +1414,22 @@ origin and read them against the bullets above. No leftover sentence implying
 only allow-listed addresses can ever sign in. Both still render in light and
 dark and contain no external asset reference. `dist/privacy.html` and
 `dist/terms.html` contain the new text — the consent screen's Branding URLs
-point at the live copies, so this must be in `dist/` before step 14.
+point at the live copies, so this must be in `dist/` before step 15.
 
-**Failure handling:** if the Branding URLs are already published (see
-Ordering), these pages are live documents — a deploy with stale legal copy
-after this feature ships is the failure. Do not deploy step 14 before this
-step is in the image.
+**Failure handling:** the Branding URLs **are** already published
+(`deploy-and-end-state` step 4 is ticked), so these two pages are live
+documents that Google's consent screen points at right now. A deploy that
+ships this feature with legal copy that does not mention access requests or
+Resend is the failure. Do not deploy step 15 before this step is in the image.
 
-### 13. [core] Local end-to-end by hand, two Google accounts
+### 14. [core] Local end-to-end by hand, two Google accounts
 
 `npm run dev` + `npm run dev:api`, `http://localhost:5173`, `RESEND_API_KEY`
 set only if you intend to send a real email (it goes to the owner's real
-inbox). Account A = owner, in `ALLOWED_EMAILS`. Account B = a second real
-Google account, **not** in `ALLOWED_EMAILS`, able to complete consent (see
-Ordering).
+inbox). Account A = owner, in `ALLOWED_EMAILS`. Account B = any second real
+Google account, **not** in `ALLOWED_EMAILS`. The consent screen is In
+production, so B needs no console change and no test-users entry — it can
+complete consent today and land on the current 403.
 
 1. Account B, separate browser profile: Settings → Sign in with Google →
    consent → the **403 invitation-only** page with the Request access button.
@@ -983,9 +1459,22 @@ Ordering).
 9. Account B: sign in again ⇒ the 403 page again, and Request access shows the
    recorded copy with **no** new email (the request is `denied`).
 10. Stop `dev:api`'s Firestore access (`FIRESTORE_EMULATOR_HOST=localhost:1`,
-    restart): Account A still signs in and still syncs; Account B's session
-    endpoint returns **503** and B's client shows `offline`, **not** signed
-    out. Restore.
+    restart). Note what this does and does not prove: **every** Firestore-backed
+    operation now fails for everyone, so "A still syncs" is impossible and is
+    not the claim. What must hold is that **authorization** survives for the
+    owner and that nobody is signed out:
+    - Account A can still complete sign-in (the `'owner'` branch of
+      `accessAllows` returns before any Firestore read) and
+      `GET /api/auth/session` still returns A's user with `isOwner: true`.
+    - A's `/api/sync/pull` and `/api/photos/:id` **fail** — 503, not 401 — and
+      the client shows a sync failure while the cached library still opens. A
+      is **not** signed out and no toast says "Synced".
+    - Account B's `/api/auth/session` returns **503** with the cookie
+      untouched, and B's client shows `offline` with its cached user, **not**
+      signed out.
+    - `/admin` shows its error line, not an empty-but-successful list.
+
+    Restore afterwards and confirm both accounts recover with no re-sign-in.
 11. `npm test` and `npm run build` both clean.
 
 **Verify:** every numbered bullet, done once by hand. 6, 7 and 8 are the three
@@ -996,7 +1485,7 @@ A's recipes ⇒ **stop everything**: `uid` is being taken from somewhere other
 than the session; that is the one unrecoverable bug in this plan. B's client
 signs out on the Firestore outage ⇒ a 401 where a 503 belongs.
 
-### 14. [core] Production deploy and live verification *(operational)*
+### 15. [core] Production deploy and live verification *(operational)*
 
 Record the rollback target first:
 
@@ -1008,7 +1497,7 @@ $P = 'cooking-assistant-508423'
 ```
 
 Write that revision into the parent Deploy record, then from Git Bash at the
-repo root on a commit containing steps 1–13:
+repo root on a commit containing steps 1–14:
 
 ```bash
 bash scripts/deploy.sh
@@ -1037,7 +1526,7 @@ node -e "fetch('https://sous.kyrylo.lol/api/admin/decision',{method:'POST',heade
 ```
 
 Expect 200 / 200 / 200 for the pages, **401** for both admin calls, **400**
-for the bad token. `/privacy` must be the step-12 copy. Then sign in as the
+for the bad token. `/privacy` must be the step-13 copy. Then sign in as the
 owner and re-run the framing/streaming oracle from
 `docs/plans/sous-subdomain.md` step 2 with a `sous_session` cookie
 (`$env:PROBE_COOKIE`, removed afterwards): `FRAMING PASS`, `STREAMING PASS`,
@@ -1119,7 +1608,14 @@ debug second.
   protected request per member.
 - **`ALLOWED_EMAILS` now grants admin** (**D7**). The natural instinct —
   "just add my friend to `ALLOWED_EMAILS`" — silently makes them an
-  administrator. Three documents warn about it; nothing enforces it.
+  administrator, and it is exactly what `docs/handoff-invitation-only.md`
+  currently *instructs* a future agent to do. Four documents warn about it
+  after steps 11–13; nothing enforces it.
+- **`docs/handoff-invitation-only.md` is untracked and has been lost once**
+  already (stashed when a cloud agent was launched, which is why this plan's
+  first draft had to reconstruct its rules from `server/allowlist.ts` and
+  `server/auth.ts`). Until step 12 commits it, the repo's only statement of
+  *why* the app is invitation-only exists solely in one working tree.
 - **Dev writes to production Firestore.** `members/`, `accessRequests/` and
   `accessRequestMeta/` are **top-level**, so local `dev:api` experiments can
   approve or decline a real person, and a local run with `RESEND_API_KEY` set
@@ -1145,40 +1641,31 @@ debug second.
   a fresh Google account plus a completed consent; per identity the cap is 5
   notifications ever and 1 per 24 h, and globally 20 per UTC day (**D16**).
   Firestore junk is one small document per consenting account.
-- **This deploys straight to production, with no staging.** Step 14 records the
+- **This deploys straight to production, with no staging.** Step 15 records the
   rollback revision before anything else for that reason.
 
 ## Open Questions
 
-- **BLOCKING — `docs/handoff-invitation-only.md` does not exist.** It is not in
-  the working tree and `git log --all -- docs/handoff-invitation-only.md`
-  returns nothing, so the stated product/security rationale for the
-  invitation-only gate could not be read. This plan reconstructs the
-  fail-closed rules from `AGENTS.md` and from `server/allowlist.ts`,
-  `server/session.ts` and `server/auth.ts` directly, and preserves all of
-  them (blank list denies everyone, unverified email denies, blank email
-  denies, blank never means allow-all, re-check on every protected request).
-  If that document exists elsewhere, it must be read before step 4, because a
-  rule in it could contradict **D7** (owner set) or **D11** (60 s cache).
-- **BLOCKING — `docs/plans/deploy-and-end-state.md` is also missing from the
-  working tree**, and the only copy in git (commit `1cfde06`, on branch
-  `cursor/cloud-agent-1789710534681-e537h`, which is **not** an ancestor of
-  `HEAD`) shows its Status with steps **1–4 ticked** — i.e. the consent screen
-  already published to Production — which contradicts the brief's "steps 4–7
-  are still pending". Confirm which is authoritative and what the consent
-  screen's real state is. It changes exactly one thing in this plan: whether
-  step 13 can use any second Google account (In production) or needs that
-  account added to the OAuth **test users** list first (Testing). It does not
-  change any code.
+**No blocking questions remain.** The two that blocked the first draft are
+resolved: `docs/handoff-invitation-only.md` and
+`docs/plans/deploy-and-end-state.md` were stashed when a cloud agent was
+launched and have both been restored and read. The consent screen is **In
+production** (that plan's steps 1–4 ticked, 5–7 pending), so no OAuth console
+change is needed anywhere in this plan, and the handoff doc's fail-closed rules
+have been read in full: all of them are preserved, its `x-sous-user` ban is
+quoted in **D6** and satisfied, and step 12 extends the document rather than
+leaving it to contradict the code.
+
 - Non-blocking: does a Resend account already exist, and is `kyrylo.lol`
   verified there? Default assumed in step 1 is the sandbox sender
   (`MAIL_FROM=onboarding@resend.dev`, delivery to the owner's own address
   only), which is enough for v1 and is env-configurable later.
 - Non-blocking: **D7** reuses `ALLOWED_EMAILS` as the admin set rather than
   adding `ADMIN_EMAILS`. If the owner would rather have them separate, it is a
-  small change: a new `adminEmails()` getter, one line in `requireOwner`, and
-  a `resolve_secret` + `keys` entry in `deploy.sh`.
-- Non-blocking: declined requests are kept for 12 months per step 12's copy.
+  small change: a new `adminEmails()` getter, one line in `requireOwner`, a
+  `resolve_secret` + `keys` entry in `deploy.sh`, and a paragraph in step 12's
+  handoff rewrite.
+- Non-blocking: declined requests are kept for 12 months per step 13's copy.
   If the owner prefers immediate deletion on decline, drop the `denied` state
   and accept that a declined person can re-notify after 24 h.
 
@@ -1195,6 +1682,7 @@ debug second.
 - [ ] 9. [core] `src/lib/adminApi.ts` and `isOwner` on the session
 - [ ] 10. [ui] `/admin` screen and the Settings entry point
 - [ ] 11. [core] `.env.example`, `scripts/deploy.sh`, `README.md`, `AGENTS.md`
-- [ ] 12. [ui] Privacy and terms
-- [ ] 13. [core] Local end-to-end by hand, two Google accounts
-- [ ] 14. [core] Production deploy and live verification *(operational)*
+- [ ] 12. [core] `docs/handoff-invitation-only.md` — extend the briefing, commit it
+- [ ] 13. [ui] Privacy and terms
+- [ ] 14. [core] Local end-to-end by hand, two Google accounts
+- [ ] 15. [core] Production deploy and live verification *(operational)*
