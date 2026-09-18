@@ -4,18 +4,23 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
 import { blankDraft } from '../lib/recipeDraft';
 import { recipeStore, useRecipe } from '../lib/recipeStore';
-import { backLink } from '../lib/uiClasses';
+import { backLink, primaryBtn } from '../lib/uiClasses';
 import type { RecipeDraft } from '../lib/types';
+
+const EDIT_FORM_ID = 'recipe-edit-form';
 
 function Screen({
   heading,
   backTo,
   backLabel,
+  action,
   children,
 }: {
   heading: string;
   backTo: string;
   backLabel: string;
+  /** Optional control shown on the right, opposite the heading. */
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -24,7 +29,10 @@ function Screen({
         <Link to={backTo} className={backLink}>
           &larr; {backLabel}
         </Link>
-        <h1 className="mt-2 text-2xl font-bold">{heading}</h1>
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold">{heading}</h1>
+          {action}
+        </div>
       </header>
       {children}
     </div>
@@ -87,12 +95,22 @@ function EditRecipe({ id }: { id: string }) {
       heading="Edit recipe"
       backTo={`/recipe/${recipe.id}`}
       backLabel="Recipe"
+      action={
+        <button
+          type="submit"
+          form={EDIT_FORM_ID}
+          className={`${primaryBtn} shrink-0 px-5 py-2`}
+        >
+          Save
+        </button>
+      }
     >
       <RecipeForm
         initial={recipe}
         submitLabel="Save"
         onSubmit={save}
         onCancel={() => navigate(`/recipe/${recipe.id}`)}
+        formId={EDIT_FORM_ID}
       />
     </Screen>
   );
