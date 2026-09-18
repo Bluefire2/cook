@@ -66,13 +66,16 @@ function jsonResponse(req: Request, body: unknown, status = 200): Response {
 export function extensionImportOptions(req: Request): Promise<Response> {
   const cors = corsHeaders(req);
   if (Object.keys(cors).length === 0) {
-    return Promise.resolve(new Response(null, { status: 403 }));
+    return Promise.resolve(
+      new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } }),
+    );
   }
   return Promise.resolve(
     new Response(null, {
       status: 204,
       headers: {
         ...cors,
+        'Cache-Control': 'no-store',
         'Access-Control-Allow-Methods': 'POST',
         'Access-Control-Allow-Headers': 'content-type, x-sous-session',
         'Access-Control-Max-Age': '600',
@@ -109,8 +112,16 @@ export async function extensionImport(req: Request): Promise<Response> {
   }
 
   const url = typeof body.url === 'string' ? body.url.trim() : '';
-  if (url === '') {
+  // Checked here rather than left to `fetchPageHtml`, which the `html` path
+  // skips: `sourceUrl` is stored on the recipe either way.
+  let parsedUrl: URL | null = null;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
     return jsonResponse(req, { error: 'That does not look like a web address.' }, 422);
+  }
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    return jsonResponse(req, { error: 'Only http and https URLs are supported.' }, 422);
   }
 
   const html = typeof body.html === 'string' ? body.html : '';

@@ -2,7 +2,6 @@
  * Renders whatever the service worker has recorded for this tab. The popup
  * never fetches and never holds the import itself — see background.js.
  */
-const SIGN_IN_URL = 'https://sous.kyrylo.lol';
 /** A worker killed mid-run cannot clear its own state; don't spin forever. */
 const STALE_WORKING_MS = 2 * 60 * 1000;
 
@@ -11,6 +10,7 @@ const els = {
   status: document.getElementById('status'),
   action: document.getElementById('action'),
   openRecipe: document.getElementById('open-recipe'),
+  openSous: document.getElementById('open-sous'),
 };
 
 let tabId = null;
@@ -36,23 +36,30 @@ function showAction(label, onClick) {
   els.action.onclick = onClick;
 }
 
-function startImport() {
-  setStatus('Reading the recipe…', null, true);
+function hideControls() {
   els.action.hidden = true;
   els.openRecipe.hidden = true;
+  els.openSous.hidden = true;
+}
+
+function startImport() {
+  setStatus('Reading the recipe…', null, true);
+  hideControls();
   void chrome.runtime.sendMessage({ type: 'import', tabId });
 }
 
+// Each render* clears the controls itself, because the probe in `init` calls
+// renderSignedOut directly rather than going through render().
 function renderIdle() {
+  hideControls();
   setStatus('');
   showAction('Import to Sous', startImport);
 }
 
 function renderSignedOut() {
+  hideControls();
   setStatus('Sign in to Sous to import.');
-  showAction('Open Sous', () => {
-    void chrome.tabs.create({ url: SIGN_IN_URL });
-  });
+  els.openSous.hidden = false;
 }
 
 function isStale(state) {
@@ -64,8 +71,7 @@ function isStale(state) {
 }
 
 function render(state) {
-  els.action.hidden = true;
-  els.openRecipe.hidden = true;
+  hideControls();
 
   if (!state) {
     renderIdle();

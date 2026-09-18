@@ -86,8 +86,10 @@ flowchart LR
 5. **The target origin is discovered, dev is preferred, and preference is not
    commitment.** The worker collects the origins that have a `sous_session`
    cookie — `http://localhost:5173` first, then production — and tries them in
-   that order, moving to the next only when `fetch` rejects at the network
-   level. Any real HTTP response, 404 and 401 included, is final.
+   that order, moving to the next only when the connection is refused. Any real
+   HTTP response, 404 and 401 included, is final, and so is a timeout: a server
+   that accepted the request may already have saved the recipe, and retrying
+   elsewhere would import it twice.
 
    Dev-first is a safety property: production-first would make every local test
    either hit a 404 (the route is not deployed) or, once it is deployed, write
@@ -212,7 +214,9 @@ New `server/recipeFromExtraction.test.ts` covers each of those.
 3. A body that fails `req.text()` or `JSON.parse` is 400 JSON, as `syncPush`
    does — otherwise a hand-rolled curl during verification gets the dispatcher's
    `text/plain` "Internal error". `url` must parse as `http:`/`https:` —
-   otherwise 422 with the `fetchPageHtml` wording.
+   otherwise 422 with the `fetchPageHtml` wording. That check belongs in the
+   route, not only in `fetchPageHtml`, because the `html` path skips the fetch
+   and `sourceUrl` is stored on the recipe either way.
 4. `html` present and non-blank ⇒ `extractRecipeSource(html)`. Otherwise
    `fetchPageHtml(url)` then `extractRecipeSource`. Empty source ⇒ 422 "Could
    not read that page."
@@ -298,11 +302,11 @@ include would pick it up, and `AGENTS.md` keeps unit tests on pure logic.
 
 ### 7. [ui] `extension/popup.*` — the whole UI
 
-`popup.html`, `popup.css`, `popup.js`. One 360px-wide card on the app's dark
+`popup.html`, `popup.css`, `popup.js`. One 320px-wide card on the app's dark
 palette (`#1c1917` background, the same accent as `theme_color`):
 
-- **Signed out** — "Sign in to Sous to import." plus a link that opens Sous in a
-  new tab.
+- **Signed out** — "Sign in to Sous to import." plus an anchor that opens Sous
+  in a new tab (an anchor, not a scripted button, so it behaves like a link).
 - **Idle** — the page title, and a primary **Import to Sous** button.
 - **Working** — the button is replaced by a spinner and "Reading the recipe…",
   matching the app's import copy. Reopening the popup mid-run shows this.

@@ -116,15 +116,19 @@ export async function runImport(tabId) {
   }, KEEPALIVE_MS);
 
   try {
-    let timedOut = false;
     for (const target of targets) {
       let response;
       try {
         response = await post(target, body);
       } catch (err) {
-        // Only a network-level failure falls through to the next origin. Any
-        // real HTTP answer — including 401 and 404 — is this run's answer.
-        timedOut = timedOut || err.name === 'AbortError';
+        // A timeout is final: the server accepted the request and may well have
+        // saved the recipe, so retrying elsewhere risks importing it twice.
+        if (err.name === 'AbortError') {
+          await writeState(tabId, { phase: 'error', message: 'The import timed out.' });
+          return;
+        }
+        // Only a refused connection falls through to the next origin. Any real
+        // HTTP answer — including 401 and 404 — is this run's answer.
         console.warn('Sous: could not reach', target.origin, err);
         continue;
       }
@@ -149,10 +153,7 @@ export async function runImport(tabId) {
       return;
     }
 
-    await writeState(tabId, {
-      phase: 'error',
-      message: timedOut ? 'The import timed out.' : 'Could not reach Sous.',
-    });
+    await writeState(tabId, { phase: 'error', message: 'Could not reach Sous.' });
   } finally {
     clearInterval(keepAlive);
   }
