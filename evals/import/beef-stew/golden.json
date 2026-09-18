@@ -1,0 +1,45 @@
+{
+  "title": "All-American Beef Stew",
+  "description": "Tender beef in a rich, intense sauce with vegetables that keep their texture.",
+  "servings": 6,
+  "prepMinutes": 5,
+  "cookMinutes": 190,
+  "ingredientSections": [
+    {
+      "items": [
+        { "quantity": 4, "unit": "cup", "item": "chicken stock", "note": "low-sodium" },
+        { "quantity": 3, "unit": "tbsp", "item": "tomato paste" },
+        { "quantity": 3, "item": "anchovy fillets", "note": "oil- or salt-packed, rinsed; or 1 tbsp fish sauce" },
+        { "quantity": 4, "item": "packets unflavored gelatin", "note": "1 oz / 30 g" },
+        { "quantity": 1, "unit": "tbsp", "item": "soy sauce" },
+        { "quantity": 1, "unit": "tbsp", "item": "Worcestershire sauce" },
+        { "quantity": 2, "unit": "tbsp", "item": "vegetable oil" },
+        { "quantity": 3, "unit": "lb", "item": "boneless beef chuck roast", "note": "cut into 3 steaks" },
+        { "item": "kosher salt and black pepper" },
+        { "quantity": 10, "unit": "oz", "item": "white button mushrooms", "note": "quartered" },
+        { "quantity": 4, "item": "carrots", "note": "2 left whole, 2 cut into bite-sized pieces" },
+        { "quantity": 8, "unit": "oz", "item": "pearl onions", "note": "thawed if frozen, peeled if fresh" },
+        { "quantity": 1, "item": "yellow onion", "note": "large, unpeeled, split in half" },
+        { "quantity": 2, "item": "celery stalks", "note": "small" },
+        { "quantity": 3, "item": "garlic cloves", "note": "unpeeled" },
+        { "quantity": 1, "unit": "cup", "item": "sherry", "note": "or dry vermouth or red wine" },
+        { "quantity": 2, "unit": "tbsp", "item": "all-purpose flour" },
+        { "quantity": 2, "item": "bay leaves" },
+        { "quantity": 4, "item": "thyme sprigs" },
+        { "quantity": 1, "unit": "lb", "item": "Yukon gold potatoes", "note": "peeled and cubed" },
+        { "quantity": 4, "unit": "oz", "item": "frozen peas" }
+      ]
+    }
+  ],
+  "steps": [
+    { "text": "Blend the chicken stock, tomato paste, anchovies, gelatin, soy sauce, and Worcestershire until smooth. Set aside." },
+    { "text": "Heat the oven to 300°F / 150°C with the rack on the lowest position. In a Dutch oven, heat the oil until shimmering. Season the beef with salt and pepper and brown well on 2 sides, about 10 minutes. Transfer to a plate." },
+    { "text": "Cook the mushrooms until they release liquid and begin to brown, about 6 minutes. Add the diced carrots and pearl onions and brown on all sides. Season, transfer to a bowl, and set aside." },
+    { "text": "Brown the halved onion cut-side down with the whole carrots, celery, and garlic, about 4 minutes." },
+    { "text": "Add the wine, scrape up browned bits, and reduce by three-quarters, about 3 minutes. Add the blended stock mixture and bring to a simmer. Remove from heat." },
+    { "text": "Cut the seared steaks into 1.5–2 inch chunks and toss with the flour. Return the beef and juices to the pot with the bay leaves and thyme. Bring to a simmer, then cook in the oven with the lid partly open until the beef is starting to become tender, about 1.5 hours, keeping a slow steady simmer." },
+    { "text": "Discard the whole carrot, celery, thyme, bay leaves, onion, and garlic. Add the potatoes and the reserved mushrooms, pearl onions, and carrots. Continue in the oven, partly covered, until the beef, potatoes, and carrots are tender and the broth has thickened, 45 minutes to 1 hour." },
+    { "text": "If needed, simmer on the stove up to 15 minutes to thicken. Stir in the peas, season, and serve, or refrigerate up to 5 days and reheat." }
+  ],
+  "tags": ["beef", "stew", "american"]
+}

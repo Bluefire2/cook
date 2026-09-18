@@ -1,0 +1,35 @@
+{
+  "title": "Chef Isaac Toups Chicken and Sausage Gumbo",
+  "description": "A dark-roux chicken and andouille gumbo served over rice.",
+  "servings": 4,
+  "ingredientSections": [
+    {
+      "items": [
+        { "quantity": 4, "item": "chicken thighs", "note": "bone-in, skin-on" },
+        { "quantity": 2, "unit": "tsp", "item": "ground black pepper", "note": "divided" },
+        { "quantity": 0.5, "unit": "cup", "item": "grapeseed oil" },
+        { "quantity": 0.5, "unit": "cup", "item": "all-purpose flour" },
+        { "quantity": 1, "item": "onion", "note": "large, diced" },
+        { "quantity": 1, "item": "red bell pepper", "note": "large, diced" },
+        { "quantity": 2, "item": "celery ribs", "note": "diced" },
+        { "quantity": 10, "item": "garlic cloves", "note": "crushed" },
+        { "quantity": 4, "item": "bay leaves" },
+        { "quantity": 12, "unit": "oz", "item": "amber-style beer", "note": "1 bottle" },
+        { "quantity": 5, "unit": "cup", "item": "chicken stock" },
+        { "quantity": 1, "unit": "tsp", "item": "Louisiana Liquid Snake hot sauce" },
+        { "quantity": 1, "unit": "lb", "item": "andouille sausage", "note": "or smoked sausage, cut into ½-inch half-moons" },
+        { "item": "rice", "note": "for serving" },
+        { "item": "green onions", "note": "sliced, for garnish" },
+        { "quantity": 1, "unit": "tsp", "item": "Smokey Green hot sauce" }
+      ]
+    }
+  ],
+  "steps": [
+    { "text": "Preheat the oven to 400°F. Season the chicken thighs with 2 teaspoons of salt and 1 teaspoon of black pepper. Roast skin-side up on a rimmed baking sheet for 20 minutes, until the skin is lightly browned. Set aside and keep the rendered fat." },
+    { "text": "In a heavy Dutch oven over medium heat, cook the oil and flour into a dark roux, about 45 minutes, until milk-chocolate colored. Add the onion, bell pepper, and celery and stir about 1 minute until they begin to soften. Add the garlic and bay leaves and cook 30 seconds more." },
+    { "text": "Deglaze with the beer, scraping up browned bits, and return to a simmer. Add the stock and stir back to a simmer. Add the remaining 1 teaspoon salt, 1 teaspoon black pepper, and cayenne. Add the chicken (skin, bones, and fat) and the sausage. Cover and simmer on the lowest heat for 3 hours, stirring every 30 minutes. Thin with a little water if it gets too thick. Do not boil or scorch the roux." },
+    { "text": "Do not skim the fat off the top." },
+    { "text": "Serve with rice: gumbo in the bowl first, rice on top. Garnish with sliced green onions and more Louisiana Liquid Snake if you want extra heat." }
+  ],
+  "tags": ["gumbo", "cajun", "chicken", "sausage"]
+}

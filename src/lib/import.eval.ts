@@ -1,16 +1,20 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoogleGenAI, Type, type Schema } from '@google/genai';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { generateRecipeFromSource } from '../../api/import';
+import {
+  extractRecipeSource,
+  generateRecipeFromSource,
+} from '../../api/import';
 import { normalizeRecipeDraft } from './recipeShape';
 import type { RecipeDraft } from './types';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const fixturesRoot = join(repoRoot, 'evals/import');
 
-const POSITIVE_FIXTURES = ['pomodoro', 'messy-sections'] as const;
+const TEXT_FIXTURES = ['pomodoro', 'messy-sections'] as const;
+const PAGE_FIXTURES = ['gumbo', 'beef-noodle-soup', 'beef-stew'] as const;
 
 const JUDGE_SCHEMA: Schema = {
   type: Type.OBJECT,
@@ -33,6 +37,14 @@ const JUDGE_SCHEMA: Schema = {
 
 function readFixtureText(name: string, file: string): string {
   return readFileSync(join(fixturesRoot, name, file), 'utf8');
+}
+
+function loadSource(name: string): string {
+  const htmlPath = join(fixturesRoot, name, 'page.html');
+  if (existsSync(htmlPath)) {
+    return extractRecipeSource(readFileSync(htmlPath, 'utf8'));
+  }
+  return readFixtureText(name, 'source.txt');
 }
 
 function readGolden(name: string): RecipeDraft {
@@ -112,6 +124,44 @@ async function judgeRecipe(
   }
 }
 
+async function expectCloseToGolden(name: string): Promise<void> {
+  const source = loadSource(name);
+  const golden = readGolden(name);
+  const result = await generateRecipeFromSource(source);
+  expect(result.status, `${name} extraction status`).toBe('ok');
+  if (result.status !== 'ok') return;
+
+  const extracted = normalizeRecipeDraft(result.recipe);
+  expect(extracted, `${name} did not normalize to a RecipeDraft`).toBeDefined();
+  if (extracted === undefined) return;
+
+  expect(extracted.servings, `${name} servings`).toBe(golden.servings);
+
+  const gotIng = ingredientCount(extracted);
+  const goldIng = ingredientCount(golden);
+  expect(
+    Math.abs(gotIng - goldIng),
+    `${name} ingredient count ${gotIng} vs golden ${goldIng}\n${JSON.stringify(extracted, null, 2)}`,
+  ).toBeLessThanOrEqual(2);
+
+  const gotSteps = extracted.steps.length;
+  const goldSteps = golden.steps.length;
+  expect(
+    Math.abs(gotSteps - goldSteps),
+    `${name} step count ${gotSteps} vs golden ${goldSteps}\n${JSON.stringify(extracted, null, 2)}`,
+  ).toBeLessThanOrEqual(2);
+
+  const verdict = await judgeRecipe(extracted, golden);
+  const failureText =
+    verdict.failures.length === 0
+      ? 'judge rejected the extraction with no failure list'
+      : verdict.failures.map((row) => `${row.field}: ${row.reason}`).join('\n');
+  expect(
+    verdict.pass,
+    `${name} judge:\n${failureText}\n\nextracted:\n${JSON.stringify(extracted, null, 2)}`,
+  ).toBe(true);
+}
+
 describe('import from text (live Gemini)', () => {
   beforeAll(() => {
     if (!process.env.GEMINI_API_KEY?.trim()) {
@@ -127,44 +177,28 @@ describe('import from text (live Gemini)', () => {
     expect(result.status).toBe('not_a_recipe');
   });
 
-  it.each(POSITIVE_FIXTURES)(
+  it.each(TEXT_FIXTURES)(
     'extracts %s close to the golden recipe',
     async (name) => {
-      const source = readFixtureText(name, 'source.txt');
-      const golden = readGolden(name);
-      const result = await generateRecipeFromSource(source);
-      expect(result.status, `${name} extraction status`).toBe('ok');
-      if (result.status !== 'ok') return;
+      await expectCloseToGolden(name);
+    },
+  );
+});
 
-      const extracted = normalizeRecipeDraft(result.recipe);
-      expect(extracted, `${name} did not normalize to a RecipeDraft`).toBeDefined();
-      if (extracted === undefined) return;
+describe('import from cached page (live Gemini)', () => {
+  beforeAll(() => {
+    if (!process.env.GEMINI_API_KEY?.trim()) {
+      throw new Error(
+        'GEMINI_API_KEY is required for npm run test:import. Put it in .env.local (same as dev:api).',
+      );
+    }
+  });
 
-      expect(extracted.servings, `${name} servings`).toBe(golden.servings);
-
-      const gotIng = ingredientCount(extracted);
-      const goldIng = ingredientCount(golden);
-      expect(
-        Math.abs(gotIng - goldIng),
-        `${name} ingredient count ${gotIng} vs golden ${goldIng}\n${JSON.stringify(extracted, null, 2)}`,
-      ).toBeLessThanOrEqual(2);
-
-      const gotSteps = extracted.steps.length;
-      const goldSteps = golden.steps.length;
-      expect(
-        Math.abs(gotSteps - goldSteps),
-        `${name} step count ${gotSteps} vs golden ${goldSteps}\n${JSON.stringify(extracted, null, 2)}`,
-      ).toBeLessThanOrEqual(2);
-
-      const verdict = await judgeRecipe(extracted, golden);
-      const failureText =
-        verdict.failures.length === 0
-          ? 'judge rejected the extraction with no failure list'
-          : verdict.failures.map((row) => `${row.field}: ${row.reason}`).join('\n');
-      expect(
-        verdict.pass,
-        `${name} judge:\n${failureText}\n\nextracted:\n${JSON.stringify(extracted, null, 2)}`,
-      ).toBe(true);
+  it.each(PAGE_FIXTURES)(
+    'extracts %s from cached HTML close to the golden recipe',
+    async (name) => {
+      expect(existsSync(join(fixturesRoot, name, 'page.html'))).toBe(true);
+      await expectCloseToGolden(name);
     },
   );
 });

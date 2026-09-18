@@ -187,8 +187,10 @@ feature.
 
 Live paste-to-recipe evals are `npm run test:import` (`src/**/*.eval.ts`,
 `vitest.eval.config.ts`). They call Gemini against fixtures in `evals/import/`
-and need `GEMINI_API_KEY` from `.env.local` (same as `dev:api`). Do not fold
-them into `npm test` or CI.
+and need `GEMINI_API_KEY` from `.env.local` (same as `dev:api`). Website
+fixtures use cached `page.html` (never fetch at eval time). Do not fold them
+into `npm test` or CI. After the input set is complete, generate new goldens
+with Claude Opus 5 — do not regenerate existing goldens until then.
 
 UI and layout changes: exercise the flow in the browser (not a screenshot).
 Vite + `dev:api`, signed in at `localhost:5173`. Check other routes that share

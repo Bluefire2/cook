@@ -1,0 +1,61 @@
+{
+  "title": "Taiwanese Beef Noodle Soup",
+  "description": "Tender beef shank in a rich, slightly spicy broth with fresh noodles, bok choy, pickled mustard greens, scallions, and cilantro. Instant Pot or stovetop.",
+  "servings": 10,
+  "prepMinutes": 30,
+  "cookMinutes": 120,
+  "ingredientSections": [
+    {
+      "name": "Soup",
+      "items": [
+        { "quantity": 3, "unit": "lb", "item": "beef shank", "note": "cut into 2-inch chunks" },
+        { "quantity": 2, "unit": "tbsp", "item": "oil" },
+        { "item": "ginger", "note": "2-inch piece, smashed" },
+        { "quantity": 6, "item": "garlic cloves", "note": "smashed" },
+        { "quantity": 3, "item": "scallions", "note": "cut into 2-inch segments" },
+        { "quantity": 1, "item": "onion", "note": "cut into wedges" },
+        { "quantity": 1, "item": "tomato", "note": "cut into wedges" },
+        { "quantity": 4, "item": "dried chilies", "note": "ripped in half" },
+        { "quantity": 1, "unit": "tbsp", "item": "tomato paste" },
+        { "quantity": 2, "unit": "tbsp", "item": "spicy bean paste", "note": "doubanjiang" },
+        { "quantity": 2, "unit": "tsp", "item": "sugar" },
+        { "quantity": 0.5, "unit": "cup", "item": "soy sauce" },
+        { "quantity": 0.5, "unit": "cup", "item": "Shaoxing wine" },
+        { "quantity": 8, "unit": "cup", "item": "water" }
+      ]
+    },
+    {
+      "name": "Aromatic spice packet",
+      "items": [
+        { "quantity": 1, "item": "Chinese cinnamon stick" },
+        { "quantity": 3, "item": "bay leaves", "note": "optional" },
+        { "quantity": 0.5, "unit": "tbsp", "item": "fennel seeds" },
+        { "quantity": 0.5, "unit": "tbsp", "item": "cumin seeds" },
+        { "quantity": 1, "unit": "tsp", "item": "coriander seeds" },
+        { "quantity": 1, "unit": "tbsp", "item": "Sichuan peppercorns", "note": "optional" },
+        { "quantity": 0.25, "unit": "tsp", "item": "black pepper" }
+      ]
+    },
+    {
+      "name": "To serve",
+      "items": [
+        { "quantity": 32, "unit": "oz", "item": "fresh wheat noodles" },
+        { "item": "bok choy", "note": "a small handful per serving" },
+        { "item": "cilantro", "note": "finely chopped" },
+        { "item": "scallions", "note": "finely chopped" },
+        { "item": "pickled mustard greens", "note": "snow vegetable / 雪菜, to taste" }
+      ]
+    }
+  ],
+  "steps": [
+    { "text": "Boil the beef shank chunks for 1 minute, then drain and rinse thoroughly to remove impurities." },
+    { "text": "On the Instant Pot sauté setting, cook the oil, ginger, garlic, scallions, and onion until the onion is translucent. Add the tomato and dried chilies." },
+    { "text": "Add the beef, tomato paste, spicy bean paste, sugar, soy sauce, and Shaoxing wine, and mix thoroughly." },
+    { "text": "Pour in 8 cups of water and add the spice packet. Do not fill the Instant Pot more than two-thirds full; halve the recipe for a smaller cooker." },
+    { "text": "Pressure-cook 100 minutes on Meat/Stew with the vent sealed. On the stove, simmer 3–4 hours instead." },
+    { "text": "Release the pressure carefully. Boil the noodles according to the package, and blanch the bok choy in the noodle water for the last 1–2 minutes." },
+    { "text": "Serve the broth and beef over noodles with bok choy, cilantro, scallions, and pickled mustard greens." }
+  ],
+  "tags": ["soup", "taiwanese", "beef", "noodles"],
+  "notes": "Stovetop option: simmer 3–4 hours instead of pressure-cooking."
+}
