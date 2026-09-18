@@ -100,13 +100,14 @@
     <h2>Third parties</h2>
     <p>
       Recipe text, your chat messages and any photo you send the assistant are
-      passed to Google's Gemini API at request time to produce a reply. Recipe
+      passed to Google's Gemini API at request time to produce a reply. Using
+      Dictate uploads a short microphone recording to Sous, which sends it to
+      Gemini to turn into text and does not store the audio. Recipe
       import fetches the URL you paste. If you press Request access, the
       notification email to the owner is sent through Resend and contains
       your email address, display name and the time of the request; it
       includes no one-click approval link — approval only ever happens on the
-      owner's own signed-in screen. Hosting is on Google Cloud. Nothing
-      else.
+      owner's own signed-in screen. Hosting is on Google Cloud.
     </p>
 
     <h2>Retention and deletion</h2>
