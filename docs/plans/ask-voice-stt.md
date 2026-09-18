@@ -9,6 +9,11 @@ not a spoken conversation.
 lands in `draft`. The user taps Send. Web Speech API (path A) is rejected —
 see “Rejected: path A” at the bottom.
 
+Checked against `main` at `0e2ff7a` (invitation flow + membership gate).
+That commit **does** change this plan: `sessionFrom` is gone; protected
+routes use `requireMember`. ChatPanel itself is unchanged. The recipe-edit
+header Save button (`4737164`) does not affect Ask.
+
 Parent surfaces: `src/components/ChatPanel.tsx` (the only Ask UI) mounted from
 `src/screens/RecipeView.tsx`. There is no separate cooking-mode chat; RecipeView
 always passes `cookingState` and already holds a screen wake lock.
@@ -47,8 +52,18 @@ None blocking. Path B and fill-then-Send are settled below. Remaining knobs
   `api/chat.ts` / `api/import.ts` exist only because those two still have
   Vercel copies; STT is Cloud Run only. `https://cook-seven-mu.vercel.app`
   404 on `/api/stt` is fine.
-- **Auth:** `sessionFrom(req)` from `server/session.ts` (same as photos/sync).
-  401 if absent. Allowlist is already inside `sessionFrom`.
+- **Auth:** `requireMember(req)` from `server/membership.ts`, same pattern
+  as `photosPost` / sync — **not** `sessionFrom` (that helper no longer
+  exists; `server/membership.test.ts` forbids the identifier in production
+  sources). Denied (no cookie, bad cookie, signed-in non-member) → reuse
+  `membershipUnauthorized()` (401 JSON `{ error: 'Unauthorized' }`).
+  Firestore membership read throw → `membershipUnavailable()` (503 JSON).
+  A 503 must **not** look like a 401: the client must not wipe the session
+  on a membership blip. Do **not** wrap STT in `withMembership` — that
+  adapter exists for Vercel `api/chat.ts` / `api/import.ts` and the
+  `authorizedSub` count test is locked to those three files. STT is
+  Cloud Run only; call `requireMember` inside `sttPost`.
+  `POST /api/access-request` stays un-gated by membership; STT must not.
 - **Body:** raw bytes, `Content-Type` is the recording MIME (no multipart).
   Mirror photos: allowlist the type, cap length, 413 if too large.
 - **Allowed MIME** (strip `;codecs=` before compare): `audio/webm`,
@@ -67,8 +82,11 @@ None blocking. Path B and fill-then-Send are settled below. Remaining knobs
   string if no speech; no quotes or commentary. Language follows
   `document.documentElement.lang` (`en` → ask for English).
 - **Client fetch:** `src/lib/sttApi.ts` (next to `chatApi.ts`). Screens must
-  not `fetch`. 401 → `invalidateSession()` like chat. Credentials
-  `same-origin`.
+  not `fetch`. Credentials `same-origin`. **401** → `invalidateSession()`
+  and throw `'Please sign in again — your session expired.'` (same sentence
+  as `chatApi.ts`). **503** (membership blip or missing `GEMINI_API_KEY`) →
+  throw the JSON `error` string, **do not** invalidate. Other non-OK → throw
+  `error` if present, else `'Dictation failed — try again.'`
 - **Unsupported:** hide the mic when `getUserMedia` or `MediaRecorder` is
   missing. When they exist, always show it; permission / capture errors use
   ChatPanel’s error strip.
@@ -87,11 +105,19 @@ None blocking. Path B and fill-then-Send are settled below. Remaining knobs
   `aria-pressed` while recording. Do not focus the textarea on start (that
   pops the iOS keyboard).
 - **Legal:** Sous *does* receive the clip and passes it to Gemini at request
-  time, then discards it. Rewrite `public/privacy.html` Third parties.
-  One sentence on `public/terms.html` if it currently implies only text +
-  photos go to the model. Bump last-updated dates.
+  time, then discards it. Edit `public/privacy.html` **Third parties** (the
+  paragraph that currently lists Gemini for recipe text / chat / photos,
+  URL import, Resend for access-request mail, hosting, then “Nothing
+  else.”). Add dictation; keep Resend; drop “Nothing else.”
+  `public/terms.html` Accuracy currently names “the assistant and the
+  recipe importer” — include dictation as AI transcription that can be
+  wrong. Bump last-updated dates if the calendar day changed.
 - **README:** one line under the chat/API bullets that Ask dictation POSTs
-  audio to `/api/stt` and Gemini returns text. Do not describe Web Speech.
+  audio to `/api/stt` and Gemini returns text. Change “both Gemini
+  handlers” / “both Gemini endpoints” (`GEMINI_API_KEY`, `CHAT_MODEL`) to
+  include STT. “Your data” already says chat and import send text/photos;
+  add that Dictate sends a short audio clip that is not stored. Do not
+  describe Web Speech.
 - **Tests:** pure predicates only (MIME allowlist, size, silence gate,
   transcript trim). No DOM testing library, no Gemini mock server, no
   fake MediaRecorder in CI. Do not fold a live STT eval into `npm test`.
@@ -115,7 +141,8 @@ attach keep working. Close / navigation does not leak a live MediaStream.
 - Gemini inline audio limit (20 MB) is far above `MAX_STT_BYTES`.
 - Chrome Android: `audio/webm;codecs=opus`. iOS Safari / standalone PWA:
   `audio/mp4`. Both are on the Gemini MIME list.
-- `sessionFrom` re-checks `ALLOWED_EMAILS`. No uid in the STT body.
+- `requireMember` is the gate (owners via `ALLOWED_EMAILS`, members via
+  Firestore `members/{sub}`). No uid in the STT body.
 - Implementer can click through Vite + `dev:api` signed in. Phone mic is
   the author’s device (Cloud Agent VMs often have none).
 
@@ -125,23 +152,31 @@ attach keep working. Close / navigation does not leak a live MediaStream.
   when draft is empty and there are no pending photos, or when `busy`.
 - Close / unmount already `abort()`s the in-flight **chat** controller.
   Recording needs the same cleanup for `MediaStream` tracks.
-- `POST /api/chat` lives in `api/chat.ts` and is mounted as an exact path
-  in `scripts/server.ts`. Photos are a prefix matcher. STT is an exact
-  `POST /api/stt` — add it to `apiRoutes`, do not overload the photos
-  prefix.
-- Photos POST is the binary-body precedent: session cookie, Content-Type
-  allowlist, Content-Length + streamed byte cap, 413. Copy that shape;
-  do not write GCS.
+- `POST /api/chat` lives in `api/chat.ts` and is mounted as
+  `withMembership(chatPost)` on the exact-path list in `scripts/server.ts`
+  (alongside `/api/access-request` and `/api/admin/*`). Photos are a
+  prefix matcher and call `requireMember` inside the handler. STT is an
+  exact `POST /api/stt` — add `{ method: 'POST', path: '/api/stt',
+  handler: sttPost }` to `apiRoutes` (bare `sttPost`, not
+  `withMembership(sttPost)`), do not overload the photos prefix.
+- Photos POST is the binary-body + membership precedent: `requireMember`,
+  Content-Type allowlist, Content-Length + streamed byte cap, 413. Copy
+  that shape; do not write GCS.
 - Chat Gemini: `new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })`,
   `CHAT_MODEL || 'gemini-3.7-flash'`, images as
   `{ inlineData: { mimeType, data: base64 } }`. STT is the audio analogue
   of that part, **without** tools or streaming.
 - `src/lib/chatApi.ts` is the existing non-library `fetch` helper. STT
   gets a sibling, not a method on `remote.ts` (remote is pull/push/photos).
-- Privacy Third parties today: recipe text, chat messages, photos → Gemini;
-  URL import; hosting; then “Nothing else.” That becomes false once STT
-  ships.
+- Privacy Third parties today: Gemini for recipe text / chat / photos;
+  URL import; Resend for access-request notification mail; hosting; then
+  “Nothing else.” Dictation makes that last sentence false. Keep the
+  Resend sentence.
+- `readSession` is cryptographic only. `sessionFrom` is deleted.
+  `server/membership.test.ts` asserts `sessionFrom` appears in no
+  production source — STT code must not reintroduce it.
 - No `SpeechRecognition` / `MediaRecorder` usage in `src/` today.
+  ChatPanel composer is unchanged by the invitation-flow merge.
 - `index.html` `lang="en"`. PWA `display: standalone`.
 
 ## Files to change
@@ -232,11 +267,14 @@ Files: `server/stt.ts`, `server/stt.test.ts`, `scripts/server.ts`
 
 **`sttPost(req: Request): Promise<Response>`**
 
-1. `sessionFrom(req)` → null ⇒ 401 `Unauthorized` (plain text, same as
-   chat’s unauthorized, or JSON — pick JSON `{ error }` **and use it for
-   every STT error** so the client can show `error` consistently).
+1. `const access = await requireMember(req)`.
+   `denied` → `membershipUnauthorized()` (401 JSON).
+   `unknown` → `membershipUnavailable()` (503 JSON). Do not invent a third
+   unauthorized shape. All later STT errors stay JSON `{ error }` with
+   `Cache-Control: no-store`.
 2. `GEMINI_API_KEY` missing/blank ⇒ 503 `{ error: 'Assistant is unavailable.' }`
-   (do not mention the env var name).
+   (do not mention the env var name). Distinct from membership 503 copy
+   (`Membership unavailable`) so the client can show it as-is.
 3. Method is already gated by the router (POST only).
 4. `Content-Type` → `normalizeSttContentType` (strip params, lower-case,
    allowlist). Null ⇒ 400 `{ error: 'Bad request' }`.
@@ -305,7 +343,9 @@ transcribeAudio(params: {
   optional 'x-recipe-title': title }, body: blob, signal })`
 - 401 → `invalidateSession()` and throw `'Please sign in again — your session expired.'`
   (same sentence as `chatApi.ts`)
-- Non-OK → throw the JSON `error` string if present, else
+- 503 → throw the JSON `error` (`Membership unavailable` or
+  `Assistant is unavailable.`) — **do not** `invalidateSession`
+- Other non-OK → throw the JSON `error` string if present, else
   `'Dictation failed — try again.'`
 - 200 → `stripTranscript` of `body.text`; allow empty (caller decides)
 
@@ -362,19 +402,20 @@ transcript is in `draft`.
 Files: `public/privacy.html`, `public/terms.html`, `README.md`, `AGENTS.md`
 
 Privacy Third parties: keep Gemini for recipe text, chat messages, and
-photos; **add** that using Dictate uploads a short microphone recording to
-Sous, which sends it to Gemini to turn into text and does not store the
-audio. Hosting remains Google Cloud. Remove “Nothing else.” Bump last
-updated.
+photos; keep the Resend access-request mail sentence; **add** that using
+Dictate uploads a short microphone recording to Sous, which sends it to
+Gemini to turn into text and does not store the audio. Hosting remains
+Google Cloud. Remove the closing “Nothing else.” Bump last updated if
+needed.
 
-Terms: one accuracy/acceptable-use-adjacent sentence that dictation is
-also AI transcription and can be wrong. Do not invent a new ToS section
-unless the current “assistant and importer” sentence can simply include
-dictation.
+Terms Accuracy: extend “The assistant and the recipe importer are AI”
+so dictation/transcription is named too. Do not add a new ToS section.
 
-README architecture / API list: `POST /api/stt` — session cookie, raw
-audio body, JSON `{ text }`. Mention it next to chat/import. Note that
-Vite’s `/api` proxy must be up or dictation fails the same way chat does.
+README: `POST /api/stt` — session cookie, raw audio body, JSON `{ text }`.
+List it next to chat/import. Change “both Gemini handlers/endpoints” to
+cover STT. “Your data” paragraph: Dictate sends a short clip to Gemini
+at request time and it is not stored. Vite’s `/api` proxy must be up or
+dictation fails the same way chat does.
 
 AGENTS.md plans row: `docs/plans/ask-voice-stt.md` | Planned. Ask
 composer dictation via `POST /api/stt` (Gemini); output remains text.
@@ -408,10 +449,13 @@ silent fallback in the same slice.
    max duration / loud resets pause); MIME picker; stripTranscript;
    stt content-type and size predicates.
 2. `npm run build` — type gate on `server/stt.ts`.
-3. `GET http://localhost:3001/api/stt` → 405; `POST` no cookie → 401;
-   `POST` cookie + `Content-Type: text/plain` → 400; oversized
-   Content-Length → 413. (Use a real `sous_session` cookie like other
-   server checks; do not print it.)
+3. `GET http://localhost:3001/api/stt` → 405; `POST` no cookie → 401 JSON
+   `{ error: 'Unauthorized' }`; signed-in **non-member** cookie → same 401
+   (do not treat as 403); `POST` member cookie + `Content-Type: text/plain`
+   → 400; oversized Content-Length → 413. (Use a real `sous_session`
+   cookie; do not print it.) Confirm `server/membership.test.ts` still
+   passes (no `sessionFrom` in `server/stt.ts`; `withMembership(chatPost)`
+   still the only chat wrapper).
 4. Browser, Vite + `dev:api`, signed in, `http://localhost:5173`:
    - RecipeView → Ask → Dictate → speak → stop → text in the box → Send
      → **text** reply. Network: `POST /api/stt` then `POST /api/chat`.
@@ -425,7 +469,7 @@ silent fallback in the same slice.
      transcribe without a second tap.
    - Opening the mic and waiting `SILENCE_PAUSE_MS` **without** speaking:
      still listening (until 30s or tap).
-   - Library / Import / Settings: no mic.
+   - Library / Import / Settings / Admin: no mic.
 5. Phone: Chrome Android and iOS Safari + standalone PWA. Confirm
    `Content-Type` is one of the allowlisted types. If standalone fails
    where Safari-tab works, record it; do not add Web Speech in this PR.
