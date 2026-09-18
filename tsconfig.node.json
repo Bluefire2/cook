@@ -18,5 +18,11 @@
     "noUncheckedSideEffectImports": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["vite.config.ts", "scripts", "server"]
+  "include": [
+    "vite.config.ts",
+    "vitest.config.ts",
+    "vitest.eval.config.ts",
+    "scripts",
+    "server"
+  ]
 }

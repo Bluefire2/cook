@@ -1,0 +1,183 @@
+{
+  "title": "Taiwanese Beef Noodle Soup",
+  "description": "Tender beef shank in a rich, slightly spicy broth with fresh noodles, bok choy, pickled mustard greens, scallions, and cilantro. Works in an Instant Pot or on the stove.",
+  "servings": 10,
+  "prepMinutes": 30,
+  "cookMinutes": 120,
+  "ingredientSections": [
+    {
+      "name": "Soup",
+      "items": [
+        {
+          "quantity": 3,
+          "unit": "lb",
+          "item": "beef shank",
+          "note": "1.4 kg, cut into 2-inch chunks"
+        },
+        {
+          "quantity": 2,
+          "unit": "tbsp",
+          "item": "oil"
+        },
+        {
+          "item": "ginger",
+          "note": "a 2-inch piece, smashed"
+        },
+        {
+          "quantity": 6,
+          "item": "garlic cloves",
+          "note": "smashed"
+        },
+        {
+          "quantity": 3,
+          "item": "scallions",
+          "note": "cut into 2-inch segments"
+        },
+        {
+          "quantity": 1,
+          "item": "onion",
+          "note": "cut into wedges"
+        },
+        {
+          "quantity": 1,
+          "item": "tomato",
+          "note": "cut into wedges"
+        },
+        {
+          "quantity": 4,
+          "item": "dried chilies",
+          "note": "ripped in half"
+        },
+        {
+          "quantity": 1,
+          "unit": "tbsp",
+          "item": "tomato paste"
+        },
+        {
+          "quantity": 2,
+          "unit": "tbsp",
+          "item": "spicy bean paste",
+          "note": "doubanjiang"
+        },
+        {
+          "quantity": 2,
+          "unit": "tsp",
+          "item": "sugar"
+        },
+        {
+          "quantity": 0.5,
+          "unit": "cup",
+          "item": "soy sauce"
+        },
+        {
+          "quantity": 0.5,
+          "unit": "cup",
+          "item": "Shaoxing wine"
+        },
+        {
+          "quantity": 8,
+          "unit": "cup",
+          "item": "water",
+          "note": "for the broth"
+        }
+      ]
+    },
+    {
+      "name": "Aromatic spice packet",
+      "items": [
+        {
+          "quantity": 1,
+          "item": "Chinese cinnamon stick"
+        },
+        {
+          "quantity": 3,
+          "item": "bay leaves",
+          "note": "optional"
+        },
+        {
+          "quantity": 0.5,
+          "unit": "tbsp",
+          "item": "fennel seeds"
+        },
+        {
+          "quantity": 0.5,
+          "unit": "tbsp",
+          "item": "cumin seeds"
+        },
+        {
+          "quantity": 1,
+          "unit": "tsp",
+          "item": "coriander seeds"
+        },
+        {
+          "quantity": 1,
+          "unit": "tbsp",
+          "item": "Sichuan peppercorns",
+          "note": "optional"
+        },
+        {
+          "quantity": 0.25,
+          "unit": "tsp",
+          "item": "black pepper"
+        }
+      ]
+    },
+    {
+      "name": "To serve",
+      "items": [
+        {
+          "quantity": 32,
+          "unit": "oz",
+          "item": "fresh wheat noodles",
+          "note": "900 g"
+        },
+        {
+          "item": "bok choy",
+          "note": "a small handful per serving"
+        },
+        {
+          "item": "cilantro",
+          "note": "finely chopped"
+        },
+        {
+          "item": "scallions",
+          "note": "finely chopped"
+        },
+        {
+          "item": "pickled mustard greens",
+          "note": "to taste; also called snow vegetable or 雪菜"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "text": "Boil enough water to cover all of the beef. Add the beef, return to a boil, and boil for 1 minute. Strain in a colander and rinse thoroughly with fresh water to remove any impurities."
+    },
+    {
+      "text": "Turn on the sauté setting on the Instant Pot. Add the oil, smashed ginger, garlic, scallions, and onion in that order and stir to lightly caramelize, letting the onion turn translucent. Add the tomato and dried chilies."
+    },
+    {
+      "text": "Add the beef to the pot, then the tomato paste, spicy bean paste, sugar, soy sauce, and Shaoxing wine, and mix thoroughly."
+    },
+    {
+      "text": "Pour in 8 cups of water and add the spice packet. The pot should reach about the 10-cup line and must not be more than two-thirds full; halve the recipe for a smaller cooker."
+    },
+    {
+      "text": "Close the lid with the vent sealed and cook for 100 minutes on the Meat/Stew setting. Without an Instant Pot, simmer the soup in a regular pot on low for 3–4 hours instead."
+    },
+    {
+      "text": "Carefully release the pressure valve, wearing an oven mitt. Boil the noodles per the package instructions, and in the last minute or two throw in the bok choy to blanch until just tender."
+    },
+    {
+      "text": "Serve each bowl with a portion of noodles, a few stalks of bok choy, and generous sprinklings of finely minced cilantro, scallions, and pickled mustard greens."
+    }
+  ],
+  "tags": [
+    "soup",
+    "taiwanese",
+    "beef",
+    "noodles"
+  ],
+  "notes": "Pre-seasoned spicy pickled mustard greens can go straight from the package into the bowl. If you only have the non-spicy kind, chop and sauté it with a little oil, a few chopped dried red chilies, and a pinch of sugar."
+}
