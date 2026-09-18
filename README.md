@@ -13,6 +13,30 @@ in your account (Firestore and Cloud Storage in `europe-west1`) and are cached
 in IndexedDB on each device so the app keeps working offline. The server also
 talks to Gemini on your behalf when you use chat or import.
 
+## Invitation and access
+
+Sous is **invitation-only**: a Google account must either be in
+`ALLOWED_EMAILS` (the owner/admin bootstrap list) or hold an **`active`**
+`members/{sub}` record in Firestore that the owner created by approving a
+request. Everyone else completes Google consent, lands on a server-rendered
+403 with **Request access**, and gets no session cookie until approved.
+
+1. The requester submits **Request access** (signed token, no cookie). Sous
+   stores one `accessRequests/{sub}` document and may email the owner via
+   Resend (optional — requests still appear in `/admin` without email).
+2. The owner opens **Settings → Invitations** (owners only) or `/admin` directly.
+   The screen loads all three sections on mount, has an explicit **Refresh**,
+   and pages with **Load more** per section (document-id order, not “the most
+   recent 200”).
+3. **Pending** rows can be approved or declined; **Approved** rows can have
+   access removed; **Declined** rows can be approved again. Approval writes
+   `members/{sub}` and takes effect on the member’s next sign-in — **no
+   redeploy**.
+
+**Every address in `ALLOWED_EMAILS` is an owner/admin** who can manage
+invitations. Add ordinary members through `/admin`, not by editing that
+variable.
+
 ## Installing it on a phone
 
 1. Open <https://sous.kyrylo.lol> in Safari.
@@ -143,10 +167,13 @@ the full map).
 | `AUTH_GOOGLE_ID` | yes | OAuth 2.0 Web client id. |
 | `AUTH_GOOGLE_SECRET` | yes | OAuth client secret. |
 | `SESSION_SECRET` | yes | HMAC key for the `sous_session` cookie. **Do not rotate casually** — every device is signed out if it changes. |
-| `ALLOWED_EMAILS` | yes | Comma-separated allowlist. **Unset or empty ⇒ nobody can sign in** (fail-closed). |
+| `ALLOWED_EMAILS` | yes | Comma-separated **owner/admin** list. **Unset or empty ⇒ nobody can sign in** (fail-closed). Every address here can use `/admin`; approve ordinary members there, not by editing this list. |
 | `PUBLIC_ORIGIN` | yes | Origin used to build the OAuth redirect URI. Local: `http://localhost:5173`. Production: `https://sous.kyrylo.lol`. |
 | `GOOGLE_CLOUD_PROJECT` | yes | `cooking-assistant-508423` for Firestore. |
 | `PHOTO_BUCKET` | no | GCS bucket name for recipe and chat photos. Unset ⇒ photo sync off (503, outbox kept). |
+| `MAIL_FROM` | yes (prod) | Resend sender address for access-request notifications. Must be verified in Resend. |
+| `OWNER_NOTIFY_EMAIL` | yes (prod) | Inbox that receives access-request notifications. |
+| `RESEND_API_KEY` | no | Resend API key. Unset ⇒ no notification email; requests still land in `/admin`. |
 | `CHAT_MODEL` | no | Model id for both Gemini endpoints. Defaults to `gemini-3.7-flash`. A bare `CHAT_MODEL=` is read as `''` by `--env-file`, which defeats the default — comment the line out instead. |
 
 No `VITE_`-prefixed variable exists anywhere in the app, and none should. Vite
@@ -175,12 +202,21 @@ repo `sous`. The multi-stage [`Dockerfile`](Dockerfile) pins
 `["node", "scripts/server.ts"]`. No secrets in any layer: `.dockerignore` and
 `.gcloudignore` exclude `.env*`.
 
-Build, push, and deploy with the env map the container needs (`GEMINI_API_KEY`,
-`AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `SESSION_SECRET`, `ALLOWED_EMAILS`,
-`PUBLIC_ORIGIN`, `GOOGLE_CLOUD_PROJECT`, `PHOTO_BUCKET`):
+Build, push, and deploy with the env map the container needs. The generator
+writes **ten** required keys (`GEMINI_API_KEY`, `AUTH_GOOGLE_ID`,
+`AUTH_GOOGLE_SECRET`, `SESSION_SECRET`, `ALLOWED_EMAILS`, `PUBLIC_ORIGIN`,
+`GOOGLE_CLOUD_PROJECT`, `PHOTO_BUCKET`, `MAIL_FROM`, `OWNER_NOTIFY_EMAIL`)
+and adds **`RESEND_API_KEY`** only when it is set — omitting it removes the
+key from Cloud Run because `--env-vars-file` replaces the whole map.
 
 ```bash
 bash scripts/deploy.sh
+```
+
+To turn off notification email on a service that already has a key:
+
+```bash
+SOUS_DISABLE_RESEND=1 bash scripts/deploy.sh
 ```
 
 The script resolves secrets from the environment or the live service, never
@@ -260,7 +296,44 @@ Use export before migrating an old on-device library into your account, and
 occasionally as a personal backup. Importing merges into the existing library,
 overwriting entries that share an id.
 
-To delete all cloud data for the account, email **chernyshov.k@gmail.com** from
+To delete all cloud data for an account, email **chernyshov.k@gmail.com** from
 the signed-in address (there is no in-app delete-account button). Revoking
 Google access in your Google account settings signs you out of Sous but does
 **not** by itself delete stored recipes.
+
+**Manual deletion procedure (operator): revoke access first, then delete data.**
+Membership is cached positively for up to **60 seconds** per Cloud Run
+instance, so deleting a library while the person is still authorized can let
+their client push it back on the next sync.
+
+1. Set `members/{sub}.status = 'revoked'`, or delete `members/{sub}` — either
+   denies access immediately.
+2. Wait at least 60 seconds and confirm denial: their `/api/auth/session` must
+   return `user: null` and sync must **401** before you delete anything else.
+3. Delete `members/{sub}` if you only revoked in step 1 (a revoked row is
+   still stored personal data).
+4. Recursively delete the `users/{sub}` subtree. The console does **not**
+   delete subcollections when you delete a parent document; use Firestore
+   `recursiveDelete`:
+
+   ```bash
+   node -e "const {Firestore}=require('@google-cloud/firestore');const db=new Firestore({projectId:'cooking-assistant-508423'});db.recursiveDelete(db.doc('users/'+process.argv[1])).then(()=>console.log('deleted'),(e)=>{console.error(e.message);process.exit(1)})" <SUB>
+   ```
+
+   Requires Application Default Credentials with quota project
+   `cooking-assistant-508423` (see [Local development](#local-development)).
+5. Delete `accessRequests/{sub}` (single document).
+6. Remove photo objects (Firestore does not touch GCS):
+
+   ```bash
+   gcloud storage rm --recursive gs://sous-photos-cooking-assistant-508423/users/<SUB>/ --project=cooking-assistant-508423
+   ```
+
+   On this machine `gcloud` is often not on PATH; use
+   `C:\Users\chern\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd`
+   instead of `gcloud`.
+
+7. Verify all four are gone: `members/{sub}`, `accessRequests/{sub}`, the
+   `users/{sub}` subtree, and the bucket prefix under `users/<SUB>/`.
+
+There is **no automated purge job** for access-request or membership records.

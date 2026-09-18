@@ -2206,8 +2206,8 @@ OAuth console change is needed anywhere in this plan.
 - [x] 8. [core] Admin API, owner-only and enforced server-side
 - [x] 9. [core] `src/lib/adminApi.ts` and `isOwner` on the session
 - [x] 10. [ui] `/admin` screen and the Settings entry point
-- [ ] 11. [core] `.env.example`, `scripts/deploy.sh`, `README.md`, `AGENTS.md`
-- [ ] 12. [core] `docs/handoff-invitation-only.md` — extend the briefing, commit it
-- [ ] 13. [ui] Privacy and terms
+- [x] 11. [core] `.env.example`, `scripts/deploy.sh`, `README.md`, `AGENTS.md`
+- [x] 12. [core] `docs/handoff-invitation-only.md` — extend the briefing, commit it
+- [x] 13. [ui] Privacy and terms
 - [ ] 14. [core] Local end-to-end by hand, two Google accounts
 - [ ] 15. [core] Production deploy and live verification *(operational)*

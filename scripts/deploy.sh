@@ -164,6 +164,35 @@ resolve_secret() {
   export "$name"
 }
 
+# Same precedence as resolve_secret, but an empty value is allowed (optional secrets).
+resolve_optional_secret() {
+  local name="$1" prompt="$2" value orig
+  value="${!name:-}"
+  if [[ -n "$value" ]]; then
+    info "${name} taken from the environment"
+  else
+    value="$(read_deployed_env "$name" || true)"
+    if [[ -n "$value" ]]; then
+      info "${name} reused from the deployed service"
+    elif [[ -t 0 ]]; then
+      printf '%s: ' "$prompt" >&2
+      read -rs value
+      printf '\n' >&2
+    fi
+  fi
+  orig="$value"
+  value="$(strip_controls "$value")"
+  if [[ -n "$orig" && "$value" != "$orig" ]]; then
+    warn "${name} contained non-printable characters (often a Git Bash paste artefact); they were stripped."
+  fi
+  if [[ -n "$value" ]]; then
+    printf -v "$name" '%s' "$value"
+    export "$name"
+  else
+    unset "$name" 2>/dev/null || true
+  fi
+}
+
 # Environment, then deployed service, then generate — generate only when describe
 # succeeded (or there is no service yet). A failed describe must not mint a secret.
 resolve_session_secret() {
@@ -209,6 +238,14 @@ resolve_secret AUTH_GOOGLE_SECRET "AUTH_GOOGLE_SECRET"
 resolve_secret ALLOWED_EMAILS     "ALLOWED_EMAILS (comma-separated allowlist)"
 resolve_secret GEMINI_API_KEY     "GEMINI_API_KEY"
 resolve_session_secret
+resolve_secret MAIL_FROM          "MAIL_FROM (Resend sender address)"
+resolve_secret OWNER_NOTIFY_EMAIL "OWNER_NOTIFY_EMAIL (access-request notification recipient)"
+if [[ -n "${SOUS_DISABLE_RESEND:-}" ]]; then
+  info "SOUS_DISABLE_RESEND set — notification email disabled (RESEND_API_KEY omitted from deploy map)"
+  unset RESEND_API_KEY
+else
+  resolve_optional_secret RESEND_API_KEY "RESEND_API_KEY (blank to disable notification email)"
+fi
 
 IMAGE_TAG="${IMAGE_TAG:-$(date -u +%Y%m%d-%H%M%S)}"
 IMAGE="${IMAGE:-${IMAGE_REPO}:${IMAGE_TAG}}"
@@ -233,7 +270,7 @@ trap 'rm -f "$ENV_FILE"' EXIT
 # JSON.stringify produces a double-quoted YAML scalar and escapes quotes and
 # backslashes. Do not put the values on the node command line — they are
 # already in the environment. Single-line -e: see strip_controls.
-node -e 'const fs=require("fs");const dest=process.argv[process.argv.length-1];const fixed={PUBLIC_ORIGIN:"https://sous.kyrylo.lol",GOOGLE_CLOUD_PROJECT:"cooking-assistant-508423",PHOTO_BUCKET:"sous-photos-cooking-assistant-508423"};const keys=["GEMINI_API_KEY","AUTH_GOOGLE_ID","AUTH_GOOGLE_SECRET","SESSION_SECRET","ALLOWED_EMAILS","PUBLIC_ORIGIN","GOOGLE_CLOUD_PROJECT","PHOTO_BUCKET"];const lines=keys.map(k=>{const v=fixed[k]??process.env[k];if(typeof v!=="string"||v==="")process.exit(2);return k+": "+JSON.stringify(v);});fs.writeFileSync(dest,lines.join("\n")+"\n");' "$(to_native_path "$ENV_FILE")" \
+node -e 'const fs=require("fs");const dest=process.argv[process.argv.length-1];const fixed={PUBLIC_ORIGIN:"https://sous.kyrylo.lol",GOOGLE_CLOUD_PROJECT:"cooking-assistant-508423",PHOTO_BUCKET:"sous-photos-cooking-assistant-508423"};const keys=["GEMINI_API_KEY","AUTH_GOOGLE_ID","AUTH_GOOGLE_SECRET","SESSION_SECRET","ALLOWED_EMAILS","PUBLIC_ORIGIN","GOOGLE_CLOUD_PROJECT","PHOTO_BUCKET","MAIL_FROM","OWNER_NOTIFY_EMAIL","RESEND_API_KEY"];const optional=new Set(["RESEND_API_KEY"]);const lines=keys.flatMap(k=>{const v=fixed[k]??process.env[k];if(typeof v!=="string"||v===""){if(optional.has(k))return[];process.exit(2)}return[k+": "+JSON.stringify(v)]});fs.writeFileSync(dest,lines.join("\n")+"\n");' "$(to_native_path "$ENV_FILE")" \
   || die "failed to write --env-vars-file (a required secret was empty?)"
 
 info "Deploying Cloud Run service ${SERVICE_NAME} in ${REGION}"
