@@ -131,20 +131,27 @@ export async function requireMember(req: Request): Promise<RequireMemberResult> 
   }
 }
 
-export type RequireOwnerResult = 'ok' | 'unauthenticated' | 'forbidden';
+export type RequireOwnerResult =
+  | { kind: 'unauthenticated' }
+  | { kind: 'forbidden' }
+  | { kind: 'ok'; sub: string; email: string };
 
 export function requireOwner(req: Request): RequireOwnerResult {
   const sessionResult = readSession(req);
   if (sessionResult.status === 'absent') {
-    return 'unauthenticated';
+    return { kind: 'unauthenticated' };
   }
   if (sessionResult.status !== 'ok') {
-    return 'unauthenticated';
+    return { kind: 'unauthenticated' };
   }
   if (!isAllowed(sessionResult.session.email, true, allowedEmails())) {
-    return 'forbidden';
+    return { kind: 'forbidden' };
   }
-  return 'ok';
+  return {
+    kind: 'ok',
+    sub: sessionResult.session.sub,
+    email: sessionResult.session.email,
+  };
 }
 
 export function membershipUnauthorized(): Response {

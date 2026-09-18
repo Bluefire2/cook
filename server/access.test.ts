@@ -32,6 +32,8 @@ describe('invitationOnlyPage', () => {
     expect(html).toContain('<form method="POST" action="/api/access-request">');
     expect(html).toContain('<input type="hidden" name="t" value="tok.en-value">');
     expect(html).toContain('<button type="submit">Request access</button>');
+    expect(html).toContain('Your request goes to the owner of this app.');
+    expect(html).toContain('Nobody will email you back');
     expect(html).toContain('<a href="/privacy">Privacy</a>');
     expect(html).toContain('<a href="/terms">Terms</a>');
   });
@@ -51,12 +53,18 @@ describe('invitationOnlyPage', () => {
     expect(html).not.toContain('<script>');
   });
 
-  it('omits the form when the token could not be minted', () => {
+  it('omits the form but keeps the guidance when the token could not be minted', () => {
     const html = invitationOnlyPage({ email: 'person@example.com' }, null);
     expect(html).toContain('<h1>Sous is invitation-only</h1>');
     expect(html).toContain('You signed in as person@example.com.');
     expect(html).not.toContain('<form');
+    expect(html).not.toContain('name="t"');
     expect(html).not.toContain('<button');
+    // D14 substance survives the missing form: no email back, sign in again
+    // once approved — plus the transient-failure pointer to retry sign-in.
+    expect(html).toContain('could not be started right now');
+    expect(html).toContain('Nobody will email you back');
+    expect(html).toContain('once you have been approved, you can try signing in again');
   });
 
   it('is self-contained: lang, viewport, color-scheme, no script, no external URLs', () => {

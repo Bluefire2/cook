@@ -2203,8 +2203,8 @@ OAuth console change is needed anywhere in this plan.
 - [x] 5. [core] The chat/import membership gate (the landmine)
 - [x] 6. [core] The access-request token and `POST /api/access-request`
 - [x] 7. [ui] The invitation-only page and the request-result pages
-- [ ] 8. [core] Admin API, owner-only and enforced server-side
-- [ ] 9. [core] `src/lib/adminApi.ts` and `isOwner` on the session
+- [x] 8. [core] Admin API, owner-only and enforced server-side
+- [x] 9. [core] `src/lib/adminApi.ts` and `isOwner` on the session
 - [ ] 10. [ui] `/admin` screen and the Settings entry point
 - [ ] 11. [core] `.env.example`, `scripts/deploy.sh`, `README.md`, `AGENTS.md`
 - [ ] 12. [core] `docs/handoff-invitation-only.md` — extend the briefing, commit it
