@@ -1,3 +1,4 @@
+import { drainGcsDeletes } from './photos.ts';
 import { sessionFrom } from './session.ts';
 import {
   cascadeRecipeDelete,
@@ -7,7 +8,7 @@ import {
   isKnownPushKind,
   listChangedSince,
   putDoc,
-  tombstoneDoc,
+  tombstonePhotoWithGcs,
   type PullCursor,
   type StoreKind,
   validatePushOp,
@@ -170,7 +171,7 @@ export async function applyPushOp(
     }
     case 'photo.delete': {
       const body = payload as { id: string; updatedAt: number };
-      return tombstoneDoc(uid, 'photos', body.id, body.updatedAt);
+      return tombstonePhotoWithGcs(uid, body.id, body.updatedAt);
     }
     default:
       return { applied: false, reason: 'unknown' };
@@ -233,6 +234,8 @@ export async function syncPush(req: Request): Promise<Response> {
       current: outcome.current,
     });
   }
+
+  await drainGcsDeletes(uid);
 
   return jsonResponse({ results });
 }

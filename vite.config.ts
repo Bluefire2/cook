@@ -11,6 +11,19 @@ export default defineConfig({
     },
   },
   plugins: [
+    {
+      name: 'legal-html',
+      configureServer(server) {
+        server.middlewares.use((req, _res, next) => {
+          if (req.url === '/privacy' || req.url?.startsWith('/privacy?')) {
+            req.url = '/privacy.html';
+          } else if (req.url === '/terms' || req.url?.startsWith('/terms?')) {
+            req.url = '/terms.html';
+          }
+          next();
+        });
+      },
+    },
     react(),
     tailwindcss(),
     VitePWA({

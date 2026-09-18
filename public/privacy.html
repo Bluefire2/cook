@@ -51,21 +51,23 @@
   </head>
   <body>
     <h1>Privacy policy</h1>
-    <p class="muted">Last updated: 14 September 2026</p>
+    <p class="muted">Last updated: 18 September 2026</p>
 
     <h2>What is stored</h2>
     <p>
-      When you sign in, Sous sets a signed session cookie
-      (<code>sous_session</code>) holding your Google account id
-      (<code>sub</code>) and email address. The cookie is HttpOnly and is not
-      readable by page scripts; it does not contain your display name. A cached
-      copy of your profile may also be kept in this browser's local storage
-      under <code>cook.session</code>, so the app can show who is signed in.
+      When you sign in, Sous associates your Google account id
+      (<code>sub</code>), email address, and display name with your library.
+      A signed session cookie (<code>sous_session</code>) holds your
+      <code>sub</code> and email; it is HttpOnly and is not readable by page
+      scripts. A cached copy of your profile may also be kept in this browser's
+      local storage under <code>cook.session</code>, so the app can show who is
+      signed in.
     </p>
     <p>
-      Your recipes, chat messages, cooking progress and photos stay in this
-      browser's storage (IndexedDB) on each device. They are not uploaded to a
-      Sous server.
+      Your recipes, chat messages, cooking progress, and attached photos are
+      stored in Google Cloud (Firestore and Cloud Storage) in the
+      <code>europe-west1</code> region. They are loaded into this browser
+      while you are signed in. There is no on-device recipe database.
     </p>
     <p>
       No password and no Google refresh token is stored — the app only ever
@@ -74,9 +76,9 @@
 
     <h2>What it is used for</h2>
     <p>
-      Knowing which Google account is signed in, so chat and recipe import can
-      run as you. Your information is not sold, not shared, and not used for
-      advertising or profiling.
+      Showing your own recipe library across devices, and answering cooking
+      questions. Your information is not sold, not shared, and not used for
+      advertising.
     </p>
 
     <h2>What it can reach in your Google account</h2>
@@ -97,14 +99,22 @@
 
     <h2>Retention and deletion</h2>
     <p>
-      Sign out to drop the session cookie — this works when the network request
-      succeeds. If you sign out while offline, the cached profile is cleared
-      from this browser, but the HttpOnly cookie may remain until it expires or
-      a later sign-out succeeds. Clearing this site's browser data deletes the
-      on-device library. You can also revoke the app's access at any time from
-      your Google account permissions page. There is no in-app "delete my
-      account" button in this version, because there is no server-side library
-      yet.
+      Deleting a recipe in Sous deletes its chat thread, cooking progress, and
+      attached photos from your stored library.
+    </p>
+    <p>
+      To delete all data stored for your account, email
+      <a href="mailto:chernyshov.k@gmail.com">chernyshov.k@gmail.com</a>
+      from the same address you use to sign in. There is no in-app delete-account
+      button. Revoking Sous's access from your Google account permissions page
+      signs you out but does not by itself delete your stored recipes.
+    </p>
+    <p>
+      Sign out to drop the session cookie when the network request succeeds. If
+      you sign out while offline, the cached profile is cleared from this
+      browser, but the HttpOnly cookie may remain until it expires or a later
+      sign-out succeeds. Your library in Google Cloud remains until you
+      request account deletion.
     </p>
 
     <h2>Access</h2>

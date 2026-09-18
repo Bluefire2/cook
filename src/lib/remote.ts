@@ -1,0 +1,277 @@
+import { compactRecipe } from './compactRecipe';
+import { MAX_PUSH_OPS, type PushOp } from './pushOps';
+import { invalidateSession } from './session';
+import type { ChatMessage, Recipe } from './types';
+import type { CookStateRow } from './useCookState';
+import { clearLibrary } from './libraryMemory';
+
+export type PullCursor = Partial<
+  Record<'recipes' | 'chatMessages' | 'cookState' | 'photos', [number, string]>
+>;
+
+export type PullChanges = {
+  recipes: Record<string, unknown>[];
+  chatMessages: Record<string, unknown>[];
+  cookState: Record<string, unknown>[];
+  photos: Record<string, unknown>[];
+};
+
+export type PullPage = {
+  changes: PullChanges;
+  cursor: PullCursor;
+  hasMore: boolean;
+};
+
+export type RemoteResult = 'ok' | 'signedOut' | 'error';
+
+function jsonHeaders(): HeadersInit {
+  return { 'Content-Type': 'application/json' };
+}
+
+export function mergePullCursor(prev: PullCursor, next: PullCursor): PullCursor {
+  return { ...prev, ...next };
+}
+
+function encodePullCursor(cursor: PullCursor): string {
+  const json = JSON.stringify(cursor);
+  const bytes = new TextEncoder().encode(json);
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function readErrorStatus(response: Response): Promise<'signedOut' | 'error'> {
+  if (response.status === 401 || response.status === 403) {
+    invalidateSession();
+    clearLibrary();
+    return 'signedOut';
+  }
+  return 'error';
+}
+
+export async function pullPage(cursor: PullCursor | null): Promise<PullPage | 'signedOut' | 'error'> {
+  const params = new URLSearchParams({ limit: '200' });
+  if (cursor !== null && Object.keys(cursor).length > 0) {
+    params.set('cursor', encodePullCursor(cursor));
+  }
+  let response: Response;
+  try {
+    response = await fetch(`/api/sync/pull?${params.toString()}`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+  } catch {
+    return 'error';
+  }
+  if (!response.ok) {
+    return readErrorStatus(response);
+  }
+  const body = (await response.json()) as {
+    changes?: PullChanges;
+    cursor?: PullCursor;
+    hasMore?: boolean;
+  };
+  if (!body.changes) {
+    return 'error';
+  }
+  return {
+    changes: body.changes,
+    cursor: body.cursor ?? {},
+    hasMore: Boolean(body.hasMore),
+  };
+}
+
+export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
+  for (let offset = 0; offset < ops.length; offset += MAX_PUSH_OPS) {
+    const batch = ops.slice(offset, offset + MAX_PUSH_OPS);
+    let response: Response;
+    try {
+      response = await fetch('/api/sync/push', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ ops: batch }),
+      });
+    } catch {
+      return 'error';
+    }
+    if (!response.ok) {
+      return readErrorStatus(response);
+    }
+  }
+  return 'ok';
+}
+
+const PHOTO_UPLOAD_JPEG = 'image/jpeg';
+const PHOTO_UPLOAD_PNG = 'image/png';
+
+export async function resolvePhotoUploadContentType(
+  blob: Blob,
+): Promise<'image/jpeg' | 'image/png' | null> {
+  const declared = blob.type;
+  if (declared === PHOTO_UPLOAD_JPEG || declared === PHOTO_UPLOAD_PNG) {
+    return declared;
+  }
+  if (declared !== '' && declared !== 'application/octet-stream') {
+    return null;
+  }
+  const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+  if (
+    head.length >= 4 &&
+    head[0] === 0x89 &&
+    head[1] === 0x50 &&
+    head[2] === 0x4e &&
+    head[3] === 0x47
+  ) {
+    return PHOTO_UPLOAD_PNG;
+  }
+  if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) {
+    return PHOTO_UPLOAD_JPEG;
+  }
+  return PHOTO_UPLOAD_JPEG;
+}
+
+export async function postPhoto(
+  id: string,
+  recipeId: string,
+  updatedAt: number,
+  blob: Blob,
+): Promise<RemoteResult | 'unavailable'> {
+  const contentType = await resolvePhotoUploadContentType(blob);
+  if (contentType === null) {
+    return 'error';
+  }
+  let response: Response;
+  try {
+    response = await fetch(`/api/photos/${encodeURIComponent(id)}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': contentType,
+        'x-photo-updated-at': String(updatedAt),
+        'x-recipe-id': recipeId,
+      },
+      body: blob,
+    });
+  } catch {
+    return 'error';
+  }
+  if (response.status === 200) {
+    return 'ok';
+  }
+  if (response.status === 503) {
+    return 'unavailable';
+  }
+  return readErrorStatus(response);
+}
+
+export async function fetchPhotoBlob(id: string): Promise<Blob | null | 'signedOut'> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/photos/${encodeURIComponent(id)}`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+  } catch {
+    return null;
+  }
+  if (response.status === 401 || response.status === 403) {
+    invalidateSession();
+    clearLibrary();
+    return 'signedOut';
+  }
+  if (!response.ok) {
+    return null;
+  }
+  return response.blob();
+}
+
+export function normalizeRecipeChange(raw: Record<string, unknown>): Recipe | 'tombstone' {
+  if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
+    return 'tombstone';
+  }
+  return compactRecipe(raw as unknown as Recipe);
+}
+
+export function normalizeChatChange(raw: Record<string, unknown>): ChatMessage | 'tombstone' {
+  if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
+    return 'tombstone';
+  }
+  const message: ChatMessage = {
+    id: raw.id as string,
+    recipeId: raw.recipeId as string,
+    role: raw.role as 'user' | 'assistant',
+    content: raw.content as string,
+    createdAt: raw.createdAt as number,
+  };
+  if (Array.isArray(raw.photoIds)) {
+    message.photoIds = raw.photoIds as string[];
+  }
+  if (raw.proposedRecipe !== undefined) {
+    message.proposedRecipe = raw.proposedRecipe as ChatMessage['proposedRecipe'];
+  }
+  return message;
+}
+
+export function normalizeCookChange(
+  raw: Record<string, unknown>,
+): CookStateRow | 'tombstone' {
+  if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
+    return 'tombstone';
+  }
+  return {
+    recipeId: raw.recipeId as string,
+    servings: raw.servings as number,
+    currentStep: raw.currentStep as number,
+    checkedKeys: raw.checkedKeys as string[],
+    recipeUpdatedAt: raw.recipeUpdatedAt as number,
+  };
+}
+
+export function applyPullChanges(
+  acc: {
+    recipes: Map<string, Recipe>;
+    chat: Map<string, ChatMessage>;
+    cook: Map<string, CookStateRow>;
+    remotePhotoIds: Set<string>;
+  },
+  changes: PullChanges,
+): void {
+  for (const raw of changes.recipes) {
+    const id = raw.id as string;
+    const normalized = normalizeRecipeChange(raw);
+    if (normalized === 'tombstone') {
+      acc.recipes.delete(id);
+    } else {
+      acc.recipes.set(id, normalized);
+    }
+  }
+  for (const raw of changes.chatMessages) {
+    const id = raw.id as string;
+    const normalized = normalizeChatChange(raw);
+    if (normalized === 'tombstone') {
+      acc.chat.delete(id);
+    } else {
+      acc.chat.set(id, normalized);
+    }
+  }
+  for (const raw of changes.cookState) {
+    const recipeId = (raw.recipeId ?? raw.id) as string;
+    const normalized = normalizeCookChange(raw);
+    if (normalized === 'tombstone') {
+      acc.cook.delete(recipeId);
+    } else {
+      acc.cook.set(recipeId, normalized);
+    }
+  }
+  for (const raw of changes.photos) {
+    const id = raw.id as string;
+    if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
+      acc.remotePhotoIds.delete(id);
+    } else {
+      acc.remotePhotoIds.add(id);
+    }
+  }
+}

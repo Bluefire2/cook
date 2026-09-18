@@ -2,9 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
-import { OWNER_UID_KEY } from './lib/cacheOwner';
-import { photoStore } from './lib/photoStore';
-import { seedIfEmpty } from './lib/seed';
+import { clearLibrary, discardLegacyCookDb, markLoaded } from './lib/libraryMemory';
 import { fetchSession } from './lib/session';
 import { setupSyncTriggers, triggerSyncAfterSession } from './lib/syncEngine';
 import { settings } from './lib/settings';
@@ -12,6 +10,7 @@ import { applyTheme } from './lib/theme';
 import './index.css';
 
 applyTheme(settings.getTheme());
+discardLegacyCookDb();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -24,14 +23,12 @@ createRoot(document.getElementById('root')!).render(
 setupSyncTriggers();
 
 void fetchSession()
-  .then(async (result) => {
+  .then((result) => {
     if (result.status === 'signedIn') {
       triggerSyncAfterSession(result.user.sub);
       return;
     }
-    if (result.status === 'signedOut' && !localStorage.getItem(OWNER_UID_KEY)) {
-      await seedIfEmpty();
-    }
+    clearLibrary();
+    markLoaded();
   })
-  .then(() => photoStore.sweepUnreferenced())
   .catch((err) => console.error(err));

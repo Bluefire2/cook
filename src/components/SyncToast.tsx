@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { decideSyncToast, onSyncFinished, useSyncStatus } from '../lib/syncEngine';
+import { decideSyncToast, onSyncFinished } from '../lib/syncEngine';
 
 export default function SyncToast() {
-  const { status } = useSyncStatus();
   const [toast, setToast] = useState<{
     id: number;
     kind: 'success' | 'error';
@@ -50,7 +49,7 @@ export default function SyncToast() {
       aria-atomic="true"
       className="pointer-events-none fixed inset-x-0 top-[max(0.75rem,env(safe-area-inset-top))] z-30 flex justify-center px-4"
     >
-      {toast !== null && status !== 'needsMigration' && (
+      {toast !== null && (
         <p
           key={toast.id}
           className={`max-w-full rounded-full px-4 py-2 text-center text-sm font-medium shadow-lg transition-all duration-200 motion-reduce:transition-none ${

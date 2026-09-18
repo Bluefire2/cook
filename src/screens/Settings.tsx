@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { exportLibrary, importLibrary } from '../lib/backup';
-import { notifyImportComplete, resyncFromServer, sync, useSyncStatus } from '../lib/syncEngine';
+import { notifyImportComplete, sync, useSyncStatus } from '../lib/syncEngine';
 import { signInHref, signOut, useSession } from '../lib/session';
 import { settings, type Theme } from '../lib/settings';
 import { applyTheme } from '../lib/theme';
@@ -13,7 +13,6 @@ export default function Settings() {
   const [theme, setTheme] = useState(settings.getTheme());
   const [status, setStatus] = useState<string | null>(null);
   const [statusKind, setStatusKind] = useState<'ok' | 'err' | null>(null);
-  const [confirmResync, setConfirmResync] = useState(false);
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -50,7 +49,7 @@ export default function Settings() {
     }
   };
 
-  const doSync = async () => {
+  const doRefresh = async () => {
     setBusy(true);
     try {
       await sync();
@@ -61,27 +60,16 @@ export default function Settings() {
     }
   };
 
-  const doResync = async () => {
-    setBusy(true);
-    try {
-      await resyncFromServer();
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const syncedLabel = (() => {
     const at = syncStatus.lastSyncedAt;
     if (at === null) {
-      return 'Never synced';
+      return 'Not loaded yet';
     }
     const minutes = Math.round((Date.now() - at) / 60_000);
     if (minutes < 1) {
-      return 'Synced just now';
+      return 'Loaded just now';
     }
-    return `Synced ${minutes} min ago`;
+    return `Loaded ${minutes} min ago`;
   })();
 
   return (
@@ -99,7 +87,7 @@ export default function Settings() {
           {sessionStatus === 'signedOut' && (
             <>
               <p className="mt-1 text-sm text-ink-muted">
-                Sign in with Google so your recipes follow you across devices.
+                Sign in with Google to load your recipes from your account.
               </p>
               <a
                 href={signInHref('/settings')}
@@ -107,10 +95,6 @@ export default function Settings() {
               >
                 Sign in with Google
               </a>
-              <p className="mt-2 text-sm text-ink-muted">
-                Recipes already on this device stay on this device until you
-                add them to your account.
-              </p>
             </>
           )}
           {sessionStatus === 'signedIn' && user && (
@@ -127,9 +111,6 @@ export default function Settings() {
                   Sign out
                 </button>
               </div>
-              <p className="mt-2 text-sm text-ink-muted">
-                Recipes stay cached on this device.
-              </p>
             </>
           )}
           {sessionStatus === 'offline' && (
@@ -149,60 +130,23 @@ export default function Settings() {
 
       {sessionStatus === 'signedIn' && (
         <>
-          <h2 className="mt-8 text-lg font-semibold">Sync</h2>
+          <h2 className="mt-8 text-lg font-semibold">Library</h2>
           <p className="mt-1 text-sm text-ink-muted">{syncedLabel}</p>
-          {syncStatus.pendingCount > 0 && (
-            <p className="mt-1 text-sm text-ink-muted">
-              {syncStatus.pendingCount} change
-              {syncStatus.pendingCount === 1 ? '' : 's'} waiting to upload
-            </p>
-          )}
-          {syncStatus.status === 'offline' && (
-            <p className="mt-1 text-sm text-ink-muted">
-              Offline — changes upload when you're back on.
-            </p>
-          )}
           {syncStatus.status === 'error' && (
             <p className="mt-1 text-sm text-danger">
-              Couldn't sync. Check your connection and try again.
+              Couldn't load your recipes. Check your connection and try again.
             </p>
           )}
           <div className="mt-3 flex gap-2">
             <button
               type="button"
-              onClick={() => void doSync()}
-              disabled={busy || syncStatus.status === 'syncing'}
+              onClick={() => void doRefresh()}
+              disabled={busy || syncStatus.status === 'loading'}
               className={`${secondaryBtn} flex-1 py-2.5`}
             >
-              {busy
-                ? 'Syncing…'
-                : syncStatus.status === 'error'
-                  ? 'Try again'
-                  : 'Sync now'}
+              {busy || syncStatus.status === 'loading' ? 'Loading…' : 'Refresh'}
             </button>
           </div>
-          <button
-            type="button"
-            disabled={busy || syncStatus.status === 'syncing'}
-            onClick={() => {
-              if (busy) {
-                return;
-              }
-              if (!confirmResync) {
-                setConfirmResync(true);
-                return;
-              }
-              setConfirmResync(false);
-              void doResync();
-            }}
-            className="mt-3 text-sm text-ink-muted underline-offset-2 hover:underline disabled:opacity-40"
-          >
-            {busy
-              ? 'Resyncing…'
-              : confirmResync
-                ? 'Resync from server? This does not delete anything.'
-                : 'Resync from server'}
-          </button>
         </>
       )}
 
@@ -228,21 +172,23 @@ export default function Settings() {
       <h2 className="mt-8 text-lg font-semibold">Backup</h2>
       <p className="mt-1 text-sm text-ink-muted">
         {sessionStatus === 'signedIn'
-          ? 'Recipes sync to your account. An export is still the way to move a library between accounts or keep an offline copy.'
-          : "Recipes live only on this device. Export a backup file now and then, so a lost phone doesn't mean a lost library."}
+          ? 'Export a file of your account library, or import a backup to add recipes to this account.'
+          : 'Sign in to export or import a backup of your account library.'}
       </p>
       <div className="mt-3 flex gap-2">
         <button
           type="button"
           onClick={() => void doExport()}
-          className={`${secondaryBtn} flex-1 py-2.5`}
+          disabled={sessionStatus !== 'signedIn'}
+          className={`${secondaryBtn} flex-1 py-2.5 disabled:opacity-40`}
         >
           Export library
         </button>
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className={`${secondaryBtn} flex-1 py-2.5`}
+          disabled={sessionStatus !== 'signedIn'}
+          className={`${secondaryBtn} flex-1 py-2.5 disabled:opacity-40`}
         >
           Import backup
         </button>

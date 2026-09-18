@@ -24,11 +24,15 @@ function finiteNumber(value: unknown): number | undefined {
 
 let firestoreClient: Firestore | null = null;
 
-function getFirestore(): Firestore {
+export function getStoreFirestore(): Firestore {
   if (firestoreClient === null) {
     firestoreClient = new Firestore(firestoreConfig());
   }
   return firestoreClient;
+}
+
+function getFirestore(): Firestore {
+  return getStoreFirestore();
 }
 
 function userRef(uid: string) {
@@ -39,8 +43,30 @@ function colRef(uid: string, kind: StoreKind) {
   return userRef(uid).collection(kind);
 }
 
-function gcsDeletesRef(uid: string) {
+export function gcsDeletesColRef(uid: string) {
   return userRef(uid).collection('gcsDeletes');
+}
+
+function gcsDeletesRef(uid: string) {
+  return gcsDeletesColRef(uid);
+}
+
+export function photoDocRef(uid: string, photoId: string) {
+  return colRef(uid, 'photos').doc(photoId);
+}
+
+export function recipeDocRef(uid: string, recipeId: string) {
+  return colRef(uid, 'recipes').doc(recipeId);
+}
+
+export function photosColRef(uid: string) {
+  return colRef(uid, 'photos');
+}
+
+export function readStoredMutationState(
+  data: Record<string, unknown> | undefined,
+): StoredMutationState | null {
+  return readStoredState(data);
 }
 
 export interface StoredMutationState {
@@ -401,21 +427,23 @@ export async function tombstoneDoc(
   });
 }
 
-async function tombstonePhotoWithGcs(
+export async function tombstonePhotoWithGcs(
   uid: string,
   photoId: string,
   at: number,
-): Promise<void> {
+): Promise<MutationResult> {
   const serverUpdatedAt = Date.now();
-  await getFirestore().runTransaction(async (tx) => {
+  return getFirestore().runTransaction(async (tx) => {
     const photoRef = colRef(uid, 'photos').doc(photoId);
     const snap = await tx.get(photoRef);
-    const stored = readStoredState(
-      snap.exists ? (snap.data() as Record<string, unknown>) : undefined,
-    );
+    const storedRaw = snap.exists ? (snap.data() as Record<string, unknown>) : null;
+    const stored = readStoredState(storedRaw ?? undefined);
     const cmp = compareMutation(stored, at, 'tombstone');
     if (!cmp.allow) {
-      return;
+      return {
+        applied: false,
+        current: storedRaw ?? undefined,
+      };
     }
     tx.set(photoRef, tombstonePayload(photoId, at, serverUpdatedAt), { merge: false });
     tx.set(
@@ -423,6 +451,7 @@ async function tombstonePhotoWithGcs(
       { photoId, createdAt: Date.now() },
       { merge: true },
     );
+    return { applied: true, serverUpdatedAt };
   });
 }
 

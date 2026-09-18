@@ -1,8 +1,21 @@
-import { db } from './db';
-import { enqueue } from './outbox';
 import { isUsableRecipe } from './recipeShape';
 import type { CookStateRow } from './useCookState';
 import type { ChatMessage, Recipe } from './types';
+import {
+  addPendingBlob,
+  getPendingBlob,
+  listAllChat,
+  listAllCook,
+  listPhotoIds,
+  listRecipes,
+  markPhotoRemote,
+  upsertChat,
+  upsertCook,
+  upsertRecipe,
+} from './libraryMemory';
+import { compactRecipe } from './compactRecipe';
+import { fetchPhotoBlob, postPhoto, pushOps } from './remote';
+import type { PushOp } from './pushOps';
 
 interface BackupPhoto {
   id: string;
@@ -15,11 +28,9 @@ interface BackupFile {
   app: 'cook';
   version: 1 | 2;
   exportedAt: number;
-  /** Whatever the user chose; only rows that pass isUsableRecipe reach the db. */
   recipes: unknown[];
   chatMessages: ChatMessage[];
   photos: BackupPhoto[];
-  /** Present from v2. Older files omit it. */
   cookState?: CookStateRow[];
 }
 
@@ -33,34 +44,6 @@ function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
-}
-
-export async function exportLibrary(): Promise<Blob> {
-  const [recipes, chatMessages, photos, cookState] = await Promise.all([
-    db.recipes.toArray(),
-    db.chatMessages.toArray(),
-    db.photos.toArray(),
-    db.cookState.toArray(),
-  ]);
-
-  const backup: BackupFile = {
-    app: 'cook',
-    version: 2,
-    exportedAt: Date.now(),
-    recipes,
-    chatMessages,
-    cookState,
-    photos: await Promise.all(
-      photos.map(async (p) => ({
-        id: p.id,
-        type: p.blob.type || 'image/jpeg',
-        base64: await blobToBase64(p.blob),
-        createdAt: p.createdAt,
-      })),
-    ),
-  };
-
-  return new Blob([JSON.stringify(backup)], { type: 'application/json' });
 }
 
 function attributePhotos(
@@ -83,7 +66,44 @@ function attributePhotos(
   return map;
 }
 
-/** Merges a backup into the library (existing ids get overwritten). */
+export async function exportLibrary(): Promise<Blob> {
+  const recipes = listRecipes();
+  const chatMessages = listAllChat();
+  const cookState = listAllCook();
+  const photoIds = listPhotoIds();
+
+  const photos: BackupPhoto[] = [];
+  for (const id of photoIds) {
+    let blob = getPendingBlob(id);
+    if (!blob) {
+      const fetched = await fetchPhotoBlob(id);
+      if (fetched === null || fetched === 'signedOut') {
+        continue;
+      }
+      blob = fetched;
+    }
+    photos.push({
+      id,
+      type: blob.type || 'image/jpeg',
+      base64: await blobToBase64(blob),
+      createdAt: Date.now(),
+    });
+  }
+
+  const backup: BackupFile = {
+    app: 'cook',
+    version: 2,
+    exportedAt: Date.now(),
+    recipes,
+    chatMessages,
+    cookState,
+    photos,
+  };
+
+  return new Blob([JSON.stringify(backup)], { type: 'application/json' });
+}
+
+/** Merges a backup into the account library (existing ids get overwritten). */
 export async function importLibrary(
   file: Blob,
 ): Promise<{ imported: number; skipped: number }> {
@@ -92,7 +112,7 @@ export async function importLibrary(
     throw new Error("That file doesn't look like a Sous backup.");
   }
 
-  const recipes = backup.recipes.filter(isUsableRecipe);
+  const recipes = backup.recipes.filter(isUsableRecipe).map(compactRecipe);
   const skipped = backup.recipes.length - recipes.length;
   const chatMessages = backup.chatMessages ?? [];
   const photoAttribution = attributePhotos(recipes, chatMessages);
@@ -100,55 +120,61 @@ export async function importLibrary(
   const photos = await Promise.all(
     (backup.photos ?? []).map(async (p) => ({
       id: p.id,
-      blob: await (
-        await fetch(`data:${p.type};base64,${p.base64}`)
-      ).blob(),
+      blob: await (await fetch(`data:${p.type};base64,${p.base64}`)).blob(),
       createdAt: p.createdAt,
     })),
   );
 
-  await db.transaction(
-    'rw',
-    [db.recipes, db.chatMessages, db.photos, db.cookState, db.outbox],
-    async (tx) => {
-      await db.recipes.bulkPut(recipes);
-      await db.chatMessages.bulkPut(chatMessages);
-      await db.photos.bulkPut(photos);
-      if (backup.cookState) {
-        await db.cookState.bulkPut(backup.cookState);
-      } else {
-        // v1 files have no progress. Drop leftover rows for overwritten ids
-        // so restored recipes do not inherit this device's old ticks.
-        await db.cookState.bulkDelete(recipes.map((r) => r.id));
-      }
+  for (const photo of photos) {
+    addPendingBlob(photo.id, photo.blob);
+  }
+  for (const recipe of recipes) {
+    upsertRecipe(recipe);
+  }
+  for (const message of chatMessages) {
+    upsertChat(message);
+  }
+  if (backup.cookState) {
+    for (const row of backup.cookState) {
+      upsertCook(row);
+    }
+  }
 
-      for (const recipe of recipes) {
-        await enqueue(tx, { kind: 'recipe.put', payload: recipe });
-      }
-      for (const [photoId, recipeId] of photoAttribution) {
-        const photo = photos.find((p) => p.id === photoId);
-        await enqueue(tx, {
-          kind: 'photo.put',
-          payload: {
-            id: photoId,
-            recipeId,
-            updatedAt: photo?.createdAt ?? Date.now(),
-          },
-        });
-      }
-      for (const message of chatMessages) {
-        await enqueue(tx, { kind: 'chat.put', payload: message });
-      }
-      if (backup.cookState) {
-        for (const row of backup.cookState) {
-          await enqueue(tx, {
-            kind: 'cookState.put',
-            payload: { ...row, updatedAt: Date.now() },
-          });
-        }
-      }
-    },
-  );
+  for (const [photoId, recipeId] of photoAttribution) {
+    const photo = photos.find((p) => p.id === photoId);
+    if (!photo) {
+      continue;
+    }
+    const uploaded = await postPhoto(photoId, recipeId, photo.createdAt, photo.blob);
+    if (uploaded !== 'ok') {
+      throw new Error("Couldn't upload a photo from the backup.");
+    }
+    markPhotoRemote(photoId);
+  }
+
+  const ops: PushOp[] = [];
+  for (const recipe of recipes) {
+    ops.push({ kind: 'recipe.put', payload: recipe });
+  }
+  for (const message of chatMessages) {
+    ops.push({ kind: 'chat.put', payload: message });
+  }
+  if (backup.cookState) {
+    for (const row of backup.cookState) {
+      ops.push({
+        kind: 'cookState.put',
+        payload: { ...row, updatedAt: Date.now() },
+      });
+    }
+  }
+  const result = await pushOps(ops);
+  if (result !== 'ok') {
+    throw new Error(
+      result === 'signedOut'
+        ? 'Please sign in again — your session expired.'
+        : "Couldn't import the backup.",
+    );
+  }
 
   return { imported: recipes.length, skipped };
 }

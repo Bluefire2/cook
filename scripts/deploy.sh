@@ -7,9 +7,9 @@ set -euo pipefail
 #   bash scripts/deploy.sh
 #
 # Secrets are typed once. On every later run they are read back off the
-# deployed service, so a redeploy needs nothing in the environment and
-# APP_PASSWORD cannot be changed by accident -- changing it locks out every
-# device whose Settings screen still holds the old value.
+# deployed service, so a redeploy needs nothing in the environment.
+# SESSION_SECRET is only generated when describe succeeds and the var was
+# absent — regenerating it on a flaky describe would sign every device out.
 #
 # Runs in Git Bash on Windows and unchanged in Cloud Shell. Does not create the
 # project, enable APIs, or create the Artifact Registry repo; see
@@ -84,18 +84,49 @@ require_gcloud() {
     || die "No active gcloud account. Run: gcloud auth login"
 }
 
-# Reads one env var back off the deployed service. Must never fail: on the first
-# deploy there is no service to read, and under `set -e` a failing command
-# substitution would abort the script with no output at all.
-# Single-line node -e: a multiline script inside $(...) prints nothing under
-# Git Bash (see strip_controls) — and this function's whole output is captured
-# in $(...) by resolve_secret, so a multiline script here silently reads nothing.
-read_deployed_env() {
-  local json
+# One describe per run. Result: ok | no_service | failed (network, creds, empty JSON).
+_DEPLOYED_SERVICE_JSON=""
+_DEPLOYED_DESCRIBE_RESULT=""
+
+load_deployed_service_describe() {
+  [[ -n "$_DEPLOYED_DESCRIBE_RESULT" ]] && return 0
+  local json stderr err
+  err=0
+  stderr="$(mktemp)"
   json="$(gcloud run services describe "$SERVICE_NAME" --region="$REGION" \
-    --project="$PROJECT" --format=json 2>/dev/null)" || return 0
-  [[ -n "$json" ]] || return 0
-  printf '%s' "$json" | node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{const env=JSON.parse(s).spec.template.spec.containers[0].env||[];const hit=env.find((e)=>e.name===process.argv[1]);if(hit&&typeof hit.value==="string")process.stdout.write(hit.value);}catch{}});' "$1" || return 0
+    --project="$PROJECT" --format=json 2>"$stderr")" || err=$?
+  if [[ "$err" -ne 0 ]]; then
+    if grep -qiE 'NOT_FOUND|could not find|does not exist|Resource .* was not found' "$stderr"; then
+      _DEPLOYED_DESCRIBE_RESULT=no_service
+    else
+      _DEPLOYED_DESCRIBE_RESULT=failed
+    fi
+    rm -f "$stderr"
+    return 0
+  fi
+  rm -f "$stderr"
+  if [[ -z "$json" ]]; then
+    _DEPLOYED_DESCRIBE_RESULT=failed
+    return 0
+  fi
+  _DEPLOYED_SERVICE_JSON="$json"
+  _DEPLOYED_DESCRIBE_RESULT=ok
+}
+
+# Single-line node -e: a multiline script inside $(...) prints nothing under Git Bash.
+env_value_from_deployed_json() {
+  local name="$1"
+  [[ -n "$_DEPLOYED_SERVICE_JSON" ]] || return 0
+  printf '%s' "$_DEPLOYED_SERVICE_JSON" | node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{const env=JSON.parse(s).spec.template.spec.containers[0].env||[];const hit=env.find((e)=>e.name===process.argv[1]);if(hit&&typeof hit.value==="string")process.stdout.write(hit.value);}catch{}});' "$name" || return 0
+}
+
+# Reads one env var off the deployed service when describe succeeded; empty on first deploy.
+read_deployed_env() {
+  load_deployed_service_describe
+  case "$_DEPLOYED_DESCRIBE_RESULT" in
+    ok) env_value_from_deployed_json "$1" ;;
+    *) return 0 ;;
+  esac
 }
 
 # Git Bash `read -rs` + Windows paste can prefix a C0 control (STX #x0002 is the
@@ -133,11 +164,51 @@ resolve_secret() {
   export "$name"
 }
 
+# Environment, then deployed service, then generate — generate only when describe
+# succeeded (or there is no service yet). A failed describe must not mint a secret.
+resolve_session_secret() {
+  local value orig
+  value="${SESSION_SECRET:-}"
+  if [[ -n "$value" ]]; then
+    info "SESSION_SECRET taken from the environment"
+  else
+    load_deployed_service_describe
+    case "$_DEPLOYED_DESCRIBE_RESULT" in
+      failed)
+        die "could not read SESSION_SECRET off the service; refusing to generate a new one because it would sign every device out"
+        ;;
+      ok)
+        value="$(env_value_from_deployed_json SESSION_SECRET)"
+        if [[ -n "$value" ]]; then
+          info "SESSION_SECRET reused from the deployed service"
+        else
+          value="$(node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("base64"))')"
+          info "SESSION_SECRET generated (32 random bytes); save it in a password manager — changing it signs every device out"
+        fi
+        ;;
+      no_service)
+        value="$(node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("base64"))')"
+        info "SESSION_SECRET generated (32 random bytes); save it in a password manager — changing it signs every device out"
+        ;;
+    esac
+  fi
+  orig="$value"
+  value="$(strip_controls "$value")"
+  if [[ -n "$orig" && "$value" != "$orig" ]]; then
+    warn "SESSION_SECRET contained non-printable characters (often a Git Bash paste artefact); they were stripped."
+  fi
+  [[ -n "$value" ]] || die "SESSION_SECRET is empty after resolution."
+  export SESSION_SECRET="$value"
+}
+
 require_gcloud
 command -v node >/dev/null 2>&1 || die "node not found; it is needed to read env vars back off the deployed service."
 
-resolve_secret GEMINI_API_KEY "GEMINI_API_KEY"
-resolve_secret APP_PASSWORD   "APP_PASSWORD (must match the app's Settings screen)"
+resolve_secret AUTH_GOOGLE_ID     "AUTH_GOOGLE_ID"
+resolve_secret AUTH_GOOGLE_SECRET "AUTH_GOOGLE_SECRET"
+resolve_secret ALLOWED_EMAILS     "ALLOWED_EMAILS (comma-separated allowlist)"
+resolve_secret GEMINI_API_KEY     "GEMINI_API_KEY"
+resolve_session_secret
 
 IMAGE_TAG="${IMAGE_TAG:-$(date -u +%Y%m%d-%H%M%S)}"
 IMAGE="${IMAGE:-${IMAGE_REPO}:${IMAGE_TAG}}"
@@ -154,14 +225,15 @@ fi
 # --env-vars-file, not --set-env-vars: gcloud splits --set-env-vars values on
 # commas, and escaping that on Windows needs quadrupled carets. A YAML file has
 # no such problem, and keeps the secrets off the command line and out of shell
-# history.
+# history. The file replaces the whole env map on the service — omitting a key
+# Omitting a key that is still on the service deletes that var on the next deploy.
 ENV_FILE="$(mktemp)"
 chmod 600 "$ENV_FILE"
 trap 'rm -f "$ENV_FILE"' EXIT
 # JSON.stringify produces a double-quoted YAML scalar and escapes quotes and
 # backslashes. Do not put the values on the node command line — they are
 # already in the environment. Single-line -e: see strip_controls.
-node -e 'const fs=require("fs");const dest=process.argv[process.argv.length-1];const keys=["GEMINI_API_KEY","APP_PASSWORD"];const lines=keys.map(k=>{const v=process.env[k];if(typeof v!=="string"||v==="")process.exit(2);return k+": "+JSON.stringify(v);});fs.writeFileSync(dest,lines.join("\n")+"\n");' "$(to_native_path "$ENV_FILE")" \
+node -e 'const fs=require("fs");const dest=process.argv[process.argv.length-1];const fixed={PUBLIC_ORIGIN:"https://sous.kyrylo.lol",GOOGLE_CLOUD_PROJECT:"cooking-assistant-508423",PHOTO_BUCKET:"sous-photos-cooking-assistant-508423"};const keys=["GEMINI_API_KEY","AUTH_GOOGLE_ID","AUTH_GOOGLE_SECRET","SESSION_SECRET","ALLOWED_EMAILS","PUBLIC_ORIGIN","GOOGLE_CLOUD_PROJECT","PHOTO_BUCKET"];const lines=keys.map(k=>{const v=fixed[k]??process.env[k];if(typeof v!=="string"||v==="")process.exit(2);return k+": "+JSON.stringify(v);});fs.writeFileSync(dest,lines.join("\n")+"\n");' "$(to_native_path "$ENV_FILE")" \
   || die "failed to write --env-vars-file (a required secret was empty?)"
 
 info "Deploying Cloud Run service ${SERVICE_NAME} in ${REGION}"
@@ -184,13 +256,10 @@ DIGEST="$(gcloud run services describe "$SERVICE_NAME" --region="$REGION" \
 info "Deployed to ${SERVICE_URL:-(url unavailable)}"
 info "Running image: ${DIGEST:-(unknown)}"
 info ""
-info "Next, before mapping the domain: check ${SERVICE_URL:-the service URL} serves"
-info "  /, a deep link such as /settings, the assets, and a STREAMING chat turn."
-info "Then the remaining manual steps:"
-info "  1. gcloud beta run domain-mappings create --service=${SERVICE_NAME} \\"
-info "       --domain=sous.kyrylo.lol --region=${REGION} --project=${PROJECT}"
-info "     Run it as the account that verified kyrylo.lol in Search Console."
-info "  2. Add the record it prints in Cloudflare as DNS-only (grey cloud), not proxied,"
-info "     or the managed certificate will never provision."
-info "  3. Wait for CertificateProvisioned=True. 'You must configure your DNS records'"
-info "     shows for the whole pending window even when DNS is already correct."
+info "After this deploy (step 20): fill OAuth consent-screen Branding URLs and publish (step 21)."
+info ""
+info "Domain mapping history (sous.kyrylo.lol is already mapped):"
+info "  gcloud beta run domain-mappings create --service=${SERVICE_NAME} \\"
+info "    --domain=sous.kyrylo.lol --region=${REGION} --project=${PROJECT}"
+info "  DNS in Cloudflare must stay DNS-only (grey cloud), not proxied."
+info "  Wait for CertificateProvisioned=True before relying on HTTPS."
