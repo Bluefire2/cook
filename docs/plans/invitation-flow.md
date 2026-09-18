@@ -1796,28 +1796,48 @@ tone; bump "Last updated":
   subcollections (the orphaned documents survive and stay queryable by path),
   and nothing in Firestore touches GCS. The procedure is therefore, in order:
 
-  1. `gcloud firestore` recursive delete of the subtree —
-     `& $gcloud firestore documents delete "projects/cooking-assistant-508423/databases/(default)/documents/users/<SUB>" --recursive --project=cooking-assistant-508423`
-     — or the console's **Delete collection** on each of the person's
-     subcollections followed by the parent document. Confirm which
-     subcollections exist first rather than assuming the list.
-  2. `members/{sub}` and `accessRequests/{sub}` — single document deletes.
-  3. The photo objects, which step 1 does not touch:
-     `& $gcloud storage rm --recursive gs://sous-photos-cooking-assistant-508423/users/<SUB>/ --project=cooking-assistant-508423`.
-  4. Verify absence: re-query `users/{sub}` and list the bucket prefix, both
-     empty. Deletion of a member also removes access, so confirm that person is
-     denied on their next request.
+  **Revoke access first, and only then delete data.** The order is not
+  cosmetic: membership is cached positively for up to 60 s (**D11**), so a
+  member whose library you delete while they are still authorized can have
+  their client push the whole thing straight back on its next sync — you would
+  be racing `syncEngine`, and the visible result is a "deleted" library that
+  quietly reappears.
 
-  Note the ordering consequence: after step 2 the person is no longer a member,
-  so if anything in steps 1 or 3 fails partway the remaining data is
-  unreachable through the app but **still present** — finish the procedure
+  1. Delete `members/{sub}` (or set `status: 'revoked'` — either denies).
+  2. **Wait out the cache and verify denial** before touching any data: after
+     60 s that person's `/api/auth/session` must return `user: null` and their
+     sync must 401. Only now is the data safe to remove.
+  3. Recursively delete the `users/{sub}` subtree. `gcloud` has **no**
+     single-document recursive delete (`gcloud firestore bulk-delete` targets
+     collections, not one document's subtree), so use the client library that is
+     already a dependency — `@google-cloud/firestore` ^9.1.0, whose
+     `recursiveDelete` does exactly this:
+
+     ```
+     node -e "const {Firestore}=require('@google-cloud/firestore');const db=new Firestore({projectId:'cooking-assistant-508423'});db.recursiveDelete(db.doc('users/'+process.argv[1])).then(()=>console.log('deleted'),(e)=>{console.error(e.message);process.exit(1)})" <SUB>
+     ```
+
+     It needs local ADC with the quota project set (see Assumptions). Deleting
+     `users/{sub}` on its own in the console is **not** sufficient — Firestore
+     does not delete subcollections with their parent, so `recipes`, `chats`,
+     `cookState` and the rest would survive as orphans that are still
+     queryable by path.
+  4. `accessRequests/{sub}` — a single document delete.
+  5. The photo objects, which nothing above touches:
+     `& $gcloud storage rm --recursive gs://sous-photos-cooking-assistant-508423/users/<SUB>/ --project=cooking-assistant-508423`.
+  6. Verify absence: re-run the `recursiveDelete` (it succeeds trivially on an
+     empty subtree), list `users/{sub}`'s subcollections in the console, and
+     list the bucket prefix — all empty.
+
+  If anything after step 1 fails partway, the person is already denied but data
+  remains **present though unreachable through the app** — finish the procedure
   rather than stopping at "they can't sign in any more". Any of the four
   records can be deleted on request to the contact address. State
   plainly that **there is no automated purge job** — do **not** write "kept for
   up to 12 months" or any other period. Nothing in this plan deletes an
   access-request document on a schedule, so a stated retention period would be
   a promise the code does not keep, in the one document that is supposed to be
-  legally accurate. The manual process is one line, and belongs in `README.md`
+  legally accurate. The procedure above belongs in `README.md`
   in step 11 so it is findable: delete the `accessRequests/{sub}` document (and
   `members/{sub}` if present) in the Firestore console. If a real retention
   window is ever wanted, it needs a scheduled job and its own plan.
@@ -1938,13 +1958,19 @@ complete consent today and land on the current 403.
     `/admin`** and cannot be revoked through the UI at all — the worst possible
     resting state, and one nobody would notice later. Finish with:
 
+    Follow **step 13's procedure, in its order** — revoke, verify, then delete —
+    because B's browser is still open and still holding a session:
+
     1. Delete `members/{B-sub}` by hand in the console (`/admin` cannot do it —
        that is the point of this bullet).
     2. Wait out the positive membership cache — up to 60 s (**D11**) — then
        confirm B is actually denied: B's `/api/auth/session` returns
-       `user: null` and B's next sign-in lands on the 403 page.
-    3. Delete B's test library the same way the step-13 procedure describes:
-       the `users/{B-sub}` subtree recursively, plus any photo objects under
+       `user: null` and B's next sign-in lands on the 403 page. **Do not skip
+       to step 3 before this passes.** B's client is live and still syncing; if
+       it is still authorized when you delete the library, its next sync pushes
+       B's recipe back and the deletion silently undoes itself.
+    3. Delete B's test library with the `recursiveDelete` one-liner from step
+       13 on `users/{B-sub}`, plus any photo objects under
        `gs://…/users/{B-sub}/`. B's recipes were created only for this test.
     4. Optionally recreate `accessRequests/{B-sub}` if you want B available for
        future testing; otherwise B starts clean as a first-time requester,
