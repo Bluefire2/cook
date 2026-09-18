@@ -26,6 +26,7 @@ import {
   authStart,
 } from '../server/auth.ts';
 import { redirectUri } from '../server/env.ts';
+import { extensionImport, extensionImportOptions } from '../server/extensionImport.ts';
 import { syncPull, syncPush } from '../server/sync.ts';
 
 type ApiHandler = (req: Request) => Promise<Response>;
@@ -45,6 +46,8 @@ const apiRoutes: ApiRoute[] = [
   { method: 'POST', path: '/api/auth/signout', handler: authSignout },
   { method: 'GET', path: '/api/sync/pull', handler: syncPull },
   { method: 'POST', path: '/api/sync/push', handler: syncPush },
+  { method: 'POST', path: '/api/extension/import', handler: extensionImport },
+  { method: 'OPTIONS', path: '/api/extension/import', handler: extensionImportOptions },
 ];
 
 const LEGAL_HTML: Record<string, string> = {

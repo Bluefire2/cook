@@ -5,6 +5,14 @@ import { isAllowed } from './allowlist.ts';
 export const SESSION_COOKIE_NAME = 'sous_session';
 export const OAUTH_COOKIE_NAME = 'sous_oauth';
 
+/**
+ * Carries the same token as the cookie, for clients that cannot rely on the
+ * browser attaching a `SameSite=Lax` cookie — today only the Chrome extension,
+ * which reads the cookie itself and forwards it. Honoured by
+ * `readHeaderSession` alone; every other route stays cookie-only.
+ */
+export const SESSION_HEADER_NAME = 'x-sous-session';
+
 const SESSION_MAX_AGE_SEC = 90 * 24 * 60 * 60;
 const OAUTH_MAX_AGE_SEC = 600;
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
@@ -303,8 +311,7 @@ export function clearedOauthCookie(options: { secure: boolean }): string {
   return parts.join('; ');
 }
 
-export function readSession(req: Request): ReadSessionResult {
-  const token = readCookie(req, SESSION_COOKIE_NAME);
+function sessionFromToken(token: string | null): ReadSessionResult {
   if (token === null) {
     return { status: 'absent' };
   }
@@ -322,8 +329,29 @@ export function readSession(req: Request): ReadSessionResult {
   return { status: 'ok', session };
 }
 
+export function readSession(req: Request): ReadSessionResult {
+  return sessionFromToken(readCookie(req, SESSION_COOKIE_NAME));
+}
+
 export function sessionFrom(req: Request): SessionPayload | null {
   const result = readSession(req);
+  if (result.status === 'ok') {
+    return result.session;
+  }
+  return null;
+}
+
+/**
+ * Header only, with no cookie fallback: the extension always has the token in
+ * hand, and a fallback would give this route two different auth stories.
+ */
+export function readHeaderSession(req: Request): ReadSessionResult {
+  const raw = req.headers.get(SESSION_HEADER_NAME)?.trim();
+  return sessionFromToken(raw === undefined || raw === '' ? null : raw);
+}
+
+export function sessionFromHeader(req: Request): SessionPayload | null {
+  const result = readHeaderSession(req);
   if (result.status === 'ok') {
     return result.session;
   }

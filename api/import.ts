@@ -229,64 +229,57 @@ export function extractRecipeSource(html: string): string {
     .slice(0, MAX_SOURCE_CHARS);
 }
 
-export async function POST(req: Request): Promise<Response> {
-  if (sessionSub(req) === null) {
-    return new Response('Unauthorized', { status: 401 });
+export type PageFetchResult =
+  | { ok: true; html: string }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Also used by `server/extensionImport.ts`, which needs the same fetch and the
+ * same user-facing wording. Exported rather than duplicated: the no-sibling-
+ * imports rule is about `api/` entrypoints importing each other under Vercel's
+ * isolated transpile, and nothing here imports a sibling.
+ */
+export async function fetchPageHtml(rawUrl: string): Promise<PageFetchResult> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { ok: false, status: 422, error: 'That does not look like a web address.' };
+  }
+  // Scheme check only (matches RecipeView's http/https allowlist); does not block private or link-local destinations.
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, status: 422, error: 'Only http and https URLs are supported.' };
   }
 
-  const body = (await req.json()) as ImportRequestBody;
-
-  let source = body.text?.trim() ?? '';
-  if (body.url) {
-    let parsed: URL;
-    try {
-      parsed = new URL(body.url);
-    } catch {
-      return Response.json(
-        { error: 'That does not look like a web address.' },
-        { status: 422 },
-      );
-    }
-    // Scheme check only (matches RecipeView's http/https allowlist); does not block private or link-local destinations.
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return Response.json(
-        { error: 'Only http and https URLs are supported.' },
-        { status: 422 },
-      );
-    }
-
-    let page: Response;
-    try {
-      page = await fetch(parsed.href, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-          Accept: 'text/html',
-        },
-        redirect: 'follow',
-      });
-    } catch {
-      return Response.json(
-        { error: 'Could not reach that URL.' },
-        { status: 422 },
-      );
-    }
-    if (!page.ok) {
-      return Response.json(
-        { error: `The site refused the request (${page.status}). Try pasting the recipe text instead.` },
-        { status: 422 },
-      );
-    }
-    source = extractRecipeSource(await page.text());
+  let page: Response;
+  try {
+    page = await fetch(parsed.href, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+        Accept: 'text/html',
+      },
+      redirect: 'follow',
+    });
+  } catch {
+    return { ok: false, status: 422, error: 'Could not reach that URL.' };
   }
-
-  if (source === '') {
-    return Response.json(
-      { error: 'Provide a URL or recipe text.' },
-      { status: 400 },
-    );
+  if (!page.ok) {
+    return {
+      ok: false,
+      status: 422,
+      error: `The site refused the request (${page.status}). Try pasting the recipe text instead.`,
+    };
   }
+  return { ok: true, html: await page.text() };
+}
 
+export type ExtractionResult =
+  | { ok: true; recipe: Record<string, unknown> }
+  | { ok: false; status: number; error: string };
+
+/** The Gemini half of an import: source material in, recipe fields out. */
+export async function extractRecipeDraft(source: string): Promise<ExtractionResult> {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const result = await ai.models.generateContent({
     model: MODEL,
@@ -303,25 +296,49 @@ export async function POST(req: Request): Promise<Response> {
     },
   });
 
-  let recipe: { title?: string };
+  let recipe: Record<string, unknown>;
   try {
     const parsed: unknown = JSON.parse(result.text ?? '');
     if (typeof parsed !== 'object' || parsed === null) {
       throw new Error('not an object');
     }
-    recipe = parsed as { title?: string };
+    recipe = parsed as Record<string, unknown>;
   } catch {
-    return Response.json(
-      { error: 'Extraction failed — no structured result.' },
-      { status: 502 },
-    );
+    return { ok: false, status: 502, error: 'Extraction failed — no structured result.' };
   }
   if (recipe.title === 'NOT_A_RECIPE') {
+    return { ok: false, status: 422, error: "Couldn't find a recipe in that content." };
+  }
+  return { ok: true, recipe };
+}
+
+export async function POST(req: Request): Promise<Response> {
+  if (sessionSub(req) === null) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  const body = (await req.json()) as ImportRequestBody;
+
+  let source = body.text?.trim() ?? '';
+  if (body.url) {
+    const page = await fetchPageHtml(body.url);
+    if (!page.ok) {
+      return Response.json({ error: page.error }, { status: page.status });
+    }
+    source = extractRecipeSource(page.html);
+  }
+
+  if (source === '') {
     return Response.json(
-      { error: "Couldn't find a recipe in that content." },
-      { status: 422 },
+      { error: 'Provide a URL or recipe text.' },
+      { status: 400 },
     );
   }
 
-  return Response.json({ recipe: { ...recipe, sourceUrl: body.url } });
+  const extracted = await extractRecipeDraft(source);
+  if (!extracted.ok) {
+    return Response.json({ error: extracted.error }, { status: extracted.status });
+  }
+
+  return Response.json({ recipe: { ...extracted.recipe, sourceUrl: body.url } });
 }
