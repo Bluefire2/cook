@@ -1,13 +1,8 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
-import {
-  allowedEmails,
-  googleClient,
-  isSecureOrigin,
-  publicOrigin,
-  redirectUri,
-} from './env.ts';
-import { isAllowed } from './allowlist.ts';
+import { googleClient, isSecureOrigin, publicOrigin, redirectUri } from './env.ts';
+import { touchRequestIdentity } from './members.ts';
+import { accessAllows, requireMember } from './membership.ts';
 import {
   clearedOauthCookie,
   clearedSessionCookie,
@@ -174,7 +169,14 @@ export async function authCallbackGoogle(req: Request): Promise<Response> {
       return respond(400, { body: 'Sign-in failed' });
     }
 
-    if (!isAllowed(email, payload.email_verified, allowedEmails())) {
+    const name = typeof payload.name === 'string' ? payload.name : undefined;
+    const access = await accessAllows({
+      sub: payload.sub,
+      email,
+      emailVerified: payload.email_verified,
+    });
+
+    if (access === 'denied') {
       console.log(`sign-in refused: ${email}`);
       const body =
         '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Invitation only</title></head>' +
@@ -185,8 +187,20 @@ export async function authCallbackGoogle(req: Request): Promise<Response> {
       });
     }
 
-    const name = typeof payload.name === 'string' ? payload.name : undefined;
+    if (access === 'unknown') {
+      const unavailableBody =
+        '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Unavailable</title></head>' +
+        '<body><p>Sign-in is temporarily unavailable. Try again in a few minutes.</p></body></html>';
+      return respond(503, {
+        body: unavailableBody,
+        contentType: 'text/html; charset=utf-8',
+      });
+    }
+
     await upsertUser(payload.sub, email, name);
+    if (access === 'member') {
+      await touchRequestIdentity(payload.sub, { sub: payload.sub, email, name });
+    }
 
     const sessionToken = signSession({ sub: payload.sub, email }, Date.now());
     return respond(302, {
@@ -214,8 +228,24 @@ export async function authSession(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ user: null }), { status: 200, headers });
   }
 
-  const body: { user: { sub: string; email: string } } = {
-    user: { sub: result.session.sub, email: result.session.email },
+  const membership = await requireMember(req);
+  if (membership.kind === 'denied') {
+    headers.append('Set-Cookie', clearedSessionCookie({ secure }));
+    return new Response(JSON.stringify({ user: null }), { status: 200, headers });
+  }
+  if (membership.kind === 'unknown') {
+    return new Response(JSON.stringify({ error: 'Membership unavailable' }), {
+      status: 503,
+      headers,
+    });
+  }
+
+  const body: { user: { sub: string; email: string; isOwner: boolean } } = {
+    user: {
+      sub: membership.sub,
+      email: membership.email,
+      isOwner: membership.isOwner,
+    },
   };
   if (shouldRefresh(result.session, Date.now())) {
     const refreshed = signSession(

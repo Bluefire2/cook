@@ -1,5 +1,10 @@
 import { drainGcsDeletes } from './photos.ts';
-import { sessionFrom } from './session.ts';
+import {
+  membershipUnauthorized,
+  membershipUnavailable,
+  requireMember,
+  storeUnavailable,
+} from './membership.ts';
 import {
   cascadeRecipeDelete,
   clearChatForRecipe,
@@ -18,16 +23,6 @@ const STORE_KINDS: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photo
 
 const MAX_PUSH_OPS = 50;
 const MAX_PUSH_BYTES = 1_000_000;
-
-function unauthorized(): Response {
-  return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-    status: 401,
-    headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-store',
-    },
-  });
-}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -71,11 +66,15 @@ function mergeCursors(prev: PullCursor, kind: StoreKind, cursor: [number, string
 }
 
 export async function syncPull(req: Request): Promise<Response> {
-  const session = sessionFrom(req);
-  if (!session) {
-    return unauthorized();
+  const access = await requireMember(req);
+  if (access.kind === 'denied') {
+    return membershipUnauthorized();
+  }
+  if (access.kind === 'unknown') {
+    return membershipUnavailable();
   }
 
+  try {
   const url = new URL(req.url);
   const limitRaw = url.searchParams.get('limit');
   let limit = 200;
@@ -99,7 +98,7 @@ export async function syncPull(req: Request): Promise<Response> {
   let hasMore = false;
 
   for (const kind of STORE_KINDS) {
-    const page = await listChangedSince(session.sub, kind, cursor[kind], limit);
+    const page = await listChangedSince(access.sub, kind, cursor[kind], limit);
     changes[kind] = page.docs.map((doc) => docToChange(kind, doc));
     nextCursor = mergeCursors(nextCursor, kind, page.cursor);
     if (page.hasMore) {
@@ -108,11 +107,15 @@ export async function syncPull(req: Request): Promise<Response> {
   }
 
   return jsonResponse({
-    user: { sub: session.sub, email: session.email },
+    user: { sub: access.sub, email: access.email },
     changes,
     cursor: nextCursor,
     hasMore,
   });
+  } catch (err) {
+    console.error('syncPull store error:', err);
+    return storeUnavailable();
+  }
 }
 
 export type PushResult = {
@@ -179,9 +182,12 @@ export async function applyPushOp(
 }
 
 export async function syncPush(req: Request): Promise<Response> {
-  const session = sessionFrom(req);
-  if (!session) {
-    return unauthorized();
+  const access = await requireMember(req);
+  if (access.kind === 'denied') {
+    return membershipUnauthorized();
+  }
+  if (access.kind === 'unknown') {
+    return membershipUnavailable();
   }
 
   let raw: string;
@@ -211,8 +217,9 @@ export async function syncPush(req: Request): Promise<Response> {
     return jsonResponse({ error: 'Too many ops; batch your requests' }, 413);
   }
 
-  const uid = session.sub;
+  const uid = access.sub;
 
+  try {
   const results: PushResult[] = [];
   for (let index = 0; index < ops.length; index++) {
     const op = ops[index];
@@ -238,6 +245,10 @@ export async function syncPush(req: Request): Promise<Response> {
   await drainGcsDeletes(uid);
 
   return jsonResponse({ results });
+  } catch (err) {
+    console.error('syncPush store error:', err);
+    return storeUnavailable();
+  }
 }
 
 export { encodePullCursor, decodePullCursor } from './store.ts';

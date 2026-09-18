@@ -67,3 +67,27 @@ export function photoBucket(): string | null {
 export function isSecureOrigin(): boolean {
   return new URL(publicOrigin()).protocol === 'https:';
 }
+
+export function resendApiKey(): string | null {
+  const raw = process.env.RESEND_API_KEY;
+  if (raw === undefined || raw.trim() === '') {
+    return null;
+  }
+  return raw.trim();
+}
+
+export function mailFrom(): string {
+  const raw = process.env.MAIL_FROM;
+  if (raw === undefined || raw.trim() === '') {
+    throw envError('MAIL_FROM');
+  }
+  return raw.trim();
+}
+
+export function ownerNotifyEmail(): string {
+  const raw = process.env.OWNER_NOTIFY_EMAIL;
+  if (raw === undefined || raw.trim() === '') {
+    throw envError('OWNER_NOTIFY_EMAIL');
+  }
+  return raw.trim();
+}

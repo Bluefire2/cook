@@ -2196,12 +2196,12 @@ OAuth console change is needed anywhere in this plan.
 
 ## Status
 
-- [ ] 1. [core] `server/mail.ts` and the three env getters
-- [ ] 2. [core] `server/members.ts` — collections and the pure decisions
-- [ ] 3. [core] `server/membership.ts` — the gate, the cache, the architecture lock
-- [ ] 4. [core] Cut every protected route over to the gate
-- [ ] 5. [core] The chat/import membership gate (the landmine)
-- [ ] 6. [core] The access-request token and `POST /api/access-request`
+- [x] 1. [core] `server/mail.ts` and the three env getters
+- [x] 2. [core] `server/members.ts` — collections and the pure decisions
+- [x] 3. [core] `server/membership.ts` — the gate, the cache, the architecture lock
+- [x] 4. [core] Cut every protected route over to the gate
+- [x] 5. [core] The chat/import membership gate (the landmine)
+- [x] 6. [core] The access-request token and `POST /api/access-request`
 - [ ] 7. [ui] The invitation-only page and the request-result pages
 - [ ] 8. [core] Admin API, owner-only and enforced server-side
 - [ ] 9. [core] `src/lib/adminApi.ts` and `isOwner` on the session
