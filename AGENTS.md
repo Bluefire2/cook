@@ -9,6 +9,10 @@ package, Dexie database, backup marker, and directories are still named
 A personal, allowlisted recipe PWA: readable recipes, a Gemini cooking
 assistant per recipe, URL/paste import. Live at https://sous.kyrylo.lol.
 
+There is also `extension/`: an unpacked MV3 Chrome extension (plain JS, no
+build step) that imports the page you are reading. It is excluded from the
+image and from `tsc`; nothing else depends on it.
+
 It is a **Vite SPA + a hand-written Node server**, not Next.js, not Auth.js.
 New HTTP routes go in `server/`, not `api/`. The two files under `api/`
 (`chat.ts`, `import.ts`) exist because Vercel still hosts a copy of those
@@ -69,7 +73,14 @@ No refresh tokens, no extra Google APIs, no Auth.js.
 - Cookie `sous_session`: `base64url(JSON).HMAC`, payload `{v,sub,email,iat,exp}`.
   HttpOnly, SameSite=Lax, Path=/, Secure on https, 90 days.
 - `ALLOWED_EMAILS` is fail-closed (blank = nobody). Re-checked on every
-  protected request, not only at cookie issue time.
+ protected request, not only at cookie issue time.
+- **One exception to cookie-only auth:** `POST /api/extension/import` reads the
+ same token from an `X-Sous-Session` header and **never** from the cookie
+ (`sessionFromHeader`, no fallback). The Chrome extension reads the cookie with
+ `chrome.cookies.get` and forwards it, because a `SameSite=Lax` cookie is not
+ dependably attached to an extension-initiated request. Do not extend header
+ auth to any other route, and do not add `Access-Control-Allow-Credentials` to
+ this one.
 - OAuth callback **must not** use `Response.redirect()` (immutable Headers;
   `Set-Cookie` would be dropped). Build a `Response` with a `Location` header
   and always clear `sous_oauth`.
@@ -172,6 +183,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/sync-toast.md` | Done (`b4b43b6`). |
 | `docs/plans/photos-and-deploy-docs.md` | **Next repo slice:** steps 18–19 (GCS photos, deploy.sh, README, legal rewrite). |
 | `docs/plans/deploy-and-end-state.md` | Steps 20–22 (production deploy, consent In production, two-device / iOS PWA check). Forbidden until 18–19 land. |
+| `docs/plans/chrome-extension-import.md` | `extension/` + `POST /api/extension/import`, built and verified locally. Deploys nothing: the production half waits on the same deploy 18–19 gate. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan (resync vs in-flight pull, Dexie lease ownership, malformed 200 push bodies). |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
@@ -197,5 +209,7 @@ guard — run it against Cloud Run after a production deploy, not only locally.
 
 Settings and `/privacy` `/terms` currently still describe identity-first /
 device-only storage in places. Step 19 rewrites legal pages for Firestore +
-GCS **before** any public Branding URL is filled. Do not ship consent
+GCS **before** any public Branding URL is filled. That rewrite must also cover
+the extension's new data flow: rendered page HTML, possibly from a page behind
+a login, is sent to the server and on to Gemini. Do not ship consent
 Homepage/Privacy/Terms URLs until that rewrite is in `dist/`.

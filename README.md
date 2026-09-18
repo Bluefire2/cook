@@ -110,6 +110,41 @@ API on `PORT` (8080 by default). That is what the container runs.
 `npm run build` type-checks everything, including `api/` and `scripts/`, which
 the running servers do not — run it before deploying.
 
+## The Chrome extension
+
+[`extension/`](extension) is an unpacked MV3 extension that imports the recipe
+page you are looking at, straight into your library — one button, no review
+step. It is plain JavaScript with no build step, so nothing in `npm run build`
+or the container image touches it.
+
+**Load it**
+
+1. `chrome://extensions` → turn on **Developer mode** → **Load unpacked** →
+   pick the `extension/` directory.
+2. Sign in to Sous in that browser profile.
+3. Open a recipe page, click the toolbar icon, click **Import to Sous**.
+
+It posts to `POST /api/extension/import`, which extracts with Gemini and writes
+the recipe to Firestore under your account; your devices pick it up on their
+next sync, and the popup links straight to it. **That route has to be deployed
+for the production origin to work** — against a local checkout the extension
+talks to `http://localhost:5173`, which needs both `npm run dev` and
+`npm run dev:api` running.
+
+It tries `localhost` before production and only falls through to the next
+origin when the connection is refused, so a local run never posts your test
+imports into the real library.
+
+| Permission | Why |
+| --- | --- |
+| `cookies` | Reads the `sous_session` cookie for the two Sous origins and sends it as `X-Sous-Session`. The cookie is `SameSite=Lax`, so relying on the browser to attach it to an extension request would be relying on a browser implementation detail. |
+| `activeTab` + `scripting` | Grabs the rendered HTML of the tab you invoked it on, which is what makes it work on sites the server cannot fetch. No `<all_urls>`: access is granted per invocation. |
+| `storage` | Keeps per-tab import state in `chrome.storage.session`, so closing the popup mid-import does not lose the run. |
+| `host_permissions` | `https://sous.kyrylo.lol/*` and `http://localhost/*` — the localhost pattern is port-wide because cookies are not port-scoped and `chrome.cookies.get` has to match it. |
+
+The extension sends the page's HTML to the server, which forwards a trimmed
+version to Gemini, exactly as pasting the page into the import screen would.
+
 ## Environment variables
 
 All three are **server-side only**. They belong in `.env.local` for local dev
@@ -169,6 +204,7 @@ is untouched. It keeps its own copy of the env vars and its own IndexedDB.
 ```
 api/chat.ts               streaming Gemini proxy + the update_recipe tool
 api/import.ts             URL fetch, JSON-LD extraction, Gemini extraction
+extension/                Chrome extension: import the page you are reading
 scripts/server.ts         production server: API + static dist/ + SPA fallback
 scripts/dev-api-server.ts same listener, static serving off, port 3001
 Dockerfile                multi-stage image; CMD node scripts/server.ts
