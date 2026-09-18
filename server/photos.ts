@@ -3,7 +3,12 @@ import type { Transaction } from '@google-cloud/firestore';
 import { Readable } from 'node:stream';
 import { Transform } from 'node:stream';
 import { firestoreConfig, photoBucket } from './env.ts';
-import { sessionFrom } from './session.ts';
+import {
+  membershipUnauthorized,
+  membershipUnavailable,
+  requireMember,
+  storeUnavailable,
+} from './membership.ts';
 import {
   compareMutation,
   gcsDeletesColRef,
@@ -61,16 +66,6 @@ export function isPhotoByteCountTooLarge(byteCount: number): boolean {
 function photoStorageUnavailable(): Response {
   return new Response(JSON.stringify({ error: 'Photo storage unavailable' }), {
     status: 503,
-    headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-store',
-    },
-  });
-}
-
-function unauthorized(): Response {
-  return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-    status: 401,
     headers: {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store',
@@ -491,11 +486,15 @@ export async function photosPost(req: Request): Promise<Response> {
     return photoStorageUnavailable();
   }
 
-  const session = sessionFrom(req);
-  if (!session) {
-    return unauthorized();
+  const access = await requireMember(req);
+  if (access.kind === 'denied') {
+    return membershipUnauthorized();
+  }
+  if (access.kind === 'unknown') {
+    return membershipUnavailable();
   }
 
+  try {
   const photoId = photoIdFromRequest(req);
   if (photoId === null || !assertPhotoId(photoId)) {
     return jsonError('Bad request', 400);
@@ -523,7 +522,7 @@ export async function photosPost(req: Request): Promise<Response> {
     return jsonError('Payload too large', 413);
   }
 
-  const uid = session.sub;
+  const uid = access.sub;
   const sizeHint = contentLength ?? undefined;
 
   const intent = await runUploadIntent(
@@ -569,6 +568,10 @@ export async function photosPost(req: Request): Promise<Response> {
     return jsonError(confirm.error, 409);
   }
   return new Response(null, { status: 200, headers: { 'Cache-Control': 'no-store' } });
+  } catch (err) {
+    console.error('photosPost store error:', err);
+    return storeUnavailable();
+  }
 }
 
 export async function photosGet(req: Request): Promise<Response> {
@@ -576,17 +579,21 @@ export async function photosGet(req: Request): Promise<Response> {
     return photoStorageUnavailable();
   }
 
-  const session = sessionFrom(req);
-  if (!session) {
-    return unauthorized();
+  const access = await requireMember(req);
+  if (access.kind === 'denied') {
+    return membershipUnauthorized();
+  }
+  if (access.kind === 'unknown') {
+    return membershipUnavailable();
   }
 
+  try {
   const photoId = photoIdFromRequest(req);
   if (photoId === null || !assertPhotoId(photoId)) {
     return jsonError('Bad request', 400);
   }
 
-  const uid = session.sub;
+  const uid = access.sub;
   const snap = await photoDocRef(uid, photoId).get();
   if (!snap.exists) {
     return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
@@ -631,4 +638,8 @@ export async function photosGet(req: Request): Promise<Response> {
   }
 
   return new Response(webStream, { status: 200, headers });
+  } catch (err) {
+    console.error('photosGet store error:', err);
+    return storeUnavailable();
+  }
 }

@@ -70,8 +70,25 @@ No refresh tokens, no extra Google APIs, no Auth.js.
 
 - Cookie `sous_session`: `base64url(JSON).HMAC`, payload `{v,sub,email,iat,exp}`.
   HttpOnly, SameSite=Lax, Path=/, Secure on https, 90 days.
-- `ALLOWED_EMAILS` is fail-closed (blank = nobody). Re-checked on every
-  protected request, not only at cookie issue time.
+  `readSession` is cryptographic only; **`sessionFrom` no longer exists**.
+  Protected routes call **`requireMember`** (or **`requireOwner`** for `/api/admin/*`).
+- **Two-tier admission:** `ALLOWED_EMAILS` is the fail-closed **owner/admin**
+  set (blank = nobody), re-parsed from env on **every** protected request with
+  **no cache**. Firestore **`members/{sub}`** with `status: 'active'` is the
+  member tier, keyed by Google **`sub`**. Owners short-circuit before any
+  member read. Approve ordinary people from **`/admin`**, not by editing
+  `ALLOWED_EMAILS` (every address there is an admin).
+- **401 = denied** (client may invalidate the session). **503 = unknown**
+  (Firestore blip — do not sign the user out). Membership **denied** must never
+  map to 503; membership **unknown** must never map to 401.
+- **Revocation bound:** only **active** members are cached, for **60 seconds**
+  per container instance. Removing someone from `members/{sub}` takes effect
+  within that bound; removing an owner from `ALLOWED_EMAILS` takes effect on
+  the very next request.
+- **`api/chat.ts` / `api/import.ts`:** on Cloud Run, `withMembership` passes an
+  in-process **`authorizedSub`** argument after `requireMember` passed. The
+  inline **`sessionSub`** copy remains the **Vercel** gate and must stay in sync
+  with `server/session.ts` + `server/allowlist.ts`.
 - OAuth callback **must not** use `Response.redirect()` (immutable Headers;
   `Set-Cookie` would be dropped). Build a `Response` with a `Location` header
   and always clear `sous_oauth`.
@@ -123,7 +140,9 @@ the production library.
 Never `--set-env-vars` (`ALLOWED_EMAILS` is comma-separated). Never put a
 secret on a `gcloud` command line. `SESSION_SECRET` may be generated only if
 `services describe` **succeeded** and the var was absent; a failed describe
-must die, not mint a new secret.
+must die, not mint a new secret. Production env also includes **`MAIL_FROM`**,
+**`OWNER_NOTIFY_EMAIL`**, and optional **`RESEND_API_KEY`** (omit with
+`SOUS_DISABLE_RESEND=1` to remove an existing key from the service).
 
 This deploys **straight to production**. There is no staging. Record the
 current revision before `bash scripts/deploy.sh`.
@@ -154,8 +173,9 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/sous-oauth-db.md` | Parent. Identity + sync (1–17) done. |
 | `docs/plans/sync-toast.md` | Done (`b4b43b6`). |
 | `docs/plans/photos-and-deploy-docs.md` | Done (GCS photos, deploy.sh, README, legal rewrite). |
+| `docs/plans/invitation-flow.md` | In progress on branch `invitation-flow` (request access → `/admin` → Firestore membership). |
 | `docs/plans/deploy-and-end-state.md` | Production cutover (`sous-00004-mpx`) and consent In production done. |
-| `docs/plans/server-backed-library.md` | **This slice:** drop IndexedDB; in-memory library over pull/push. |
+| `docs/plans/server-backed-library.md` | Done: drop IndexedDB; in-memory library over pull/push. |
 | `docs/plans/ask-voice-stt.md` | Planned. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
 

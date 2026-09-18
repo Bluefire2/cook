@@ -6,9 +6,10 @@ import {
   readSession,
   safeReturnTo,
   sessionCookie,
-  sessionFrom,
+  signAccessRequestTx,
   signOauthTx,
   signSession,
+  verifyAccessRequestTx,
   verifyOauthTx,
   verifySession,
 } from './session.ts';
@@ -86,12 +87,16 @@ describe('readSession', () => {
     expect(readSession(req)).toEqual({ status: 'unusable' });
   });
 
-  it('is unusable when allowlist misses', () => {
+  it('is ok for any valid cookie — membership is enforced by requireMember', () => {
     const token = signSession({ sub: 'sub-1', email: 'not@listed.com' }, nowMs());
     const req = new Request('http://localhost/', {
       headers: { cookie: `sous_session=${token}` },
     });
-    expect(readSession(req)).toEqual({ status: 'unusable' });
+    const result = readSession(req);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.session.email).toBe('not@listed.com');
+    }
   });
 
   it('is ok for a valid allowlisted cookie', () => {
@@ -113,7 +118,6 @@ describe('readSession', () => {
       headers: { cookie: `sous_session=${token}` },
     });
     expect(readSession(req)).toEqual({ status: 'unusable' });
-    expect(sessionFrom(req)).toBeNull();
   });
 
   it('is absent when secret is blank and no cookie', () => {
@@ -178,6 +182,48 @@ describe('safeReturnTo', () => {
     ]) {
       expect(safeReturnTo(bad, ORIGIN)).toBe('/');
     }
+  });
+});
+
+describe('signAccessRequestTx / verifyAccessRequestTx', () => {
+  it('round-trips access request identity', () => {
+    const now = nowMs();
+    const token = signAccessRequestTx(
+      { sub: 'sub-a', email: 'a@example.com', name: 'A' },
+      now,
+    );
+    expect(verifyAccessRequestTx(token, now)).toEqual({
+      sub: 'sub-a',
+      email: 'a@example.com',
+      name: 'A',
+      iat: now,
+      exp: now + 10 * 60 * 1000,
+    });
+  });
+
+  it('rejects expired tokens', () => {
+    const now = nowMs();
+    const token = signAccessRequestTx({ sub: 'sub-a', email: 'a@example.com' }, now);
+    expect(verifyAccessRequestTx(token, now + 11 * 60 * 1000)).toBeNull();
+  });
+
+  it('rejects session and oauth tokens', () => {
+    const now = nowMs();
+    const sessionToken = signSession({ sub: 'sub-a', email: 'a@example.com' }, now);
+    const oauthToken = signOauthTx(
+      { state: 's', nonce: 'n', verifier: 'v', returnTo: '/' },
+      now,
+    );
+    expect(verifyAccessRequestTx(sessionToken, now)).toBeNull();
+    expect(verifyAccessRequestTx(oauthToken, now)).toBeNull();
+  });
+});
+
+describe('verifySession rejects accessreq tokens', () => {
+  it('returns null for accessreq family', () => {
+    const now = nowMs();
+    const token = signAccessRequestTx({ sub: 'sub-a', email: 'a@example.com' }, now);
+    expect(verifySession(token, now)).toBeNull();
   });
 });
 

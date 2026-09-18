@@ -1,6 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { allowedEmails, sessionSecret } from './env.ts';
-import { isAllowed } from './allowlist.ts';
+import { sessionSecret } from './env.ts';
 
 export const SESSION_COOKIE_NAME = 'sous_session';
 export const OAUTH_COOKIE_NAME = 'sous_oauth';
@@ -23,6 +22,14 @@ export interface OauthTxPayload {
   nonce: string;
   verifier: string;
   returnTo: string;
+  iat: number;
+  exp: number;
+}
+
+export interface AccessRequestTxPayload {
+  sub: string;
+  email: string;
+  name?: string;
   iat: number;
   exp: number;
 }
@@ -303,6 +310,7 @@ export function clearedOauthCookie(options: { secure: boolean }): string {
   return parts.join('; ');
 }
 
+/** Cryptographic cookie validation only — not an authorization decision; call `requireMember`. */
 export function readSession(req: Request): ReadSessionResult {
   const token = readCookie(req, SESSION_COOKIE_NAME);
   if (token === null) {
@@ -316,18 +324,86 @@ export function readSession(req: Request): ReadSessionResult {
   if (!session) {
     return { status: 'unusable' };
   }
-  if (!isAllowed(session.email, true, allowedEmails())) {
-    return { status: 'unusable' };
-  }
   return { status: 'ok', session };
 }
 
-export function sessionFrom(req: Request): SessionPayload | null {
-  const result = readSession(req);
-  if (result.status === 'ok') {
-    return result.session;
+export function signAccessRequestTx(
+  identity: { sub: string; email: string; name?: string },
+  now: number,
+): string {
+  const secret = sessionSecret();
+  if (!secret) {
+    throw new Error('SESSION_SECRET is not set');
   }
-  return null;
+  const iat = now;
+  const exp = now + TEN_MINUTES_MS;
+  const payload: Record<string, unknown> = {
+    v: 'accessreq',
+    sub: identity.sub,
+    email: identity.email,
+    iat,
+    exp,
+  };
+  if (identity.name !== undefined) {
+    payload.name = identity.name;
+  }
+  const payloadPart = base64urlEncode(JSON.stringify(payload));
+  const signature = hmacSign(payloadPart, secret);
+  return `${payloadPart}.${signature}`;
+}
+
+export function verifyAccessRequestTx(
+  token: string,
+  now: number,
+): AccessRequestTxPayload | null {
+  const secret = sessionSecret();
+  if (!secret) {
+    return null;
+  }
+  const parts = splitToken(token);
+  if (!parts) {
+    return null;
+  }
+  if (!hmacVerify(parts.payload, parts.signature, secret)) {
+    return null;
+  }
+  const parsed = base64urlDecodeJson(parts.payload);
+  if (typeof parsed !== 'object' || parsed === null) {
+    return null;
+  }
+  const row = parsed as {
+    v?: unknown;
+    sub?: unknown;
+    email?: unknown;
+    name?: unknown;
+    iat?: unknown;
+    exp?: unknown;
+  };
+  if (row.v !== 'accessreq') {
+    return null;
+  }
+  if (typeof row.sub !== 'string' || row.sub === '') {
+    return null;
+  }
+  if (typeof row.email !== 'string' || row.email === '') {
+    return null;
+  }
+  if (typeof row.iat !== 'number' || typeof row.exp !== 'number') {
+    return null;
+  }
+  if (row.exp <= now) {
+    return null;
+  }
+  const out: AccessRequestTxPayload = {
+    sub: row.sub,
+    email: row.email,
+    iat: row.iat,
+    exp: row.exp,
+  };
+  if (typeof row.name === 'string' && row.name !== '') {
+    out.name = row.name;
+  }
+  return out;
 }
 
 export function shouldRefresh(session: SessionPayload, now: number): boolean {

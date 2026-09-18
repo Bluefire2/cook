@@ -259,6 +259,7 @@ export default function RecipeForm({
   submitLabel,
   onSubmit,
   onCancel,
+  formId,
 }: {
   /** Starting values. Use a blank draft for create-from-scratch. */
   initial: RecipeDraft;
@@ -266,6 +267,9 @@ export default function RecipeForm({
   submitLabel: string;
   onSubmit: (draft: RecipeDraft) => void | Promise<void>;
   onCancel: () => void;
+  /** Sets the form's `id` so a `type="submit" form=…` button can live
+   * outside the form (e.g. a second Save button up in the screen header). */
+  formId?: string;
 }): ReactElement {
   const [form, setForm] = useState(() => fromDraft(initial));
   const [photoId, setPhotoId] = useState(initial.photoId);
@@ -385,6 +389,7 @@ export default function RecipeForm({
 
   return (
     <form
+      id={formId}
       onSubmit={(e) => void submit(e)}
       onKeyDown={(e) => {
         // Enter in any of these one-line fields would submit the whole recipe;

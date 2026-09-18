@@ -3,7 +3,7 @@ import { clearLibrary } from './libraryMemory';
 
 const SESSION_CACHE_KEY = 'cook.session';
 
-export type SessionUser = { sub: string; email: string; name?: string };
+export type SessionUser = { sub: string; email: string; name?: string; isOwner?: boolean };
 
 export type SessionStatus = 'loading' | 'signedIn' | 'signedOut' | 'offline';
 
@@ -33,6 +33,7 @@ function readCachedUser(): SessionUser | null {
       return null;
     }
     const parsed = JSON.parse(raw) as SessionUser;
+    // Only sub/email are required; stale isOwner can reveal a link at most — admin routes enforce server-side.
     if (typeof parsed.sub === 'string' && typeof parsed.email === 'string') {
       return parsed;
     }
