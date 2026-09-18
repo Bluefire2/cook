@@ -2601,9 +2601,9 @@ choice was actually made.
 | Redirect URIs registered | |
 | `SESSION_SECRET` stored in password manager | |
 | `ALLOWED_EMAILS` value | |
-| Revision before the Phase 2 deploy (rollback target) | |
-| Revision after | |
-| Consent screen published to Production on | |
+| Revision before the Phase 2 deploy (rollback target) | `sous-00003-p64` |
+| Revision after | `sous-00004-mpx` |
+| Consent screen published to Production on | 17 September 2026 |
 | iOS standalone redirect sign-in: works / needed GIS fallback | |
 
 ## Status
@@ -2627,8 +2627,8 @@ allowlisted email, until 13–19 are done. Step 1 may wait until just before 13.
 - [x] 15. [core] Dexie v3: outbox, syncMeta, and stores that enqueue *(repo)*
 - [x] 16. [core] `src/lib/syncEngine.ts` — drain, pull, apply, cache ownership *(repo)*
 - [x] 17. [ui] Sync status and the first-sign-in migration screen *(repo)*
-- [ ] 18. [core] Photos: bucket endpoints and lazy fetch *(repo)*
-- [ ] 19. [core] `scripts/deploy.sh`, `.env.example`, `README.md`, privacy rewrite *(repo)*
+- [x] 18. [core] Photos: bucket endpoints and lazy fetch *(repo)*
+- [x] 19. [core] `scripts/deploy.sh`, `.env.example`, `README.md`, privacy rewrite *(repo)*
 - [ ] 20. [core] Deploy and verify on the live host *(operational)*
 - [ ] 21. [core] Fill the Branding URLs and publish to Production *(operational)*
 - [ ] 22. [core] End-state check *(operational)*
