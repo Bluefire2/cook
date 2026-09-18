@@ -4,6 +4,13 @@ import { chatStore, useChatMessages } from '../lib/chatStore';
 import { photoStore, useObjectUrl, usePhotoUrl } from '../lib/photoStore';
 import { recipeStore } from '../lib/recipeStore';
 import { streamChatReply, type CookingState } from '../lib/chatApi';
+import { transcribeAudio } from '../lib/sttApi';
+import {
+  canRecord,
+  startRecording,
+  stripTranscript,
+  type VoiceSession,
+} from '../lib/voiceRecorder';
 import {
   encodeImageForChat,
   encodeImageForStorage,
@@ -228,6 +235,13 @@ export default function ChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inFlight = useRef<AbortController | null>(null);
+  const sessionRef = useRef<VoiceSession | null>(null);
+  const sttAbort = useRef<AbortController | null>(null);
+  const finishingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const [listening, setListening] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const micAvailable = canRecord();
 
   const busy = streamingText !== null;
 
@@ -236,8 +250,29 @@ export default function ChatPanel({
   }, [messages?.length, streamingText]);
 
   // The sheet unmounts on close and on navigation; a reply nobody can read is
-  // still billed until the request is cancelled.
-  useEffect(() => () => inFlight.current?.abort(), []);
+  // still billed until the request is cancelled. Drop the mic stream too.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      inFlight.current?.abort();
+      sttAbort.current?.abort();
+      sessionRef.current?.abort();
+      sessionRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!busy) {
+      return;
+    }
+    sessionRef.current?.abort();
+    sessionRef.current = null;
+    sttAbort.current?.abort();
+    finishingRef.current = false;
+    setListening(false);
+    setTranscribing(false);
+  }, [busy]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -298,9 +333,91 @@ export default function ChatPanel({
     }
   };
 
+  const applyTranscript = async (blob: Blob | null) => {
+    if (finishingRef.current) {
+      return;
+    }
+    finishingRef.current = true;
+    sessionRef.current = null;
+    setListening(false);
+    if (!blob || blob.size === 0) {
+      finishingRef.current = false;
+      return;
+    }
+    const controller = new AbortController();
+    sttAbort.current = controller;
+    setTranscribing(true);
+    try {
+      const text = await transcribeAudio({
+        blob,
+        title: recipe.title,
+        signal: controller.signal,
+      });
+      const next = stripTranscript(text);
+      if (next !== '') {
+        setDraft((current) => {
+          const base = current.trimEnd();
+          return base === '' ? next : `${base} ${next}`;
+        });
+      }
+    } catch (err) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setError(
+        err instanceof Error ? err.message : 'Dictation failed — try again.',
+      );
+    } finally {
+      if (sttAbort.current === controller) {
+        sttAbort.current = null;
+      }
+      setTranscribing(false);
+      finishingRef.current = false;
+    }
+  };
+
+  const onMicClick = async () => {
+    if (busy || transcribing) {
+      return;
+    }
+    if (listening) {
+      const session = sessionRef.current;
+      sessionRef.current = null;
+      setListening(false);
+      const blob = session ? await session.stop() : null;
+      await applyTranscript(blob);
+      return;
+    }
+    setError(null);
+    finishingRef.current = false;
+    setListening(true);
+    try {
+      const session = await startRecording((blob) => {
+        void applyTranscript(blob);
+      });
+      if (!mountedRef.current) {
+        session.abort();
+        return;
+      }
+      sessionRef.current = session;
+    } catch (err) {
+      setListening(false);
+      const name = err instanceof DOMException ? err.name : '';
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        setError(
+          'Microphone access was blocked — allow it for this site and try again.',
+        );
+      } else if (name === 'NotFoundError') {
+        setError('No microphone was found.');
+      } else {
+        setError('Dictation failed — try again.');
+      }
+    }
+  };
+
   const send = async () => {
     const content = draft.trim();
-    if ((content === '' && pendingPhotos.length === 0) || busy) return;
+    if ((content === '' && pendingPhotos.length === 0) || busy || transcribing) return;
 
     setError(null);
     setStreamingText('');
@@ -514,6 +631,36 @@ export default function ChatPanel({
           >
             📷
           </button>
+          {micAvailable && (
+            <button
+              type="button"
+              aria-label={
+                transcribing
+                  ? 'Transcribing'
+                  : listening
+                    ? 'Stop dictation'
+                    : 'Dictate'
+              }
+              aria-pressed={listening}
+              aria-busy={transcribing}
+              disabled={busy || transcribing}
+              onClick={() => void onMicClick()}
+              className={
+                listening || transcribing
+                  ? 'flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500 text-white hover:bg-amber-600 active:bg-amber-600 disabled:opacity-40'
+                  : 'flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-muted text-ink hover:bg-line-strong active:bg-line-strong disabled:opacity-40'
+              }
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className={`h-5 w-5 ${transcribing ? 'animate-pulse' : ''}`}
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z" />
+              </svg>
+            </button>
+          )}
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -530,7 +677,7 @@ export default function ChatPanel({
           <button
             type="button"
             onClick={() => void send()}
-            disabled={busy}
+            disabled={busy || transcribing}
             className={`${primaryBtn} h-10 px-4`}
           >
             Send
