@@ -11,6 +11,7 @@ import {
   shouldParkPhotoPut,
   splitDrainBatch,
   syncOwnershipDecision,
+  resolveSyncOwnershipDecision,
 } from './syncEngine';
 import type { OutboxRow } from './outbox';
 
@@ -33,6 +34,23 @@ describe('syncOwnershipDecision', () => {
 
   it('treats empty owner as absent', () => {
     expect(syncOwnershipDecision('', 'sub-a', 1)).toBe('needsMigration');
+  });
+});
+
+describe('resolveSyncOwnershipDecision', () => {
+  it('wipes an unmodified sample instead of blocking on AccountGate', () => {
+    expect(resolveSyncOwnershipDecision(null, 'sub-a', 1, true)).toBe('wipe-and-pull');
+  });
+
+  it('keeps needsMigration when local rows are real user data', () => {
+    expect(resolveSyncOwnershipDecision(null, 'sub-a', 1, false)).toBe('needsMigration');
+    expect(resolveSyncOwnershipDecision(null, 'sub-a', 4, true)).toBe('needsMigration');
+  });
+
+  it('does not change proceed, wipe, or empty claim', () => {
+    expect(resolveSyncOwnershipDecision('sub-a', 'sub-a', 1, true)).toBe('proceed');
+    expect(resolveSyncOwnershipDecision('sub-a', 'sub-b', 1, true)).toBe('wipe-and-pull');
+    expect(resolveSyncOwnershipDecision(null, 'sub-a', 0, false)).toBe('claim-and-pull');
   });
 });
 

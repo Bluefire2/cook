@@ -1,9 +1,14 @@
 import { db } from './db';
 import { OWNER_UID_KEY } from './cacheOwner';
 import { recipeStore } from './recipeStore';
+import type { Recipe } from './types';
 
 const SEEDED_KEY = 'cook.hasSeeded';
 const SESSION_CACHE_KEY = 'cook.session';
+
+export const SAMPLE_RECIPE_TITLE = 'Spaghetti al Pomodoro';
+export const SAMPLE_RECIPE_DESCRIPTION =
+  'A simple, bright tomato pasta — the test recipe that ships with the app.';
 
 /**
  * First launch only. A user who deletes their last recipe must be able to
@@ -14,6 +19,36 @@ export function shouldSeed(
   alreadySeeded: boolean,
 ): boolean {
   return recipeCount === 0 && !alreadySeeded;
+}
+
+/**
+ * True when the only local rows are the first-launch sample, never edited.
+ * A second device that opened the app unsigned-in always has this shape, and
+ * treating it as `needsMigration` blocks pull behind an export sheet for a
+ * recipe that must not be pushed into the account.
+ */
+export function isUnmodifiedSampleLibrary(input: {
+  recipes: Pick<
+    Recipe,
+    'title' | 'description' | 'createdAt' | 'updatedAt' | 'photoId'
+  >[];
+  chatCount: number;
+  photoCount: number;
+  cookCount: number;
+}): boolean {
+  if (input.chatCount !== 0 || input.cookCount !== 0 || input.photoCount !== 0) {
+    return false;
+  }
+  if (input.recipes.length !== 1) {
+    return false;
+  }
+  const recipe = input.recipes[0];
+  return (
+    recipe.title === SAMPLE_RECIPE_TITLE &&
+    recipe.description === SAMPLE_RECIPE_DESCRIPTION &&
+    recipe.createdAt === recipe.updatedAt &&
+    recipe.photoId === undefined
+  );
 }
 
 function hasSeeded(): boolean {
@@ -46,9 +81,8 @@ export async function seedIfEmpty(): Promise<void> {
   if (!shouldSeed(count, hasSeeded())) return;
 
   await recipeStore.create({
-    title: 'Spaghetti al Pomodoro',
-    description:
-      'A simple, bright tomato pasta — the test recipe that ships with the app.',
+    title: SAMPLE_RECIPE_TITLE,
+    description: SAMPLE_RECIPE_DESCRIPTION,
     servings: 2,
     prepMinutes: 10,
     cookMinutes: 25,

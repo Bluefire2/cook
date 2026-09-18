@@ -3,6 +3,7 @@ import { compactRecipe } from './recipeStore';
 import { OWNER_UID_KEY } from './cacheOwner';
 import { db } from './db';
 import { enqueue, type OutboxRow } from './outbox';
+import { isUnmodifiedSampleLibrary } from './seed';
 import { invalidateSession } from './session';
 import type { ChatMessage, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
@@ -128,6 +129,24 @@ export function syncOwnershipDecision(
     return 'claim-and-pull';
   }
   return 'needsMigration';
+}
+
+/**
+ * The first-launch sample is not user data. Absent owner + only that recipe
+ * would otherwise sit on AccountGate and never pull the account library.
+ * Wipe-and-pull drops the sample (and its outbox row) instead of pushing it.
+ */
+export function resolveSyncOwnershipDecision(
+  ownerUid: string | null,
+  sub: string,
+  rowCount: number,
+  sampleOnly: boolean,
+): ReturnType<typeof syncOwnershipDecision> {
+  const decision = syncOwnershipDecision(ownerUid, sub, rowCount);
+  if (decision === 'needsMigration' && sampleOnly && rowCount === 1) {
+    return 'wipe-and-pull';
+  }
+  return decision;
 }
 
 export function splitDrainBatch(rows: OutboxRow[]): {
@@ -1035,8 +1054,20 @@ async function runOnce(): Promise<SyncResult> {
     }
 
     const ownerUid = localStorage.getItem(OWNER_UID_KEY);
-    const rowCount = await userRowCount();
-    const decision = syncOwnershipDecision(ownerUid, sub, rowCount);
+    const [recipes, chatCount, photoCount, cookCount] = await Promise.all([
+      db.recipes.toArray(),
+      db.chatMessages.count(),
+      db.photos.count(),
+      db.cookState.count(),
+    ]);
+    const rowCount = recipes.length + chatCount + photoCount + cookCount;
+    const sampleOnly = isUnmodifiedSampleLibrary({
+      recipes,
+      chatCount,
+      photoCount,
+      cookCount,
+    });
+    const decision = resolveSyncOwnershipDecision(ownerUid, sub, rowCount, sampleOnly);
 
     if (decision === 'needsMigration') {
       setSnapshot({ status: 'needsMigration', pendingCount: await db.outbox.count() });
