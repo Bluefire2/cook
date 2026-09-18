@@ -548,7 +548,7 @@ stops *that* plan for a GIS `id_token` plan, not this one.
 | `README.md` | Invitation flow, `/admin`, env table, the admin warning. |
 | `AGENTS.md` | Auth section: dynamic membership, `sub` keying, the 60 s revocation bound, 401-vs-503 rule, the `api/` argument bypass, new env vars, plan table row. |
 | `docs/handoff-invitation-only.md` | Extend to the two-tier model; rewrite the two passages **D7** contradicts; repoint the code citations. Committed on this branch — keep it that way. |
-| `public/privacy.html` | Access-request data, Resend as subprocessor, retention and deletion of pending/denied requests; rewrite the "Access" section. |
+| `public/privacy.html` | Access-request data, Resend as subprocessor, retention of **all four** records (pending, declined, approved requests and `members/{sub}`) and what a deletion request covers; rewrite the "Access" section. |
 | `public/terms.html` | "What Sous is" — invitation **by request and approval**. |
 | `docs/plans/invitation-flow.md` | Tick Status as steps land. |
 
@@ -769,7 +769,11 @@ diagnosable without reading the whole collection.
   already true** (see `recordAccessRequest`), so a quiet press never reads or
   writes it. A `false` from this function suppresses the **email only** — the
   write still happens and `lastNotifiedAt` still moves, or the bound above
-  would reopen precisely when the cap is exhausted (**D16**).
+  would reopen precisely when the cap is exhausted (**D16**). When it returns
+  `allowed: false`, the counter document is **read but not written**: the count
+  is already at the cap and rewriting the same value would put every
+  over-cap press back into contention on the one global document, which is
+  exactly what consulting it lazily was meant to avoid.
 - `decisionTransition(existing, action, ownerSub, now)` for
   `'approve'|'deny'|'revoke'` → the `members/{sub}` and `accessRequests/{sub}`
   bodies, or a refusal reason (`'unknown-request'`, `'self'`). `existing` is
@@ -1484,10 +1488,18 @@ copy, `text-danger` for errors):
   **appends the returned rows for that section only**. This is the one subtle
   part: the response always carries all three sections, so a Load more in
   Pending comes back with Pending's *next* page but Approved's and Denied's
-  *first* pages. Appending everything would duplicate every already-loaded row
-  in the other two sections. Merge the requested section, take the other two
-  sections' `nextCursor` values but **discard their rows**, then re-sort the
-  accumulated rows of the merged section. Rows within what is loaded are
+  *first* pages.   Appending everything would duplicate every already-loaded row
+  in the other two sections. So: merge and re-sort the **requested** section
+  only, and for the other two **discard both their rows and their returned
+  `nextCursor`, keeping the ones already in state**.
+
+  Keeping their old cursors matters as much as discarding their rows. Their
+  returned cursor describes *their first page*, so if Approved had already been
+  paged twice, overwriting its cursor would rewind it and its next Load more
+  would re-fetch a page the screen already shows. The rule is therefore: a
+  section's rows and cursor are only ever updated by a fetch that section
+  asked for — the initial load and Refresh ask for all three, a Load more asks
+  for exactly one. Rows within what is loaded are
   displayed newest-first. The one `text-ink-muted` line beneath a truncated section says
   so honestly — that this section has more entries and loads 200 at a time —
   and **must not** say "the most recent 200", because the query selects in
@@ -1522,7 +1534,11 @@ lowering the page size in `listAccessRequests` to 2 and seeding three request
 documents — **Load more** appends the next rows exactly once and then
 disappears, **and no row in Approved or Declined is duplicated by that click**
 (seed one decided request too, so there is something in another section that
-could double). Restore the page size afterwards and confirm the button is gone
+could double). Then the cursor-preservation case, which is the one a naive
+merge fails: seed enough rows that **two** sections page, press Load more twice
+in Pending, then once in Approved, then once more in Pending — the second
+Pending click must continue from where it left off, with **no row repeated and
+none skipped**. Restore the page size afterwards and confirm the button is gone
 with real data. Check 375 px and desktop, dark and light. Reload directly
 at `/admin` (SPA fallback + SW), and with the API stopped confirm the error
 line appears and no request data is rendered. Confirm Library, RecipeView and
@@ -1772,8 +1788,31 @@ tone; bump "Last updated":
   (recipes, chats, cook state and photos) are deleted, which also removes their
   access. Deleting only the request document would leave an authorization
   record and a whole library behind, which is the kind of half-answer that
-  makes a privacy page wrong. Any of the four can be deleted
-  on request to the contact address. State
+  makes a privacy page wrong.
+
+  **And write the procedure down, in `README.md` alongside the step-11 note, or
+  the promise is unbacked.** Two Firestore behaviours make the obvious version
+  wrong: deleting `users/{sub}` in the console **does not** delete its
+  subcollections (the orphaned documents survive and stay queryable by path),
+  and nothing in Firestore touches GCS. The procedure is therefore, in order:
+
+  1. `gcloud firestore` recursive delete of the subtree —
+     `& $gcloud firestore documents delete "projects/cooking-assistant-508423/databases/(default)/documents/users/<SUB>" --recursive --project=cooking-assistant-508423`
+     — or the console's **Delete collection** on each of the person's
+     subcollections followed by the parent document. Confirm which
+     subcollections exist first rather than assuming the list.
+  2. `members/{sub}` and `accessRequests/{sub}` — single document deletes.
+  3. The photo objects, which step 1 does not touch:
+     `& $gcloud storage rm --recursive gs://sous-photos-cooking-assistant-508423/users/<SUB>/ --project=cooking-assistant-508423`.
+  4. Verify absence: re-query `users/{sub}` and list the bucket prefix, both
+     empty. Deletion of a member also removes access, so confirm that person is
+     denied on their next request.
+
+  Note the ordering consequence: after step 2 the person is no longer a member,
+  so if anything in steps 1 or 3 fails partway the remaining data is
+  unreachable through the app but **still present** — finish the procedure
+  rather than stopping at "they can't sign in any more". Any of the four
+  records can be deleted on request to the contact address. State
   plainly that **there is no automated purge job** — do **not** write "kept for
   up to 12 months" or any other period. Nothing in this plan deletes an
   access-request document on a schedule, so a stated retention period would be
@@ -1890,8 +1929,26 @@ complete consent today and land on the current 403.
     document is a one-way door for the rest of the script: `decisionTransition`
     refuses `'unknown-request'`, so once it is gone the owner can no longer
     approve, decline or revoke B from `/admin` at all, and B vanishes from all
-    three lists. Do not move it earlier. To carry on testing afterwards, either
-    recreate the document by hand or start again with a third account.
+    three lists. Do not move it earlier.
+
+    **Then clean up, before step 15 and before walking away.** This is not
+    tidiness: `dev:api` talks to **real production Firestore** (see
+    Assumptions), so whatever this bullet leaves behind is the live state of the
+    app. Left as-is it leaves B an **active member who is invisible in
+    `/admin`** and cannot be revoked through the UI at all — the worst possible
+    resting state, and one nobody would notice later. Finish with:
+
+    1. Delete `members/{B-sub}` by hand in the console (`/admin` cannot do it —
+       that is the point of this bullet).
+    2. Wait out the positive membership cache — up to 60 s (**D11**) — then
+       confirm B is actually denied: B's `/api/auth/session` returns
+       `user: null` and B's next sign-in lands on the 403 page.
+    3. Delete B's test library the same way the step-13 procedure describes:
+       the `users/{B-sub}` subtree recursively, plus any photo objects under
+       `gs://…/users/{B-sub}/`. B's recipes were created only for this test.
+    4. Optionally recreate `accessRequests/{B-sub}` if you want B available for
+       future testing; otherwise B starts clean as a first-time requester,
+       which is itself a useful state to be in.
 13. `npm test` and `npm run build` both clean.
 
 **Verify:** every numbered bullet, done once by hand, **in order** — bullets 8
