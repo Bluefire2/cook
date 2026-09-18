@@ -162,6 +162,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message && message.type === 'import' && typeof message.tabId === 'number') {
     void runImport(message.tabId);
     sendResponse({ started: true });
+    return false;
+  }
+  if (message && message.type === 'probe') {
+    void resolveTargets().then((targets) => sendResponse({ signedIn: targets.length > 0 }));
+    return true;
   }
   return false;
 });

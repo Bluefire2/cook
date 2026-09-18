@@ -15,6 +15,13 @@
   box-sizing: border-box;
 }
 
+/* `.primary` sets `display: block`, and an author rule outranks the user
+   agent's `[hidden] { display: none }`. Without this, every state's controls
+   render at once. */
+[hidden] {
+  display: none !important;
+}
+
 body {
   width: 320px;
   margin: 0;

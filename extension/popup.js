@@ -43,6 +43,18 @@ function startImport() {
   void chrome.runtime.sendMessage({ type: 'import', tabId });
 }
 
+function renderIdle() {
+  setStatus('');
+  showAction('Import to Sous', startImport);
+}
+
+function renderSignedOut() {
+  setStatus('Sign in to Sous to import.');
+  showAction('Open Sous', () => {
+    void chrome.tabs.create({ url: SIGN_IN_URL });
+  });
+}
+
 function isStale(state) {
   return (
     state.phase === 'working' &&
@@ -55,17 +67,19 @@ function render(state) {
   els.action.hidden = true;
   els.openRecipe.hidden = true;
 
-  if (!state || isStale(state)) {
-    setStatus(isStale(state) ? 'That import did not finish.' : '', isStale(state) ? 'error' : null);
-    showAction('Import to Sous', startImport);
+  if (!state) {
+    renderIdle();
+    return;
+  }
+
+  if (isStale(state)) {
+    setStatus('That import did not finish.', 'error');
+    showAction('Try again', startImport);
     return;
   }
 
   if (state.phase === 'signedOut') {
-    setStatus('Sign in to Sous to import.');
-    showAction('Open Sous', () => {
-      void chrome.tabs.create({ url: SIGN_IN_URL });
-    });
+    renderSignedOut();
     return;
   }
 
@@ -85,6 +99,11 @@ function render(state) {
   showAction('Try again', startImport);
 }
 
+async function readState() {
+  const stored = await chrome.storage.session.get(stateKey(tabId));
+  return stored[stateKey(tabId)];
+}
+
 async function init() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || typeof tab.id !== 'number') {
@@ -98,15 +117,25 @@ async function init() {
     els.pageTitle.hidden = false;
   }
 
-  const stored = await chrome.storage.session.get(stateKey(tabId));
-  render(stored[stateKey(tabId)]);
-
   chrome.storage.session.onChanged.addListener((changes) => {
     const change = changes[stateKey(tabId)];
     if (change) {
       render(change.newValue);
     }
   });
+
+  const stored = await readState();
+  render(stored);
+
+  if (stored) {
+    return;
+  }
+  // Only the worker reads cookies, so being signed out is something the popup
+  // has to ask about rather than discover when an import fails.
+  const probe = await chrome.runtime.sendMessage({ type: 'probe' }).catch(() => null);
+  if (probe && probe.signedIn === false && !(await readState())) {
+    renderSignedOut();
+  }
 }
 
 void init();
