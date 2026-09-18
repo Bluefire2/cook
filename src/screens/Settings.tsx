@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { exportLibrary, importLibrary } from '../lib/backup';
 import { notifyImportComplete, resyncFromServer, sync, useSyncStatus } from '../lib/syncEngine';
 import { signInHref, signOut, useSession } from '../lib/session';
+import { relativeMinutesLabel } from '../lib/relativeTime';
 import { settings, type Theme } from '../lib/settings';
 import { applyTheme } from '../lib/theme';
 import { backLink, primaryBtn, secondaryBtn } from '../lib/uiClasses';
@@ -77,11 +78,7 @@ export default function Settings() {
     if (at === null) {
       return 'Never synced';
     }
-    const minutes = Math.round((Date.now() - at) / 60_000);
-    if (minutes < 1) {
-      return 'Synced just now';
-    }
-    return `Synced ${minutes} min ago`;
+    return `Synced ${relativeMinutesLabel(at)}`;
   })();
 
   return (
@@ -130,6 +127,20 @@ export default function Settings() {
               <p className="mt-2 text-sm text-ink-muted">
                 Recipes stay cached on this device.
               </p>
+              {user.isOwner === true && (
+                <>
+                  <p className="mt-4 text-sm text-ink-muted">
+                    Review requests from people who want in — approving gives
+                    them their own empty library.
+                  </p>
+                  <Link
+                    to="/admin"
+                    className={`${secondaryBtn} mt-2 inline-block px-4 py-2.5`}
+                  >
+                    Invitations
+                  </Link>
+                </>
+              )}
             </>
           )}
           {sessionStatus === 'offline' && (

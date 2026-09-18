@@ -7,6 +7,7 @@ import RecipeView from './screens/RecipeView';
 import RecipeEdit from './screens/RecipeEdit';
 import ImportScreen from './screens/ImportScreen';
 import Settings from './screens/Settings';
+import Admin from './screens/Admin';
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/recipe/:id/edit" element={<RecipeEdit />} />
         <Route path="/import" element={<ImportScreen />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/admin" element={<Admin />} />
       </Routes>
     </ErrorBoundary>
   );

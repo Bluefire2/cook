@@ -2205,7 +2205,7 @@ OAuth console change is needed anywhere in this plan.
 - [x] 7. [ui] The invitation-only page and the request-result pages
 - [x] 8. [core] Admin API, owner-only and enforced server-side
 - [x] 9. [core] `src/lib/adminApi.ts` and `isOwner` on the session
-- [ ] 10. [ui] `/admin` screen and the Settings entry point
+- [x] 10. [ui] `/admin` screen and the Settings entry point
 - [ ] 11. [core] `.env.example`, `scripts/deploy.sh`, `README.md`, `AGENTS.md`
 - [ ] 12. [core] `docs/handoff-invitation-only.md` — extend the briefing, commit it
 - [ ] 13. [ui] Privacy and terms
