@@ -1803,11 +1803,17 @@ tone; bump "Last updated":
   be racing `syncEngine`, and the visible result is a "deleted" library that
   quietly reappears.
 
-  1. Delete `members/{sub}` (or set `status: 'revoked'` — either denies).
+  1. Set `members/{sub}.status = 'revoked'`, **or** delete the document
+     outright — either one denies immediately. Revoking is the gentler first
+     move because it is reversible if you have the wrong person.
   2. **Wait out the cache and verify denial** before touching any data: after
      60 s that person's `/api/auth/session` must return `user: null` and their
      sync must 401. Only now is the data safe to remove.
-  3. Recursively delete the `users/{sub}` subtree. `gcloud` has **no**
+  3. **Delete `members/{sub}`** if step 1 only revoked it. A revoked record is
+     still a stored record of that person, so leaving it behind would satisfy
+     the *access* half of the request while quietly failing the *deletion*
+     half — the promise on the privacy page is deletion, not denial.
+  4. Recursively delete the `users/{sub}` subtree. `gcloud` has **no**
      single-document recursive delete (`gcloud firestore bulk-delete` targets
      collections, not one document's subtree), so use the client library that is
      already a dependency — `@google-cloud/firestore` ^9.1.0, whose
@@ -1822,12 +1828,17 @@ tone; bump "Last updated":
      does not delete subcollections with their parent, so `recipes`, `chats`,
      `cookState` and the rest would survive as orphans that are still
      queryable by path.
-  4. `accessRequests/{sub}` — a single document delete.
-  5. The photo objects, which nothing above touches:
+  5. `accessRequests/{sub}` — a single document delete.
+  6. The photo objects, which nothing above touches:
      `& $gcloud storage rm --recursive gs://sous-photos-cooking-assistant-508423/users/<SUB>/ --project=cooking-assistant-508423`.
-  6. Verify absence: re-run the `recursiveDelete` (it succeeds trivially on an
-     empty subtree), list `users/{sub}`'s subcollections in the console, and
-     list the bucket prefix — all empty.
+  7. Verify absence, **naming all four records** rather than eyeballing the
+     console: `members/{sub}` gone, `accessRequests/{sub}` gone, the
+     `users/{sub}` subtree gone (re-run the `recursiveDelete` — it succeeds
+     trivially on an empty subtree — then confirm the document and its
+     subcollections are absent), and the bucket prefix empty. A single
+     `node -e` that `.get()`s the two top-level documents and prints
+     `snap.exists` for each is the least error-prone form; both must print
+     `false`.
 
   If anything after step 1 fails partway, the person is already denied but data
   remains **present though unreachable through the app** — finish the procedure
