@@ -156,7 +156,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/photos-and-deploy-docs.md` | Done (GCS photos, deploy.sh, README, legal rewrite). |
 | `docs/plans/deploy-and-end-state.md` | Production cutover (`sous-00004-mpx`) and consent In production done. |
 | `docs/plans/server-backed-library.md` | **This slice:** drop IndexedDB; in-memory library over pull/push. |
-| `docs/plans/ask-voice-stt.md` | Planned. Ask composer speech-to-text (Web Speech API); output remains text. |
+| `docs/plans/ask-voice-stt.md` | Planned. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,

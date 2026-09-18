@@ -4,508 +4,437 @@ Let the recipe Ask assistant accept spoken questions through the phone
 microphone. Replies stay text. This is dictation into the existing composer,
 not a spoken conversation.
 
+**Settled: path B.** The page records a clip (`getUserMedia` + `MediaRecorder`),
+`POST /api/stt` transcribes it with the existing Gemini API, and the transcript
+lands in `draft`. The user taps Send. Web Speech API (path A) is rejected —
+see “Rejected: path A” at the bottom.
+
 Parent surfaces: `src/components/ChatPanel.tsx` (the only Ask UI) mounted from
 `src/screens/RecipeView.tsx`. There is no separate cooking-mode chat; RecipeView
 always passes `cookingState` and already holds a screen wake lock.
 
 ## Open questions
 
-### BLOCKING 1 — Where does speech become text?
+None blocking. Path B and fill-then-Send are settled below. Remaining knobs
+(pause length, max clip) are named constants, not Settings UI.
 
-Recommended default: **browser Web Speech API**
-(`SpeechRecognition` / `webkitSpeechRecognition`) in the client. No new npm
-dependency, no new `/api` route, no audio upload through Sous, no extra Google
-OAuth scope, no Cloud Speech-to-Text product.
+## Decisions
 
-Why: AGENTS.md forbids extra Google APIs and extra OAuth scopes; chat framing
-(`0x1E`) must not change; screens must not grow a second fetch style. The
-request is “enter input text using the phone mic”, which the browser can do.
-
-Cost of that default (must be disclosed, not hidden):
-
-- **Chrome / Android Chrome** send microphone audio to Google’s speech service
-  (the browser’s, not a Sous endpoint). Today `public/privacy.html` says
-  Gemini + URL import + Google Cloud hosting and then “Nothing else.” That
-  sentence would be false once Chromium dictation ships.
-- **Safari / iOS** can do on-device recognition after a permission grant
-  (language pack). Support is **partial**: iOS 14.5+, including standalone
-  PWA, but sessions stop on their own, first-tap can miss, and `continuous`
-  is unreliable. Firefox has the API behind a flag — treat as unsupported.
-- Chromium still prefixes the constructor as `webkitSpeechRecognition`.
-
-Fallback slice (only if this question is answered “Sous must transcribe”):
-`MediaRecorder` → session-authenticated `POST /api/stt` using the already
-configured Gemini API, then fill `draft`. That is a new route under `server/`,
-a legal rewrite (Sous would handle audio), and a later plan. Do not mix it
-into this slice.
-
-**Need from you:** accept the Web Speech API default (plus a privacy-page
-sentence about the *browser* speech service), or reject it in favour of a
-Sous-side Gemini STT slice. The expanded comparison and pause notes below
-are the rest of this question — they do not add a third option.
-
-### BLOCKING 2 — Does a finished utterance send, or only fill the box?
-
-The request says “enter input text”. That is **fill `draft`, user taps Send**
-(they can fix kitchen-noise mistakes; photos already attached stay attached).
-
-The cooking-with-messy-hands reading is **auto-send on `isFinal`** so a second
-tap is unnecessary.
-
-Recommended default: **fill, do not auto-send.** Interim results appear live
-in the textarea; the final result replaces that interim span; Send stays
-explicit. A follow-up can add auto-send once dictation quality is trusted.
-
-**Need from you:** fill-then-Send (recommended) or auto-send on final.
-
-### Non-blocking
-
-- **Language.** Plan uses `document.documentElement.lang` (`en` in
-  `index.html`) with `en-US` if the recognizer rejects a short tag. A later
-  Settings locale is out of scope.
-- **Hold-to-talk vs tap.** Plan uses **tap to start, tap to stop** (also
-  stops on the browser’s `onend`). Hold requires a clean finger on the
-  control the whole time.
-- **Dedicated “voice mode” screen.** Plan is a mic control in the existing
-  composer, not a full-screen overlay. Say so if you wanted a mode you enter.
-
-## How the two STT paths differ
-
-Same product either way: mic on the Ask composer, transcript becomes
-`draft` / `ChatMessage.content`, assistant output stays text. The split is
-**who transcribes, and what we control**.
-
-### A — Browser Web Speech API (recommended default)
-
-The page constructs `SpeechRecognition` / `webkitSpeechRecognition`, calls
-`start()` from the mic tap, and writes `onresult` transcripts into the
-textarea. Sous never sees the recording.
-
-| | |
-| --- | --- |
-| **Who hears the audio** | The browser’s speech engine. Chrome / Android Chrome send it to Google’s *browser* speech service (not `/api/chat`, not Gemini). Safari / iOS can do on-device recognition after a permission / language-pack grant. |
-| **What Sous stores** | The resulting text, as a normal chat message. |
-| **Live text while speaking** | Yes (`interimResults`). Words appear as you talk. |
-| **Latency** | Low. Partials stream in; no extra Sous round-trip. |
-| **New backend** | None. No `/api/stt`, no audio MIME handling, no size cap on our server. |
-| **Dependencies / GCP** | None. Does not add Cloud Speech-to-Text, extra OAuth scopes, or a second Gemini call. |
-| **Legal** | One privacy sentence: on some browsers the *browser* sends mic audio to its speech service. Sous does not upload the recording. |
-| **iOS PWA** | Partial and flaky (sessions die, first tap can miss, `continuous` is unreliable). Same class of risk as iOS standalone OAuth. |
-| **Firefox** | Treat as unsupported; hide the mic. |
-| **Cost to us** | $0. (Chrome’s speech service is on Google’s side, not billed on `GEMINI_API_KEY`.) |
-| **Code size** | Small: helper + ChatPanel mic. Fits this slice. |
-
-Kitchen noise can still produce a bad transcript; the user edits the box
-(if BLOCKING 2 stays fill-then-Send).
-
-### B — Sous-side STT (`MediaRecorder` → `POST /api/stt` → Gemini)
-
-The page records a clip with `getUserMedia` + `MediaRecorder`. On stop it
-POSTs the blob to a new session-authenticated route under `server/` (client
-helper next to `chatApi.ts`, not a screen `fetch`). The handler sends the
-audio to the **already configured** Gemini API as `inlineData` (same
-pattern as chat photos) and returns text. That fills `draft`.
-
-This is **not** Cloud Speech-to-Text and adds **no OAuth scopes**. It *does*
-send a new kind of payload (audio) through Sous to Gemini. AGENTS.md’s
-“no extra Google APIs” is about identity / new GCP products; Gemini audio
-would still be a product + legal change.
-
-| | |
-| --- | --- |
-| **Who hears the audio** | Sous (briefly, in the request) then Gemini. We would retain or discard the blob in the handler — default: transcribe and drop, never write audio to Firestore/GCS. |
-| **What Sous stores** | Text only, same as A, unless we later choose to keep clips (out of scope). |
-| **Live text while speaking** | No in v1. The box stays empty (or shows “Transcribing…”) until the clip is done *and* Gemini answers. Streaming STT is a later complication. |
-| **Latency** | Higher. Speak → stop → upload → Gemini → text. A 8s question plus model time, not word-by-word. |
-| **New backend** | Yes: `server/` route, auth, allowlist, body size limit, MIME (`audio/webm` vs iOS `audio/mp4`), errors. Duplicate the session check if a Vercel `api/` copy is required — chat already has that pain. |
-| **Legal** | Rewrite Third parties: Sous *does* receive microphone audio and passes it to Gemini. Stronger than A. `terms.html` may need a line too. |
-| **iOS PWA** | Recording via `getUserMedia` is the well-trodden path (we already attach photos from the camera). Reliability is better than Web Speech on iPhone; it is not free (autoplay / audio-session quirks, but we are not playing TTS). |
-| **Firefox** | Works (MediaRecorder is there). Mic would show. |
-| **Cost to us** | Gemini audio tokens per utterance, on top of the later chat turn. |
-| **Code size** | A second slice: server + client recorder + silence gate + privacy. Do not mix into the Web Speech steps. |
-
-Chat photos already go device → Sous → Gemini as `inlineData`. Path B is
-that pattern for sound. Path A never puts the sound on our server.
-
-### What does *not* change between A and B
-
-- Ask still lives only in `ChatPanel`.
-- Replies stay text. No TTS.
-- `ChatMessage` schema unchanged.
-- `/api/chat` framing (`0x1E`) unchanged.
-- Fill-vs-auto-send (BLOCKING 2) is independent: either path can fill the
-  box or call `send()` once we have a final string.
-
-Pick A unless you need (1) a pause length we own, (2) iPhone reliability
-as a day-one requirement, (3) Firefox, or (4) audio that only Gemini (via
-Sous) may see — not Chrome’s separate speech service.
-
-## End-of-utterance pause — can we tune it?
-
-Two different “done”s:
-
-1. **This spoken span is over** (stop listening / mark the transcript
-   final). That is the pause question.
-2. **Send the chat message.** That is BLOCKING 2 and is a tap (or
-   auto-send) *after* (1). Tuning the pause never sends by itself unless
-   we also choose auto-send.
-
-### Path A (Web Speech API): not really
-
-The spec exposes `lang`, `continuous`, `interimResults`, `maxAlternatives`.
-There is **no** `silenceTimeout` / `pauseMs` / endpointing attribute.
-`speechend` is a notification that the engine already decided speech
-stopped; it is not a knob.
-
-What the engine does:
-
-- `continuous: false` (this plan’s default): after a short, **browser-
-  defined** quiet period it finalizes one result and ends the session.
-  Chrome’s gap is often ~1s; iOS is jumpy and can cut mid-thought. We
-  cannot set 400ms vs 2s.
-- `continuous: true`: it keeps listening until `stop()` / `abort()` or
-  the engine dies. Pause length still is not ours.
-
-Workaround we *could* add later, still on path A: `continuous: true`,
-reset a timer on every `onresult`, and `stop()` after **N ms with no new
-transcript**. That N is ours (e.g. 1500ms). Limits:
-
-- It measures **no new words**, not true silence. A thinking pause with
-  no interim is “done”; extractor-hood noise that the engine turns into
-  junk words **resets** the timer.
-- iOS `continuous` is the flaky mode. A pause timer that depends on it
-  is a poor cooking-phone bet.
-- The engine may still `speechend` / `onend` on *its* schedule before N.
-
-So: **no first-class tunable pause on path A.** Tap-to-stop is the
-reliable “I’m done” (already in the plan). A software gap-timer is a
-best-effort extra, not a setting we should advertise.
-
-If BLOCKING 2 stays fill-then-Send, a too-short engine pause is annoying
-but recoverable: listening drops, text stays in the box, tap mic to
-continue, tap Send when ready. If BLOCKING 2 is auto-send, a too-short
-pause **sends an unfinished question** — much worse, and we cannot
-lengthen the engine’s VAD.
-
-### Path B (Sous recorder): yes
-
-We own the clip. After `getUserMedia`, an `AnalyserNode` (or a time
-since last loud RMS) can treat “level below threshold for **P ms**” as
-end-of-utterance, then stop `MediaRecorder` and POST. **P is our
-constant** (and could become a setting later). Tap-to-stop still wins
-if they finish sooner.
-
-Typical cooking default: P ≈ 1200–2000ms so “wait — is it 350 or 375?”
-does not cut the sentence. Threshold needs a floor so a fridge hum does
-not look like speech.
-
-Trade: no live captions while that pause is elapsing; transcription
-starts only after we decide the clip ended.
-
-### Plan implication
-
-v1 on path A: **do not promise a pause control.** Done = tap mic again
-(or the engine’s own `onend`). If a tunable pause is a requirement for
-shipping, that is a vote for path B, not a Web Speech tweak.
+- **Transcribe on Sous, via Gemini.** Same `GEMINI_API_KEY` / `CHAT_MODEL`
+  (`gemini-3.7-flash` default, `||` not `??`) as chat and import. No Cloud
+  Speech-to-Text, no extra OAuth scopes, no Auth.js, no Web Speech API.
+- **Fill, do not auto-send.** Path B has no live captions, so auto-send would
+  POST a string the user has not seen. Transcript appends to `draft`; they
+  tap Send (photos already attached stay attached).
+- **Tap to start, tap to stop.** Hold-to-talk is hostile with messy hands.
+  Auto-stop after `SILENCE_PAUSE_MS` of quiet **once speech has been heard**,
+  or at `MAX_RECORD_MS`, whichever first. Opening silence does not stop the
+  clip (otherwise the first 1.5s before they speak would submit empty audio).
+- **Pause knob:** `SILENCE_PAUSE_MS = 1500` in `src/lib/voiceRecorder.ts`.
+  That is the product control. Do not add a Settings slider in this slice.
+  RMS threshold is a sibling constant (`SILENCE_RMS`); tune on a phone if
+  kitchen hum false-triggers, do not expose it in UI.
+- **Hard cap:** `MAX_RECORD_MS = 30_000`. At the cap, stop and transcribe
+  (same as a tap-stop). Do not keep recording into a huge blob.
+- **No audio persistence.** The handler reads the body, calls Gemini, returns
+  `{ text }`, drops the bytes. No Firestore, no GCS, no Dexie, no chat
+  attachment of the clip.
+- **Transcript storage:** spoken string is `ChatMessage.content`, same as
+  typing. Do not add fields to `Recipe`, `ChatMessage`, or `CookStateRow`.
+- **Route:** `POST /api/stt` in `server/stt.ts`, mounted from
+  `scripts/server.ts` on the exact-path list (like `/api/chat`). **Do not**
+  add `api/stt.ts`. New HTTP routes go in `server/`. Vercel’s leftover
+  `api/chat.ts` / `api/import.ts` exist only because those two still have
+  Vercel copies; STT is Cloud Run only. `https://cook-seven-mu.vercel.app`
+  404 on `/api/stt` is fine.
+- **Auth:** `sessionFrom(req)` from `server/session.ts` (same as photos/sync).
+  401 if absent. Allowlist is already inside `sessionFrom`.
+- **Body:** raw bytes, `Content-Type` is the recording MIME (no multipart).
+  Mirror photos: allowlist the type, cap length, 413 if too large.
+- **Allowed MIME** (strip `;codecs=` before compare): `audio/webm`,
+  `audio/mp4`, `audio/aac`, `audio/mpeg`, `audio/ogg`, `audio/wav`. Gemini
+  accepts these. Client picks the first `MediaRecorder.isTypeSupported` from
+  `audio/webm;codecs=opus`, `audio/webm`, `audio/mp4`, `audio/aac`.
+- **Size cap:** `MAX_STT_BYTES = 1_048_576` (1 MiB). 30s of opus/webm is
+  far under; iOS mp4 is larger but still small. Stream-count the body like
+  photos so a lying `Content-Length` cannot blow memory.
+- **Gemini call:** non-streaming `generateContent`, **no tools**, not the
+  chat `0x1E` framer. Do not change `api/chat.ts`. Contents: one user turn
+  with `inlineData` (audio) + a short text prompt. Optional bias: recipe
+  **title only** (ChatPanel has it; do not send the full recipe or
+  cookingState — that is `/api/chat`’s job).
+- **Prompt:** transcribe speech to text; return only the transcript; empty
+  string if no speech; no quotes or commentary. Language follows
+  `document.documentElement.lang` (`en` → ask for English).
+- **Client fetch:** `src/lib/sttApi.ts` (next to `chatApi.ts`). Screens must
+  not `fetch`. 401 → `invalidateSession()` like chat. Credentials
+  `same-origin`.
+- **Unsupported:** hide the mic when `getUserMedia` or `MediaRecorder` is
+  missing. When they exist, always show it; permission / capture errors use
+  ChatPanel’s error strip.
+- **Busy:** abort recording (do not transcribe a partial if we abort for
+  Close/unmount). Disable mic while `streamingText !== null` or while
+  `transcribing`. Disable Send while `transcribing` so they cannot send a
+  draft that is about to gain the new sentence.
+- **UI:** mic between attach and textarea, attach-button geometry
+  (`h-10 w-10 rounded-full`). Idle matches attach fill; listening is amber
+  (`bg-amber-500` / `hover:bg-amber-600 active:bg-amber-600`). Transcribing:
+  keep the amber chrome, `aria-busy`, `aria-label="Transcribing"`. Hover
+  always has an `active:` twin. No `<Button>` component, no new
+  `uiClasses` unless a string is truly shared (attach’s classes are local —
+  copy that pattern).
+- **a11y:** `aria-label="Dictate"` / `"Stop dictation"` / `"Transcribing"`,
+  `aria-pressed` while recording. Do not focus the textarea on start (that
+  pops the iOS keyboard).
+- **Legal:** Sous *does* receive the clip and passes it to Gemini at request
+  time, then discards it. Rewrite `public/privacy.html` Third parties.
+  One sentence on `public/terms.html` if it currently implies only text +
+  photos go to the model. Bump last-updated dates.
+- **README:** one line under the chat/API bullets that Ask dictation POSTs
+  audio to `/api/stt` and Gemini returns text. Do not describe Web Speech.
+- **Tests:** pure predicates only (MIME allowlist, size, silence gate,
+  transcript trim). No DOM testing library, no Gemini mock server, no
+  fake MediaRecorder in CI. Do not fold a live STT eval into `npm test`.
+- **`erasableSyntaxOnly`:** no enums, no constructor parameter properties.
+- **Do not touch:** `/api/chat` framing, `maxDuration = 60` on chat, Dexie,
+  Dockerfile, `vercel.json`, OAuth scopes, `package.json` `"name"`.
 
 ## Goal
 
-On a phone (Chrome Android and iOS Safari / installed PWA), open a recipe,
-open Ask, tap the mic, speak, see text in “Ask the assistant…”, tap Send.
-The assistant still streams a text reply (and optional recipe proposal) as
-today. Typed input, photo attach, and keyboard dictation keep working.
+On a phone, open a recipe, open Ask, tap the mic, speak (including a short
+thinking pause), tap stop or wait ~1.5s after the last word, see text in
+the box, tap Send, get a **text** reply as today. Typed input and photo
+attach keep working. Close / navigation does not leak a live MediaStream.
 
-## Decisions (not blocking once Open questions are answered)
+## Assumptions
 
-- **Surface:** ChatPanel composer only. No Library / Import / Settings mic.
-- **Output:** no `speechSynthesis`, no auto-read of replies. The iOS bug
-  where SpeechRecognition hangs after `<audio>` playback is therefore
-  irrelevant — we never play assistant audio.
-- **Transcript storage:** the spoken string is `ChatMessage.content`, same as
-  typing. Do not add fields to `Recipe`, `ChatMessage`, or `CookStateRow`.
-- **No `getUserMedia` in v1.** `recognition.start()` from the tap is the user
-  gesture. A separate `getUserMedia` prompt would be a second permission and
-  is not required for Web Speech. If iOS first-utterance misses in testing,
-  a later step can warm the audio session; do not add it speculatively.
-- **Hide the mic when the constructor is missing** (Firefox, old Safari).
-  Do not ship a dead control. When the constructor exists, always show it;
-  permission / no-speech / `not-allowed` use ChatPanel’s existing error
-  strip.
-- **One recognizer per ChatPanel mount**, created lazily on first tap,
-  `stop()`/`abort()` on unmount, Close, and when `busy` becomes true.
-- **`interimResults: true`.** Live text in the textarea. Track
-  `draftBase` (text before this utterance) so interim chunks replace each
-  other instead of stacking.
-- **`continuous: false`.** iOS is more stable this way. While the user still
-  wants listening (`listening === true`), `onend` may restart once from the
-  same tap session. Do not loop forever if `start()` throws.
-- **`lang`:** `document.documentElement.lang` or `'en-US'`.
-- **Busy / streaming:** mic is disabled and any active recognition is aborted
-  so a late `onresult` cannot clobber a send in flight.
-- **Empty finals:** ignore; do not clear a typed draft.
-- **HTTPS:** production is `https://sous.kyrylo.lol`. Local Vite on
-  `http://localhost:5173` is a secure context. No Permissions-Policy header
-  is required (microphone defaults to self).
-- **Legal:** one sentence in `public/privacy.html` Third parties: on some
-  browsers, using the mic sends audio to that browser’s speech service
-  (Chrome: Google). Sous does not receive the audio. `public/terms.html`
-  does not name processors; leave it unless BLOCKING 1 chooses Sous-side
-  STT.
-- **UI tokens:** new mic uses the attach-button size (`h-10 w-10 rounded-full`)
-  and `ui-polish` hover/active twins. Listening fill is amber
-  (`bg-amber-500` / `hover:bg-amber-600 active:bg-amber-600`) to match the
-  Ask FAB and cook chrome. Idle fill matches attach
-  (`bg-surface-muted` / `hover:bg-line-strong active:bg-line-strong`).
-- **a11y:** `aria-label="Dictate"` idle, `aria-label="Stop dictation"` while
-  listening, `aria-pressed` bound to listening. Not emoji-only.
-- **No new React Context, no `<Button>` component, no enums**
-  (`erasableSyntaxOnly`).
-- **Tests:** pure helper only. No DOM testing library, no Playwright.
-
-## Out of scope
-
-- Text-to-speech / spoken replies / wake word / always-on listening
-- A new cook-mode screen (RecipeView already *is* cook mode + `useWakeLock`)
-- Changing `/api/chat`, Gemini request shape, `0x1E` framing, `maxDuration`
-- New Dexie tables, ChatMessage fields, WebSockets, polling
-- Extra Google OAuth scopes, Cloud Speech-to-Text, Auth.js
-- Firefox (API disabled); desktop is a nice-to-have for implementer testing
-- Auto-punctuation product work beyond whatever the recognizer returns
-- iOS keyboard dictation (already works if the textarea is focused; we do
-  not disable it)
+- Production is Cloud Run (`scripts/server.ts`). Vite already proxies `/api`
+  to :3001, including a new path.
+- `GEMINI_API_KEY` is already required for chat. STT fails closed with a
+  clear 503 if it is missing — same as a broken chat key, not a new env var.
+- Gemini inline audio limit (20 MB) is far above `MAX_STT_BYTES`.
+- Chrome Android: `audio/webm;codecs=opus`. iOS Safari / standalone PWA:
+  `audio/mp4`. Both are on the Gemini MIME list.
+- `sessionFrom` re-checks `ALLOWED_EMAILS`. No uid in the STT body.
+- Implementer can click through Vite + `dev:api` signed in. Phone mic is
+  the author’s device (Cloud Agent VMs often have none).
 
 ## Starting state (verified by reading the code)
 
-- `ChatPanel` composer (end of `src/components/ChatPanel.tsx`): hidden file
-  input, 📷 attach (`h-10 w-10 rounded-full`), `<textarea value={draft}>`,
-  Send. `send()` no-ops when `draft` is empty and there are no pending
-  photos, or when `busy` (`streamingText !== null`).
-- Close / unmount already `abort()`s the in-flight chat `AbortController`.
-  Recognition needs the same lifecycle; it does not exist today.
-- `cookingState` is always passed from RecipeView (`servings`, 1-based
-  `currentStep`, checked ingredient names). Irrelevant to STT.
-- `index.html` is `lang="en"`, `apple-mobile-web-app-capable`, viewport-fit
-  cover. PWA `display: standalone` in `vite.config.ts`.
-- `src/lib/uiClasses.ts` has `iconBtn` (rounded-lg, not the circular attach
-  treatment). Attach’s classes are local to ChatPanel — **copy that local
-  pattern** for the mic, do not force `iconBtn`.
-- No `SpeechRecognition` usage anywhere in `src/`. TypeScript `lib` is
-  `DOM` — the unprefixed interface exists in current DOM libs; the
-  `webkit` alias does not. The helper must read
-  `(window as Window & { webkitSpeechRecognition?: typeof SpeechRecognition }).webkitSpeechRecognition`.
-- Unit tests in this repo are Vitest over pure modules (`chatApi.test.ts`
-  stubs `fetch`). Speech result-folding belongs in a testable helper.
+- ChatPanel composer: 📷 attach, textarea `draft`, Send. `send()` no-ops
+  when draft is empty and there are no pending photos, or when `busy`.
+- Close / unmount already `abort()`s the in-flight **chat** controller.
+  Recording needs the same cleanup for `MediaStream` tracks.
+- `POST /api/chat` lives in `api/chat.ts` and is mounted as an exact path
+  in `scripts/server.ts`. Photos are a prefix matcher. STT is an exact
+  `POST /api/stt` — add it to `apiRoutes`, do not overload the photos
+  prefix.
+- Photos POST is the binary-body precedent: session cookie, Content-Type
+  allowlist, Content-Length + streamed byte cap, 413. Copy that shape;
+  do not write GCS.
+- Chat Gemini: `new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })`,
+  `CHAT_MODEL || 'gemini-3.7-flash'`, images as
+  `{ inlineData: { mimeType, data: base64 } }`. STT is the audio analogue
+  of that part, **without** tools or streaming.
+- `src/lib/chatApi.ts` is the existing non-library `fetch` helper. STT
+  gets a sibling, not a method on `remote.ts` (remote is pull/push/photos).
+- Privacy Third parties today: recipe text, chat messages, photos → Gemini;
+  URL import; hosting; then “Nothing else.” That becomes false once STT
+  ships.
+- No `SpeechRecognition` / `MediaRecorder` usage in `src/` today.
+- `index.html` `lang="en"`. PWA `display: standalone`.
 
 ## Files to change
 
-- `src/lib/speechRecognition.ts` — **new**. Constructor lookup, error
-  mapping, `foldSpeechResults` (interim vs final).
-- `src/lib/speechRecognition.test.ts` — **new**.
-- `src/components/ChatPanel.tsx` — mic button, listening state, wire helper.
-- `public/privacy.html` — Third parties sentence (date bump if the page
-  has a last-updated line).
-- `docs/plans/ask-voice-stt.md` — this file (already).
-- `AGENTS.md` Plans table — add this row as unfinished until implemented.
+- `server/stt.ts` — **new**. `sttPost`, exported MIME/size predicates.
+- `server/stt.test.ts` — **new**.
+- `scripts/server.ts` — mount `POST /api/stt`.
+- `src/lib/sttApi.ts` — **new**. `transcribeAudio({ blob, title })`.
+- `src/lib/sttApi.test.ts` — **new** if the JSON/401 mapping is worth
+  locking; otherwise keep tests in the recorder helper.
+- `src/lib/voiceRecorder.ts` — **new**. MIME pick, silence gate, start/stop.
+- `src/lib/voiceRecorder.test.ts` — **new**.
+- `src/components/ChatPanel.tsx` — mic, recording/transcribing states.
+- `public/privacy.html`, `public/terms.html` — dictation disclosure.
+- `README.md` — `/api/stt` bullet.
+- `AGENTS.md` — this plan’s table row (wording: path B).
+- `docs/plans/ask-voice-stt.md` — this file.
 
-Do not change `src/lib/chatApi.ts`, `api/chat.ts`, server chat handlers,
+Do not change `api/chat.ts`, `api/import.ts`, `src/lib/chatApi.ts` framing,
 `src/lib/chatStore.ts`, Recipe/ChatMessage types, `vite.config.ts`,
-`index.html`, or `src/lib/uiClasses.ts` unless a class string is clearly
-shared (it is not; attach is local).
+`index.html`, `src/lib/uiClasses.ts`, Dockerfile, deploy.sh.
 
 ## Steps
 
-### 1. [core] Speech helper and tests
+### 1. [core] Silence gate, MIME pick, transcript trim (pure)
 
-Files: `src/lib/speechRecognition.ts`, `src/lib/speechRecognition.test.ts`
+Files: `src/lib/voiceRecorder.ts`, `src/lib/voiceRecorder.test.ts`
 
-Export (names may vary; behaviour must not):
+Export constants (numbers, not enums):
 
 ```
-getSpeechRecognitionCtor(): (new () => SpeechRecognition) | null
-  window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null
-
-mapSpeechError(code: string): string
-  'not-allowed' | 'service-not-allowed'
-    → 'Microphone access was blocked — allow it for this site and try again.'
-  'no-speech'
-    → 'No speech heard — tap the mic and try again.'
-  'audio-capture'
-    → 'No microphone was found.'
-  'network'
-    → 'Dictation needs a network connection on this browser.'
-  default
-    → 'Dictation failed — try again.'
-
-foldSpeechResults(
-  draftBase: string,
-  results: ReadonlyArray<{ isFinal: boolean; transcript: string }>,
-): { nextDraft: string; nextBase: string }
+SILENCE_PAUSE_MS = 1500
+SILENCE_RMS = 0.04
+MAX_RECORD_MS = 30_000
 ```
 
-`foldSpeechResults` rules (lock in tests):
+`pickRecorderMime(): string | null` — first of
+`['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac']`
+where `MediaRecorder.isTypeSupported` is true; `null` if none. Tests stub
+`MediaRecorder` as a global with `isTypeSupported`.
 
-- Concatenate **final** transcripts (trimmed, single spaces between) onto
-  `draftBase`. If `draftBase` is non-empty and does not already end in
-  whitespace, insert one space before the first final.
-- Append the latest **interim** transcript the same way, but do not advance
-  `nextBase` until finals land. A later interim replaces the previous
-  interim, it does not append to it.
-- Empty transcripts are no-ops.
+`silenceDecision(input): 'keep-listening' | 'stop'`
 
-Do not wrap `start()` in this module — ChatPanel owns the instance and
-events so unmount can `abort()` without a hidden singleton leaking across
-recipes.
+```
+input = {
+  now: number,
+  startedAt: number,
+  lastLoudAt: number | null,  // null until RMS >= SILENCE_RMS once
+  rms: number,
+}
+```
 
-No enums. Error codes stay string literals.
+- If `now - startedAt >= MAX_RECORD_MS` → `'stop'`.
+- If `lastLoudAt === null` → `'keep-listening'` (still waiting for speech).
+- If `rms >= SILENCE_RMS` → `'keep-listening'` (caller updates lastLoudAt).
+- If `now - lastLoudAt >= SILENCE_PAUSE_MS` → `'stop'`.
+- Else `'keep-listening'`.
 
-### 2. [core] Privacy sentence
+Lock those branches in tests. Do not put `getUserMedia` in this module’s
+pure functions.
 
-File: `public/privacy.html`
+`stripTranscript(raw: string): string` — trim; if the whole string is
+wrapped in matching `"` or `“”`, unwrap once; collapse internal
+newlines to spaces. Empty in → empty out. Tests for quotes and
+whitespace.
 
-In **Third parties**, replace the closing “Nothing else.” so the paragraph
-still lists Gemini (chat text + photos), URL import, and hosting, and **adds**
-that tapping Dictate on some browsers sends microphone audio to that
-browser’s own speech service (Chrome uses Google). Sous does not upload the
-recording; the transcript is then a normal chat message.
+`canRecord(): boolean` — `typeof navigator !== 'undefined'` and
+`navigator.mediaDevices?.getUserMedia` and `typeof MediaRecorder === 'function'`.
+Tests: stub globals.
 
-Bump “Last updated” if present. Do not mention Cloud Speech-to-Text or a
-Sous `/api/stt`. Do not edit `terms.html` in this slice.
+A small `startRecording()` / `stopRecording()` wrapper may live in the
+same file for ChatPanel to call, but it will not be unit-tested against a
+real mic. It must:
 
-Skip this step only if BLOCKING 1 is answered “no disclosure / don’t ship
-Chromium dictation.”
+- `getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })`
+- `new MediaRecorder(stream, mime ? { mimeType } : undefined)`
+- `AudioContext` + `AnalyserNode` on the same stream; `requestAnimationFrame`
+  or a 100ms `setInterval` reading RMS from `getByteTimeDomainData` or
+  float data, mapped to 0..1, feeding `silenceDecision`
+- Collect `dataavailable` blobs; on stop, `stop()` all tracks, close the
+  AudioContext, resolve one `Blob` with `type` set to the chosen MIME
+  **without** a codecs suffix if the browser left it empty
+- `abortRecording()` stops tracks without resolving a blob (Close / unmount)
 
-### 3. [ui] Mic control in ChatPanel
+### 2. [core] `POST /api/stt`
+
+Files: `server/stt.ts`, `server/stt.test.ts`, `scripts/server.ts`
+
+**`sttPost(req: Request): Promise<Response>`**
+
+1. `sessionFrom(req)` → null ⇒ 401 `Unauthorized` (plain text, same as
+   chat’s unauthorized, or JSON — pick JSON `{ error }` **and use it for
+   every STT error** so the client can show `error` consistently).
+2. `GEMINI_API_KEY` missing/blank ⇒ 503 `{ error: 'Assistant is unavailable.' }`
+   (do not mention the env var name).
+3. Method is already gated by the router (POST only).
+4. `Content-Type` → `normalizeSttContentType` (strip params, lower-case,
+   allowlist). Null ⇒ 400 `{ error: 'Bad request' }`.
+5. If `Content-Length` parses and is `> MAX_STT_BYTES` ⇒ 413
+   `{ error: 'Recording too long — try a shorter question.' }`.
+6. Read `req.body` with a byte cap (copy the photos stream limiter or a
+   smaller local helper). Over cap ⇒ 413 same copy. Empty body ⇒ 400.
+7. Optional `x-recipe-title` header: if present, take the first 200
+   Unicode scalar values, strip C0 controls, use in the prompt; if absent
+   or empty, omit. **Do not** require it.
+8. `generateContent` with `CHAT_MODEL || 'gemini-3.7-flash'`:
+
+```
+contents: [{
+  role: 'user',
+  parts: [
+    { inlineData: { mimeType, data: base64 } },
+    { text: prompt },
+  ],
+}]
+config: { maxOutputTokens: 512, temperature: 0 }
+```
+
+No tools. No systemInstruction that restates the whole recipe. Prompt
+shape (exact words may vary, meaning must not):
+
+> Transcribe the speech in this audio to plain text.
+> Return only the transcript. If there is no speech, return an empty string.
+> Do not add quotation marks, labels, or commentary.
+> Language: English.
+
+If a title header was sent, append `The cook is making: {title}.` so
+ingredient names bias slightly.
+
+9. On Gemini throw / empty model: 502 `{ error: 'Dictation failed — try again.' }`.
+   Do not leak provider error bodies to the client.
+10. `stripTranscript` on `response.text`. 200
+    `{ text: string }` with `Cache-Control: no-store`.
+11. Drop the Buffer. No log of the transcript in production (a debug log
+    of byte length + mime is fine).
+
+Export from `server/stt.ts` for tests: `normalizeSttContentType`,
+`isSttByteCountTooLarge`, `MAX_STT_BYTES`, `clipRecipeTitle`.
+
+`scripts/server.ts`: add
+`{ method: 'POST', path: '/api/stt', handler: sttPost }` to `apiRoutes`.
+GET `/api/stt` must 405 (the existing pathMatched branch).
+
+Tests: MIME allow / reject (`audio/webm;codecs=opus` → `audio/webm`);
+size predicate; title clipping to 200; no network.
+
+### 3. [core] Client `transcribeAudio`
+
+File: `src/lib/sttApi.ts`
+
+```
+transcribeAudio(params: {
+  blob: Blob,
+  title?: string,
+  signal?: AbortSignal,
+}): Promise<string>
+```
+
+- `fetch('/api/stt', { method: 'POST', credentials: 'same-origin',
+  headers: { 'Content-Type': blob.type.split(';')[0] || 'application/octet-stream',
+  optional 'x-recipe-title': title }, body: blob, signal })`
+- 401 → `invalidateSession()` and throw `'Please sign in again — your session expired.'`
+  (same sentence as `chatApi.ts`)
+- Non-OK → throw the JSON `error` string if present, else
+  `'Dictation failed — try again.'`
+- 200 → `stripTranscript` of `body.text`; allow empty (caller decides)
+
+ChatPanel is the only caller. Do not import `sttApi` from screens other
+than via ChatPanel.
+
+### 4. [ui] Mic in ChatPanel
 
 File: `src/components/ChatPanel.tsx`
 
-State (local, not store):
+State: `listening`, `transcribing` (boolean). Refs for the active recorder
+abort.
 
-- `listening: boolean`
-- `draftBaseRef` — string the current utterance started from
-- `recognitionRef` — the `SpeechRecognition` instance or null
+If `canRecord()` is false, render no mic (typed Ask unchanged).
 
-Constructor: call `getSpeechRecognitionCtor()` once per mount (or once per
-render is fine if it is cheap). If null, render no mic.
-
-Layout, composer row, between attach and textarea:
+Composer row:
 
 ```
 [ 📷 attach ] [ mic ] [ textarea ] [ Send ]
 ```
 
-Idle mic: same geometry as attach (`flex h-10 w-10 shrink-0 items-center
-justify-center rounded-full bg-surface-muted … hover:bg-line-strong
-active:bg-line-strong`). Glyph: a simple mic character or inline SVG; must
-have `aria-label`.
+Send `disabled={busy || transcribing}`. Mic `disabled={busy || transcribing}`
+while transcribing; while listening the mic is the stop control.
 
-Listening: `bg-amber-500 text-white hover:bg-amber-600 active:bg-amber-600`,
-`aria-pressed={true}`. Optional `animate-pulse` is allowed; do not add a
-new token.
+**Tap:**
 
-Disabled when `busy`. Clicking while `busy` is a no-op.
+1. If `listening`: stop recorder, set listening false, `transcribing` true,
+   `transcribeAudio`, append `stripTranscript` to `draft` with a leading
+   space if draft is non-empty and the transcript is non-empty, clear
+   transcribing. Empty transcript: no draft change, no error (they may
+   have tapped immediately). Gemini/network throw: error strip, draft
+   unchanged.
+2. If not listening and not transcribing and not busy: `setError(null)`,
+   `listening` true, `startRecording()`. `getUserMedia` reject
+   (`NotAllowedError`) → listening false, `'Microphone access was blocked — allow it for this site and try again.'`
+   `NotFoundError` → `'No microphone was found.'`
+3. Silence/max-duration stop from the recorder takes the same path as (1)
+   (stop → transcribe → fill).
 
-**Tap handler:**
+**Abort without transcribe** (drop the blob): unmount, Close, `busy`
+becoming true. Stop tracks. Do not POST.
 
-1. If `listening`, `recognition.stop()` (not `abort()` — let a pending
-   final flush), set `listening` false. Return.
-2. If ctor is null, return (control should be hidden).
-3. Lazily `new ctor()`, set `interimResults = true`, `continuous = false`,
-   `lang` as in Decisions. Bind:
-   - `onresult` → `foldSpeechResults(draftBaseRef, mapped results)` →
-     `setDraft` / update base ref
-   - `onerror` → `setError(mapSpeechError(event.error))`, `listening` false
-   - `onend` → if `listening` still true, try `start()` once inside
-     try/catch; on throw, `listening` false and map a generic error
-4. Set `draftBaseRef` to current `draft` (trimEnd only if you need a
-   separator; prefer letting `foldSpeechResults` insert the space).
-5. `setError(null)`, `listening` true, `start()` inside the click stack
-   (user gesture). If `start()` throws, reset listening and show the mapped
-   error.
+Do not call `send()` from the transcribe path.
 
-**Abort recognition** (use `abort()`, drop listening) when:
+Placeholder stays “Ask the assistant…”. Optional: while listening, the
+textarea placeholder can stay; do not swap the whole composer for a
+full-screen overlay.
 
-- ChatPanel unmounts (extend the existing cleanup effect that already
-  aborts `inFlight`)
-- Close is pressed (`onClose`)
-- `busy` becomes true (effect on `busy`, or first line of `send`)
-- Escape already closes the sheet — unmount covers it
+Photo + voice: unchanged `pendingPhotos`; user taps Send after the
+transcript is in `draft`.
 
-Do not call `send()` from recognition events unless BLOCKING 2 is answered
-auto-send. If it is, auto-send only when `foldSpeechResults` produced a
-non-empty `nextBase` change, `!busy`, and listening was turned off by
-`onend` with the user still in “one tap” mode — **do not** auto-send every
-interim.
+### 5. [ui] Privacy, terms, README, plans table
 
-Placeholder can stay “Ask the assistant…”. While listening, do not steal
-focus into the textarea (that would pop the keyboard on iPhone and defeat
-the point).
+Files: `public/privacy.html`, `public/terms.html`, `README.md`, `AGENTS.md`
 
-Photo + voice: unchanged `pendingPhotos`; `send()` already concatenates
-`draft` + photos.
+Privacy Third parties: keep Gemini for recipe text, chat messages, and
+photos; **add** that using Dictate uploads a short microphone recording to
+Sous, which sends it to Gemini to turn into text and does not store the
+audio. Hosting remains Google Cloud. Remove “Nothing else.” Bump last
+updated.
 
-Typed text during listening: allowed (onChange updates `draft`). Do not try
-to keep `draftBaseRef` in sync with mid-utterance typing; a mixed edit is
-best-effort. Stopping then starting a new tap resets the base.
+Terms: one accuracy/acceptable-use-adjacent sentence that dictation is
+also AI transcription and can be wrong. Do not invent a new ToS section
+unless the current “assistant and importer” sentence can simply include
+dictation.
 
-### 4. [core] Plans table
+README architecture / API list: `POST /api/stt` — session cookie, raw
+audio body, JSON `{ text }`. Mention it next to chat/import. Note that
+Vite’s `/api` proxy must be up or dictation fails the same way chat does.
 
-File: `AGENTS.md`
-
-Add a row:
-
-`docs/plans/ask-voice-stt.md` | Planned. Ask composer speech-to-text (Web
-Speech API); output remains text.
-
-Do not retitle other rows. Do not start photos/deploy/end-state work here.
+AGENTS.md plans row: `docs/plans/ask-voice-stt.md` | Planned. Ask
+composer dictation via `POST /api/stt` (Gemini); output remains text.
 
 ## Deferred
 
-- **Sous-side STT (`/api/stt` + Gemini)** if Web Speech is too flaky on
-  the user’s iPhone, privacy forbids Chromium’s speech service, or we
-  need a pause length we own (see “End-of-utterance pause”). Needs a new
-  plan, legal rewrite, and a client helper next to `chatApi.ts`.
-- **iOS `getUserMedia` warmup** if the first tap after opening Ask never
-  fires `onresult`.
-- **Auto-send** if BLOCKING 2 stays “fill”.
-- **Continuous listening / barge-in** while the assistant streams. Out of
-  scope; `busy` disables the mic.
-- **Per-recipe language** (imported recipes in French, etc.).
-- **Firefox** (`media.webspeech.recognition.enable`).
+- **Auto-send** after a successful transcript. Worse on path B than A
+  because the user has not watched live words. Revisit only after the
+  fill path feels right on a phone.
+- **Settings slider for `SILENCE_PAUSE_MS`.** Changing the constant is
+  enough until someone hates 1500ms.
+- **Live captions** (Web Speech in parallel, or Gemini streaming). Out of
+  scope; do not mix path A back in “for interims”.
+- **TTS / spoken replies / wake word / always-on.**
+- **Vercel `api/stt.ts` copy.** Production is Cloud Run.
+- **Biasing with full recipe / cookingState** on the STT prompt. Title
+  only in v1.
+- **Keeping audio** in GCS. Explicitly not wanted.
+- **Firefox-only quirks** beyond MediaRecorder + getUserMedia, which it
+  has.
 
-Residual risk: iOS standalone PWA dictation will be worse than Android
-Chrome. That is accepted for v1 if BLOCKING 1 stays Web Speech. If the
-first iPhone check is “start() hangs with no events”, stop and write the
-STT-endpoint plan instead of piling WebKit workarounds (same rule as OAuth:
-do not invent extra workarounds).
+Residual risk: iOS audio-session + PWA. If `getUserMedia` works for the
+phone (it should; the camera file input already exists) but
+`MediaRecorder` produces an empty blob or a MIME Gemini rejects, stop and
+narrow the MIME list / add a conversion — do not bolt on Web Speech as a
+silent fallback in the same slice.
 
 ## Verification
 
-No DOM test runner. After implementation:
+1. `npm test` — silenceDecision matrix (no speech / speech then pause /
+   max duration / loud resets pause); MIME picker; stripTranscript;
+   stt content-type and size predicates.
+2. `npm run build` — type gate on `server/stt.ts`.
+3. `GET http://localhost:3001/api/stt` → 405; `POST` no cookie → 401;
+   `POST` cookie + `Content-Type: text/plain` → 400; oversized
+   Content-Length → 413. (Use a real `sous_session` cookie like other
+   server checks; do not print it.)
+4. Browser, Vite + `dev:api`, signed in, `http://localhost:5173`:
+   - RecipeView → Ask → Dictate → speak → stop → text in the box → Send
+     → **text** reply. Network: `POST /api/stt` then `POST /api/chat`.
+     No audio on the chat request.
+   - Deny mic: error strip; typed Send still works.
+   - Hide-mic: stub `canRecord` false in a desktop without
+     MediaRecorder if needed; composer is attach + textarea + Send.
+   - Attach photo, dictate, Send: user bubble has photo + transcript.
+   - Start dictation, Close: tab’s mic indicator clears; no `/api/stt`.
+   - Start dictation, wait through `SILENCE_PAUSE_MS` after speech:
+     transcribe without a second tap.
+   - Opening the mic and waiting `SILENCE_PAUSE_MS` **without** speaking:
+     still listening (until 30s or tap).
+   - Library / Import / Settings: no mic.
+5. Phone: Chrome Android and iOS Safari + standalone PWA. Confirm
+   `Content-Type` is one of the allowlisted types. If standalone fails
+   where Safari-tab works, record it; do not add Web Speech in this PR.
 
-1. `npm test` — helper cases: finals append with a space; interims replace;
-   empty ignored; `getSpeechRecognitionCtor` null without the globals;
-   every `mapSpeechError` branch.
-2. `npm run build` — type gate, including the `webkit` constructor cast.
-3. Browser (Vite + `dev:api`, signed in, `http://localhost:5173`):
-   - Desktop Chromium with mic: RecipeView → Ask → Dictate → speak → text
-     in the box → Send → **text** reply streams as today. Mic idle after
-     send.
-   - Deny microphone: error strip, draft untouched, typed send still works.
-   - Hide-mic: Firefox or a Chromium session with the API stubbed off —
-     composer is attach + textarea + Send only.
-   - Attach a photo, dictate, Send: user bubble has photo + transcript.
-   - Start dictation, tap Close: no leftover listening indicator, no
-     permission indicator stuck on (recognition aborted).
-   - Start dictation, tap Send with existing draft: recognition aborts,
-     send proceeds, no second send from a late `onresult`.
-4. Phone (required for the feature, not optional polish):
-   - Chrome Android, installed PWA if available.
-   - iOS Safari **and** Add-to-Home-Screen standalone. If standalone fails
-     where Safari-tab works, record it in the PR; do not invent a second
-     STT stack in the same slice.
-5. Confirm Settings / Library / Import have no mic. Confirm replies are
-   never spoken.
+## Rejected: path A (Web Speech API)
 
-Cloud Agent VMs usually have no phone and may lack a mic. Desktop Chromium
-plus the unit tests are the implementer’s bar; the iOS/Android pass is the
-author’s device (same as the existing iOS PWA sign-in check).
+Browser `SpeechRecognition` / `webkitSpeechRecognition`. Live interims,
+no Sous audio upload, Chrome sends mic audio to Google’s *browser* speech
+service, no tunable pause (`speechend` is engine-defined), iOS standalone
+is flaky. Rejected in favour of path B so we own the pause length and the
+iPhone recording path. Do not implement a hidden Web Speech fallback in
+this slice.
