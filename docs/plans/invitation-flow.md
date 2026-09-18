@@ -436,7 +436,7 @@ Made while planning, with reasons:
   *notification-bearing*, in which case it writes, or it is quiet, in which
   case it writes **nothing at all**:
 
-  | existing document | write? | notify? |
+  | existing document | write? | notification window? |
   | --- | --- | --- |
   | absent | create, `requestCount: 1` | yes |
   | `pending`, `now - lastNotifiedAt >= 24 h`, `requestCount < 5` | bump `requestCount`, set `lastNotifiedAt` | yes |
@@ -444,6 +444,11 @@ Made while planning, with reasons:
   | `pending`, `requestCount >= 5` | **no**, ever again | no |
   | `approved` | no | no |
   | `denied` | no | **never** |
+
+  The third column is `notificationEligible` — "this press opened a
+  notification window" — **not** "an email was sent". Delivery is decided
+  afterwards by the global daily cap and then by Resend, and either can
+  suppress the email while the write stands (see below, and step 2).
 
   This is the whole abuse bound, and it is deliberately a single mechanism
   rather than a write throttle layered under a separate notification rule.
@@ -519,7 +524,7 @@ stops *that* plan for a GIS `id_token` plan, not this one.
 | `server/env.ts` | New getters: `resendApiKey()` (`null` when unset), `mailFrom()`, `ownerNotifyEmail()`. |
 | `server/mail.ts` | **New.** `sendMail({subject, text})` → Resend `POST https://api.resend.com/emails`, bearer token, 10 s `AbortSignal.timeout`, returns `boolean`, **never throws** (network and timeout rejections are caught). Logs status codes and error names only, never the key or the body. |
 | `server/members.ts` | **New.** Owns the `MemberRecord` type and pure `parseMemberDoc`, so nothing in this file imports `server/membership.ts` — the dependency runs one way, members → membership. Firestore accessors for `members/`, `accessRequests/`, `accessRequestMeta/` (`readMember`, `recordAccessRequest`, `listAccessRequests` as three cursor-paged per-status queries, `applyDecision`, `touchRequestIdentity`) + the pure decisions `nextRequestState`, `nextNotificationCounter`, `decisionTransition`, `isValidSubParam`. |
-| `server/members.test.ts` | **New.** Pure only: the `parseMemberDoc` rejection table, the request state machine (write **and** notify for every input state), 24 h window, `requestCount` ceiling of 5, quiet-press-writes-nothing, denied/approved absorbing, `nextRequestState` idempotence, daily counter rollover, decision transitions. |
+| `server/members.test.ts` | **New.** Pure only: the `parseMemberDoc` rejection table, the request state machine (`write` **and** `notificationEligible` for every input state, plus `write === notificationEligible` as a loop), 24 h window, `requestCount` ceiling of 5, quiet-press-writes-nothing, denied/approved absorbing, `nextRequestState` idempotence, daily counter rollover **including the cap-exhausted composition where the write stands but delivery is false**, decision transitions. |
 | `server/membership.ts` | **New.** Imports `MemberRecord` / `parseMemberDoc` from `server/members.ts`. Pure `accessDecision({email, emailVerified, allowedRaw, member})` → `'owner'|'member'|'denied'`; async `accessAllows(identity)` (never throws — for the callback), `requireMember(req)`, `requireOwner(req)`, `withMembership(handler)`; the **positive-only** 60 s TTL cache with `clearMembershipCache(sub)`; the shared 401/503 response helpers, `storeUnavailable()`, and `readBoundedText(req, limit)`. |
 | `server/membership.test.ts` | **New.** Pure `accessDecision` table (blank list, unverified email, blank email, revoked member, owner-when-Firestore-absent), cache TTL with an injected clock in **both** directions (approval visible immediately, revocation after the TTL) + the architecture-lock assertions over production sources only — three of the six land here, one in step 4 and two in step 5, as each becomes true. |
 | `server/session.ts` | Add `signAccessRequestTx`/`verifyAccessRequestTx` (`v:'accessreq'`, 10 min). Remove the `isAllowed` call and the `allowedEmails` import from `readSession` (it becomes cryptographic-only, with a doc comment saying so). **Delete `sessionFrom`.** |
@@ -728,32 +733,43 @@ document is a definite "not a member", not an outage. `readMember` logs the
 diagnosable without reading the whole collection.
 
 - `nextRequestState(existing, identity, now)` →
-  `{ write: boolean; doc; notify: boolean }`, implementing the **D16** table
-  exactly. Restated as code-shaped rules, because this one function is the
-  whole abuse bound:
-  - `existing === null` ⇒ `{ write: true, notify: true }`, doc is a fresh
-    `pending` with `requestCount: 1`, `createdAt = updatedAt = now`,
+  `{ write: boolean; doc; notificationEligible: boolean }`, implementing the
+  **D16** table exactly. Restated as code-shaped rules, because this one
+  function is the whole abuse bound:
+  - `existing === null` ⇒ `{ write: true, notificationEligible: true }`, doc is
+    a fresh `pending` with `requestCount: 1`, `createdAt = updatedAt = now`,
     `lastNotifiedAt = now`;
   - `existing.status === 'pending'` and `existing.requestCount < 5` and
     `now - (existing.lastNotifiedAt ?? 0) >= 86_400_000` ⇒
-    `{ write: true, notify: true }`, `requestCount + 1`,
+    `{ write: true, notificationEligible: true }`, `requestCount + 1`,
     `lastNotifiedAt = now`, identity fields refreshed;
   - `existing.status === 'pending'` otherwise (inside the 24 h window, or
-    `requestCount >= 5`) ⇒ `{ write: false, notify: false }`;
-  - `existing.status === 'approved'` ⇒ `{ write: false, notify: false }`;
-  - `existing.status === 'denied'` ⇒ `{ write: false, notify: false }`.
+    `requestCount >= 5`) ⇒ `{ write: false, notificationEligible: false }`;
+  - `existing.status === 'approved'` ⇒ `{ write: false, notificationEligible: false }`;
+  - `existing.status === 'denied'` ⇒ `{ write: false, notificationEligible: false }`.
 
-  **`write` and `notify` are never independent**: `notify` implies `write`,
-  and `write` implies `notify`. There is no third state and no separate write
-  throttle, because a quiet press that writes anything at all is an
-  unauthenticated write channel a stranger can drive forever by minting fresh
-  tokens (**D16**). The single window is the bound.
+  **The flag is named `notificationEligible`, not `notify`, and the
+  distinction is load-bearing.** It means "this press opened a notification
+  window", which is a *decision about the request document*. Whether an email
+  is actually **sent** is a separate, later question answered by the global
+  daily cap and then by Resend. Conflating the two produced a real
+  contradiction in an earlier draft: the invariant below claims
+  `write === notificationEligible`, yet the cap can permit the write while
+  suppressing the email, so a single field called `notify` had to be both true
+  and false at once.
+
+  **`write` and `notificationEligible` are never independent**:
+  each implies the other, asserted as a property test over every fixture.
+  There is no third state and no separate write throttle, because a quiet
+  press that writes anything at all is an unauthenticated write channel a
+  stranger can drive forever by minting fresh tokens (**D16**). The single
+  window is the bound.
 - `nextNotificationCounter(counter, now)` → `{ counter, allowed: boolean }` —
-  UTC-day rollover, cap 20. **Consulted only when `notify` is already true**
-  (see `recordAccessRequest`), so a quiet press never reads or writes it.
-  A `false` from this function suppresses the **email only** — the write still
-  happens and `lastNotifiedAt` still moves, or the bound above would reopen
-  precisely when the cap is exhausted (**D16**).
+  UTC-day rollover, cap 20. **Consulted only when `notificationEligible` is
+  already true** (see `recordAccessRequest`), so a quiet press never reads or
+  writes it. A `false` from this function suppresses the **email only** — the
+  write still happens and `lastNotifiedAt` still moves, or the bound above
+  would reopen precisely when the cap is exhausted (**D16**).
 - `decisionTransition(existing, action, ownerSub, now)` for
   `'approve'|'deny'|'revoke'` → the `members/{sub}` and `accessRequests/{sub}`
   bodies, or a refusal reason (`'unknown-request'`, `'self'`). `existing` is
@@ -769,7 +785,13 @@ modified):
   sub)` defined above in this same file. Throws only on a genuine Firestore
   error, which callers map to `unknown`/503.
 - `recordAccessRequest(identity, now)` →
-  `{ outcome: 'recorded'|'quiet'|'already-approved', notify: boolean }` —
+  `{ outcome: 'recorded'|'quiet'|'already-approved', notify: boolean }`, where
+  this `notify` is the **delivery** decision and is defined as
+  `notificationEligible && counter.allowed` — the only place the two ideas
+  combine, and the only value `server/access.ts` may use to decide whether to
+  call `sendMail`. A cap-exhausted press therefore advances the request
+  document (`requestCount`, `lastNotifiedAt`) while returning
+  `notify: false` —
   `'quiet'` covering every no-write case except an existing membership
   (inside the 24 h window, at the ceiling of 5, or `denied`), all of which
   render identical copy by design (**D16**) — in **two phases**, so the
@@ -785,7 +807,7 @@ modified):
      genuine request.
   2. Otherwise one `runTransaction` that re-reads `accessRequests/{sub}`,
      re-applies `nextRequestState` against the re-read value, and — only if
-     that result still has `notify: true` — reads and writes
+     that result still has `notificationEligible: true` — reads and writes
      `accessRequestMeta/notifications`. The re-read inside the transaction is
      what makes two simultaneous presses idempotent; phase 1 is an
      optimisation and is never the correctness argument. If the re-read now
@@ -845,21 +867,37 @@ only for a fully-formed document.
 `nextRequestState`, asserting **both** flags on every case, since they are the
 write bound and not only the email bound:
 
-- absent ⇒ `write: true`, `notify: true`, `requestCount: 1`;
+- absent ⇒ `write: true`, `notificationEligible: true`, `requestCount: 1`;
 - `pending` at `lastNotifiedAt + 23 h 59 m` ⇒ `write: false` **and**
-  `notify: false` — the quiet press writes nothing;
+  `notificationEligible: false` — the quiet press writes nothing;
 - `pending` at `+ 24 h 01 m` with `requestCount: 4` ⇒ `write: true`,
-  `notify: true`, `requestCount: 5`;
+  `notificationEligible: true`, `requestCount: 5`;
 - `pending` with `requestCount: 5` at `+ 30 days` ⇒ `write: false`,
-  `notify: false` — the ceiling stops writes, not just emails, and no later
-  `now` reopens it;
+  `notificationEligible: false` — the ceiling stops writes, not just emails,
+  and no later `now` reopens it;
 - `approved` and `denied`, each at `+ 30 days` ⇒ `write: false`,
-  `notify: false`;
-- `write === notify` for every case in the table — assert it as a loop over
-  the fixtures, so a future edit cannot separate them again;
+  `notificationEligible: false`;
+- `write === notificationEligible` for every case in the table — assert it as
+  a loop over the fixtures, so a future edit cannot separate them again;
 - **idempotence**: called twice with the same `existing` and `now`, the same
-  `doc` and the same `notify` come back — the property the in-transaction
-  re-read relies on.
+  `doc` and the same `notificationEligible` come back — the property the
+  in-transaction re-read relies on.
+
+And, for the eligibility-versus-delivery split (the two must not be conflated
+again), over `nextNotificationCounter` and the composition rule:
+
+- a counter already at 20 for today ⇒ `allowed: false`, and the counter is
+  **not** incremented past 20 however many times it is called;
+- the same counter with `now` in the next UTC day ⇒ `allowed: true`, count
+  resets to 1;
+- **cap-exhausted composition**: `notificationEligible: true` with
+  `allowed: false` ⇒ `recordAccessRequest` returns `notify: false` while the
+  request document still advances — `requestCount` incremented and
+  `lastNotifiedAt` moved. This is the case an earlier draft could not express
+  with one field, and it is the one that keeps the write bound closed when the
+  cap is exhausted (**D16**);
+- `notificationEligible: false` ⇒ the counter is never consulted at all, so no
+  quiet press can burn a day's allowance or contend on that document.
 
 Plus `nextNotificationCounter` rolling over at UTC midnight and capping at 20,
 and `decisionTransition` refusing `ownerSub === sub` and refusing an absent
@@ -1207,7 +1245,11 @@ helpers and is used by **both** this route and the admin POST in step 8:
 readBoundedText(req: Request, limit: number): Promise<string | null>
 ```
 
-It pulls from `req.body!.getReader()`, accumulating byte lengths, and as soon as
+A `null` `req.body` is an **empty body**, not an error: return `''` and let the
+caller's own validation reject it (a missing `t` field ⇒ the 400 expired page;
+missing JSON ⇒ 400). Do not write `req.body!` — a bodyless POST is easy to
+send and must not throw a 500 out of the bounds check. Otherwise it pulls from
+`req.body.getReader()`, accumulating byte lengths, and as soon as
 the running total exceeds `limit` it calls `reader.cancel()` and returns `null`
 (the caller replies 413). It decodes with a single `TextDecoder` over the
 collected chunks. `await req.text()` followed by a length check is **not** a
@@ -1439,8 +1481,14 @@ copy, `text-danger` for errors):
 - **Paging, with a claim the query can actually back.** A section whose
   `nextCursor` is non-null renders a **Load more** button beneath its rows
   that calls `fetchAccessRequests` with that cursor for that section and
-  **appends** the returned rows. Rows within what is loaded are displayed
-  newest-first. The one `text-ink-muted` line beneath a truncated section says
+  **appends the returned rows for that section only**. This is the one subtle
+  part: the response always carries all three sections, so a Load more in
+  Pending comes back with Pending's *next* page but Approved's and Denied's
+  *first* pages. Appending everything would duplicate every already-loaded row
+  in the other two sections. Merge the requested section, take the other two
+  sections' `nextCursor` values but **discard their rows**, then re-sort the
+  accumulated rows of the merged section. Rows within what is loaded are
+  displayed newest-first. The one `text-ink-muted` line beneath a truncated section says
   so honestly — that this section has more entries and loads 200 at a time —
   and **must not** say "the most recent 200", because the query selects in
   account-id order, not by date (**D5**). Recency is a presentation detail
@@ -1472,7 +1520,9 @@ Approve moves it to Approved without a reload; Remove access moves it back;
 Refresh re-fetches. With a real `nextCursor` — force it by temporarily
 lowering the page size in `listAccessRequests` to 2 and seeding three request
 documents — **Load more** appends the next rows exactly once and then
-disappears; restore the page size afterwards and confirm the button is gone
+disappears, **and no row in Approved or Declined is duplicated by that click**
+(seed one decided request too, so there is something in another section that
+could double). Restore the page size afterwards and confirm the button is gone
 with real data. Check 375 px and desktop, dark and light. Reload directly
 at `/admin` (SPA fallback + SW), and with the API stopped confirm the error
 line appears and no request data is rendered. Confirm Library, RecipeView and
@@ -1706,10 +1756,24 @@ tone; bump "Last updated":
 - **Third parties** gains Resend as the email subprocessor for the owner's
   notification, naming what is in that email (the requester's email address
   and display name) and that no one-click approval link is included.
-- **Retention and deletion** gains: pending requests are kept until decided,
-  and a declined request is kept **indefinitely, until it is deleted by hand**,
-  because that record is what stops a repeat press from re-notifying
-  (**D16**). Either can be deleted on request to the contact address. State
+- **Retention and deletion** must cover **all four** records this feature can
+  create, not just the two that are easy to describe. Pending requests are kept
+  until decided. A declined request is kept **indefinitely, until it is deleted
+  by hand**, because that record is what stops a repeat press from re-notifying
+  (**D16**). An **approved** request document is likewise kept indefinitely —
+  it is what `/admin` lists (**D4**) — and so is `members/{sub}`, which is the
+  authorization record itself and therefore lasts as long as the person has
+  access; revoking sets its `status` to `revoked` rather than deleting it, so a
+  revoked person still has a row. Say all of that explicitly.
+
+  Also state what a **deletion request covers**, since a member has recipes as
+  well as a membership: on request to the contact address, all of
+  `accessRequests/{sub}`, `members/{sub}` and the person's `users/{sub}` data
+  (recipes, chats, cook state and photos) are deleted, which also removes their
+  access. Deleting only the request document would leave an authorization
+  record and a whole library behind, which is the kind of half-answer that
+  makes a privacy page wrong. Any of the four can be deleted
+  on request to the contact address. State
   plainly that **there is no automated purge job** — do **not** write "kept for
   up to 12 months" or any other period. Nothing in this plan deletes an
   access-request document on a schedule, so a stated retention period would be
@@ -1770,12 +1834,6 @@ complete consent today and land on the current 403.
    email, **no Invitations link**, and the library is **empty** (no sample
    recipe, no recipe of A's). Create a recipe; Sync now; Firestore shows it
    under `users/{B-sub}/recipes` and **nothing** under A's subtree.
-   Then the `touchRequestIdentity` check, which no unit test can cover:
-   delete `accessRequests/{B-sub}` by hand in the console, have B sign in
-   again, and confirm the document is **not** recreated — B keeps full access
-   (authorization is `members/{B-sub}`) and simply stops appearing in
-   `/admin`'s Approved list. A reappearing half-populated document means the
-   write used `set`/`merge` instead of `update`.
 7. Account B: one chat turn streams and one URL import works — this is the
    landmine proof. `/admin` in B's profile ⇒ the "can't manage invitations"
    line only, and `POST /api/admin/decision` from B's console ⇒ **403**.
@@ -1786,7 +1844,13 @@ complete consent today and land on the current 403.
    existing signed-out behaviour.
 9. Account B: sign in again ⇒ the 403 page again, and Request access shows the
    recorded copy with **no** new email (the request is `denied`).
-10. Stop `dev:api`'s Firestore access (`FIRESTORE_EMULATOR_HOST=localhost:1`,
+10. **Put B back to an approved, signed-in member before the outage test** —
+    the next bullet needs a live member session, and bullets 8 and 9 left B
+    revoked with no cookie. Account A: `/admin` → **Declined** → Approve on B
+    (the request document is still there, which is why this works and why
+    nothing before this point may delete it). Account B: sign in again and
+    confirm the app loads with B's recipe still present.
+11. Stop `dev:api`'s Firestore access (`FIRESTORE_EMULATOR_HOST=localhost:1`,
     restart). Note what this does and does not prove: **every** Firestore-backed
     operation now fails for everyone, so "A still syncs" is impossible and is
     not the claim. What must hold is that **authorization** survives for the
@@ -1814,10 +1878,26 @@ complete consent today and land on the current 403.
     - `/admin` shows its error line, not an empty-but-successful list.
 
     Restore afterwards and confirm both accounts recover with no re-sign-in.
-11. `npm test` and `npm run build` both clean.
+12. **Last, because it is destructive:** the `touchRequestIdentity` check, which
+    no unit test can cover. Delete `accessRequests/{B-sub}` by hand in the
+    console, have B sign in again, and confirm the document is **not**
+    recreated — B keeps full access (authorization is `members/{B-sub}`, not the
+    request) and simply stops appearing in `/admin`'s Approved list. A
+    reappearing half-populated document means the write used `set`/`merge`
+    instead of `update`.
 
-**Verify:** every numbered bullet, done once by hand. 6, 7 and 8 are the three
-that cannot be replaced by a unit test.
+    This bullet runs **after** every other one on purpose. Deleting the request
+    document is a one-way door for the rest of the script: `decisionTransition`
+    refuses `'unknown-request'`, so once it is gone the owner can no longer
+    approve, decline or revoke B from `/admin` at all, and B vanishes from all
+    three lists. Do not move it earlier. To carry on testing afterwards, either
+    recreate the document by hand or start again with a third account.
+13. `npm test` and `npm run build` both clean.
+
+**Verify:** every numbered bullet, done once by hand, **in order** — bullets 8
+through 12 form a chain (revoke → denied → re-approve → outage → destructive
+delete) and reordering them makes later ones impossible rather than merely
+inconvenient. 6, 7 and 8 are the three that cannot be replaced by a unit test.
 
 **Failure handling:** B gets 401 on chat but syncs ⇒ step 5's wrapper. B sees
 A's recipes ⇒ **stop everything**: `uid` is being taken from somewhere other
