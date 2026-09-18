@@ -2202,7 +2202,7 @@ OAuth console change is needed anywhere in this plan.
 - [x] 4. [core] Cut every protected route over to the gate
 - [x] 5. [core] The chat/import membership gate (the landmine)
 - [x] 6. [core] The access-request token and `POST /api/access-request`
-- [ ] 7. [ui] The invitation-only page and the request-result pages
+- [x] 7. [ui] The invitation-only page and the request-result pages
 - [ ] 8. [core] Admin API, owner-only and enforced server-side
 - [ ] 9. [core] `src/lib/adminApi.ts` and `isOwner` on the session
 - [ ] 10. [ui] `/admin` screen and the Settings entry point

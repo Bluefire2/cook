@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
+import { invitationOnlyPage, unavailablePageHtml } from './access.ts';
 import { googleClient, isSecureOrigin, publicOrigin, redirectUri } from './env.ts';
 import { touchRequestIdentity } from './members.ts';
 import { accessAllows, requireMember } from './membership.ts';
@@ -14,6 +15,7 @@ import {
   safeReturnTo,
   sessionCookie,
   shouldRefresh,
+  signAccessRequestTx,
   signOauthTx,
   signSession,
   verifyOauthTx,
@@ -178,21 +180,23 @@ export async function authCallbackGoogle(req: Request): Promise<Response> {
 
     if (access === 'denied') {
       console.log(`sign-in refused: ${email}`);
-      const body =
-        '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Invitation only</title></head>' +
-        '<body><p>This app is invitation-only.</p><p><a href="/privacy">Privacy</a></p></body></html>';
+      let requestToken: string | null = null;
+      try {
+        requestToken = signAccessRequestTx({ sub: payload.sub, email, name }, Date.now());
+      } catch (err) {
+        // Only possible when SESSION_SECRET is unset — the 403 then renders
+        // without the request form rather than with a broken button.
+        console.error('signAccessRequestTx failed:', err);
+      }
       return respond(403, {
-        body,
+        body: invitationOnlyPage({ email, name }, requestToken),
         contentType: 'text/html; charset=utf-8',
       });
     }
 
     if (access === 'unknown') {
-      const unavailableBody =
-        '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Unavailable</title></head>' +
-        '<body><p>Sign-in is temporarily unavailable. Try again in a few minutes.</p></body></html>';
       return respond(503, {
-        body: unavailableBody,
+        body: unavailablePageHtml(),
         contentType: 'text/html; charset=utf-8',
       });
     }
