@@ -7,6 +7,7 @@
  * `createRequestListener({ staticRoot: null })` is the API-only listener used
  * by `scripts/dev-api-server.ts`. With `staticRoot: null`, `/privacy` and
  * `/terms` return 404 on this port; Vite serves `public/` on :5173 in dev.
+ * `/invite/:token` is handled here in both modes (Vite proxies `/invite`).
  *
  * Requires Node 22.18+ for native TypeScript type stripping.
  */
@@ -26,8 +27,15 @@ import {
   authStart,
 } from '../server/auth.ts';
 import { redirectUri } from '../server/env.ts';
-import { adminDecisionPost, adminRequestsGet } from '../server/admin.ts';
+import {
+  adminDecisionPost,
+  adminInviteRevokePost,
+  adminInvitesGet,
+  adminInvitesPost,
+  adminRequestsGet,
+} from '../server/admin.ts';
 import { accessRequestPost } from '../server/access.ts';
+import { inviteLandingGet } from '../server/invites.ts';
 import { withMembership } from '../server/membership.ts';
 import { photosGet, photosPost } from '../server/photos.ts';
 import { sttPost } from '../server/stt.ts';
@@ -48,6 +56,9 @@ const apiRoutes: ApiRoute[] = [
   { method: 'POST', path: '/api/access-request', handler: accessRequestPost },
   { method: 'GET', path: '/api/admin/requests', handler: adminRequestsGet },
   { method: 'POST', path: '/api/admin/decision', handler: adminDecisionPost },
+  { method: 'GET', path: '/api/admin/invites', handler: adminInvitesGet },
+  { method: 'POST', path: '/api/admin/invites', handler: adminInvitesPost },
+  { method: 'POST', path: '/api/admin/invites/revoke', handler: adminInviteRevokePost },
   { method: 'GET', path: '/api/auth/start', handler: authStart },
   { method: 'GET', path: '/api/auth/callback/google', handler: authCallbackGoogle },
   { method: 'GET', path: '/api/auth/session', handler: authSession },
@@ -133,6 +144,15 @@ async function handleRequest(
 
     if (decodedPath.startsWith('/api/')) {
       await handleApi(nodeReq, nodeRes, decodedPath, method);
+      return;
+    }
+
+    if (decodedPath === '/invite' || decodedPath.startsWith('/invite/')) {
+      if (method !== 'GET' && method !== 'HEAD') {
+        sendText(nodeReq, nodeRes, 405, 'Method not allowed');
+        return;
+      }
+      await dispatchFetch(nodeReq, nodeRes, decodedPath, method, inviteLandingGet);
       return;
     }
 
@@ -238,6 +258,16 @@ async function handleApi(
     return;
   }
 
+  await dispatchFetch(nodeReq, nodeRes, pathname, method, match);
+}
+
+async function dispatchFetch(
+  nodeReq: IncomingMessage,
+  nodeRes: ServerResponse,
+  pathname: string,
+  method: string,
+  handler: ApiHandler,
+): Promise<void> {
   const host = nodeReq.headers.host;
   const port = nodeReq.socket.localPort ?? Number(process.env.PORT || 8080);
   const origin = host ? `http://${host}` : `http://localhost:${port}`;
@@ -249,7 +279,11 @@ async function handleApi(
     duplex: method === 'GET' || method === 'HEAD' ? undefined : 'half',
   });
 
-  const response = await match(request);
+  const response = await handler(request);
+  await writeFetchResponse(nodeRes, response);
+}
+
+async function writeFetchResponse(nodeRes: ServerResponse, response: Response): Promise<void> {
   nodeRes.statusCode = response.status;
   const setCookies = response.headers.getSetCookie();
   response.headers.forEach((value, key) => {

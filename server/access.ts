@@ -48,7 +48,8 @@ a {
 form {
   margin: 1.25rem 0;
 }
-button {
+button,
+a.action {
   font: inherit;
   padding: 0.5rem 1.25rem;
   border: none;
@@ -57,10 +58,16 @@ button {
   color: #fafaf9;
   cursor: pointer;
 }
-button:hover {
+a.action {
+  display: inline-block;
+  text-decoration: none;
+}
+button:hover,
+a.action:hover {
   opacity: 0.85;
 }
-button:focus-visible {
+button:focus-visible,
+a.action:focus-visible {
   outline: 2px solid #1c1917;
   outline-offset: 2px;
 }
@@ -74,11 +81,13 @@ footer {
     background: #1c1917;
     color: #e7e5e4;
   }
-  button {
+  button,
+  a.action {
     background: #e7e5e4;
     color: #1c1917;
   }
-  button:focus-visible {
+  button:focus-visible,
+  a.action:focus-visible {
     outline-color: #e7e5e4;
   }
 }
@@ -171,6 +180,45 @@ export function unavailablePageHtml(): string {
     'Unavailable',
     '<h1>Unavailable</h1>' +
       '<p>Sign-in is temporarily unavailable. Try again in a few minutes.</p>',
+  );
+}
+
+export type InviteDeadReason = 'malformed' | 'expired' | 'used' | 'revoked' | 'unknown';
+
+export function inviteJoinPageHtml(): string {
+  return pageHtml(
+    'Join Sous',
+    '<h1>You have been invited to Sous</h1>' +
+      '<p>Sign in with Google to join. This link works once, for one person, ' +
+      'and expires after 7 days.</p>' +
+      '<p><a class="action" href="/api/auth/start">Sign in with Google</a></p>' +
+      '<footer><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></footer>',
+  );
+}
+
+export function inviteDeadPageHtml(reason: InviteDeadReason): string {
+  if (reason === 'expired') {
+    return pageHtml(
+      'Invite expired',
+      '<h1>This invite link has expired</h1>' +
+        '<p>Ask the owner for a new link, or sign in to request access.</p>' +
+        '<p><a href="/">Home</a></p>',
+    );
+  }
+  if (reason === 'used') {
+    return pageHtml(
+      'Invite used',
+      '<h1>This invite link has already been used</h1>' +
+        '<p>If you already joined, try signing in. Otherwise ask the owner ' +
+        'for a new link.</p>' +
+        '<p><a href="/">Home</a></p>',
+    );
+  }
+  return pageHtml(
+    'Invite not valid',
+    '<h1>This invite link is not valid</h1>' +
+      '<p>Ask the owner for a new link, or sign in to request access.</p>' +
+      '<p><a href="/">Home</a></p>',
   );
 }
 

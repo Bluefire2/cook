@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       // Local stand-in for Vercel functions; see scripts/dev-api-server.ts
       '/api': 'http://localhost:3001',
+      '/invite': 'http://localhost:3001',
     },
   },
   plugins: [
@@ -29,7 +30,7 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       workbox: {
-        navigateFallbackDenylist: [/^\/api\//, /^\/privacy$/, /^\/terms$/],
+        navigateFallbackDenylist: [/^\/api\//, /^\/privacy$/, /^\/terms$/, /^\/invite\//],
       },
       manifest: {
         name: 'Sous',

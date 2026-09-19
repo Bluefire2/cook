@@ -77,7 +77,10 @@ No refresh tokens, no extra Google APIs, no Auth.js.
   **no cache**. Firestore **`members/{sub}`** with `status: 'active'` is the
   member tier, keyed by Google **`sub`**. Owners short-circuit before any
   member read. Approve ordinary people from **`/admin`**, not by editing
-  `ALLOWED_EMAILS` (every address there is an admin).
+  `ALLOWED_EMAILS` (every address there is an admin). Owners can also mint a
+  single-use 7-day bearer invite URL on `/admin`; the first verified Google
+  account that finishes consent from that link is written as an active member
+  and listed under Approved.
 - **401 = denied** (client may invalidate the session). **503 = unknown**
   (Firestore blip — do not sign the user out). Membership **denied** must never
   map to 503; membership **unknown** must never map to 401.
@@ -174,6 +177,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/sync-toast.md` | Done (`b4b43b6`). |
 | `docs/plans/photos-and-deploy-docs.md` | Done (GCS photos, deploy.sh, README, legal rewrite). |
 | `docs/plans/invitation-flow.md` | In progress on branch `invitation-flow` (request access → `/admin` → Firestore membership). |
+| `docs/plans/invite-links.md` | Implementing. Owner-minted single-use 7-day bearer invite links that admit on Google consent. |
 | `docs/plans/deploy-and-end-state.md` | Production cutover (`sous-00004-mpx`) and consent In production done. |
 | `docs/plans/server-backed-library.md` | Done: drop IndexedDB; in-memory library over pull/push. |
 | `docs/plans/ask-voice-stt.md` | Implementing. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |

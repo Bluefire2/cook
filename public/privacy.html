@@ -51,7 +51,7 @@
   </head>
   <body>
     <h1>Privacy policy</h1>
-    <p class="muted">Last updated: 18 September 2026</p>
+    <p class="muted">Last updated: 19 September 2026</p>
 
     <h2>What is stored</h2>
     <p>
@@ -80,6 +80,14 @@
       Firestore (<code>europe-west1</code>) so the owner can decide. No
       recipe library and no <code>users/{sub}</code> document is created for
       a person who is not admitted.
+    </p>
+    <p>
+      If the owner sends you a single-use invite link and you open it, Sous
+      stores a hashed copy of that link (not the secret itself) until it is
+      used, expires after 7 days, or is revoked. Redeeming it stores the same
+      kind of membership and access-request records as an approved request.
+      Opening an invite link does not grant access by itself — you still
+      complete Google sign-in, and only a verified email can join.
     </p>
 
     <h2>What it is used for</h2>
@@ -123,15 +131,19 @@
       kept indefinitely — it is what the owner's admin screen lists. A
       membership record lasts as long as the person has access; revoking
       access sets its status to <code>revoked</code> rather than deleting it,
-      so a revoked person still has a row. There is no automated purge job:
-      none of these records is deleted on a schedule.
+      so a revoked person still has a row. Unused invite-link records are
+      kept until they are redeemed, expire, or the owner revokes them; a
+      redeemed invite keeps a hashed identifier and the Google account id
+      that used it. There is no automated purge job: none of these records is
+      deleted on a schedule.
     </p>
     <p>
       To delete all data stored for your account, email
       <a href="mailto:chernyshov.k@gmail.com">chernyshov.k@gmail.com</a>
       from the same address you use to sign in. There is no in-app delete-account
       button. A deletion request covers all of it: your access-request record,
-      your membership record, and your stored library — recipes, chat
+      your membership record, any invite-link redemption recorded for your
+      account, and your stored library — recipes, chat
       messages, cooking progress and photos — and deleting these also removes
       your access. Revoking Sous's access from your Google account permissions
       page signs you out but does not by itself delete your stored recipes.
@@ -147,8 +159,11 @@
     <h2>Access</h2>
     <p>
       Sous is invitation-only: signing in is limited to allow-listed email
-      addresses and to accounts the owner has approved from an access
-      request. Requesting access does not grant it.
+      addresses, to accounts the owner has approved from an access
+      request, and to accounts that redeem a single-use invite link the
+      owner created. Requesting access does not grant it. Opening an invite
+      link does not grant it until Google sign-in succeeds with a verified
+      email.
     </p>
 
     <h2>Contact</h2>

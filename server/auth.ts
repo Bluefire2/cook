@@ -2,9 +2,12 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
 import { invitationOnlyPage, unavailablePageHtml } from './access.ts';
 import { googleClient, isSecureOrigin, publicOrigin, redirectUri } from './env.ts';
+import { redeemInvite } from './invites.ts';
 import { touchRequestIdentity } from './members.ts';
-import { accessAllows, requireMember } from './membership.ts';
+import { accessAllows, clearMembershipCache, requireMember } from './membership.ts';
 import {
+  INVITE_COOKIE_NAME,
+  clearedInviteCookie,
   clearedOauthCookie,
   clearedSessionCookie,
   oauthCookie,
@@ -18,6 +21,7 @@ import {
   signAccessRequestTx,
   signOauthTx,
   signSession,
+  verifyInviteTx,
   verifyOauthTx,
 } from './session.ts';
 import { upsertUser as upsertUserDoc } from './store.ts';
@@ -66,8 +70,16 @@ export async function authStart(req: Request): Promise<Response> {
   const nonce = randomToken(32);
   const pkce = pkcePair();
   const now = Date.now();
+  const inviteRaw = readCookie(req, INVITE_COOKIE_NAME);
+  const inviteTx = inviteRaw === null ? null : verifyInviteTx(inviteRaw, now);
   const txToken = signOauthTx(
-    { state, nonce, verifier: pkce.verifier, returnTo },
+    {
+      state,
+      nonce,
+      verifier: pkce.verifier,
+      returnTo,
+      invite: inviteTx?.id,
+    },
     now,
   );
   const secure = isSecureOrigin();
@@ -81,12 +93,14 @@ export async function authStart(req: Request): Promise<Response> {
   });
   const headers = new Headers({ Location: authUrl });
   headers.append('Set-Cookie', oauthCookie(txToken, { secure }));
+  headers.append('Set-Cookie', clearedInviteCookie({ secure }));
   return new Response(null, { status: 302, headers });
 }
 
 export async function authCallbackGoogle(req: Request): Promise<Response> {
   const secure = isSecureOrigin();
   const clearOauth = clearedOauthCookie({ secure });
+  const clearInvite = clearedInviteCookie({ secure });
   const respond = (
     status: number,
     options: {
@@ -104,6 +118,7 @@ export async function authCallbackGoogle(req: Request): Promise<Response> {
       headers.set('Content-Type', options.contentType);
     }
     headers.append('Set-Cookie', clearOauth);
+    headers.append('Set-Cookie', clearInvite);
     for (const cookie of options.extraCookies ?? []) {
       headers.append('Set-Cookie', cookie);
     }
@@ -172,11 +187,38 @@ export async function authCallbackGoogle(req: Request): Promise<Response> {
     }
 
     const name = typeof payload.name === 'string' ? payload.name : undefined;
-    const access = await accessAllows({
+    let access = await accessAllows({
       sub: payload.sub,
       email,
       emailVerified: payload.email_verified,
     });
+
+    if (access === 'unknown') {
+      return respond(503, {
+        body: unavailablePageHtml(),
+        contentType: 'text/html; charset=utf-8',
+      });
+    }
+
+    if (access === 'denied' && txToken.invite !== undefined) {
+      try {
+        const redeemed = await redeemInvite(
+          txToken.invite,
+          { sub: payload.sub, email, name },
+          Date.now(),
+        );
+        if (redeemed.kind === 'ok') {
+          clearMembershipCache(payload.sub);
+          access = 'member';
+        }
+      } catch (err) {
+        console.error('redeemInvite failed:', err);
+        return respond(503, {
+          body: unavailablePageHtml(),
+          contentType: 'text/html; charset=utf-8',
+        });
+      }
+    }
 
     if (access === 'denied') {
       console.log(`sign-in refused: ${email}`);
@@ -190,13 +232,6 @@ export async function authCallbackGoogle(req: Request): Promise<Response> {
       }
       return respond(403, {
         body: invitationOnlyPage({ email, name }, requestToken),
-        contentType: 'text/html; charset=utf-8',
-      });
-    }
-
-    if (access === 'unknown') {
-      return respond(503, {
-        body: unavailablePageHtml(),
         contentType: 'text/html; charset=utf-8',
       });
     }

@@ -17,21 +17,24 @@ when you use chat or import.
 
 Sous is **invitation-only**: a Google account must either be in
 `ALLOWED_EMAILS` (the owner/admin bootstrap list) or hold an **`active`**
-`members/{sub}` record in Firestore that the owner created by approving a
-request. Everyone else completes Google consent, lands on a server-rendered
-403 with **Request access**, and gets no session cookie until approved.
+`members/{sub}` record in Firestore. The owner creates that record by
+approving a request **or** by minting a single-use invite link the person
+redeems at Google sign-in. Everyone else completes Google consent, lands on a
+server-rendered 403 with **Request access**, and gets no session cookie until
+admitted.
 
 1. The requester submits **Request access** (signed token, no cookie). Sous
    stores one `accessRequests/{sub}` document and may email the owner via
    Resend (optional — requests still appear in `/admin` without email).
 2. The owner opens **Settings → Invitations** (owners only) or `/admin` directly.
-   The screen loads all three sections on mount, has an explicit **Refresh**,
-   and pages with **Load more** per section (document-id order, not “the most
-   recent 200”).
-3. **Pending** rows can be approved or declined; **Approved** rows can have
-   access removed; **Declined** rows can be approved again. Approval writes
-   `members/{sub}` and takes effect on the member’s next sign-in — **no
-   redeploy**.
+   The screen loads invite links and all three request sections on mount, has
+   an explicit **Refresh**, and pages requests with **Load more** per section
+   (document-id order, not “the most recent 200”).
+3. **Create link** mints `{origin}/invite/<token>` — shown once, unused for 7
+   days, first verified Google account wins. **Pending** rows can be approved
+   or declined; **Approved** rows can have access removed; **Declined** rows
+   can be approved again. Approval (and invite redeem) writes `members/{sub}`
+   and takes effect on the member’s next sign-in — **no redeploy**.
 
 **Every address in `ALLOWED_EMAILS` is an owner/admin** who can manage
 invitations. Add ordinary members through `/admin`, not by editing that

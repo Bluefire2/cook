@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { relativeMinutesLabel } from './relativeTime';
+import { relativeExpiryLabel, relativeMinutesLabel } from './relativeTime';
 
 describe('relativeMinutesLabel', () => {
   const now = 1_000_000_000_000;
@@ -17,5 +17,16 @@ describe('relativeMinutesLabel', () => {
 
   it('labels whole minutes', () => {
     expect(relativeMinutesLabel(now - 5 * 60_000, now)).toBe('5 min ago');
+  });
+});
+
+describe('relativeExpiryLabel', () => {
+  const now = 1_000_000_000_000;
+
+  it('describes the last minute, hours, and days', () => {
+    expect(relativeExpiryLabel(now, now)).toBe('expires in under a minute');
+    expect(relativeExpiryLabel(now + 5 * 60_000, now)).toBe('expires in 5 min');
+    expect(relativeExpiryLabel(now + 3 * 60 * 60_000, now)).toBe('expires in 3 h');
+    expect(relativeExpiryLabel(now + 7 * 24 * 60 * 60_000, now)).toBe('expires in 7 days');
   });
 });
