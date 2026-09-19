@@ -5,9 +5,10 @@
  *   node --env-file=.env.local scripts/server.ts
  *
  * `createRequestListener({ staticRoot: null })` is the API-only listener used
- * by `scripts/dev-api-server.ts`. With `staticRoot: null`, `/privacy` and
- * `/terms` return 404 on this port; Vite serves `public/` on :5173 in dev.
- * `/invite/:token` is handled here in both modes (Vite proxies `/invite`).
+ * by `scripts/dev-api-server.ts`. With `staticRoot: null`, `/privacy`,
+ * `/terms`, and `/about` return 404 on this port; Vite serves `public/` on
+ * :5173 in dev. `/invite/:token` is handled here in both modes (Vite proxies
+ * `/invite`).
  *
  * Requires Node 22.18+ for native TypeScript type stripping.
  */
@@ -67,9 +68,10 @@ const apiRoutes: ApiRoute[] = [
   { method: 'POST', path: '/api/sync/push', handler: syncPush },
 ];
 
-const LEGAL_HTML: Record<string, string> = {
+const PUBLIC_HTML: Record<string, string> = {
   '/privacy': '/privacy.html',
   '/terms': '/terms.html',
+  '/about': '/about.html',
 };
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -93,6 +95,7 @@ const NO_CACHE_NAMES = new Set([
   'manifest.webmanifest',
   'privacy.html',
   'terms.html',
+  'about.html',
 ]);
 
 let loggedRedirectUri = false;
@@ -166,10 +169,10 @@ async function handleRequest(
       return;
     }
 
-    const legalRelative = LEGAL_HTML[decodedPath];
-    if (legalRelative !== undefined) {
-      const legalPath = resolveContained(staticRoot, legalRelative);
-      if (legalPath !== null && (await serveIfFile(nodeRes, legalPath, decodedPath, method))) {
+    const publicRelative = PUBLIC_HTML[decodedPath];
+    if (publicRelative !== undefined) {
+      const publicPath = resolveContained(staticRoot, publicRelative);
+      if (publicPath !== null && (await serveIfFile(nodeRes, publicPath, decodedPath, method))) {
         return;
       }
       sendText(nodeReq, nodeRes, 404, 'Not found');

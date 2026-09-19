@@ -142,7 +142,7 @@ export function invitationOnlyPage(
     '<h1>Sous is invitation-only</h1>' +
       `<p>${signedInAs}</p>` +
       requestBlock +
-      '<footer><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></footer>',
+      '<footer><a href="/about">About</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></footer>',
   );
 }
 
@@ -192,7 +192,7 @@ export function inviteJoinPageHtml(): string {
       '<p>Sign in with Google to join. This link works once, for one person, ' +
       'and expires after 7 days.</p>' +
       '<p><a class="action" href="/api/auth/start">Sign in with Google</a></p>' +
-      '<footer><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></footer>',
+      '<footer><a href="/about">About</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></footer>',
   );
 }
 

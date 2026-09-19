@@ -20,6 +20,8 @@ export default defineConfig({
             req.url = '/privacy.html';
           } else if (req.url === '/terms' || req.url?.startsWith('/terms?')) {
             req.url = '/terms.html';
+          } else if (req.url === '/about' || req.url?.startsWith('/about?')) {
+            req.url = '/about.html';
           }
           next();
         });
@@ -30,7 +32,13 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       workbox: {
-        navigateFallbackDenylist: [/^\/api\//, /^\/privacy$/, /^\/terms$/, /^\/invite\//],
+        navigateFallbackDenylist: [
+          /^\/api\//,
+          /^\/privacy$/,
+          /^\/terms$/,
+          /^\/about$/,
+          /^\/invite\//,
+        ],
       },
       manifest: {
         name: 'Sous',

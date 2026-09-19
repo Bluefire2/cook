@@ -211,6 +211,7 @@ guard — run it against Cloud Run after a production deploy, not only locally.
 
 ## Product copy
 
-`/privacy` and `/terms` describe Firestore + GCS and that there is no
-on-device recipe database. Theme preference and `cook.session` stay in
-localStorage. Do not describe IndexedDB, offline edits, or a local library.
+`/about` is a short public page that says what the app is for. `/privacy`
+and `/terms` describe Firestore + GCS and that there is no on-device recipe
+database. Theme preference and `cook.session` stay in localStorage. Do not
+describe IndexedDB, offline edits, or a local library.
