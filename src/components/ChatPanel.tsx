@@ -9,6 +9,7 @@ import {
   encodeImageForStorage,
   type EncodedImage,
 } from '../lib/image';
+import { CameraIcon } from '../lib/icons';
 import { formatQuantity } from '../lib/quantity';
 import { normalizeRecipeDraft } from '../lib/recipeShape';
 import type { ChatMessage, Ingredient, Recipe, RecipeDraft } from '../lib/types';
@@ -510,9 +511,9 @@ export default function ChatPanel({
             type="button"
             aria-label="Attach photo"
             onClick={() => fileInputRef.current?.click()}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-muted text-lg hover:bg-line-strong active:bg-line-strong"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-muted hover:bg-line-strong active:bg-line-strong"
           >
-            📷
+            <CameraIcon className="block h-5 w-5" />
           </button>
           <textarea
             value={draft}
