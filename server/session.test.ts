@@ -1,15 +1,18 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   clearedSessionCookie,
+  inviteCookie,
   oauthCookie,
   readCookie,
   readSession,
   safeReturnTo,
   sessionCookie,
   signAccessRequestTx,
+  signInviteTx,
   signOauthTx,
   signSession,
   verifyAccessRequestTx,
+  verifyInviteTx,
   verifyOauthTx,
   verifySession,
 } from './session.ts';
@@ -207,15 +210,20 @@ describe('signAccessRequestTx / verifyAccessRequestTx', () => {
     expect(verifyAccessRequestTx(token, now + 11 * 60 * 1000)).toBeNull();
   });
 
-  it('rejects session and oauth tokens', () => {
+  it('rejects session, oauth, and invite tokens', () => {
     const now = nowMs();
     const sessionToken = signSession({ sub: 'sub-a', email: 'a@example.com' }, now);
     const oauthToken = signOauthTx(
       { state: 's', nonce: 'n', verifier: 'v', returnTo: '/' },
       now,
     );
+    const inviteToken = signInviteTx(
+      { id: 'a'.repeat(64) },
+      now,
+    );
     expect(verifyAccessRequestTx(sessionToken, now)).toBeNull();
     expect(verifyAccessRequestTx(oauthToken, now)).toBeNull();
+    expect(verifyAccessRequestTx(inviteToken, now)).toBeNull();
   });
 });
 
@@ -239,5 +247,62 @@ describe('signOauthTx / verifyOauthTx', () => {
       verifier: 'ver',
       returnTo: '/settings',
     });
+    expect(verifyOauthTx(token, nowMs())?.invite).toBeUndefined();
+  });
+
+  it('round-trips an optional invite hash', () => {
+    const invite = 'ab'.repeat(32);
+    const token = signOauthTx(
+      { state: 'st', nonce: 'no', verifier: 'ver', returnTo: '/', invite },
+      nowMs(),
+    );
+    expect(verifyOauthTx(token, nowMs())).toMatchObject({ invite });
+  });
+
+  it('rejects invite, session, and accessreq tokens', () => {
+    const now = nowMs();
+    const inviteToken = signInviteTx({ id: 'b'.repeat(64) }, now);
+    const sessionToken = signSession({ sub: 's', email: 'a@b.c' }, now);
+    const accessreq = signAccessRequestTx({ sub: 's', email: 'a@b.c' }, now);
+    expect(verifyOauthTx(inviteToken, now)).toBeNull();
+    expect(verifyOauthTx(sessionToken, now)).toBeNull();
+    expect(verifyOauthTx(accessreq, now)).toBeNull();
+  });
+});
+
+describe('signInviteTx / verifyInviteTx', () => {
+  it('round-trips the invite document id', () => {
+    const now = nowMs();
+    const id = 'c'.repeat(64);
+    const token = signInviteTx({ id }, now);
+    expect(verifyInviteTx(token, now)).toEqual({
+      id,
+      iat: now,
+      exp: now + 10 * 60 * 1000,
+    });
+  });
+
+  it('rejects expired tokens', () => {
+    const now = nowMs();
+    const token = signInviteTx({ id: 'd'.repeat(64) }, now);
+    expect(verifyInviteTx(token, now + 11 * 60 * 1000)).toBeNull();
+  });
+
+  it('rejects session, oauth, and accessreq tokens', () => {
+    const now = nowMs();
+    const sessionToken = signSession({ sub: 's', email: 'a@b.c' }, now);
+    const oauthToken = signOauthTx(
+      { state: 's', nonce: 'n', verifier: 'v', returnTo: '/' },
+      now,
+    );
+    const accessreq = signAccessRequestTx({ sub: 's', email: 'a@b.c' }, now);
+    expect(verifyInviteTx(sessionToken, now)).toBeNull();
+    expect(verifyInviteTx(oauthToken, now)).toBeNull();
+    expect(verifyInviteTx(accessreq, now)).toBeNull();
+  });
+
+  it('sets the invite cookie Max-Age to 10 minutes', () => {
+    expect(inviteCookie('tok', { secure: true })).toContain('Max-Age=600');
+    expect(inviteCookie('tok', { secure: true })).toContain('HttpOnly');
   });
 });

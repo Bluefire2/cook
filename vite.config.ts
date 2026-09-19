@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       // Local stand-in for Vercel functions; see scripts/dev-api-server.ts
       '/api': 'http://localhost:3001',
+      '/invite': 'http://localhost:3001',
     },
   },
   plugins: [
@@ -36,6 +37,7 @@ export default defineConfig({
           /^\/privacy$/,
           /^\/terms$/,
           /^\/about$/,
+          /^\/invite\//,
         ],
       },
       manifest: {

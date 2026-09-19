@@ -3,6 +3,7 @@ import { sessionSecret } from './env.ts';
 
 export const SESSION_COOKIE_NAME = 'sous_session';
 export const OAUTH_COOKIE_NAME = 'sous_oauth';
+export const INVITE_COOKIE_NAME = 'sous_invite';
 
 const SESSION_MAX_AGE_SEC = 90 * 24 * 60 * 60;
 const OAUTH_MAX_AGE_SEC = 600;
@@ -22,6 +23,13 @@ export interface OauthTxPayload {
   nonce: string;
   verifier: string;
   returnTo: string;
+  invite?: string;
+  iat: number;
+  exp: number;
+}
+
+export interface InviteTxPayload {
+  id: string;
   iat: number;
   exp: number;
 }
@@ -154,8 +162,20 @@ export function verifySession(token: string, now: number): SessionPayload | null
   return { sub: row.sub, email: row.email, iat: row.iat, exp: row.exp };
 }
 
+const INVITE_ID_RE = /^[a-f0-9]{64}$/;
+
+export function isInviteId(raw: string): boolean {
+  return INVITE_ID_RE.test(raw);
+}
+
 export function signOauthTx(
-  tx: { state: string; nonce: string; verifier: string; returnTo: string },
+  tx: {
+    state: string;
+    nonce: string;
+    verifier: string;
+    returnTo: string;
+    invite?: string;
+  },
   now: number,
 ): string {
   const secret = sessionSecret();
@@ -164,17 +184,22 @@ export function signOauthTx(
   }
   const iat = now;
   const exp = now + TEN_MINUTES_MS;
-  const payloadPart = base64urlEncode(
-    JSON.stringify({
-      v: 'oauth',
-      state: tx.state,
-      nonce: tx.nonce,
-      verifier: tx.verifier,
-      returnTo: tx.returnTo,
-      iat,
-      exp,
-    }),
-  );
+  const payload: Record<string, unknown> = {
+    v: 'oauth',
+    state: tx.state,
+    nonce: tx.nonce,
+    verifier: tx.verifier,
+    returnTo: tx.returnTo,
+    iat,
+    exp,
+  };
+  if (tx.invite !== undefined) {
+    if (!isInviteId(tx.invite)) {
+      throw new Error('oauth invite id is not a sha256 hex digest');
+    }
+    payload.invite = tx.invite;
+  }
+  const payloadPart = base64urlEncode(JSON.stringify(payload));
   const signature = hmacSign(payloadPart, secret);
   return `${payloadPart}.${signature}`;
 }
@@ -201,6 +226,7 @@ export function verifyOauthTx(token: string, now: number): OauthTxPayload | null
     nonce?: unknown;
     verifier?: unknown;
     returnTo?: unknown;
+    invite?: unknown;
     iat?: unknown;
     exp?: unknown;
   };
@@ -221,7 +247,7 @@ export function verifyOauthTx(token: string, now: number): OauthTxPayload | null
   if (row.exp <= now) {
     return null;
   }
-  return {
+  const out: OauthTxPayload = {
     state: row.state,
     nonce: row.nonce,
     verifier: row.verifier,
@@ -229,6 +255,10 @@ export function verifyOauthTx(token: string, now: number): OauthTxPayload | null
     iat: row.iat,
     exp: row.exp,
   };
+  if (typeof row.invite === 'string' && isInviteId(row.invite)) {
+    out.invite = row.invite;
+  }
+  return out;
 }
 
 export function readCookie(req: Request, name: string): string | null {
@@ -299,6 +329,88 @@ export function oauthCookie(token: string, options: { secure: boolean }): string
 export function clearedOauthCookie(options: { secure: boolean }): string {
   const parts = [
     `${OAUTH_COOKIE_NAME}=`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    'Max-Age=0',
+  ];
+  if (options.secure) {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
+export function signInviteTx(tx: { id: string }, now: number): string {
+  const secret = sessionSecret();
+  if (!secret) {
+    throw new Error('SESSION_SECRET is not set');
+  }
+  if (!isInviteId(tx.id)) {
+    throw new Error('invite id is not a sha256 hex digest');
+  }
+  const iat = now;
+  const exp = now + TEN_MINUTES_MS;
+  const payloadPart = base64urlEncode(
+    JSON.stringify({ v: 'invite', id: tx.id, iat, exp }),
+  );
+  const signature = hmacSign(payloadPart, secret);
+  return `${payloadPart}.${signature}`;
+}
+
+export function verifyInviteTx(token: string, now: number): InviteTxPayload | null {
+  const secret = sessionSecret();
+  if (!secret) {
+    return null;
+  }
+  const parts = splitToken(token);
+  if (!parts) {
+    return null;
+  }
+  if (!hmacVerify(parts.payload, parts.signature, secret)) {
+    return null;
+  }
+  const parsed = base64urlDecodeJson(parts.payload);
+  if (typeof parsed !== 'object' || parsed === null) {
+    return null;
+  }
+  const row = parsed as {
+    v?: unknown;
+    id?: unknown;
+    iat?: unknown;
+    exp?: unknown;
+  };
+  if (row.v !== 'invite') {
+    return null;
+  }
+  if (typeof row.id !== 'string' || !isInviteId(row.id)) {
+    return null;
+  }
+  if (typeof row.iat !== 'number' || typeof row.exp !== 'number') {
+    return null;
+  }
+  if (row.exp <= now) {
+    return null;
+  }
+  return { id: row.id, iat: row.iat, exp: row.exp };
+}
+
+export function inviteCookie(token: string, options: { secure: boolean }): string {
+  const parts = [
+    `${INVITE_COOKIE_NAME}=${token}`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    `Max-Age=${OAUTH_MAX_AGE_SEC}`,
+  ];
+  if (options.secure) {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
+export function clearedInviteCookie(options: { secure: boolean }): string {
+  const parts = [
+    `${INVITE_COOKIE_NAME}=`,
     'HttpOnly',
     'Path=/',
     'SameSite=Lax',

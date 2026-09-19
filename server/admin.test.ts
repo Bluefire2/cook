@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   parseAdminListCursors,
   parseDecisionBody,
+  parseRevokeInviteBody,
   serializeAccessRequestLists,
+  serializeInviteList,
   toAdminAccessRequestEntry,
 } from './admin.ts';
 import type { AccessRequestLists, AccessRequestRecord } from './members.ts';
@@ -61,5 +63,37 @@ describe('serializeAccessRequestLists', () => {
       denied: { rows: [], nextCursor: null },
     };
     expect(serializeAccessRequestLists(lists).pending.rows[0]?.requestedAt).toBe(100);
+  });
+});
+
+describe('parseRevokeInviteBody', () => {
+  it('accepts a sha256 hex id', () => {
+    const id = 'ab'.repeat(32);
+    expect(parseRevokeInviteBody({ id })).toEqual({ id });
+  });
+
+  it('rejects missing, short, or uppercase ids', () => {
+    expect(parseRevokeInviteBody(null)).toBe('invalid');
+    expect(parseRevokeInviteBody({ id: 'ab' })).toBe('invalid');
+    expect(parseRevokeInviteBody({ id: 'AB'.repeat(32) })).toBe('invalid');
+  });
+});
+
+describe('serializeInviteList', () => {
+  it('maps id, createdAt and expiresAt and omits secrets', () => {
+    const serialized = serializeInviteList([
+      {
+        id: 'aa'.repeat(32),
+        record: {
+          status: 'unused',
+          createdAt: 10,
+          createdBy: 'owner',
+          expiresAt: 20,
+        },
+      },
+    ]);
+    expect(serialized).toEqual({
+      invites: [{ id: 'aa'.repeat(32), createdAt: 10, expiresAt: 20 }],
+    });
   });
 });

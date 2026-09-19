@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { escapeHtml, invitationOnlyPage, unavailablePageHtml } from './access.ts';
+import {
+  escapeHtml,
+  invitationOnlyPage,
+  inviteDeadPageHtml,
+  inviteJoinPageHtml,
+  unavailablePageHtml,
+} from './access.ts';
 
 describe('escapeHtml', () => {
   it('escapes HTML-sensitive characters', () => {
@@ -84,5 +90,29 @@ describe('unavailablePageHtml', () => {
     expect(html).toContain('<html lang="en">');
     expect(html).toContain('Sign-in is temporarily unavailable.');
     expect(html).not.toContain('<script');
+  });
+});
+
+describe('inviteJoinPageHtml', () => {
+  it('is self-contained and starts Google sign-in without putting the token in the URL', () => {
+    const html = inviteJoinPageHtml();
+    expect(html).toContain('<h1>You have been invited to Sous</h1>');
+    expect(html).toContain('href="/api/auth/start"');
+    expect(html).not.toContain('?invite=');
+    expect(html).not.toContain('<script');
+    expect(html).not.toContain('<form');
+    expect(html).toContain('<a href="/about">About</a>');
+    expect(html).toContain('<a href="/privacy">Privacy</a>');
+  });
+});
+
+describe('inviteDeadPageHtml', () => {
+  it('explains expiry and used without a sign-in cookie hop', () => {
+    expect(inviteDeadPageHtml('expired')).toContain('This invite link has expired');
+    expect(inviteDeadPageHtml('used')).toContain('This invite link has already been used');
+    expect(inviteDeadPageHtml('unknown')).toContain('This invite link is not valid');
+    expect(inviteDeadPageHtml('revoked')).not.toContain('<form');
+    expect(inviteDeadPageHtml('malformed')).not.toContain('<script');
+    expect(inviteDeadPageHtml('malformed')).not.toContain('href="/api/auth/start"');
   });
 });

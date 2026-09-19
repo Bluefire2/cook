@@ -24,8 +24,9 @@ Admission is **after** that, in our callback. There are two tiers:
    Every address here is an **owner/admin** who can manage invitations at
    `/admin`. Re-parsed on every protected request with no cache.
 2. **Firestore `members/{sub}`** with `status: 'active'` — ordinary members
-   the owner approved from `/admin`. Keyed by Google **`sub`**, effective on
-   the next request with **no redeploy**.
+   the owner approved from `/admin`, or who redeemed a single-use invite
+   link the owner minted there. Keyed by Google **`sub`**, effective on the
+   next request with **no redeploy**.
 
 An email that is not admitted (not owner, no active member record), or
 `email_verified` is not true, or `ALLOWED_EMAILS` is unset/blank, gets **403**,
@@ -56,7 +57,9 @@ Publishing consent makes the sign-in page world-reachable. Admission is then a
 - the owner's Firestore + GCS data under `users/{uid}/…`
 
 Both tiers must fail closed. **`/admin`** is the only supported way to widen
-the member tier.
+the member tier: approve a request, or mint a single-use invite link that the
+person redeems at Google consent. Do not add ordinary members to
+`ALLOWED_EMAILS`.
 
 HMAC on `sous_session` only proves we issued the cookie. The allowlist and
 membership checks are access control. They are re-evaluated on **every**
@@ -114,7 +117,8 @@ appears nowhere in production sources.
 ## If you need a second person
 
 Use **`/admin`** (Settings → Invitations for owners): they request access from
-the 403 page, you approve there. **Do not** add an ordinary member to
+the 403 page and you approve there, **or** you mint a single-use invite link
+and they sign in through it. **Do not** add an ordinary member to
 `ALLOWED_EMAILS` — every address in that variable is an **administrator** who
 can approve and remove members. Do not invent household sharing, a shared
 `uid`, or a "fix" that makes blank mean everyone. Unverified Google emails
@@ -136,3 +140,16 @@ write per **24 hours** (`lastNotifiedAt` window); quiet repeats write nothing;
 **20** notification attempts per **UTC day** globally (email may still be
 suppressed while the write stands). `denied` and `approved` are absorbing for
 new writes.
+
+## Invite links
+
+The owner can mint a bearer URL `{PUBLIC_ORIGIN}/invite/<token>` from `/admin`.
+Firestore stores only `sha256(token)` (`invites/{hash}`), unused for **7 days**,
+**single-use**. The raw token is shown once at mint time and is not stored.
+Redeem happens in the OAuth callback after Google identity is verified: the
+first `email_verified` account consumes the link, writes `members/{sub}`
+`active` and an `approved` `accessRequests/{sub}` row, and gets a session.
+Owners and already-active members who click their own link are not charged a
+use. Unverified email still fails closed and does not consume the invite.
+There is no email when a link is redeemed. Cap: **20** unused unexpired links.
+

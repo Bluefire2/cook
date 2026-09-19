@@ -70,7 +70,7 @@ export function parseMemberDoc(raw: unknown, expectedSub: string): MemberRecord 
   };
 }
 
-function parseAccessRequestDoc(raw: unknown, expectedSub: string): AccessRequestRecord | null {
+export function parseAccessRequestDoc(raw: unknown, expectedSub: string): AccessRequestRecord | null {
   if (!isPlainObject(raw)) {
     return null;
   }
