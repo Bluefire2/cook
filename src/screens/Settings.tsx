@@ -228,6 +228,14 @@ export default function Settings() {
 
       <footer className="mt-8">
         <a
+          href="/about"
+          target="_blank"
+          rel="noreferrer"
+          className={`${backLink} inline-block py-3 pr-4`}
+        >
+          About
+        </a>
+        <a
           href="/privacy"
           target="_blank"
           rel="noreferrer"
