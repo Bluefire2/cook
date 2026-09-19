@@ -1,3 +1,4 @@
+import { compactGalleryPhotoIds } from './recipePhotos';
 import type { Recipe } from './types';
 
 /**
@@ -22,5 +23,10 @@ export function compactRecipe(recipe: Recipe): Recipe {
   if (recipe.cookMinutes !== undefined) next.cookMinutes = recipe.cookMinutes;
   if (recipe.notes !== undefined) next.notes = recipe.notes;
   if (recipe.photoId !== undefined) next.photoId = recipe.photoId;
+  const galleryPhotoIds = compactGalleryPhotoIds(
+    recipe.galleryPhotoIds,
+    recipe.photoId,
+  );
+  if (galleryPhotoIds !== undefined) next.galleryPhotoIds = galleryPhotoIds;
   return next;
 }

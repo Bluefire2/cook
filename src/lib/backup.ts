@@ -14,6 +14,7 @@ import {
   upsertRecipe,
 } from './libraryMemory';
 import { compactRecipe } from './compactRecipe';
+import { recipePhotoIds } from './recipePhotos';
 import { fetchPhotoBlob, postPhoto, pushOps } from './remote';
 import type { PushOp } from './pushOps';
 
@@ -52,8 +53,10 @@ function attributePhotos(
 ): Map<string, string> {
   const map = new Map<string, string>();
   for (const recipe of recipes) {
-    if (recipe.photoId !== undefined && !map.has(recipe.photoId)) {
-      map.set(recipe.photoId, recipe.id);
+    for (const photoId of recipePhotoIds(recipe)) {
+      if (!map.has(photoId)) {
+        map.set(photoId, recipe.id);
+      }
     }
   }
   for (const message of chatMessages) {
