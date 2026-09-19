@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { PlusIcon } from '../lib/icons';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
 import { useSession } from '../lib/session';
@@ -223,9 +224,9 @@ export default function Library() {
           type="button"
           aria-label="Add recipe"
           onClick={() => setAddOpen(true)}
-          className="fixed right-5 bottom-8 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-3xl leading-none text-page shadow-lg hover:opacity-90 active:opacity-90"
+          className="fixed right-5 bottom-8 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-page shadow-lg hover:opacity-90 active:opacity-90"
         >
-          +
+          <PlusIcon className="block h-8 w-8" />
         </button>
       )}
 
