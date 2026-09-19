@@ -71,7 +71,7 @@ return **401** by design — that deployment has no session cookie.
   lands in 22.18. `package.json` records this as
   `"engines": { "node": ">=22.18" }`; the container pins
   `node:22.20-bookworm-slim`.
-- A Gemini API key, for the assistant and import features.
+- A Gemini API key, for the assistant, dictation, and import features.
 - Google OAuth client credentials and the other server variables in
   [Environment variables](#environment-variables).
 - Application Default Credentials so the local API can reach Firestore and GCS
@@ -95,7 +95,7 @@ npm run dev:api  # API on http://localhost:3001
 ```
 
 > **`npm run dev` on its own is not enough.** It serves the whole UI, so it
-> looks like everything is fine — but chat, import, sync, and photos need the
+> looks like everything is fine — but chat, import, dictation, sync, and photos need the
 > API. Vite proxies `/api` to `localhost:3001` (see [`vite.config.ts`](vite.config.ts)), and with
 > nothing listening there the proxy answers 500, which the app surfaces as
 > "Assistant request failed (500)." and "Import failed (500).". The Vite log
@@ -104,7 +104,7 @@ npm run dev:api  # API on http://localhost:3001
 
 [`scripts/dev-api-server.ts`](scripts/dev-api-server.ts) is a thin wrapper
 around [`scripts/server.ts`](scripts/server.ts) with `staticRoot: null`: it
-serves the same routes as production (auth, sync, photos, chat, import) on port
+serves the same routes as production (auth, sync, photos, chat, import, dictation) on port
 3001, so you do not need the Vercel CLI. It loads env vars via
 `node --env-file=.env.local`, which means **`.env.local` must exist** — without
 it the process exits immediately with `node: .env.local: not found`.
@@ -170,7 +170,7 @@ the full map).
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | yes | Passed to `new GoogleGenAI({ apiKey })` in both Gemini handlers. |
+| `GEMINI_API_KEY` | yes | Passed to `new GoogleGenAI({ apiKey })` in the Gemini handlers (chat, import, and Ask dictation). |
 | `AUTH_GOOGLE_ID` | yes | OAuth 2.0 Web client id. |
 | `AUTH_GOOGLE_SECRET` | yes | OAuth client secret. |
 | `SESSION_SECRET` | yes | HMAC key for the `sous_session` cookie. **Do not rotate casually** — every device is signed out if it changes. |
@@ -181,7 +181,7 @@ the full map).
 | `MAIL_FROM` | yes (prod) | Resend sender address for access-request notifications. Must be verified in Resend. |
 | `OWNER_NOTIFY_EMAIL` | yes (prod) | Inbox that receives access-request notifications. |
 | `RESEND_API_KEY` | no | Resend API key. Unset ⇒ no notification email; requests still land in `/admin`. |
-| `CHAT_MODEL` | no | Model id for both Gemini endpoints. Defaults to `gemini-3.7-flash`. A bare `CHAT_MODEL=` is read as `''` by `--env-file`, which defeats the default — comment the line out instead. |
+| `CHAT_MODEL` | no | Model id for the Gemini endpoints (chat, import, and Ask dictation). Defaults to `gemini-3.7-flash`. A bare `CHAT_MODEL=` is read as `''` by `--env-file`, which defeats the default — comment the line out instead. |
 
 No `VITE_`-prefixed variable exists anywhere in the app, and none should. Vite
 inlines `VITE_*` values into the client bundle, so prefixing the Gemini key
@@ -249,6 +249,7 @@ is untouched. Chat and import there return 401.
 ```
 api/chat.ts               streaming Gemini proxy + the update_recipe tool
 api/import.ts             URL fetch, JSON-LD extraction, Gemini extraction
+server/stt.ts             Ask dictation: raw audio in, `{ text }` out via Gemini
 server/auth.ts            Google OAuth and session cookie
 server/sync.ts            Firestore pull/push
 server/photos.ts          GCS staged upload and download
@@ -280,6 +281,9 @@ Two details that are easy to trip over:
   That is why there is no SSE framing: the client splits on `\x1E`, renders the
   text part as it arrives, parses the proposal when present, and treats a
   missing final separator as a cut-off reply.
+- `POST /api/stt` takes a raw audio body (`Content-Type` one of webm/mp4/aac/mpeg/ogg/wav)
+  and a session cookie, and returns JSON `{ text }`. Vite must proxy `/api` to
+  the Node server or dictation fails the same way chat does.
 
 ## Your data
 
@@ -289,8 +293,9 @@ are stored in Google Cloud (Firestore and Cloud Storage in `europe-west1`).
 They are loaded into the browser while you are signed in. There is no app
 password and no
 Google refresh token. Chat and import send recipe text (and any photos you
-attach) to Gemini at request time; that traffic is not stored as a separate
-library on the server beyond what sync already keeps.
+attach) to Gemini at request time; Dictate sends a short microphone clip the
+same way. That traffic is not stored as a separate library on the server
+beyond what sync already keeps.
 
 Settings has **Export library** / **Import backup**, which write and read a
 single JSON file containing every recipe, message, and photo (photos as base64).
