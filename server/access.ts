@@ -133,7 +133,7 @@ export function invitationOnlyPage(
     '<h1>Sous is invitation-only</h1>' +
       `<p>${signedInAs}</p>` +
       requestBlock +
-      '<footer><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></footer>',
+      '<footer><a href="/about">About</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></footer>',
   );
 }
 

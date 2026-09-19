@@ -34,6 +34,7 @@ describe('invitationOnlyPage', () => {
     expect(html).toContain('<button type="submit">Request access</button>');
     expect(html).toContain('Your request goes to the owner of this app.');
     expect(html).toContain('Nobody will email you back');
+    expect(html).toContain('<a href="/about">About</a>');
     expect(html).toContain('<a href="/privacy">Privacy</a>');
     expect(html).toContain('<a href="/terms">Terms</a>');
   });
