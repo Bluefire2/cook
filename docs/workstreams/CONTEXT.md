@@ -96,21 +96,24 @@ Match the surrounding code; it is internally consistent.
 ## Domain model
 
 `src/lib/types.ts` is the source of truth. A `Recipe` has `id`, `title`,
-optional `description` / `sourceUrl` / `notes` / `photoId`, `servings`,
-optional `prepMinutes` / `cookMinutes`, `ingredientSections` (each an optional
-`name` plus `items`), `steps`, `tags`, `createdAt`, `updatedAt`.
+optional `description` / `sourceUrl` / `notes` / `photoId` /
+`galleryPhotoIds`, `servings`, optional `prepMinutes` / `cookMinutes`,
+`ingredientSections` (each an optional `name` plus `items`), `steps`,
+`tags`, `createdAt`, `updatedAt`.
 `RecipeDraft` is `Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>` and is what
 extraction and AI modification produce.
 
-Photos are normalised into their own table and referenced by id: `Recipe.photoId`
-and `ChatMessage.photoIds`.
+Photos are normalised into their own table and referenced by id:
+`Recipe.photoId` (cover), `Recipe.galleryPhotoIds` (end-of-recipe gallery,
+max 8), and `ChatMessage.photoIds`.
 
 **A trap worth knowing:** the `update_recipe` / `save_recipe` JSON schema in
 `api/chat.ts:6-55` and `api/import.ts:6-55` is a byte-identical duplicate, and
 neither copy has any compile-time relationship to `RecipeDraft`. It deliberately
-omits `id`, `createdAt`, `updatedAt` — but it also omits `sourceUrl` and
-`photoId`, which is the root of a live data-loss bug (see WS-2). If you add a
-field to `Recipe`, there are **three** places to update.
+omits `id`, `createdAt`, `updatedAt` — but it also omits `sourceUrl`,
+`photoId`, and `galleryPhotoIds`, which is the root of a live data-loss bug
+(see WS-2). If you add a field to `Recipe`, there are **three** places to
+update. Photo FKs stay out of those schemas; `applyDraft` must keep them.
 
 ## Shared interface contracts
 

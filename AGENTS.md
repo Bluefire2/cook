@@ -177,6 +177,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/deploy-and-end-state.md` | Production cutover (`sous-00004-mpx`) and consent In production done. |
 | `docs/plans/server-backed-library.md` | Done: drop IndexedDB; in-memory library over pull/push. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
+| `docs/plans/recipe-gallery.md` | In progress on branch `cursor/recipe-gallery-267b` (main photo + end-of-recipe gallery). |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not

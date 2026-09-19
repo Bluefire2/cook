@@ -35,6 +35,17 @@ function ingredientLabel(ing: Ingredient, scale: number): string {
   return ing.note ? `${base} (${ing.note})` : base;
 }
 
+function GalleryImage({ photoId }: { photoId: string }) {
+  const url = usePhotoUrl(photoId);
+  return (
+    <div className="overflow-hidden rounded-xl bg-surface-muted shadow-sm">
+      {url && (
+        <img src={url} alt="" className="aspect-square w-full object-cover" />
+      )}
+    </div>
+  );
+}
+
 export default function RecipeView() {
   const { id } = useParams<{ id: string }>();
   const recipe = useRecipe(id);
@@ -216,6 +227,14 @@ export default function RecipeView() {
           <p className="mt-2 rounded-lg bg-surface px-3 py-3 text-ink-muted shadow-sm">
             {recipe.notes}
           </p>
+        </section>
+      )}
+
+      {recipe.galleryPhotoIds && recipe.galleryPhotoIds.length > 0 && (
+        <section className="mt-6 grid grid-cols-2 gap-2">
+          {recipe.galleryPhotoIds.map((id) => (
+            <GalleryImage key={id} photoId={id} />
+          ))}
         </section>
       )}
 
