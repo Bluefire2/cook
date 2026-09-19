@@ -3,6 +3,7 @@ import type { FormEvent, ReactElement, ReactNode } from 'react';
 import { encodeImageForStorage } from '../lib/image';
 import { photoStore, useObjectUrl, usePhotoUrl } from '../lib/photoStore';
 import { blankDraft } from '../lib/recipeDraft';
+import { MAX_GALLERY_PHOTOS } from '../lib/recipePhotos';
 import type { Ingredient, IngredientSection, RecipeDraft } from '../lib/types';
 import { COMMON_UNITS, CUSTOM_UNIT, resolveUnit, unitChoice, type UnitChoice } from '../lib/units';
 import {
@@ -122,12 +123,14 @@ function toTags(text: string): string[] {
  * Optional fields are spread in only when present, so clearing one drops the
  * key instead of storing `undefined` in a record that gets fully replaced.
  * `sourceUrl` is carried through untouched because the form has no UI for it;
- * `photoId` is passed in because it is only known once the blob is stored.
+ * `photoId` and `galleryPhotoIds` are passed in because they are only known
+ * once picked blobs are stored.
  */
 function toDraft(
   form: FormState,
   initial: RecipeDraft,
   photoId: string | undefined,
+  galleryPhotoIds: string[],
 ): RecipeDraft {
   const description = form.description.trim();
   const notes = form.notes.trim();
@@ -153,6 +156,7 @@ function toDraft(
     tags: toTags(form.tags),
     ...(notes !== '' ? { notes } : {}),
     ...(photoId !== undefined ? { photoId } : {}),
+    ...(galleryPhotoIds.length > 0 ? { galleryPhotoIds } : {}),
   };
 }
 
@@ -205,7 +209,7 @@ function PhotoField({
 
   return (
     <div className="mt-3">
-      <span className="text-sm font-medium text-ink-muted">Photo</span>
+      <span className="text-sm font-medium text-ink-muted">Main photo</span>
       <input
         ref={inputRef}
         type="file"
@@ -254,6 +258,101 @@ function PhotoField({
   );
 }
 
+function GalleryThumb({
+  photoId,
+  file,
+  onRemove,
+}: {
+  photoId?: string;
+  file?: File;
+  onRemove: () => void;
+}): ReactElement {
+  const storedUrl = usePhotoUrl(file ? undefined : photoId);
+  const pickedUrl = useObjectUrl(file);
+  const url = pickedUrl ?? storedUrl;
+
+  return (
+    <li className="relative">
+      <div className="h-24 w-24 overflow-hidden rounded-xl bg-surface-muted shadow-sm">
+        {url && <img src={url} alt="" className="h-full w-full object-cover" />}
+      </div>
+      <button
+        type="button"
+        aria-label="Remove gallery photo"
+        onClick={onRemove}
+        className="absolute -top-1.5 -right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-ink text-xs text-page hover:opacity-80 active:opacity-80"
+      >
+        ✕
+      </button>
+    </li>
+  );
+}
+
+function GalleryField({
+  photoIds,
+  picked,
+  onPick,
+  onRemoveStored,
+  onRemovePicked,
+}: {
+  photoIds: string[];
+  picked: File[];
+  onPick: (files: File[]) => void;
+  onRemoveStored: (id: string) => void;
+  onRemovePicked: (index: number) => void;
+}): ReactElement {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const remaining = MAX_GALLERY_PHOTOS - photoIds.length - picked.length;
+
+  return (
+    <div className="mt-6">
+      <h2 className="text-lg font-semibold">Gallery</h2>
+      <p className="mt-1 text-sm text-ink-muted">
+        Extra photos shown at the end of the recipe.
+      </p>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          const files = [...(e.target.files ?? [])];
+          if (files.length > 0) onPick(files);
+          e.target.value = '';
+        }}
+      />
+      {(photoIds.length > 0 || picked.length > 0) && (
+        <ul className="mt-2 flex flex-wrap gap-2">
+          {photoIds.map((id) => (
+            <GalleryThumb
+              key={id}
+              photoId={id}
+              onRemove={() => onRemoveStored(id)}
+            />
+          ))}
+          {picked.map((file, i) => (
+            <GalleryThumb
+              key={`picked-${file.name}-${file.size}-${file.lastModified}`}
+              file={file}
+              onRemove={() => onRemovePicked(i)}
+            />
+          ))}
+        </ul>
+      )}
+      {remaining > 0 && (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className={`mt-2 block ${addBtn}`}
+        >
+          + Photo
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function RecipeForm({
   initial,
   submitLabel,
@@ -274,6 +373,10 @@ export default function RecipeForm({
   const [form, setForm] = useState(() => fromDraft(initial));
   const [photoId, setPhotoId] = useState(initial.photoId);
   const [picked, setPicked] = useState<File>();
+  const [galleryPhotoIds, setGalleryPhotoIds] = useState(
+    () => initial.galleryPhotoIds ?? [],
+  );
+  const [galleryPicked, setGalleryPicked] = useState<File[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // resolveUnit(CUSTOM_UNIT, '') is undefined, so without this positional
@@ -366,20 +469,35 @@ export default function RecipeForm({
       // before the caller sees it. Storing it here rather than on pick means
       // abandoning the form writes nothing at all.
       let stored: string | undefined;
-      if (picked) {
-        try {
+      const storedGallery: string[] = [];
+      try {
+        if (picked) {
           stored = await photoStore.add(await encodeImageForStorage(picked));
-        } catch {
-          setPhotoError("That photo couldn't be read — try a different one.");
-          return;
         }
+        for (const file of galleryPicked) {
+          storedGallery.push(
+            await photoStore.add(await encodeImageForStorage(file)),
+          );
+        }
+      } catch {
+        if (stored) await photoStore.remove(stored);
+        for (const id of storedGallery) await photoStore.remove(id);
+        setPhotoError("That photo couldn't be read — try a different one.");
+        return;
       }
       try {
-        await onSubmit(toDraft(form, initial, stored ?? photoId));
+        await onSubmit(
+          toDraft(form, initial, stored ?? photoId, [
+            ...galleryPhotoIds,
+            ...storedGallery,
+          ]),
+        );
       } catch (e) {
-        // The recipe kept pointing at the old photo, so this one is already
-        // unreachable; the store drops the old one only on a save that stuck.
+        // The recipe kept pointing at the old photos, so these new ids are
+        // already unreachable; the store drops replaced ones only on a save
+        // that stuck.
         if (stored) await photoStore.remove(stored);
+        for (const id of storedGallery) await photoStore.remove(id);
         throw e;
       }
     } finally {
@@ -763,6 +881,24 @@ export default function RecipeForm({
           className={inputClass}
         />
       </Field>
+
+      <GalleryField
+        photoIds={galleryPhotoIds}
+        picked={galleryPicked}
+        onPick={(files) => {
+          setPhotoError(null);
+          setGalleryPicked((prev) => {
+            const room = MAX_GALLERY_PHOTOS - galleryPhotoIds.length - prev.length;
+            return room <= 0 ? prev : [...prev, ...files.slice(0, room)];
+          });
+        }}
+        onRemoveStored={(id) =>
+          setGalleryPhotoIds((prev) => prev.filter((item) => item !== id))
+        }
+        onRemovePicked={(index) =>
+          setGalleryPicked((prev) => prev.filter((_, i) => i !== index))
+        }
+      />
 
       <div className="mt-6 flex gap-2">
         <button

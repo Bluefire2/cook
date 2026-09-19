@@ -108,15 +108,17 @@ describe('normalizeRecipeDraft', () => {
     expect(draft?.steps).toEqual([]);
   });
 
-  it('omits photoId and sourceUrl even when present', () => {
+  it('omits photoId, galleryPhotoIds, and sourceUrl even when present', () => {
     const draft = normalizeRecipeDraft({
       title: 'Draft',
       servings: 1,
       photoId: 'p1',
+      galleryPhotoIds: ['g1'],
       sourceUrl: 'https://example.com',
     });
     expect(draft).toBeDefined();
     expect(Object.keys(draft!)).not.toContain('photoId');
+    expect(Object.keys(draft!)).not.toContain('galleryPhotoIds');
     expect(Object.keys(draft!)).not.toContain('sourceUrl');
   });
 
@@ -164,5 +166,14 @@ describe('isUsableRecipe', () => {
         ingredientSections: [{ items: [{ item: 'salt', quantity: '1' }] }],
       }),
     ).toBe(false);
+  });
+
+  it('returns false when galleryPhotoIds is not a string array', () => {
+    expect(isUsableRecipe({ ...required, galleryPhotoIds: 'g1' })).toBe(false);
+    expect(isUsableRecipe({ ...required, galleryPhotoIds: [1] })).toBe(false);
+  });
+
+  it('returns true when galleryPhotoIds is a string array', () => {
+    expect(isUsableRecipe({ ...required, galleryPhotoIds: ['g1'] })).toBe(true);
   });
 });

@@ -12,6 +12,7 @@ import {
 } from './libraryMemory';
 import { postPhoto, pushOps } from './remote';
 import { compactRecipe } from './compactRecipe';
+import { recipePhotoIds } from './recipePhotos';
 import type { Recipe, RecipeDraft } from './types';
 
 export { compactRecipe };
@@ -35,17 +36,28 @@ async function uploadPhotoIfNeeded(
   markPhotoRemote(photoId);
 }
 
-async function deletePhotoIfReplaced(
-  before: string | undefined,
-  after: string | undefined,
-): Promise<void> {
-  if (before === undefined || before === after) {
-    return;
+async function uploadRecipePhotos(recipe: Recipe): Promise<void> {
+  for (const photoId of recipePhotoIds(recipe)) {
+    await uploadPhotoIfNeeded(photoId, recipe.id, recipe.updatedAt);
   }
-  const at = Date.now();
-  const result = await pushOps([{ kind: 'photo.delete', payload: { id: before, updatedAt: at } }]);
-  if (result === 'ok') {
-    dropPhoto(before);
+}
+
+async function deleteRemovedPhotos(
+  previous: Recipe | undefined,
+  next: Recipe,
+): Promise<void> {
+  const keep = new Set(recipePhotoIds(next));
+  for (const photoId of previous ? recipePhotoIds(previous) : []) {
+    if (keep.has(photoId)) {
+      continue;
+    }
+    const at = Date.now();
+    const result = await pushOps([
+      { kind: 'photo.delete', payload: { id: photoId, updatedAt: at } },
+    ]);
+    if (result === 'ok') {
+      dropPhoto(photoId);
+    }
   }
 }
 
@@ -63,12 +75,12 @@ export const recipeStore = {
     const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
     upsertRecipe(next);
     try {
-      await uploadPhotoIfNeeded(next.photoId, next.id, next.updatedAt);
+      await uploadRecipePhotos(next);
       const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
       if (result !== 'ok') {
         throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
       }
-      await deletePhotoIfReplaced(previous?.photoId, next.photoId);
+      await deleteRemovedPhotos(previous, next);
     } catch (err) {
       if (previous) {
         upsertRecipe(previous);
@@ -82,12 +94,14 @@ export const recipeStore = {
   /**
    * Merges a draft into the recipe with this id. Every field is named rather
    * than spread because drafts come from the `update_recipe` tool, whose schema
-   * cannot express `sourceUrl` or `photoId` — a spread would blank them.
+   * cannot express `sourceUrl`, `photoId`, or `galleryPhotoIds` — a spread
+   * would blank them.
    */
   async applyDraft(id: string, draft: RecipeDraft): Promise<void> {
     const existing = getRecipe(id);
     if (!existing) throw new Error(`No recipe with id ${id}.`);
     const photoId = draft.photoId ?? existing.photoId;
+    const galleryPhotoIds = draft.galleryPhotoIds ?? existing.galleryPhotoIds;
     const next = compactRecipe({
       id: existing.id,
       createdAt: existing.createdAt,
@@ -103,15 +117,16 @@ export const recipeStore = {
       notes: draft.notes,
       sourceUrl: draft.sourceUrl ?? existing.sourceUrl,
       photoId,
+      galleryPhotoIds,
     });
     upsertRecipe(next);
     try {
-      await uploadPhotoIfNeeded(next.photoId, next.id, next.updatedAt);
+      await uploadRecipePhotos(next);
       const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
       if (result !== 'ok') {
         throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
       }
-      await deletePhotoIfReplaced(existing.photoId, next.photoId);
+      await deleteRemovedPhotos(existing, next);
     } catch (err) {
       upsertRecipe(existing);
       throw err;
@@ -130,7 +145,7 @@ export const recipeStore = {
     });
     upsertRecipe(recipe);
     try {
-      await uploadPhotoIfNeeded(recipe.photoId, recipe.id, recipe.updatedAt);
+      await uploadRecipePhotos(recipe);
       const result = await pushOps([{ kind: 'recipe.put', payload: recipe }]);
       if (result !== 'ok') {
         throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
