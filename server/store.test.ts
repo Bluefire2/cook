@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   chunkByCost,
   chunkForBatch,
+  compactRecipeFields,
   compareMutation,
   decodePullCursor,
   encodePullCursor,
@@ -99,6 +100,87 @@ describe('validatePushOp', () => {
 
   it('rejects unknown kinds via caller', () => {
     expect(validatePushOp({ kind: 'photo.put', payload: {} }).ok).toBe(false);
+  });
+
+  it('accepts recipe.put with up to 8 gallery UUIDs', () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    const galleryPhotoIds = Array.from({ length: 8 }, (_, i) =>
+      `11111111-1111-4111-8111-11111111111${i}`,
+    );
+    expect(
+      validatePushOp({
+        kind: 'recipe.put',
+        payload: {
+          id,
+          title: 'T',
+          servings: 1,
+          ingredientSections: [],
+          steps: [],
+          tags: [],
+          createdAt: 1,
+          updatedAt: 2,
+          galleryPhotoIds,
+        },
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('rejects recipe.put with more than 8 gallery photos or a non-UUID', () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    const base = {
+      id,
+      title: 'T',
+      servings: 1,
+      ingredientSections: [],
+      steps: [],
+      tags: [],
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const nine = Array.from({ length: 9 }, () => id);
+    expect(
+      validatePushOp({ kind: 'recipe.put', payload: { ...base, galleryPhotoIds: nine } }).ok,
+    ).toBe(false);
+    expect(
+      validatePushOp({
+        kind: 'recipe.put',
+        payload: { ...base, galleryPhotoIds: ['not-a-uuid'] },
+      }).ok,
+    ).toBe(false);
+  });
+});
+
+describe('compactRecipeFields', () => {
+  const required = {
+    id: 'r1',
+    createdAt: 1,
+    updatedAt: 2,
+    title: 'Soup',
+    servings: 4,
+    ingredientSections: [],
+    steps: [],
+    tags: [],
+  };
+
+  it('keeps galleryPhotoIds when present', () => {
+    const compacted = compactRecipeFields({
+      ...required,
+      galleryPhotoIds: ['g1', 'g2'],
+    });
+    expect(compacted.galleryPhotoIds).toEqual(['g1', 'g2']);
+  });
+
+  it('omits an empty gallery and strips the cover id', () => {
+    expect(
+      compactRecipeFields({ ...required, photoId: 'p1', galleryPhotoIds: [] }),
+    ).not.toHaveProperty('galleryPhotoIds');
+    expect(
+      compactRecipeFields({
+        ...required,
+        photoId: 'p1',
+        galleryPhotoIds: ['p1', 'g1', 'g1'],
+      }).galleryPhotoIds,
+    ).toEqual(['g1']);
   });
 });
 

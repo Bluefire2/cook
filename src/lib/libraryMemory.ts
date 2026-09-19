@@ -1,3 +1,4 @@
+import { recipePhotoIds } from './recipePhotos';
 import type { ChatMessage, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 
@@ -106,9 +107,9 @@ export function removeRecipeLocal(id: string): void {
       }
     }
   }
-  if (recipe?.photoId !== undefined) {
-    next.pendingBlobs.delete(recipe.photoId);
-    next.remotePhotoIds.delete(recipe.photoId);
+  for (const photoId of recipe ? recipePhotoIds(recipe) : []) {
+    next.pendingBlobs.delete(photoId);
+    next.remotePhotoIds.delete(photoId);
   }
   emit({ ...snapshot, ...next });
 }

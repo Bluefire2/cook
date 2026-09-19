@@ -210,7 +210,38 @@ export function compactRecipeFields(recipe: Record<string, unknown>): Record<str
       next[key] = recipe[key];
     }
   }
+  const galleryPhotoIds = compactGalleryPhotoIds(
+    recipe.galleryPhotoIds,
+    typeof recipe.photoId === 'string' ? recipe.photoId : undefined,
+  );
+  if (galleryPhotoIds !== undefined) {
+    next.galleryPhotoIds = galleryPhotoIds;
+  }
   return next;
+}
+
+const MAX_GALLERY_PHOTOS = 8;
+
+function compactGalleryPhotoIds(
+  ids: unknown,
+  coverId: string | undefined,
+): string[] | undefined {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return undefined;
+  }
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const id of ids) {
+    if (typeof id !== 'string' || id === '' || id === coverId || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    next.push(id);
+    if (next.length >= MAX_GALLERY_PHOTOS) {
+      break;
+    }
+  }
+  return next.length > 0 ? next : undefined;
 }
 
 export type MutationResult =
@@ -461,6 +492,7 @@ export async function cascadeRecipeDelete(
   at: number,
 ): Promise<{ photoIds: string[]; gcsPending: boolean }> {
   let recipePhotoId: string | undefined;
+  const recipeGalleryIds: string[] = [];
 
   await getFirestore().runTransaction(async (tx) => {
     const recipeRef = colRef(uid, 'recipes').doc(recipeId);
@@ -469,6 +501,13 @@ export async function cascadeRecipeDelete(
       const data = snap.data() as Record<string, unknown>;
       if (isLiveDoc(data) && isUuid(data.photoId)) {
         recipePhotoId = data.photoId as string;
+      }
+      if (isLiveDoc(data) && Array.isArray(data.galleryPhotoIds)) {
+        for (const pid of data.galleryPhotoIds) {
+          if (isUuid(pid)) {
+            recipeGalleryIds.push(pid);
+          }
+        }
       }
       const stored = readStoredState(data);
       const cmp = compareMutation(stored, at, 'tombstone');
@@ -485,6 +524,9 @@ export async function cascadeRecipeDelete(
   const photoIds = new Set<string>();
   if (recipePhotoId !== undefined) {
     photoIds.add(recipePhotoId);
+  }
+  for (const pid of recipeGalleryIds) {
+    photoIds.add(pid);
   }
 
   const chatSnap = await colRef(uid, 'chatMessages').where('recipeId', '==', recipeId).get();
@@ -659,6 +701,19 @@ function validateRecipePut(payload: unknown): payload is Record<string, unknown>
   }
   if (finiteNumber(payload.createdAt) === undefined || finiteNumber(payload.updatedAt) === undefined) {
     return false;
+  }
+  if (payload.galleryPhotoIds !== undefined) {
+    if (
+      !Array.isArray(payload.galleryPhotoIds) ||
+      payload.galleryPhotoIds.length > MAX_GALLERY_PHOTOS
+    ) {
+      return false;
+    }
+    for (const pid of payload.galleryPhotoIds) {
+      if (!isUuid(pid)) {
+        return false;
+      }
+    }
   }
   if (jsonSize(payload) >= 200_000) {
     return false;

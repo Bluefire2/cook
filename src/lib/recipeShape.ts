@@ -150,6 +150,14 @@ export function isUsableRecipe(value: unknown): value is Recipe {
   if ('notes' in value && typeof value.notes !== 'string') return false;
   if ('sourceUrl' in value && typeof value.sourceUrl !== 'string') return false;
   if ('photoId' in value && typeof value.photoId !== 'string') return false;
+  if ('galleryPhotoIds' in value) {
+    if (
+      !Array.isArray(value.galleryPhotoIds) ||
+      !value.galleryPhotoIds.every((id) => typeof id === 'string')
+    ) {
+      return false;
+    }
+  }
   if ('prepMinutes' in value) {
     const prep = finiteNumber(value.prepMinutes);
     if (prep === undefined || prep < 0) return false;

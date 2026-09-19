@@ -27,8 +27,10 @@ export interface Recipe {
   steps: RecipeStep[];
   tags: string[];
   notes?: string;
-  /** FK into the photos table. */
+  /** Cover photo FK into the photos table. Library cards and the recipe header use this. */
   photoId?: string;
+  /** Secondary photo FKs, shown as a gallery at the end of the recipe. */
+  galleryPhotoIds?: string[];
   createdAt: number;
   updatedAt: number;
 }
