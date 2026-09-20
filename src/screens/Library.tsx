@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Sheet from '../components/Sheet';
-import { PlusIcon } from '../lib/icons';
+import { FolderIcon, PlusIcon } from '../lib/icons';
 import {
   collectionStore,
   libraryHref,
@@ -202,53 +202,56 @@ export default function Library() {
       </header>
 
       {showSwitcher && (
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <Link to="/" className={chipClass(currentId === undefined)}>
-            Recipes
-          </Link>
-          {collections?.map((collection) => (
-            <Link
-              key={collection.id}
-              to={libraryHref(collection.id)}
-              className={chipClass(collection.id === currentId)}
-            >
-              {collection.name}
+        <nav aria-label="Collections" className="mb-3 flex items-start gap-1.5">
+          <FolderIcon className="mt-2 block h-4 w-4 shrink-0 text-ink-muted" />
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Link to="/" className={chipClass(currentId === undefined)}>
+              Recipes
             </Link>
-          ))}
-          <button
-            type="button"
-            onClick={() => {
-              setCollectionName('');
-              setCollectionError(null);
-              setCreateOpen(true);
-            }}
-            className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
-          >
-            New
-          </button>
-          {named && (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setCollectionName(named.name);
-                  setCollectionError(null);
-                  setRenameOpen(true);
-                }}
-                className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
+            {collections?.map((collection) => (
+              <Link
+                key={collection.id}
+                to={libraryHref(collection.id)}
+                className={chipClass(collection.id === currentId)}
               >
-                Rename
-              </button>
-              <button
-                type="button"
-                onClick={() => setDeleteCollectionOpen(true)}
-                className="rounded-full px-3 py-1.5 text-sm text-danger hover:text-ink"
-              >
-                Delete
-              </button>
-            </>
-          )}
-        </div>
+                {collection.name}
+              </Link>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                setCollectionName('');
+                setCollectionError(null);
+                setCreateOpen(true);
+              }}
+              className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
+            >
+              New
+            </button>
+            {named && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCollectionName(named.name);
+                    setCollectionError(null);
+                    setRenameOpen(true);
+                  }}
+                  className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteCollectionOpen(true)}
+                  className="rounded-full px-3 py-1.5 text-sm text-danger hover:text-ink"
+                >
+                  Delete
+                </button>
+              </>
+            )}
+          </div>
+        </nav>
       )}
 
       <input
