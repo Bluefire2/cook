@@ -465,27 +465,30 @@ export default function RecipeForm({
     setBusy(true);
     setPhotoError(null);
     try {
-      // A draft can only carry an id, so a picked file has to become a row
-      // before the caller sees it. Storing it here rather than on pick means
-      // abandoning the form writes nothing at all.
-      let stored: string | undefined;
-      const storedGallery: string[] = [];
+      // Decode every selection before registering photos, so an unreadable
+      // file leaves nothing to clean up locally or on the server.
+      let encodedCover: Blob | undefined;
+      const encodedGallery: Blob[] = [];
       try {
         if (picked) {
-          stored = await photoStore.add(await encodeImageForStorage(picked));
+          encodedCover = await encodeImageForStorage(picked);
         }
         for (const file of galleryPicked) {
-          storedGallery.push(
-            await photoStore.add(await encodeImageForStorage(file)),
-          );
+          encodedGallery.push(await encodeImageForStorage(file));
         }
       } catch {
-        if (stored) await photoStore.remove(stored);
-        for (const id of storedGallery) await photoStore.remove(id);
         setPhotoError("That photo couldn't be read — try a different one.");
         return;
       }
+      let stored: string | undefined;
+      const storedGallery: string[] = [];
       try {
+        if (encodedCover) {
+          stored = await photoStore.add(encodedCover);
+        }
+        for (const blob of encodedGallery) {
+          storedGallery.push(await photoStore.add(blob));
+        }
         await onSubmit(
           toDraft(form, initial, stored ?? photoId, [
             ...galleryPhotoIds,
