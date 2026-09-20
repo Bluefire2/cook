@@ -63,8 +63,8 @@ export default function ImportScreen() {
           <button
             type="button"
             onClick={() => void extract()}
-            disabled={!busy && input.trim() === ''}
-            aria-busy={busy}
+            disabled={input.trim() === ''}
+            aria-busy={busy || undefined}
             aria-disabled={busy || input.trim() === ''}
             className={`${primaryBtn} mt-3 inline-flex w-full items-center justify-center gap-2 py-3 ${busy ? 'pointer-events-none' : ''}`}
           >
