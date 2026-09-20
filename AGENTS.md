@@ -184,6 +184,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/photos-and-deploy-docs.md` | **Next repo slice:** steps 18–19 (GCS photos, deploy.sh, README, legal rewrite). |
 | `docs/plans/deploy-and-end-state.md` | Steps 20–22 (production deploy, consent In production, two-device / iOS PWA check). Forbidden until 18–19 land. |
 | `docs/plans/chrome-extension-import.md` | `extension/` + `POST /api/extension/import`, built and verified locally. Deploys nothing: the production half waits on the same deploy 18–19 gate. |
+| `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan (resync vs in-flight pull, Dexie lease ownership, malformed 200 push bodies). |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,

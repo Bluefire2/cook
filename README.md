@@ -144,6 +144,8 @@ imports into the real library.
 
 The extension sends the page's HTML to the server, which forwards a trimmed
 version to Gemini, exactly as pasting the page into the import screen would.
+If it cannot read the tab, that is an error — the server never fetches the
+URL on its behalf.
 
 ## Environment variables
 

@@ -44,9 +44,9 @@ validation, LWW and `compactRecipeFields` keep their single home.
 
 ```mermaid
 flowchart LR
-  popup["Popup: Import button"] --> sw["Service worker"]
+  popup["Popup: Import click"] -->|"chrome.scripting: pruned page HTML"| tab["Active tab"]
+  popup -->|"url + html"| sw["Service worker"]
   sw -->|"chrome.cookies.get sous_session"| cookie[("Cookie jar")]
-  sw -->|"chrome.scripting: pruned page HTML"| tab["Active tab"]
   sw -->|"POST /api/extension/import + X-Sous-Session"| route["server/extensionImport.ts"]
   route --> gemini["extractRecipeDraft (Gemini)"]
   route --> apply["applyPushOp recipe.put"]
@@ -73,10 +73,11 @@ flowchart LR
 3. **The extension sends the page it can already see.** Server-side fetching
    fails on the sites people actually cook from — Cloudflare interstitials,
    consent walls, anything behind a login. The tab already has the rendered DOM,
-   so the extension sends it, and the server falls back to fetching the URL only
-   when injection returned nothing. On a truly restricted page (`chrome://`, the
-   Web Store) there is no injection *and* no `tab.url` without the `tabs`
-   permission, so that case is an honest error, not a silent no-op.
+   so the popup grabs it on the Import click (`activeTab` user-gesture) and
+   the worker POSTs `{ url, html }`. Empty html is an error; the server never
+   fetches the URL. On a truly restricted page (`chrome://`, the Web Store)
+   injection fails and the popup stops without POSTing. Amended by
+   `docs/plans/import-blocked-fetch.md`.
 4. **The page grabber does no recipe parsing.** It prunes the DOM (drops scripts
    that are not `ld+json`, styles, SVG, iframes, canvas) and returns HTML.
    `extractRecipeSource` in `api/import.ts` stays the only thing that knows what
@@ -200,7 +201,8 @@ New `server/recipeFromExtraction.test.ts` covers each of those.
 
 ### 4. [core] `server/extensionImport.ts` — the route
 
-`POST /api/extension/import`, body `{ url: string, html?: string }`.
+`POST /api/extension/import`, body `{ url: string, html: string }`. `html`
+must be non-blank; there is no server-side fetch fallback.
 
 1. `sessionFromHeader(req)`; null ⇒ 401 `{ error: 'Unauthorized' }`.
 2. Reject a body over `MAX_BODY_CHARS = 1_500_000` or `html` over
@@ -214,12 +216,12 @@ New `server/recipeFromExtraction.test.ts` covers each of those.
 3. A body that fails `req.text()` or `JSON.parse` is 400 JSON, as `syncPush`
    does — otherwise a hand-rolled curl during verification gets the dispatcher's
    `text/plain` "Internal error". `url` must parse as `http:`/`https:` —
-   otherwise 422 with the `fetchPageHtml` wording. That check belongs in the
-   route, not only in `fetchPageHtml`, because the `html` path skips the fetch
-   and `sourceUrl` is stored on the recipe either way.
-4. `html` present and non-blank ⇒ `extractRecipeSource(html)`. Otherwise
-   `fetchPageHtml(url)` then `extractRecipeSource`. Empty source ⇒ 422 "Could
-   not read that page."
+   otherwise 422 with the same wording `/api/import` uses. That check belongs
+   in the route because `sourceUrl` is stored on the recipe and this route
+   never fetches.
+4. `html` missing, empty, or whitespace ⇒ 422 "Could not read that page."
+   Non-blank `html` ⇒ `extractRecipeSource(html)`. Empty source after extract
+   ⇒ the same 422. The route does not call `fetchPageHtml`.
 5. `extractRecipeDraft(source)`; a failure is returned verbatim (status and
    message), so the popup shows the same words the app's import screen would.
 6. `recipePutFromExtraction(recipe, { id: randomUUID(), now: Date.now(), sourceUrl: url })`;
@@ -272,16 +274,18 @@ include would pick it up, and `AGENTS.md` keeps unit tests on pure logic.
     moves on only when `fetch` rejects (Decision 5). The `origin` stored in the
     state is the one that actually answered, not the first candidate, so the
     **Open recipe** link cannot point at a server that never saw the recipe.
-  - `runImport(tabId)` — injects the grabber with
-    `chrome.scripting.executeScript({ target, func, args })`, POSTs, and writes
+  - The **popup** injects the grabber on the Import click with
+    `chrome.scripting.executeScript({ target, func, args })` — that is the
+    `activeTab` user-gesture — then messages `{ type: 'import', tabId, url,
+    html }` to the worker. `func` is used rather than `files`: returning a
+    value is documented for `func`, whereas a `files` injection returns the
+    script's completion value and a second injection into the same document
+    throws on top-level redeclaration — which is precisely the **Try again**
+    path. Injection failure or empty html is an error in the popup; it does
+    not POST.
+  - `runImport(tabId, url, html)` POSTs that body and writes
     `{ phase, startedAt, recipeId, title, origin, message }` to
-    `chrome.storage.session` under `state:<tabId>`. `func` is used rather than
-    `files`: returning a value is documented for `func`, whereas a `files`
-    injection returns the script's completion value and a second injection into
-    the same document throws on top-level redeclaration — which is precisely the
-    **Try again** path.
-  - Injection failure falls back to the server-side fetch when a URL is known,
-    and to an error state when it is not.
+    `chrome.storage.session` under `state:<tabId>`. It does not inject.
   - A 90 s `AbortController` bounds the request, and a 20 s
     `chrome.runtime.getPlatformInfo()` tick keeps the worker alive while a
     request is in flight, since MV3 idles workers out at 30 s. `startedAt` lets
@@ -315,7 +319,7 @@ palette (`#1c1917` background, the same accent as `theme_color`):
 - **Error** — the server's message in the app's danger style, plus **Try again**.
 
 State comes from `chrome.storage.session` and a `chrome.storage.onChanged`
-subscription; the popup never fetches. Spinner honours
+subscription; the popup never POSTs (the worker does). Spinner honours
 `prefers-reduced-motion`, the status line is an `aria-live="polite"` region, and
 the button keeps a visible focus ring.
 
