@@ -1,7 +1,4 @@
-import {
-  MAX_COLLECTION_RECIPE_IDS,
-  MAX_NAMED_COLLECTIONS,
-} from './compactCollection';
+import { MAX_COLLECTION_RECIPE_IDS } from './compactCollection';
 import type { Collection, Recipe } from './types';
 
 /** Smallest collection id wins when a recipe id appears in two live lists. */
@@ -20,13 +17,6 @@ export function winningMembership(
   return map;
 }
 
-export function collectionIdForRecipe(
-  collections: readonly Collection[],
-  recipeId: string,
-): string | undefined {
-  return winningMembership(collections).get(recipeId);
-}
-
 export function unfiledRecipes(
   recipes: readonly Recipe[],
   collections: readonly Collection[],
@@ -41,18 +31,7 @@ export function recipesInCollection(
   allCollections: readonly Collection[],
 ): Recipe[] {
   const membership = winningMembership(allCollections);
-  const byId = new Map(recipes.map((recipe) => [recipe.id, recipe]));
-  const out: Recipe[] = [];
-  for (const recipeId of collection.recipeIds) {
-    if (membership.get(recipeId) !== collection.id) {
-      continue;
-    }
-    const recipe = byId.get(recipeId);
-    if (recipe) {
-      out.push(recipe);
-    }
-  }
-  return out;
+  return recipes.filter((recipe) => membership.get(recipe.id) === collection.id);
 }
 
 export function moveRecipe(
@@ -74,13 +53,6 @@ export function moveRecipe(
     changed.push({ ...collection, recipeIds, updatedAt: now });
   }
   return changed;
-}
-
-export function wouldExceedNamedCollectionCap(
-  liveCount: number,
-  creating: boolean,
-): boolean {
-  return creating && liveCount >= MAX_NAMED_COLLECTIONS;
 }
 
 export function wouldExceedRecipeIdCap(recipeIds: readonly string[]): boolean {

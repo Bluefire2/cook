@@ -157,12 +157,16 @@ collections; it adds grants, a shared pull, and cross-tree photo GET.
   `incomingShares/{viewerSub}/items/{grantId}` so a deleted folder
   disappears from grantees on the next shared pull. Shared pull also
   skips tombstoned collections even if a grant row is still live (belt).
-- **D13. New / import** land in **default**, unless the UI is currently
-  inside a named collection. Library `+` links become `/import?c=` and
-  `/recipe/new?c=` when `/?c=<uuid>` is set; `RecipeEdit` and
-  `ImportScreen` read `c` and pass `{ collectionId }` into
-  `recipeStore.create`. Back links keep `c` so the user returns to that
-  folder. Missing/unknown `c` → default (omit the extra `collection.put`).
+- **D13. New / import** save directly when started inside a live named
+  collection. Library `+` links carry `?c=`; back links preserve that folder.
+  From the top-level Recipes view, individual saves ask for an existing
+  collection, a new collection, or **No collection**, even with zero folders.
+  Resolve `c` only after collection loading; unknown/deleted folders require
+  choosing again, never silently saving unfiled. `CreateRecipeForm` owns the
+  shared new/single-import draft, picker, save error, and local-photo cleanup.
+  Bulk import chooses once after validation and before extraction; from a
+  live folder it skips the picker. Retry preserves the selection if still
+  valid, including explicit No collection and a single remaining failed URL.
   Server does not infer collection from the URL; the client sends the op.
   ChatPanel “Save as a new recipe” always creates in **default** (no `c`).
 - **D14. Folder chrome is conditional (PR 1).** Zero live **owned** named
@@ -416,8 +420,8 @@ a named collection, + links are `/import?c=` and `/recipe/new?c=`;
 `RecipeEdit` / `ImportScreen` pass that id into `create` (D13).
 
 Exercise `/`, `/?c=`, `/recipe/new`, `/recipe/new?c=`, `/recipe/:id`,
-`/recipe/:id/edit`, `/import`, `/import?c=`. Search filters the
-**current** list only.
+`/recipe/:id/edit`, `/import`, `/import?c=`. Search spans the entire library;
+without a query, the selected folder determines the list.
 
 #### 5. [core] Backup v3 + AGENTS.md
 
@@ -429,7 +433,8 @@ sharing.
 
 Vite + `dev:api`, `http://localhost:5173` (not `127.0.0.1`). Signed in.
 
-- Fresh library: no folder chrome; create recipe; it shows on `/`.
+- Fresh library: no folder chrome; create recipe, choose No collection;
+  it shows on `/`.
 - Create collection “Dinners”; switcher appears; `/` still has the
   recipe; move it to Dinners; `/` empty of that card; `/?c=` shows it.
 - From Dinners, + Import and + New; the new recipe appears in Dinners,
@@ -447,6 +452,29 @@ Vite + `dev:api`, `http://localhost:5173` (not `127.0.0.1`). Signed in.
 - [x] 4. [ui] Library default-identical, then folders
 - [x] 5. [core] Backup v3 + AGENTS.md
 - [ ] 6. [ui] Browser verification
+
+### PR 1 simplification (2026-09-20)
+
+- [x] [ui] Direct save from a live starting folder; otherwise ask once.
+- [x] [ui] Batch destination selection before any extraction, retained on retry.
+- [x] [ui] Shared creation form, native disabled controls, and no sheet
+  dismissal during a save. Cancelling releases only newly staged local photos;
+  failed saves retain their draft. Reuse a created collection on retry.
+- [x] [core] Delete unused membership lookup/add wrappers and the unused
+  cap-check branch. Filter the sorted library by winning membership.
+- [x] [core] Pure destination and ordering tests; all 350 unit tests and
+  TypeScript/Vite production build pass.
+- [x] [ui] Browser at localhost:5173: top-level picker, Escape/cancel with
+  draft preserved, signed-out save error retained, bulk picker before
+  extraction, and cancelled batch retaining input.
+- [ ] [ui] Signed-in named-folder saves, successful batch/retry, and photo
+  round-trips remain unverified: available browser session was signed out.
+
+Preserved concurrent push-rejection handling, recipe deletion membership
+cleanup, folder-reuse fixes, whole-library search, and the folder icon.
+No schema, endpoint, dependency, or deployment changes. Push operations
+remain individually applied: a client rollback does not undo partially
+successful server writes. This cleanup does not make saves atomic.
 
 ## PR 2 — Collection view ACLs
 

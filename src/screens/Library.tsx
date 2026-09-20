@@ -61,6 +61,10 @@ export default function Library() {
   const [deleteCollectionOpen, setDeleteCollectionOpen] = useState(false);
   const [collectionName, setCollectionName] = useState('');
   const [collectionError, setCollectionError] = useState<string | null>(null);
+  const [createdCollection, setCreatedCollection] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLAnchorElement>(null);
 
@@ -72,10 +76,13 @@ export default function Library() {
         : unfiledRecipes(allRecipes, collections);
 
   const q = query.trim().toLowerCase();
+  // Searching spans the whole library, not the active chip: a filed recipe
+  // would otherwise be unreachable from `/`, which is where every back link
+  // lands and there is no all-collections view to search from.
   const recipes =
     q === ''
       ? scoped
-      : scoped?.filter(
+      : allRecipes?.filter(
           (r) =>
             r.title.toLowerCase().includes(q) ||
             r.tags.some((tag) => tag.toLowerCase().includes(q)),
@@ -100,19 +107,47 @@ export default function Library() {
     setDeleteCollectionOpen(false);
     setCollectionName('');
     setCollectionError(null);
+    setCreatedCollection(null);
   };
 
   const submitCreate = async () => {
+    const trimmed = collectionName.trim();
     setCollectionError(null);
     try {
-      const created = await collectionStore.create(collectionName);
+      // Reuse the collection a failed attempt already created, so retrying
+      // does not leave two folders with the same name behind.
+      let id: string;
+      if (createdCollection === null) {
+        id = (await collectionStore.create(collectionName)).id;
+        setCreatedCollection({ id, name: trimmed });
+      } else {
+        id = createdCollection.id;
+        if (createdCollection.name !== trimmed) {
+          await collectionStore.rename(id, collectionName);
+          setCreatedCollection({ id, name: trimmed });
+        }
+      }
       if (moveRecipeId) {
-        await collectionStore.moveRecipe(moveRecipeId, created.id);
+        await collectionStore.moveRecipe(moveRecipeId, id);
       }
       closeSheets();
-      navigate(libraryHref(created.id));
+      navigate(libraryHref(id));
     } catch (err) {
       setCollectionError(err instanceof Error ? err.message : "Couldn't save the collection.");
+    }
+  };
+
+  const submitMove = async (dest: 'default' | string) => {
+    if (!moveRecipeId) {
+      return;
+    }
+    setCollectionError(null);
+    try {
+      await collectionStore.moveRecipe(moveRecipeId, dest);
+      closeSheets();
+      navigate(dest === 'default' ? '/' : libraryHref(dest));
+    } catch (err) {
+      setCollectionError(err instanceof Error ? err.message : "Couldn't move the recipe.");
     }
   };
 
@@ -133,9 +168,16 @@ export default function Library() {
     if (!currentId) {
       return;
     }
-    await collectionStore.remove(currentId);
-    closeSheets();
-    navigate('/');
+    setCollectionError(null);
+    try {
+      await collectionStore.remove(currentId);
+      closeSheets();
+      navigate('/');
+    } catch (err) {
+      setCollectionError(
+        err instanceof Error ? err.message : "Couldn't delete the collection.",
+      );
+    }
   };
 
   useEffect(() => {
@@ -424,16 +466,11 @@ export default function Library() {
       )}
 
       {moveRecipe && !createOpen && (
-        <Sheet onClose={() => setMoveRecipeId(null)}>
+        <Sheet onClose={() => closeSheets()}>
           <h2 className="text-lg font-semibold">Move “{moveRecipe.title}”</h2>
           <button
             type="button"
-            onClick={() => {
-              void collectionStore.moveRecipe(moveRecipe.id, 'default').then(() => {
-                setMoveRecipeId(null);
-                navigate('/');
-              });
-            }}
+            onClick={() => void submitMove('default')}
             className={`${secondaryBtn} mt-3 w-full py-3`}
           >
             Recipes
@@ -442,17 +479,15 @@ export default function Library() {
             <button
               key={collection.id}
               type="button"
-              onClick={() => {
-                void collectionStore.moveRecipe(moveRecipe.id, collection.id).then(() => {
-                  setMoveRecipeId(null);
-                  navigate(libraryHref(collection.id));
-                });
-              }}
+              onClick={() => void submitMove(collection.id)}
               className={`${secondaryBtn} mt-2 w-full py-3`}
             >
               {collection.name}
             </button>
           ))}
+          {collectionError && (
+            <p className="mt-2 text-sm text-danger">{collectionError}</p>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -466,7 +501,7 @@ export default function Library() {
           </button>
           <button
             type="button"
-            onClick={() => setMoveRecipeId(null)}
+            onClick={() => closeSheets()}
             className="mt-2 w-full py-2.5 text-sm text-ink-muted hover:text-ink"
           >
             Cancel
@@ -552,6 +587,9 @@ export default function Library() {
           <p className="mt-1 text-sm text-ink-muted">
             Recipes in it go back to Recipes. They are not deleted.
           </p>
+          {collectionError && (
+            <p className="mt-2 text-sm text-danger">{collectionError}</p>
+          )}
           <button
             type="button"
             onClick={() => void submitDeleteCollection()}

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { collectionStore, useCollections } from '../lib/collectionStore';
 import { SpinnerIcon } from '../lib/icons';
 import { inputClass, primaryBtn, secondaryBtn } from '../lib/uiClasses';
@@ -28,10 +28,10 @@ function SaveActionButton({
     <button
       type={type}
       onClick={onClick}
-      disabled={Boolean(disabled) && !busy}
+      disabled={disabled || busy}
       aria-busy={active || undefined}
-      aria-disabled={busy || disabled || undefined}
-      className={`inline-flex items-center justify-center gap-2 ${className} ${busy ? 'pointer-events-none' : ''} ${busy && !active ? 'opacity-40' : ''}`}
+      className={`inline-flex items-center justify-center gap-2 ${className}`}
+      style={{ opacity: active ? 1 : busy || disabled ? 0.4 : undefined }}
     >
       {active && <SpinnerIcon className="block h-5 w-5 animate-spin" />}
       {children}
@@ -42,20 +42,29 @@ function SaveActionButton({
 export default function SaveToCollectionSheet({
   onSave,
   onCancel,
+  title = 'Save to',
+  createLabel = 'Create and save',
 }: {
   onSave: (collectionId: string | undefined) => void | Promise<void>;
   onCancel: () => void;
+  title?: string;
+  createLabel?: string;
 }) {
-  const collections = useCollections() ?? [];
+  const collections = useCollections();
+  const inFlight = useRef(false);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  // Survives a failed save so a retry reuses the collection instead of
+  // creating a second one with the same name.
+  const [created, setCreated] = useState<{ id: string; name: string } | null>(null);
   const busy = pending !== null;
 
   const save = async (collectionId: string | undefined) => {
-    if (busy) {
+    if (inFlight.current || collections === undefined) {
       return;
     }
+    inFlight.current = true;
     setPending(collectionId ?? UNFILED);
     setError(null);
     try {
@@ -63,38 +72,56 @@ export default function SaveToCollectionSheet({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save the recipe.");
       setPending(null);
+    } finally {
+      inFlight.current = false;
     }
   };
 
   const createAndSave = async () => {
-    if (busy) {
+    if (inFlight.current || collections === undefined) {
       return;
     }
+    inFlight.current = true;
+    const trimmed = name.trim();
     setPending(CREATE);
     setError(null);
     try {
-      const created = await collectionStore.create(name);
-      await onSave(created.id);
+      let id: string;
+      if (created === null || !collectionStore.get(created.id)) {
+        id = (await collectionStore.create(name)).id;
+        setCreated({ id, name: trimmed });
+      } else {
+        id = created.id;
+        if (created.name !== trimmed) {
+          await collectionStore.rename(id, name);
+          setCreated({ id, name: trimmed });
+        }
+      }
+      await onSave(id);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Couldn't save the collection.",
       );
       setPending(null);
+    } finally {
+      inFlight.current = false;
     }
   };
 
   return (
-    <Sheet onClose={onCancel}>
-      <h2 className="text-lg font-semibold">Save to</h2>
+    <Sheet onClose={onCancel} dismissible={!busy}>
+      <h2 className="text-lg font-semibold">{title}</h2>
+      {collections === undefined && <p role="status">Loading collections…</p>}
       <SaveActionButton
         active={pending === UNFILED}
         busy={busy}
+        disabled={collections === undefined}
         onClick={() => void save(undefined)}
         className="mt-3 w-full rounded-xl bg-surface-muted py-3 font-medium text-ink hover:bg-line active:bg-line"
       >
         No collection
       </SaveActionButton>
-      {collections.length > 0 && (
+      {collections !== undefined && collections.length > 0 && (
         <div className="mt-4 border-t border-line pt-3">
           <p className="text-sm font-medium text-ink-muted">Collections</p>
           {collections.map((collection) => (
@@ -122,11 +149,11 @@ export default function SaveToCollectionSheet({
         </label>
         <input
           id="save-new-collection"
-          autoFocus={collections.length === 0}
+          autoFocus={collections?.length === 0}
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Name"
-          disabled={busy}
+          disabled={busy || collections === undefined}
           className={`${inputClass} mt-1.5`}
         />
         {error && <p className="mt-2 text-sm text-danger">{error}</p>}
@@ -134,10 +161,10 @@ export default function SaveToCollectionSheet({
           type="submit"
           active={pending === CREATE}
           busy={busy}
-          disabled={name.trim() === ''}
+          disabled={name.trim() === '' || collections === undefined}
           className={`${primaryBtn} mt-3 w-full py-3`}
         >
-          Create and save
+          {createLabel}
         </SaveActionButton>
       </form>
       <button

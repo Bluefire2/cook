@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import RecipeForm from '../components/RecipeForm';
+import CreateRecipeForm from '../components/CreateRecipeForm';
 import SaveToCollectionSheet from '../components/SaveToCollectionSheet';
-import { collectionStore, libraryHref } from '../lib/collectionStore';
+import { collectionStore, libraryHref, useCollections } from '../lib/collectionStore';
+import { resolveCollectionDestination } from '../lib/collectionDestination';
 import { SpinnerIcon } from '../lib/icons';
 import { importRecipe, type ExtractedRecipe } from '../lib/importApi';
 import {
@@ -11,7 +12,6 @@ import {
 } from '../lib/importInput';
 import { recipeStore } from '../lib/recipeStore';
 import { backLink, inputFocus, primaryBtn, secondaryBtn } from '../lib/uiClasses';
-import type { RecipeDraft } from '../lib/types';
 
 const SESSION_EXPIRED = 'Please sign in again — your session expired.';
 
@@ -23,9 +23,13 @@ export default function ImportScreen() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const collectionId = params.get('c') ?? undefined;
-  const knownCollectionId = collectionId && collectionStore.get(collectionId)
-    ? collectionId
-    : undefined;
+  // Subscribed, not a one-shot store read: on a cold load of `?c=<id>` the
+  // pull has not landed yet, and only a subscriber re-renders once it does.
+  const collections = useCollections();
+  const knownCollectionId =
+    collectionId && collections?.some((c) => c.id === collectionId)
+      ? collectionId
+      : undefined;
   const backTo = libraryHref(knownCollectionId);
   const [input, setInput] = useState('');
   const [bulk, setBulk] = useState(false);
@@ -35,11 +39,57 @@ export default function ImportScreen() {
   );
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ExtractedRecipe | null>(null);
-  const [pendingDraft, setPendingDraft] = useState<RecipeDraft | null>(null);
+  const [pendingUrls, setPendingUrls] = useState<string[] | null>(null);
+  const [batchDestination, setBatchDestination] = useState<string | null | undefined>();
+  const [retrying, setRetrying] = useState(false);
+  const inFlight = useRef(false);
   const [summary, setSummary] = useState<BulkResult[] | null>(null);
 
+  const runBulk = async (urls: string[], destinationId: string | undefined) => {
+    if (inFlight.current) return;
+    if (destinationId && !collectionStore.get(destinationId)) {
+      throw new Error('Collection not found. Choose another collection.');
+    }
+    inFlight.current = true;
+    setBatchDestination(destinationId ?? null);
+    setPendingUrls(null);
+    setBusy(true);
+    setError(null);
+    try {
+      const results: BulkResult[] = [];
+      for (const [i, url] of urls.entries()) {
+        setProgress({ current: i + 1, total: urls.length });
+        try {
+          if (destinationId && !collectionStore.get(destinationId)) {
+            throw new Error('Collection not found. Choose another collection.');
+          }
+          const draft = await importRecipe({ url });
+          const recipe = await recipeStore.create(
+            draft,
+            destinationId ? { collectionId: destinationId } : undefined,
+          );
+          results.push({ url, ok: true, id: recipe.id, title: recipe.title.trim() || url });
+        } catch (e) {
+          const message = e instanceof Error ? e.message : 'Import failed.';
+          results.push({ url, ok: false, error: message });
+          if (message === SESSION_EXPIRED || (destinationId && !collectionStore.get(destinationId))) {
+            for (const rest of urls.slice(i + 1)) {
+              results.push({ url: rest, ok: false, error: message });
+            }
+            break;
+          }
+        }
+      }
+      setSummary(results);
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+      setProgress(null);
+    }
+  };
+
   const extract = async () => {
-    if (busy) return;
+    if (inFlight.current || pendingUrls || collections === undefined) return;
     const parsed = parseImportInput(input);
     if (parsed.kind === 'empty') return;
     const validated = validateImportInput(parsed, bulk);
@@ -47,44 +97,28 @@ export default function ImportScreen() {
       setError(validated.error);
       return;
     }
-    setBusy(true);
     setError(null);
-    try {
-      if (validated.mode === 'bulk') {
-        const results: BulkResult[] = [];
-        for (let i = 0; i < validated.urls.length; i++) {
-          const url = validated.urls[i];
-          if (url === undefined) {
-            continue;
-          }
-          setProgress({ current: i + 1, total: validated.urls.length });
-          try {
-            const draft = await importRecipe({ url });
-            const recipe = await recipeStore.create(
-              draft,
-              knownCollectionId ? { collectionId: knownCollectionId } : undefined,
-            );
-            results.push({
-              url,
-              ok: true,
-              id: recipe.id,
-              title: recipe.title.trim() === '' ? url : recipe.title,
-            });
-          } catch (e) {
-            const message = e instanceof Error ? e.message : 'Import failed.';
-            results.push({ url, ok: false, error: message });
-            if (message === SESSION_EXPIRED) {
-              for (const rest of validated.urls.slice(i + 1)) {
-                results.push({ url: rest, ok: false, error: SESSION_EXPIRED });
-              }
-              break;
-            }
-          }
+    const urls = validated.mode === 'bulk'
+      ? validated.urls
+      : retrying && validated.mode === 'url' ? [validated.url] : null;
+    if (urls) {
+      const destination = resolveCollectionDestination(collections, collectionId, batchDestination);
+      if (destination.kind === 'choose') {
+        setPendingUrls(urls);
+      } else if (destination.kind === 'save') {
+        try {
+          await runBulk(urls, destination.collectionId);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Import failed.');
+          setPendingUrls(urls);
         }
-        setSummary(results);
-        setProgress(null);
-        return;
       }
+      return;
+    }
+    if (validated.mode === 'bulk') return;
+    inFlight.current = true;
+    setBusy(true);
+    try {
       setPreview(
         await importRecipe(
           validated.mode === 'url'
@@ -95,6 +129,7 @@ export default function ImportScreen() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Import failed.');
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
@@ -103,19 +138,9 @@ export default function ImportScreen() {
     if (summary === null) return;
     const failed = summary.filter((row) => !row.ok).map((row) => row.url);
     setInput(failed.join('\n'));
+    setRetrying(true);
     setSummary(null);
     setError(null);
-  };
-
-  const save = async (collectionId: string | undefined) => {
-    if (!pendingDraft) {
-      return;
-    }
-    const recipe = await recipeStore.create(
-      pendingDraft,
-      collectionId ? { collectionId } : undefined,
-    );
-    navigate(`/recipe/${recipe.id}`, { replace: true });
   };
 
   const successCount = summary?.filter((row) => row.ok).length ?? 0;
@@ -183,9 +208,13 @@ export default function ImportScreen() {
         <>
           <textarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setRetrying(false);
+              setBatchDestination(undefined);
+            }}
             rows={5}
-            readOnly={busy}
+            readOnly={busy || pendingUrls !== null}
             placeholder={
               bulk
                 ? 'Paste one recipe link per line…'
@@ -197,9 +226,11 @@ export default function ImportScreen() {
             <input
               type="checkbox"
               checked={bulk}
-              disabled={busy}
+              disabled={busy || pendingUrls !== null}
               onChange={(e) => {
                 setBulk(e.target.checked);
+                setRetrying(false);
+                setBatchDestination(undefined);
                 setError(null);
               }}
               className={`mt-1 h-4 w-4 shrink-0 accent-ink disabled:opacity-40 ${inputFocus}`}
@@ -217,13 +248,14 @@ export default function ImportScreen() {
               {error}
             </p>
           )}
+          {collections === undefined && <p role="status">Loading collections…</p>}
           <button
             type="button"
             onClick={() => void extract()}
-            disabled={input.trim() === ''}
+            disabled={busy || pendingUrls !== null || collections === undefined || input.trim() === ''}
             aria-busy={busy || undefined}
-            aria-disabled={busy || input.trim() === ''}
-            className={`${primaryBtn} mt-3 inline-flex w-full items-center justify-center gap-2 py-3 ${busy ? 'pointer-events-none' : ''}`}
+            className={`${primaryBtn} mt-3 inline-flex w-full items-center justify-center gap-2 py-3`}
+            style={{ opacity: busy ? 1 : undefined }}
           >
             {busy && <SpinnerIcon className="block h-5 w-5 animate-spin" />}
             {busy
@@ -273,23 +305,22 @@ export default function ImportScreen() {
             Anything the extraction got wrong, fix it here before saving.
           </div>
 
-          <RecipeForm
+          <CreateRecipeForm
             initial={preview}
-            submitLabel="Save to library"
-            onSubmit={(draft) => {
-              setPendingDraft(draft);
-            }}
+            collectionId={collectionId}
+            onCreated={(recipe) => navigate(`/recipe/${recipe.id}`, { replace: true })}
             onCancel={() => setPreview(null)}
           />
-          {pendingDraft && (
-            <SaveToCollectionSheet
-              onSave={save}
-              onCancel={() => setPendingDraft(null)}
-            />
-          )}
         </>
+      )}
+      {pendingUrls && (
+        <SaveToCollectionSheet
+          title="Import recipes to"
+          createLabel="Create and import"
+          onSave={(id) => runBulk(pendingUrls, id)}
+          onCancel={() => setPendingUrls(null)}
+        />
       )}
     </div>
   );
 }
-

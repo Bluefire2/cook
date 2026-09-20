@@ -44,6 +44,14 @@ export const photoStore = {
     return pending;
   },
 
+  /**
+   * Forget a blob that was staged but never attached to a saved recipe.
+   * Local only: nothing was uploaded yet, so there is nothing to tombstone.
+   */
+  discardLocal(id: string): void {
+    dropPhoto(id);
+  },
+
   async remove(id: string): Promise<void> {
     const at = Date.now();
     dropPhoto(id);

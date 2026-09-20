@@ -2,8 +2,8 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
-import SaveToCollectionSheet from '../components/SaveToCollectionSheet';
-import { collectionStore, libraryHref } from '../lib/collectionStore';
+import CreateRecipeForm from '../components/CreateRecipeForm';
+import { libraryHref, useCollections } from '../lib/collectionStore';
 import { blankDraft } from '../lib/recipeDraft';
 import { recipeStore, useRecipe } from '../lib/recipeStore';
 import { backLink, primaryBtn } from '../lib/uiClasses';
@@ -45,40 +45,24 @@ function CreateRecipe() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const collectionId = params.get('c') ?? undefined;
-  const knownCollectionId = collectionId && collectionStore.get(collectionId)
-    ? collectionId
-    : undefined;
+  // Subscribed, not a one-shot store read: on a cold load of `?c=<id>` the
+  // pull has not landed yet, and only a subscriber re-renders once it does.
+  const collections = useCollections();
+  const knownCollectionId =
+    collectionId && collections?.some((c) => c.id === collectionId)
+      ? collectionId
+      : undefined;
   const backTo = libraryHref(knownCollectionId);
   const [initial] = useState(blankDraft);
-  const [pendingDraft, setPendingDraft] = useState<RecipeDraft | null>(null);
-
-  const save = async (destCollectionId: string | undefined) => {
-    if (!pendingDraft) {
-      return;
-    }
-    const recipe = await recipeStore.create(
-      pendingDraft,
-      destCollectionId ? { collectionId: destCollectionId } : undefined,
-    );
-    navigate(`/recipe/${recipe.id}`, { replace: true });
-  };
 
   return (
     <Screen heading="New recipe" backTo={backTo} backLabel="Library">
-      <RecipeForm
+      <CreateRecipeForm
         initial={initial}
-        submitLabel="Save to library"
-        onSubmit={(draft) => {
-          setPendingDraft(draft);
-        }}
+        collectionId={collectionId}
+        onCreated={(recipe) => navigate(`/recipe/${recipe.id}`, { replace: true })}
         onCancel={() => navigate(backTo)}
       />
-      {pendingDraft && (
-        <SaveToCollectionSheet
-          onSave={save}
-          onCancel={() => setPendingDraft(null)}
-        />
-      )}
     </Screen>
   );
 }

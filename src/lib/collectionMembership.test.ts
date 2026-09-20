@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  collectionIdForRecipe,
   moveRecipe,
   recipesInCollection,
   unfiledRecipes,
   winningMembership,
-  wouldExceedNamedCollectionCap,
+  wouldExceedRecipeIdCap,
 } from './collectionMembership';
-import { MAX_NAMED_COLLECTIONS } from './compactCollection';
+import { MAX_COLLECTION_RECIPE_IDS } from './compactCollection';
 import type { Collection, Recipe } from './types';
 
 const r1: Recipe = {
@@ -62,12 +61,9 @@ describe('recipesInCollection', () => {
       ['r1'],
     );
   });
-});
-
-describe('collectionIdForRecipe', () => {
-  it('returns the winning collection id', () => {
-    expect(collectionIdForRecipe([dinners, lunches], 'r1')).toBe('c-a');
-    expect(collectionIdForRecipe([dinners, lunches], 'r3')).toBeUndefined();
+  it('preserves library order instead of membership insertion order', () => {
+    const newest = { ...r2, updatedAt: 10 };
+    expect(recipesInCollection([newest, r1, r3], dinners, [dinners])).toEqual([newest, r1]);
   });
 });
 
@@ -86,10 +82,10 @@ describe('moveRecipe', () => {
   });
 });
 
-describe('wouldExceedNamedCollectionCap', () => {
-  it('blocks a create at the cap and allows updates', () => {
-    expect(wouldExceedNamedCollectionCap(MAX_NAMED_COLLECTIONS, true)).toBe(true);
-    expect(wouldExceedNamedCollectionCap(MAX_NAMED_COLLECTIONS, false)).toBe(false);
-    expect(wouldExceedNamedCollectionCap(MAX_NAMED_COLLECTIONS - 1, true)).toBe(false);
+describe('wouldExceedRecipeIdCap', () => {
+  it('allows the limit and rejects an additional recipe', () => {
+    const ids = Array.from({ length: MAX_COLLECTION_RECIPE_IDS }, (_, i) => `recipe-${i}`);
+    expect(wouldExceedRecipeIdCap(ids)).toBe(false);
+    expect(wouldExceedRecipeIdCap([...ids, 'extra'])).toBe(true);
   });
 });

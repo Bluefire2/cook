@@ -85,6 +85,29 @@ export async function pullPage(cursor: PullCursor | null): Promise<PullPage | 's
   };
 }
 
+/**
+ * A 200 still carries per-op verdicts. `stale`, `already-deleted` and
+ * `recipe-deleted` are ordinary last-write-wins/cascade outcomes, but
+ * `invalid` and `unknown` mean the server threw the write away — report
+ * those so callers roll back instead of claiming a save that never landed.
+ */
+function batchRejected(body: unknown): boolean {
+  if (!body || typeof body !== 'object') {
+    return false;
+  }
+  const results = (body as { results?: unknown }).results;
+  if (!Array.isArray(results)) {
+    return false;
+  }
+  return results.some((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return false;
+    }
+    const { applied, reason } = entry as { applied?: unknown; reason?: unknown };
+    return applied === false && (reason === 'invalid' || reason === 'unknown');
+  });
+}
+
 export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
   for (let offset = 0; offset < ops.length; offset += MAX_PUSH_OPS) {
     const batch = ops.slice(offset, offset + MAX_PUSH_OPS);
@@ -101,6 +124,15 @@ export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
     }
     if (!response.ok) {
       return readErrorStatus(response);
+    }
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return 'error';
+    }
+    if (batchRejected(body)) {
+      return 'error';
     }
   }
   return 'ok';

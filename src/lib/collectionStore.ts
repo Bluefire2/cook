@@ -5,7 +5,7 @@ import {
   compactCollection,
   compactCollectionName,
 } from './compactCollection';
-import { moveRecipe, wouldExceedNamedCollectionCap, wouldExceedRecipeIdCap } from './collectionMembership';
+import { moveRecipe, wouldExceedRecipeIdCap } from './collectionMembership';
 import {
   getCollection,
   getSnapshot,
@@ -60,7 +60,7 @@ export const collectionStore = {
           : `Keep the name under ${MAX_COLLECTION_NAME_LENGTH} characters.`,
       );
     }
-    if (wouldExceedNamedCollectionCap(listCollections().length, true)) {
+    if (listCollections().length >= MAX_NAMED_COLLECTIONS) {
       throw new Error(`You can have up to ${MAX_NAMED_COLLECTIONS} collections.`);
     }
     const now = Date.now();
@@ -147,9 +147,6 @@ export const collectionStore = {
     }
   },
 
-  async addRecipe(collectionId: string, recipeId: string): Promise<void> {
-    await this.moveRecipe(recipeId, collectionId);
-  },
 };
 
 export function useCollections(): Collection[] | undefined {

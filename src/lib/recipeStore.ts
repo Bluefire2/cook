@@ -10,6 +10,7 @@ import {
   subscribe,
   upsertRecipe,
   getCollection,
+  listCollections,
   upsertCollection,
 } from './libraryMemory';
 import { postPhoto, pushOps } from './remote';
@@ -181,11 +182,31 @@ export const recipeStore = {
   async remove(id: string): Promise<void> {
     const previous = getRecipe(id);
     const at = Date.now();
+    // Nothing else drops the id from collections, and a dead id still counts
+    // against the per-collection cap, so scrub membership alongside the recipe.
+    const staleIn = listCollections().filter((c) => c.recipeIds.includes(id));
+    const scrubbed = staleIn.map((c) =>
+      compactCollection({
+        ...c,
+        recipeIds: c.recipeIds.filter((recipeId) => recipeId !== id),
+        updatedAt: at,
+      }),
+    );
     removeRecipeLocal(id);
-    const result = await pushOps([{ kind: 'recipe.delete', payload: { id, updatedAt: at } }]);
+    for (const collection of scrubbed) {
+      upsertCollection(collection);
+    }
+    const ops: PushOp[] = [{ kind: 'recipe.delete', payload: { id, updatedAt: at } }];
+    for (const collection of scrubbed) {
+      ops.push({ kind: 'collection.put', payload: collection });
+    }
+    const result = await pushOps(ops);
     if (result !== 'ok') {
       if (previous) {
         upsertRecipe(previous);
+      }
+      for (const collection of staleIn) {
+        upsertCollection(collection);
       }
       throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't delete the recipe.");
     }
