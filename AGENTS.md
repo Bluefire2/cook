@@ -148,7 +148,12 @@ must die, not mint a new secret. Production env also includes **`MAIL_FROM`**,
 `SOUS_DISABLE_RESEND=1` to remove an existing key from the service).
 
 This deploys **straight to production**. There is no staging. Record the
-current revision before `bash scripts/deploy.sh`.
+current revision before `bash scripts/deploy.sh`. The same script is what
+`.github/workflows/deploy.yml` runs; that workflow is **`workflow_dispatch`
+only** (never on push). It authenticates with Workload Identity Federation as
+`sous-github-deploy@cooking-assistant-508423.iam.gserviceaccount.com` and
+prints the live revision before calling the script. One-time pool / SA / IAM
+setup is in the README Deployment section. Do not add a `push` trigger.
 
 Docker is not installed locally; image builds run on Cloud Build.
 
@@ -192,7 +197,7 @@ invent other OAuth workarounds.
 
 Unit tests cover **pure** logic only. There is no fake-indexeddb, no Firestore
 emulator in CI, no GCS mock, no DOM testing library — do not add them for one
-feature.
+feature. `.github/workflows/ci.yml` stays `tsc -b` + `npm test` on push/PR.
 
 Live paste-to-recipe evals are `npm run test:import` (`src/**/*.eval.ts`,
 `vitest.eval.config.ts`). They call Gemini against fixtures in `evals/import/`

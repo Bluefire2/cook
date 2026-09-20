@@ -225,6 +225,77 @@ To turn off notification email on a service that already has a key:
 SOUS_DISABLE_RESEND=1 bash scripts/deploy.sh
 ```
 
+The same script can run from GitHub Actions. **Actions → Deploy → Run
+workflow** — it is `workflow_dispatch` only, never on push. Pick `main` unless
+you intend to ship another ref; every run replaces production. Tick **Omit
+RESEND_API_KEY** only when you want `SOUS_DISABLE_RESEND=1`. The job prints
+the live Cloud Run revision first, then calls `bash scripts/deploy.sh`.
+Secrets are reused from the live service; do not put `GEMINI_API_KEY` or
+`SESSION_SECRET` in GitHub Secrets.
+
+That job authenticates with Workload Identity Federation as
+`sous-github-deploy@cooking-assistant-508423.iam.gserviceaccount.com`. Create
+the pool, provider, and service account once (project owner, always
+`--project=cooking-assistant-508423`):
+
+```bash
+PROJECT=cooking-assistant-508423
+PROJECT_NUMBER=62867274312
+SA=sous-github-deploy@${PROJECT}.iam.gserviceaccount.com
+REPO=bluefire2/cook
+
+gcloud services enable iamcredentials.googleapis.com sts.googleapis.com iam.googleapis.com --project="$PROJECT"
+
+gcloud iam service-accounts create sous-github-deploy \
+  --project="$PROJECT" \
+  --display-name="GitHub Actions deploy"
+
+gcloud iam workload-identity-pools create github \
+  --project="$PROJECT" \
+  --location=global \
+  --display-name="GitHub Actions Pool"
+
+gcloud iam workload-identity-pools providers create-oidc github-actions \
+  --project="$PROJECT" \
+  --location=global \
+  --workload-identity-pool=github \
+  --display-name="GitHub Actions" \
+  --issuer-uri=https://token.actions.githubusercontent.com \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
+  --attribute-condition="assertion.repository == '${REPO}'"
+
+gcloud iam service-accounts add-iam-policy-binding "$SA" \
+  --project="$PROJECT" \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/attribute.repository/${REPO}"
+
+gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${SA}" --role=roles/run.admin --condition=None
+gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${SA}" --role=roles/cloudbuild.builds.editor --condition=None
+gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${SA}" --role=roles/artifactregistry.writer --condition=None
+
+gcloud iam service-accounts add-iam-policy-binding \
+  62867274312-compute@developer.gserviceaccount.com \
+  --project="$PROJECT" \
+  --member="serviceAccount:${SA}" \
+  --role=roles/iam.serviceAccountUser
+
+gcloud iam service-accounts add-iam-policy-binding \
+  "${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+  --project="$PROJECT" \
+  --member="serviceAccount:${SA}" \
+  --role=roles/iam.serviceAccountUser
+
+# Source upload for gcloud builds submit. Skip if this bucket name differs.
+gcloud storage buckets add-iam-policy-binding "gs://${PROJECT}_cloudbuild" \
+  --member="serviceAccount:${SA}" \
+  --role=roles/storage.objectAdmin \
+  --project="$PROJECT"
+```
+
+IAM can take a few minutes to propagate. The GitHub environment is
+`production`; add a required reviewer under **Settings → Environments** if you
+want a second click before the job starts.
+
 The script resolves secrets from the environment or the live service, never
 prints them, and uses `--env-vars-file` so comma-containing values like
 `ALLOWED_EMAILS` stay intact. Then map the domain:
