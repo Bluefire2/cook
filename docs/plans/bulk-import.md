@@ -56,7 +56,7 @@ one-shot `{ url }` call via `src/lib/importApi.ts`. Gemini request shape and
 
 ### 3. [ui] Sequential extract+save, progress, summary
 
-`urlList` (checkbox on): progress `Reading recipe 3 of 7 — this takes a few seconds.` After the loop, heading `Imported 4 of 6` or `Couldn't import these recipes` if zero succeeded. Success row: title links to `/recipe/:id`. Failure row: URL + message. Primary **Back to library**. Secondary **Try again** when any failed.
+`urlList` (checkbox on): determinate progress bar filled `current / total`, with copy `Reading recipe 3 of 7 — this takes a few seconds.` After the loop, heading `Imported 4 of 6` or `Couldn't import these recipes` if zero succeeded. Success row: title links to `/recipe/:id`. Failure row: URL + message. Primary **Back to library**. Secondary **Try again** when any failed.
 
 ## Out of scope
 

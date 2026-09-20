@@ -210,11 +210,38 @@ export default function ImportScreen() {
                 ? 'Extract recipes'
                 : 'Extract recipe'}
           </button>
-          {busy && (
+          {busy && progress && (
+            <div className="mt-3">
+              <div
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={progress.total}
+                aria-valuenow={progress.current}
+                aria-valuetext={`Reading recipe ${progress.current} of ${progress.total}`}
+                aria-label="Bulk import progress"
+                className="h-2 w-full overflow-hidden rounded-full bg-line"
+              >
+                <div
+                  className="h-full rounded-full bg-ink transition-[width] duration-300 ease-out"
+                  style={{
+                    width: `${Math.round(
+                      (progress.current / progress.total) * 100,
+                    )}%`,
+                  }}
+                />
+              </div>
+              <p
+                className="mt-2 text-center text-sm text-ink-subtle"
+                aria-live="polite"
+              >
+                Reading recipe {progress.current} of {progress.total} — this
+                takes a few seconds.
+              </p>
+            </div>
+          )}
+          {busy && !progress && (
             <p className="mt-3 text-center text-sm text-ink-subtle">
-              {progress
-                ? `Reading recipe ${progress.current} of ${progress.total} — this takes a few seconds.`
-                : 'Reading the recipe — this takes a few seconds.'}
+              Reading the recipe — this takes a few seconds.
             </p>
           )}
         </>
