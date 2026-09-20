@@ -43,6 +43,9 @@ $REPO = 'bluefire2/cook'
 & $gcloud services enable iamcredentials.googleapis.com sts.googleapis.com iam.googleapis.com --project=$P
 
 & $gcloud iam service-accounts create sous-github-deploy --project=$P --display-name="GitHub Actions deploy"
+& $gcloud iam service-accounts describe $SA --project=$P
+# $LASTEXITCODE must be 0 here. GCP reports a missing SA as PERMISSION_DENIED
+# on the next command, not as NOT_FOUND.
 
 & $gcloud iam workload-identity-pools create github --project=$P --location=global --display-name="GitHub Actions Pool"
 
@@ -65,6 +68,21 @@ $REPO = 'bluefire2/cook'
 Space-separated service names are separate arguments; do not join them with
 commas. Do not use `--set-env-vars` anywhere in this flow (`ALLOWED_EMAILS` is
 comma-separated; `deploy.sh` writes `--env-vars-file`).
+
+If `add-iam-policy-binding` on `$SA` returns `iam.serviceAccounts.setIamPolicy`
+denied (or it may not exist):
+
+```powershell
+& $gcloud iam service-accounts describe $SA --project=$P
+& $gcloud projects get-iam-policy $P --flatten="bindings[].members" --filter="bindings.members:user:chernyshov.k@gmail.com" --format="table(bindings.role)"
+```
+
+`describe` failing means the create step did not land — re-run create, wait a
+minute, describe again. `describe` succeeding but the binding still denied
+means this account is not `roles/owner` or `roles/iam.serviceAccountAdmin` on
+`$P`. `roles/editor` can create a service account and still cannot set IAM on
+it. The same `setIamPolicy` permission is required later for the Cloud Run
+runtime SA and the Cloud Build SA.
 
 ## Git Bash
 
@@ -90,6 +108,7 @@ gcloud services enable iamcredentials.googleapis.com sts.googleapis.com iam.goog
 gcloud iam service-accounts create sous-github-deploy \
   --project="$PROJECT" \
   --display-name="GitHub Actions deploy"
+gcloud iam service-accounts describe "$SA" --project="$PROJECT"
 
 gcloud iam workload-identity-pools create github \
   --project="$PROJECT" \
