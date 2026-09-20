@@ -1,0 +1,65 @@
+# Manual production deploy. Does not run on push or pull_request.
+# Replaces the public Cloud Run service behind https://sous.kyrylo.lol.
+#
+# One-time GCP setup (Workload Identity Federation + sous-github-deploy SA)
+# is in docs/github-actions-deploy.md. Until that exists, this job fails at
+# google-github-actions/auth.
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      disable_resend:
+        description: Omit RESEND_API_KEY from the env map (SOUS_DISABLE_RESEND=1)
+        type: boolean
+        default: false
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Cloud Run (sous)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      PROJECT: cooking-assistant-508423
+      REGION: europe-west1
+      SERVICE_NAME: sous
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # deploy.sh uses node -e to read Cloud Run env and write --env-vars-file.
+          node-version: '22.18'
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: cooking-assistant-508423
+          workload_identity_provider: projects/62867274312/locations/global/workloadIdentityPools/github/providers/github-actions
+          service_account: sous-github-deploy@cooking-assistant-508423.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Record current production revision
+        run: |
+          echo "Deploying git ${GITHUB_SHA} from ${GITHUB_REF}"
+          echo "Live Cloud Run revision before this deploy:"
+          gcloud run services describe "${SERVICE_NAME}" \
+            --region="${REGION}" \
+            --project="${PROJECT}" \
+            --format='yaml(status.latestReadyRevisionName,status.url,spec.template.spec.containers[0].image)'
+
+      - name: Build and deploy
+        env:
+          SOUS_DISABLE_RESEND: ${{ inputs.disable_resend && '1' || '' }}
+        run: bash scripts/deploy.sh

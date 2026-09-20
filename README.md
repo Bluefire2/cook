@@ -225,6 +225,22 @@ To turn off notification email on a service that already has a key:
 SOUS_DISABLE_RESEND=1 bash scripts/deploy.sh
 ```
 
+The same script can run from GitHub Actions. **Actions → Deploy → Run
+workflow** — it is `workflow_dispatch` only, never on push. Pick `main` unless
+you intend to ship another ref; every run replaces production. Tick **Omit
+RESEND_API_KEY** only when you want `SOUS_DISABLE_RESEND=1`. The job prints
+the live Cloud Run revision first, then calls `bash scripts/deploy.sh`.
+Secrets are reused from the live service; do not put `GEMINI_API_KEY` or
+`SESSION_SECRET` in GitHub Secrets.
+
+That job authenticates with Workload Identity Federation as
+`sous-github-deploy@cooking-assistant-508423.iam.gserviceaccount.com`. One-time
+pool, provider, and service-account setup (PowerShell and Git Bash) is in
+[`docs/github-actions-deploy.md`](docs/github-actions-deploy.md). IAM can take
+a few minutes to propagate. The GitHub environment is `production`; add a
+required reviewer under **Settings → Environments** if you want a second click
+before the job starts.
+
 The script resolves secrets from the environment or the live service, never
 prints them, and uses `--env-vars-file` so comma-containing values like
 `ALLOWED_EMAILS` stay intact. Then map the domain:
