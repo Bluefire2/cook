@@ -2,7 +2,7 @@
 # Replaces the public Cloud Run service behind https://sous.kyrylo.lol.
 #
 # One-time GCP setup (Workload Identity Federation + sous-github-deploy SA)
-# is in the README Deployment section. Until that exists, this job fails at
+# is in docs/github-actions-deploy.md. Until that exists, this job fails at
 # google-github-actions/auth.
 
 name: Deploy

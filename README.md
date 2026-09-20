@@ -234,78 +234,12 @@ Secrets are reused from the live service; do not put `GEMINI_API_KEY` or
 `SESSION_SECRET` in GitHub Secrets.
 
 That job authenticates with Workload Identity Federation as
-`sous-github-deploy@cooking-assistant-508423.iam.gserviceaccount.com`. Create
-the pool, provider, and service account once (project owner, always
-`--project=cooking-assistant-508423`):
-
-Git Bash on Windows: `gcloud` is often not on PATH, and MSYS rewrites
-arguments that look like `https://`, `gs://`, or `principalSet://` when it
-invokes `gcloud.cmd`. Start the session with this, then paste the rest:
-
-```bash
-export MSYS_NO_PATHCONV=1
-if ! command -v gcloud >/dev/null 2>&1; then
-  PATH="$HOME/AppData/Local/Google Cloud SDK/google-cloud-sdk/bin:$PATH"
-  export PATH
-fi
-command -v gcloud >/dev/null 2>&1 || { echo "gcloud not found; add the Cloud SDK bin dir to PATH"; exit 1; }
-
-PROJECT=cooking-assistant-508423
-PROJECT_NUMBER=62867274312
-SA=sous-github-deploy@${PROJECT}.iam.gserviceaccount.com
-REPO=bluefire2/cook
-
-gcloud services enable iamcredentials.googleapis.com sts.googleapis.com iam.googleapis.com --project="$PROJECT"
-
-gcloud iam service-accounts create sous-github-deploy \
-  --project="$PROJECT" \
-  --display-name="GitHub Actions deploy"
-
-gcloud iam workload-identity-pools create github \
-  --project="$PROJECT" \
-  --location=global \
-  --display-name="GitHub Actions Pool"
-
-gcloud iam workload-identity-pools providers create-oidc github-actions \
-  --project="$PROJECT" \
-  --location=global \
-  --workload-identity-pool=github \
-  --display-name="GitHub Actions" \
-  --issuer-uri=https://token.actions.githubusercontent.com \
-  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
-  --attribute-condition="assertion.repository == '${REPO}'"
-
-gcloud iam service-accounts add-iam-policy-binding "$SA" \
-  --project="$PROJECT" \
-  --role=roles/iam.workloadIdentityUser \
-  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/attribute.repository/${REPO}"
-
-gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${SA}" --role=roles/run.admin --condition=None
-gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${SA}" --role=roles/cloudbuild.builds.editor --condition=None
-gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${SA}" --role=roles/artifactregistry.writer --condition=None
-
-gcloud iam service-accounts add-iam-policy-binding \
-  62867274312-compute@developer.gserviceaccount.com \
-  --project="$PROJECT" \
-  --member="serviceAccount:${SA}" \
-  --role=roles/iam.serviceAccountUser
-
-gcloud iam service-accounts add-iam-policy-binding \
-  "${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-  --project="$PROJECT" \
-  --member="serviceAccount:${SA}" \
-  --role=roles/iam.serviceAccountUser
-
-# Source upload for gcloud builds submit. Skip if this bucket name differs.
-gcloud storage buckets add-iam-policy-binding "gs://${PROJECT}_cloudbuild" \
-  --member="serviceAccount:${SA}" \
-  --role=roles/storage.objectAdmin \
-  --project="$PROJECT"
-```
-
-IAM can take a few minutes to propagate. The GitHub environment is
-`production`; add a required reviewer under **Settings → Environments** if you
-want a second click before the job starts.
+`sous-github-deploy@cooking-assistant-508423.iam.gserviceaccount.com`. One-time
+pool, provider, and service-account setup (PowerShell and Git Bash) is in
+[`docs/github-actions-deploy.md`](docs/github-actions-deploy.md). IAM can take
+a few minutes to propagate. The GitHub environment is `production`; add a
+required reviewer under **Settings → Environments** if you want a second click
+before the job starts.
 
 The script resolves secrets from the environment or the live service, never
 prints them, and uses `--env-vars-file` so comma-containing values like

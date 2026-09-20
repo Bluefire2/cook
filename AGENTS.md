@@ -153,7 +153,8 @@ current revision before `bash scripts/deploy.sh`. The same script is what
 only** (never on push). It authenticates with Workload Identity Federation as
 `sous-github-deploy@cooking-assistant-508423.iam.gserviceaccount.com` and
 prints the live revision before calling the script. One-time pool / SA / IAM
-setup is in the README Deployment section. Do not add a `push` trigger.
+setup is in `docs/github-actions-deploy.md` (PowerShell and Git Bash). Do not
+add a `push` trigger.
 
 Docker is not installed locally; image builds run on Cloud Build.
 
