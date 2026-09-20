@@ -126,7 +126,14 @@ This file. Amends parent Decision 3 as above. Add a row to the Plans table in
   cannot be imported.' }` to `chrome.storage.session` and **do not POST**.
 - Injection succeeded but HTML is empty/whitespace →
   `'Could not read this page.'`, no POST.
-- Message becomes `{ type: 'import', tabId, url, html }`.
+- Both error paths **render as well as store**. `storage.session` drops the
+  change event when the value is byte-identical, so a second failure carrying
+  the same message never reaches the `onChanged` listener and would otherwise
+  leave the spinner up with every control hidden.
+- Message becomes `{ type: 'import', tabId, url, html }`. Await it: a rejection
+  means the worker never took the page, and since nothing has written
+  `working`, the stale-run timeout cannot rescue it — surface
+  `'Could not start the import.'` instead of spinning.
 
 `extension/background.js`:
 

@@ -47,10 +47,15 @@ function hideControls() {
   els.openSous.hidden = true;
 }
 
+/**
+ * Renders as well as stores, and does not lean on the `onChanged` listener:
+ * `storage.session` drops the change event when the value is byte-identical,
+ * so a second failure with the same message would leave the spinner up.
+ */
 async function writeError(message) {
-  await chrome.storage.session.set({
-    [stateKey(tabId)]: { phase: 'error', message },
-  });
+  const state = { phase: 'error', message };
+  await chrome.storage.session.set({ [stateKey(tabId)]: state });
+  render(state);
 }
 
 async function grabFromTab(id) {
@@ -85,7 +90,15 @@ async function startImport() {
     return;
   }
 
-  void chrome.runtime.sendMessage({ type: 'import', tabId, url, html: page.html });
+  // A rejection means the worker never took the page — it failed to start, or
+  // the message was too big. Nothing has written `working`, so the stale-run
+  // timeout cannot rescue this; say so instead of spinning forever.
+  try {
+    await chrome.runtime.sendMessage({ type: 'import', tabId, url, html: page.html });
+  } catch (err) {
+    console.warn('Sous: the importer did not accept the page', err);
+    await writeError('Could not start the import.');
+  }
 }
 
 // Each render* clears the controls itself, because the probe in `init` calls
