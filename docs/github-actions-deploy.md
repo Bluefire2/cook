@@ -88,6 +88,7 @@ $REPO = 'bluefire2/cook'
 & $gcloud projects add-iam-policy-binding $P --member="serviceAccount:${SA}" --role=roles/run.admin --condition=None
 & $gcloud projects add-iam-policy-binding $P --member="serviceAccount:${SA}" --role=roles/cloudbuild.builds.editor --condition=None
 & $gcloud projects add-iam-policy-binding $P --member="serviceAccount:${SA}" --role=roles/artifactregistry.writer --condition=None
+& $gcloud projects add-iam-policy-binding $P --member="serviceAccount:${SA}" --role=roles/serviceusage.serviceUsageConsumer --condition=None
 
 & $gcloud iam service-accounts add-iam-policy-binding 62867274312-compute@developer.gserviceaccount.com --project=$P --member="serviceAccount:${SA}" --role=roles/iam.serviceAccountUser
 
@@ -96,8 +97,11 @@ $REPO = 'bluefire2/cook'
 # — do not bind it. Confirm:
 #   & $gcloud builds get-default-service-account --project=$P
 
-# Source upload for gcloud builds submit. Skip if this bucket name differs.
-& $gcloud storage buckets add-iam-policy-binding "gs://${P}_cloudbuild" --member="serviceAccount:${SA}" --role=roles/storage.objectAdmin --project=$P
+# Source upload for gcloud builds submit. storage.objectAdmin is not enough
+# (gcloud needs storage.buckets.get). If describe 404s, create the bucket
+# first (Cloud Build's default is usually US):
+#   & $gcloud storage buckets create "gs://${P}_cloudbuild" --project=$P --location=us --uniform-bucket-level-access
+& $gcloud storage buckets add-iam-policy-binding "gs://${P}_cloudbuild" --member="serviceAccount:${SA}" --role=roles/storage.admin --project=$P
 ```
 
 Space-separated service names are separate arguments; do not join them with
@@ -120,6 +124,12 @@ it. The same `setIamPolicy` permission is required later for the Cloud Run
 runtime SA (the Compute Engine default). Do not bind
 `PROJECT_NUMBER@cloudbuild.gserviceaccount.com` — it does not exist in this
 project; Cloud Build runs as the Compute Engine SA.
+
+If `gcloud builds submit` fails with forbidden access to
+`PROJECT_cloudbuild` (often mentioning `serviceusage.services.use`):
+`roles/storage.objectAdmin` cannot `storage.buckets.get`. Grant
+`roles/storage.admin` on that bucket and
+`roles/serviceusage.serviceUsageConsumer` on the project.
 
 ## Git Bash
 
@@ -169,6 +179,7 @@ gcloud iam service-accounts add-iam-policy-binding "$SA" \
 gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${SA}" --role=roles/run.admin --condition=None
 gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${SA}" --role=roles/cloudbuild.builds.editor --condition=None
 gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${SA}" --role=roles/artifactregistry.writer --condition=None
+gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${SA}" --role=roles/serviceusage.serviceUsageConsumer --condition=None
 
 gcloud iam service-accounts add-iam-policy-binding \
   62867274312-compute@developer.gserviceaccount.com \
@@ -180,10 +191,10 @@ gcloud iam service-accounts add-iam-policy-binding \
 # PROJECT_NUMBER@cloudbuild.gserviceaccount.com is not created in this project.
 #   gcloud builds get-default-service-account --project="$PROJECT"
 
-# Source upload for gcloud builds submit. Skip if this bucket name differs.
+# Source upload for gcloud builds submit. storage.objectAdmin is not enough.
 gcloud storage buckets add-iam-policy-binding "gs://${PROJECT}_cloudbuild" \
   --member="serviceAccount:${SA}" \
-  --role=roles/storage.objectAdmin \
+  --role=roles/storage.admin \
   --project="$PROJECT"
 ```
 
