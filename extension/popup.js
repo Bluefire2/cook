@@ -1,9 +1,14 @@
 /**
  * Renders whatever the service worker has recorded for this tab. The popup
- * never fetches and never holds the import itself — see background.js.
+ * never POSTs: it grabs the tab HTML on the Import click (the `activeTab`
+ * user-gesture) and hands `{ url, html }` to the worker. See background.js.
  */
+import { grabPageSource } from './extract-page.js';
+
 /** A worker killed mid-run cannot clear its own state; don't spin forever. */
 const STALE_WORKING_MS = 2 * 60 * 1000;
+/** Comfortably inside the server's own 600 000 char / 1 500 000 body caps. */
+const MAX_HTML_CHARS = 400_000;
 
 const els = {
   pageTitle: document.getElementById('page-title'),
@@ -42,10 +47,45 @@ function hideControls() {
   els.openSous.hidden = true;
 }
 
-function startImport() {
+async function writeError(message) {
+  await chrome.storage.session.set({
+    [stateKey(tabId)]: { phase: 'error', message },
+  });
+}
+
+async function grabFromTab(id) {
+  try {
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId: id },
+      func: grabPageSource,
+      args: [MAX_HTML_CHARS],
+    });
+    const result = injection && injection.result;
+    if (result && typeof result.url === 'string' && typeof result.html === 'string') {
+      return result;
+    }
+  } catch (err) {
+    console.warn('Sous: page injection failed', err);
+  }
+  return null;
+}
+
+async function startImport() {
   setStatus('Reading the recipe…', null, true);
   hideControls();
-  void chrome.runtime.sendMessage({ type: 'import', tabId });
+
+  const page = await grabFromTab(tabId);
+  const url = page && page.url;
+  if (!url || !/^https?:\/\//i.test(url)) {
+    await writeError('This page cannot be imported.');
+    return;
+  }
+  if (!page.html.trim()) {
+    await writeError('Could not read this page.');
+    return;
+  }
+
+  void chrome.runtime.sendMessage({ type: 'import', tabId, url, html: page.html });
 }
 
 // Each render* clears the controls itself, because the probe in `init` calls
