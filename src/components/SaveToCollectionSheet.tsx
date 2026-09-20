@@ -53,21 +53,26 @@ export default function SaveToCollectionSheet({
         type="button"
         disabled={busy}
         onClick={() => void save(undefined)}
-        className={`${secondaryBtn} mt-3 w-full py-3`}
+        className="mt-3 w-full rounded-xl bg-surface-muted py-3 font-medium text-ink hover:bg-line active:bg-line disabled:opacity-40"
       >
-        Without a collection
+        No collection
       </button>
-      {collections.map((collection) => (
-        <button
-          key={collection.id}
-          type="button"
-          disabled={busy}
-          onClick={() => void save(collection.id)}
-          className={`${secondaryBtn} mt-2 w-full py-3`}
-        >
-          {collection.name}
-        </button>
-      ))}
+      {collections.length > 0 && (
+        <div className="mt-4 border-t border-line pt-3">
+          <p className="text-sm font-medium text-ink-muted">Collections</p>
+          {collections.map((collection) => (
+            <button
+              key={collection.id}
+              type="button"
+              disabled={busy}
+              onClick={() => void save(collection.id)}
+              className={`${secondaryBtn} mt-2 w-full py-3`}
+            >
+              {collection.name}
+            </button>
+          ))}
+        </div>
+      )}
       <form
         className="mt-4"
         onSubmit={(event) => {
