@@ -1,7 +1,43 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { collectionStore, useCollections } from '../lib/collectionStore';
+import { SpinnerIcon } from '../lib/icons';
 import { inputClass, primaryBtn, secondaryBtn } from '../lib/uiClasses';
 import Sheet from './Sheet';
+
+const UNFILED = 'unfiled';
+const CREATE = 'create';
+
+function SaveActionButton({
+  active,
+  busy,
+  className,
+  disabled,
+  onClick,
+  type = 'button',
+  children,
+}: {
+  active: boolean;
+  busy: boolean;
+  className: string;
+  disabled?: boolean;
+  onClick?: () => void;
+  type?: 'button' | 'submit';
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={Boolean(disabled) && !busy}
+      aria-busy={active || undefined}
+      aria-disabled={busy || disabled || undefined}
+      className={`inline-flex items-center justify-center gap-2 ${className} ${busy ? 'pointer-events-none' : ''} ${busy && !active ? 'opacity-40' : ''}`}
+    >
+      {active && <SpinnerIcon className="block h-5 w-5 animate-spin" />}
+      {children}
+    </button>
+  );
+}
 
 export default function SaveToCollectionSheet({
   onSave,
@@ -13,19 +49,20 @@ export default function SaveToCollectionSheet({
   const collections = useCollections() ?? [];
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const busy = pending !== null;
 
   const save = async (collectionId: string | undefined) => {
     if (busy) {
       return;
     }
-    setBusy(true);
+    setPending(collectionId ?? UNFILED);
     setError(null);
     try {
       await onSave(collectionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save the recipe.");
-      setBusy(false);
+      setPending(null);
     }
   };
 
@@ -33,7 +70,7 @@ export default function SaveToCollectionSheet({
     if (busy) {
       return;
     }
-    setBusy(true);
+    setPending(CREATE);
     setError(null);
     try {
       const created = await collectionStore.create(name);
@@ -42,34 +79,34 @@ export default function SaveToCollectionSheet({
       setError(
         err instanceof Error ? err.message : "Couldn't save the collection.",
       );
-      setBusy(false);
+      setPending(null);
     }
   };
 
   return (
     <Sheet onClose={onCancel}>
       <h2 className="text-lg font-semibold">Save to</h2>
-      <button
-        type="button"
-        disabled={busy}
+      <SaveActionButton
+        active={pending === UNFILED}
+        busy={busy}
         onClick={() => void save(undefined)}
-        className="mt-3 w-full rounded-xl bg-surface-muted py-3 font-medium text-ink hover:bg-line active:bg-line disabled:opacity-40"
+        className="mt-3 w-full rounded-xl bg-surface-muted py-3 font-medium text-ink hover:bg-line active:bg-line"
       >
         No collection
-      </button>
+      </SaveActionButton>
       {collections.length > 0 && (
         <div className="mt-4 border-t border-line pt-3">
           <p className="text-sm font-medium text-ink-muted">Collections</p>
           {collections.map((collection) => (
-            <button
+            <SaveActionButton
               key={collection.id}
-              type="button"
-              disabled={busy}
+              active={pending === collection.id}
+              busy={busy}
               onClick={() => void save(collection.id)}
               className={`${secondaryBtn} mt-2 w-full py-3`}
             >
               {collection.name}
-            </button>
+            </SaveActionButton>
           ))}
         </div>
       )}
@@ -93,13 +130,15 @@ export default function SaveToCollectionSheet({
           className={`${inputClass} mt-1.5`}
         />
         {error && <p className="mt-2 text-sm text-danger">{error}</p>}
-        <button
+        <SaveActionButton
           type="submit"
-          disabled={busy || name.trim() === ''}
+          active={pending === CREATE}
+          busy={busy}
+          disabled={name.trim() === ''}
           className={`${primaryBtn} mt-3 w-full py-3`}
         >
           Create and save
-        </button>
+        </SaveActionButton>
       </form>
       <button
         type="button"
