@@ -102,10 +102,10 @@ export const recipeStore = {
     if (!existing) throw new Error(`No recipe with id ${id}.`);
     const photoId = draft.photoId ?? existing.photoId;
     const galleryPhotoIds = draft.galleryPhotoIds ?? existing.galleryPhotoIds;
-    const next = compactRecipe({
+    await recipeStore.save({
       id: existing.id,
       createdAt: existing.createdAt,
-      updatedAt: Date.now(),
+      updatedAt: existing.updatedAt,
       title: draft.title,
       description: draft.description,
       servings: draft.servings,
@@ -119,18 +119,6 @@ export const recipeStore = {
       photoId,
       galleryPhotoIds,
     });
-    upsertRecipe(next);
-    try {
-      await uploadRecipePhotos(next);
-      const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
-      if (result !== 'ok') {
-        throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
-      }
-      await deleteRemovedPhotos(existing, next);
-    } catch (err) {
-      upsertRecipe(existing);
-      throw err;
-    }
   },
 
   async create(
