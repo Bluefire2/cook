@@ -25,6 +25,38 @@ The GitHub environment is `production`. Add a required reviewer under
 **Settings → Environments** if you want a second click before the job starts.
 IAM can take a few minutes to propagate.
 
+## If `google-github-actions/auth` rejects the credential
+
+GitHub's OIDC `repository` claim is `Bluefire2/cook` (canonical owner
+casing). A condition of `assertion.repository == 'bluefire2/cook'` is
+rejected as `unauthorized_client` / "The given credential is rejected by
+the attribute condition." Lower-case both the condition and the mapped
+`attribute.repository` so the existing
+`principalSet://…/attribute.repository/bluefire2/cook` binding still
+matches.
+
+If the provider already exists, update it (do not recreate):
+
+```powershell
+$gcloud = "C:\Users\chern\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd"
+$P = 'cooking-assistant-508423'
+
+& $gcloud iam workload-identity-pools providers update-oidc github-actions --project=$P --location=global --workload-identity-pool=github --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository.lowerAscii(),attribute.repository_owner=assertion.repository_owner.lowerAscii()" --attribute-condition="assertion.repository.lowerAscii() == 'bluefire2/cook'"
+```
+
+```bash
+export MSYS_NO_PATHCONV=1
+gcloud iam workload-identity-pools providers update-oidc github-actions \
+  --project=cooking-assistant-508423 \
+  --location=global \
+  --workload-identity-pool=github \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository.lowerAscii(),attribute.repository_owner=assertion.repository_owner.lowerAscii()" \
+  --attribute-condition="assertion.repository.lowerAscii() == 'bluefire2/cook'"
+```
+
+Wait about five minutes (WIF provider updates are eventually consistent),
+then rerun **Actions → Deploy**.
+
 ## PowerShell
 
 `gcloud` is a native executable, so a non-zero exit does **not** stop the
@@ -49,7 +81,7 @@ $REPO = 'bluefire2/cook'
 
 & $gcloud iam workload-identity-pools create github --project=$P --location=global --display-name="GitHub Actions Pool"
 
-& $gcloud iam workload-identity-pools providers create-oidc github-actions --project=$P --location=global --workload-identity-pool=github --display-name="GitHub Actions" --issuer-uri=https://token.actions.githubusercontent.com --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" --attribute-condition="assertion.repository == '$REPO'"
+& $gcloud iam workload-identity-pools providers create-oidc github-actions --project=$P --location=global --workload-identity-pool=github --display-name="GitHub Actions" --issuer-uri=https://token.actions.githubusercontent.com --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository.lowerAscii(),attribute.repository_owner=assertion.repository_owner.lowerAscii()" --attribute-condition="assertion.repository.lowerAscii() == 'bluefire2/cook'"
 
 & $gcloud iam service-accounts add-iam-policy-binding $SA --project=$P --role=roles/iam.workloadIdentityUser --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/attribute.repository/${REPO}"
 
@@ -126,8 +158,8 @@ gcloud iam workload-identity-pools providers create-oidc github-actions \
   --workload-identity-pool=github \
   --display-name="GitHub Actions" \
   --issuer-uri=https://token.actions.githubusercontent.com \
-  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
-  --attribute-condition="assertion.repository == '${REPO}'"
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository.lowerAscii(),attribute.repository_owner=assertion.repository_owner.lowerAscii()" \
+  --attribute-condition="assertion.repository.lowerAscii() == 'bluefire2/cook'"
 
 gcloud iam service-accounts add-iam-policy-binding "$SA" \
   --project="$PROJECT" \
