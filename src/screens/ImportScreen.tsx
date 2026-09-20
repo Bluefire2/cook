@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
+import SaveToCollectionSheet from '../components/SaveToCollectionSheet';
 import { collectionStore, libraryHref } from '../lib/collectionStore';
 import { importRecipe, type ExtractedRecipe } from '../lib/importApi';
 import { recipeStore } from '../lib/recipeStore';
@@ -19,6 +20,7 @@ export default function ImportScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ExtractedRecipe | null>(null);
+  const [pendingDraft, setPendingDraft] = useState<RecipeDraft | null>(null);
 
   const extract = async () => {
     const trimmed = input.trim();
@@ -37,10 +39,13 @@ export default function ImportScreen() {
     }
   };
 
-  const save = async (draft: RecipeDraft) => {
+  const save = async (collectionId: string | undefined) => {
+    if (!pendingDraft) {
+      return;
+    }
     const recipe = await recipeStore.create(
-      draft,
-      knownCollectionId ? { collectionId: knownCollectionId } : undefined,
+      pendingDraft,
+      collectionId ? { collectionId } : undefined,
     );
     navigate(`/recipe/${recipe.id}`, { replace: true });
   };
@@ -91,11 +96,20 @@ export default function ImportScreen() {
           <RecipeForm
             initial={preview}
             submitLabel="Save to library"
-            onSubmit={save}
+            onSubmit={(draft) => {
+              setPendingDraft(draft);
+            }}
             onCancel={() => setPreview(null)}
           />
+          {pendingDraft && (
+            <SaveToCollectionSheet
+              onSave={save}
+              onCancel={() => setPendingDraft(null)}
+            />
+          )}
         </>
       )}
     </div>
   );
 }
+

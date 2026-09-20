@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import Sheet from '../components/Sheet';
 import { PlusIcon } from '../lib/icons';
 import {
   collectionStore,
@@ -27,29 +27,6 @@ function CardThumb({ photoId }: { photoId: string }) {
   return (
     <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-surface-muted">
       {url && <img src={url} alt="" className="h-full w-full object-cover" />}
-    </div>
-  );
-}
-
-function Sheet({
-  onClose,
-  children,
-}: {
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div className="fixed inset-0 z-30 flex flex-col justify-end">
-      <button
-        type="button"
-        aria-label="Dismiss"
-        tabIndex={-1}
-        onClick={onClose}
-        className="flex-1 bg-black/40"
-      />
-      <div className="rounded-t-3xl bg-surface px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl md:mx-auto md:w-full md:max-w-xl">
-        {children}
-      </div>
     </div>
   );
 }
@@ -497,59 +474,72 @@ export default function Library() {
       {createOpen && (
         <Sheet onClose={() => closeSheets()}>
           <h2 className="text-lg font-semibold">New collection</h2>
-          <input
-            autoFocus
-            value={collectionName}
-            onChange={(e) => setCollectionName(e.target.value)}
-            placeholder="Name"
-            className={`${inputClass} mt-3`}
-          />
-          {collectionError && (
-            <p className="mt-2 text-sm text-danger">{collectionError}</p>
-          )}
-          <button
-            type="button"
-            onClick={() => void submitCreate()}
-            className={`${primaryBtn} mt-3 w-full py-3`}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitCreate();
+            }}
           >
-            Create
-          </button>
-          <button
-            type="button"
-            onClick={() => closeSheets()}
-            className={`${secondaryBtn} mt-2 w-full py-3`}
-          >
-            Cancel
-          </button>
+            <input
+              autoFocus
+              value={collectionName}
+              onChange={(e) => setCollectionName(e.target.value)}
+              placeholder="Name"
+              className={`${inputClass} mt-3`}
+            />
+            {collectionError && (
+              <p className="mt-2 text-sm text-danger">{collectionError}</p>
+            )}
+            <button
+              type="submit"
+              disabled={collectionName.trim() === ''}
+              className={`${primaryBtn} mt-3 w-full py-3`}
+            >
+              Create
+            </button>
+            <button
+              type="button"
+              onClick={() => closeSheets()}
+              className={`${secondaryBtn} mt-2 w-full py-3`}
+            >
+              Cancel
+            </button>
+          </form>
         </Sheet>
       )}
 
       {renameOpen && named && (
         <Sheet onClose={() => closeSheets()}>
           <h2 className="text-lg font-semibold">Rename collection</h2>
-          <input
-            autoFocus
-            value={collectionName}
-            onChange={(e) => setCollectionName(e.target.value)}
-            className={`${inputClass} mt-3`}
-          />
-          {collectionError && (
-            <p className="mt-2 text-sm text-danger">{collectionError}</p>
-          )}
-          <button
-            type="button"
-            onClick={() => void submitRename()}
-            className={`${primaryBtn} mt-3 w-full py-3`}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitRename();
+            }}
           >
-            Save
-          </button>
-          <button
-            type="button"
-            onClick={() => closeSheets()}
-            className={`${secondaryBtn} mt-2 w-full py-3`}
-          >
-            Cancel
-          </button>
+            <input
+              autoFocus
+              value={collectionName}
+              onChange={(e) => setCollectionName(e.target.value)}
+              className={`${inputClass} mt-3`}
+            />
+            {collectionError && (
+              <p className="mt-2 text-sm text-danger">{collectionError}</p>
+            )}
+            <button
+              type="submit"
+              className={`${primaryBtn} mt-3 w-full py-3`}
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => closeSheets()}
+              className={`${secondaryBtn} mt-2 w-full py-3`}
+            >
+              Cancel
+            </button>
+          </form>
         </Sheet>
       )}
 

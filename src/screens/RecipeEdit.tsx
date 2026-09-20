@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
+import SaveToCollectionSheet from '../components/SaveToCollectionSheet';
 import { collectionStore, libraryHref } from '../lib/collectionStore';
 import { blankDraft } from '../lib/recipeDraft';
 import { recipeStore, useRecipe } from '../lib/recipeStore';
@@ -49,11 +50,15 @@ function CreateRecipe() {
     : undefined;
   const backTo = libraryHref(knownCollectionId);
   const [initial] = useState(blankDraft);
+  const [pendingDraft, setPendingDraft] = useState<RecipeDraft | null>(null);
 
-  const create = async (draft: RecipeDraft) => {
+  const save = async (destCollectionId: string | undefined) => {
+    if (!pendingDraft) {
+      return;
+    }
     const recipe = await recipeStore.create(
-      draft,
-      knownCollectionId ? { collectionId: knownCollectionId } : undefined,
+      pendingDraft,
+      destCollectionId ? { collectionId: destCollectionId } : undefined,
     );
     navigate(`/recipe/${recipe.id}`, { replace: true });
   };
@@ -62,10 +67,18 @@ function CreateRecipe() {
     <Screen heading="New recipe" backTo={backTo} backLabel="Library">
       <RecipeForm
         initial={initial}
-        submitLabel="Save"
-        onSubmit={create}
+        submitLabel="Save to library"
+        onSubmit={(draft) => {
+          setPendingDraft(draft);
+        }}
         onCancel={() => navigate(backTo)}
       />
+      {pendingDraft && (
+        <SaveToCollectionSheet
+          onSave={save}
+          onCancel={() => setPendingDraft(null)}
+        />
+      )}
     </Screen>
   );
 }
