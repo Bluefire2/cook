@@ -7,11 +7,7 @@
  * and `compactRecipeFields` keep their single home in `server/sync.ts`.
  */
 import { randomUUID } from 'node:crypto';
-import {
-  extractRecipeDraft,
-  extractRecipeSource,
-  fetchPageHtml,
-} from '../api/import.ts';
+import { extractRecipeDraft, extractRecipeSource } from '../api/import.ts';
 import { recipePutFromExtraction } from './recipeFromExtraction.ts';
 import { sessionFromHeader } from './session.ts';
 import { applyPushOp } from './sync.ts';
@@ -112,8 +108,8 @@ export async function extensionImport(req: Request): Promise<Response> {
   }
 
   const url = typeof body.url === 'string' ? body.url.trim() : '';
-  // Checked here rather than left to `fetchPageHtml`, which the `html` path
-  // skips: `sourceUrl` is stored on the recipe either way.
+  // `sourceUrl` is stored on the recipe even though this route never fetches
+  // the URL: empty html is an error, not a `fetchPageHtml` fallback.
   let parsedUrl: URL | null = null;
   try {
     parsedUrl = new URL(url);
@@ -128,17 +124,11 @@ export async function extensionImport(req: Request): Promise<Response> {
   if (html.length > MAX_HTML_CHARS) {
     return jsonResponse(req, { error: TOO_LARGE }, 413);
   }
-
-  let source: string;
-  if (html.trim() !== '') {
-    source = extractRecipeSource(html);
-  } else {
-    const page = await fetchPageHtml(url);
-    if (!page.ok) {
-      return jsonResponse(req, { error: page.error }, page.status);
-    }
-    source = extractRecipeSource(page.html);
+  if (html.trim() === '') {
+    return jsonResponse(req, { error: 'Could not read that page.' }, 422);
   }
+
+  const source = extractRecipeSource(html);
 
   if (source.trim() === '') {
     return jsonResponse(req, { error: 'Could not read that page.' }, 422);

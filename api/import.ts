@@ -234,10 +234,10 @@ export type PageFetchResult =
   | { ok: false; status: number; error: string };
 
 /**
- * Also used by `server/extensionImport.ts`, which needs the same fetch and the
- * same user-facing wording. Exported rather than duplicated: the no-sibling-
- * imports rule is about `api/` entrypoints importing each other under Vercel's
- * isolated transpile, and nothing here imports a sibling.
+ * Used by `POST /api/import` for the website URL path. Exported rather than
+ * inlined: the no-sibling-imports rule is about `api/` entrypoints importing
+ * each other under Vercel's isolated transpile, and nothing here imports a
+ * sibling. The Chrome extension does not call this — it sends the tab HTML.
  */
 export async function fetchPageHtml(rawUrl: string): Promise<PageFetchResult> {
   let parsed: URL;
