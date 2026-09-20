@@ -10,6 +10,7 @@ import {
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
+import { visibleLibraryRecipes } from '../lib/visibleLibraryRecipes';
 import { useSession } from '../lib/session';
 import { useSyncStatus } from '../lib/syncEngine';
 import {
@@ -52,6 +53,7 @@ export default function Library() {
   const currentId = named?.id;
 
   const [query, setQuery] = useState('');
+  const [browseAll, setBrowseAll] = useState(false);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -76,17 +78,12 @@ export default function Library() {
         : unfiledRecipes(allRecipes, collections);
 
   const q = query.trim().toLowerCase();
-  // Searching spans the whole library, not the active chip: a filed recipe
-  // would otherwise be unreachable from `/`, which is where every back link
-  // lands and there is no all-collections view to search from.
-  const recipes =
-    q === ''
-      ? scoped
-      : allRecipes?.filter(
-          (r) =>
-            r.title.toLowerCase().includes(q) ||
-            r.tags.some((tag) => tag.toLowerCase().includes(q)),
-        );
+  const recipes = visibleLibraryRecipes({
+    all: allRecipes,
+    scoped,
+    query,
+    browseAll,
+  });
 
   const pendingDelete = allRecipes?.find((r) => r.id === pendingDeleteId);
   const moveRecipe = allRecipes?.find((r) => r.id === moveRecipeId);
@@ -181,6 +178,10 @@ export default function Library() {
   };
 
   useEffect(() => {
+    setBrowseAll(false);
+  }, [currentId]);
+
+  useEffect(() => {
     if (!menuId) return;
     firstActionRef.current?.focus({ preventScroll: true });
   }, [menuId]);
@@ -247,14 +248,19 @@ export default function Library() {
         <nav aria-label="Collections" className="mb-3 flex items-start gap-1.5">
           <FolderIcon className="mt-2 block h-4 w-4 shrink-0 text-ink-muted" />
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <Link to="/" className={chipClass(currentId === undefined)}>
+            <Link
+              to="/"
+              onClick={() => setBrowseAll(false)}
+              className={chipClass(!browseAll && currentId === undefined)}
+            >
               Recipes
             </Link>
             {collections?.map((collection) => (
               <Link
                 key={collection.id}
                 to={libraryHref(collection.id)}
-                className={chipClass(collection.id === currentId)}
+                onClick={() => setBrowseAll(false)}
+                className={chipClass(!browseAll && collection.id === currentId)}
               >
                 {collection.name}
               </Link>
@@ -296,13 +302,38 @@ export default function Library() {
         </nav>
       )}
 
-      <input
-        type="search"
-        placeholder="Search recipes…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        className={`${inputClass} mb-4`}
-      />
+      {showSwitcher ? (
+        <div className="mb-4 flex items-center gap-2">
+          <input
+            type="search"
+            placeholder={
+              browseAll
+                ? 'Search all recipes…'
+                : named
+                  ? `Search in ${named.name}…`
+                  : 'Search recipes…'
+            }
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className={`${inputClass} min-w-0 flex-1`}
+          />
+          <button
+            type="button"
+            onClick={() => setBrowseAll((on) => !on)}
+            className={`${chipClass(browseAll)} shrink-0`}
+          >
+            All collections
+          </button>
+        </div>
+      ) : (
+        <input
+          type="search"
+          placeholder="Search recipes…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className={`${inputClass} mb-4`}
+        />
+      )}
 
       {recipes === undefined ? (
         <p className="py-12 text-center text-ink-muted">Loading recipes…</p>

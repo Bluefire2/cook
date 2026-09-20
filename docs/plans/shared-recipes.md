@@ -471,10 +471,27 @@ Vite + `dev:api`, `http://localhost:5173` (not `127.0.0.1`). Signed in.
   round-trips remain unverified: available browser session was signed out.
 
 Preserved concurrent push-rejection handling, recipe deletion membership
-cleanup, folder-reuse fixes, whole-library search, and the folder icon.
+cleanup, folder-reuse fixes, and the folder icon. Library search is scoped
+to the selected chip, with an All collections toggle when named folders
+exist.
 No schema, endpoint, dependency, or deployment changes. Push operations
 remain individually applied: a client rollback does not undo partially
 successful server writes. This cleanup does not make saves atomic.
+
+## Gate 1 — after PR 1 merge, before view ACLs
+
+Not in PR 1. Do these before starting PR 2:
+
+- **A2.** Thread rejection reason through `RemoteResult` so a 50-collection
+  cap can say “You can have up to 50 collections” instead of a generic
+  save error.
+- **B3 / B4 / B2.** `collectionsToScrub(docs, recipeId, at)` in
+  `server/store.ts`, tested next to `compactCollectionFields` /
+  `compareMutation`. Thin glue in `cascadeRecipeDelete` using
+  `where('recipeIds', 'array-contains', recipeId)`. Confirm the Native
+  auto-index in project `cooking-assistant-508423` before relying on it
+  (no `firestore.indexes.json` in this repo). No backfill: #13 has not
+  reached other users.
 
 ## PR 2 — Collection view ACLs
 
