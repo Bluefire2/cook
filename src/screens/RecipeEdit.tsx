@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
+import { collectionStore, libraryHref } from '../lib/collectionStore';
 import { blankDraft } from '../lib/recipeDraft';
 import { recipeStore, useRecipe } from '../lib/recipeStore';
 import { backLink, primaryBtn } from '../lib/uiClasses';
@@ -41,20 +42,29 @@ function Screen({
 
 function CreateRecipe() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const collectionId = params.get('c') ?? undefined;
+  const knownCollectionId = collectionId && collectionStore.get(collectionId)
+    ? collectionId
+    : undefined;
+  const backTo = libraryHref(knownCollectionId);
   const [initial] = useState(blankDraft);
 
   const create = async (draft: RecipeDraft) => {
-    const recipe = await recipeStore.create(draft);
+    const recipe = await recipeStore.create(
+      draft,
+      knownCollectionId ? { collectionId: knownCollectionId } : undefined,
+    );
     navigate(`/recipe/${recipe.id}`, { replace: true });
   };
 
   return (
-    <Screen heading="New recipe" backTo="/" backLabel="Library">
+    <Screen heading="New recipe" backTo={backTo} backLabel="Library">
       <RecipeForm
         initial={initial}
         submitLabel="Save"
         onSubmit={create}
-        onCancel={() => navigate('/')}
+        onCancel={() => navigate(backTo)}
       />
     </Screen>
   );

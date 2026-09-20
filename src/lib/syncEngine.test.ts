@@ -17,6 +17,7 @@ describe('applyPullChanges', () => {
   it('upserts live docs and drops tombstones', () => {
     const acc = {
       recipes: new Map(),
+      collections: new Map(),
       chat: new Map(),
       cook: new Map(),
       remotePhotoIds: new Set<string>(),
@@ -69,6 +70,40 @@ describe('applyPullChanges', () => {
     expect(acc.chat.size).toBe(0);
     expect(acc.cook.size).toBe(0);
     expect(acc.remotePhotoIds.size).toBe(0);
+  });
+
+  it('upserts live collections and drops tombstones', () => {
+    const acc = {
+      recipes: new Map(),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      remotePhotoIds: new Set<string>(),
+    };
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+      collections: [
+        {
+          id: 'c1',
+          name: 'Dinners',
+          recipeIds: ['r1'],
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    });
+    expect(acc.collections.get('c1')?.name).toBe('Dinners');
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+      collections: [{ id: 'c1', deletedAt: 9 }],
+    });
+    expect(acc.collections.size).toBe(0);
   });
 });
 

@@ -9,11 +9,16 @@ import {
   removeRecipeLocal,
   subscribe,
   upsertRecipe,
+  getCollection,
+  upsertCollection,
 } from './libraryMemory';
 import { postPhoto, pushOps } from './remote';
 import { compactRecipe } from './compactRecipe';
+import { compactCollection } from './compactCollection';
+import { wouldExceedRecipeIdCap } from './collectionMembership';
 import { recipePhotoIds } from './recipePhotos';
 import type { Recipe, RecipeDraft } from './types';
+import type { PushOp } from './pushOps';
 
 export { compactRecipe };
 
@@ -135,6 +140,7 @@ export const recipeStore = {
 
   async create(
     data: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>,
+    opts?: { collectionId?: string },
   ): Promise<Recipe> {
     const now = Date.now();
     const recipe = compactRecipe({
@@ -143,15 +149,42 @@ export const recipeStore = {
       createdAt: now,
       updatedAt: now,
     });
+    const collectionId = opts?.collectionId;
+    const previousCollection =
+      collectionId !== undefined ? getCollection(collectionId) : undefined;
+    let nextCollection = previousCollection;
+    if (collectionId !== undefined) {
+      if (!previousCollection) {
+        throw new Error('Collection not found.');
+      }
+      if (wouldExceedRecipeIdCap([...previousCollection.recipeIds, recipe.id])) {
+        throw new Error('This collection is full.');
+      }
+      nextCollection = compactCollection({
+        ...previousCollection,
+        recipeIds: [...previousCollection.recipeIds, recipe.id],
+        updatedAt: now,
+      });
+    }
     upsertRecipe(recipe);
+    if (nextCollection) {
+      upsertCollection(nextCollection);
+    }
     try {
       await uploadRecipePhotos(recipe);
-      const result = await pushOps([{ kind: 'recipe.put', payload: recipe }]);
+      const ops: PushOp[] = [{ kind: 'recipe.put', payload: recipe }];
+      if (nextCollection) {
+        ops.push({ kind: 'collection.put', payload: nextCollection });
+      }
+      const result = await pushOps(ops);
       if (result !== 'ok') {
         throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
       }
     } catch (err) {
       removeRecipeLocal(recipe.id);
+      if (previousCollection) {
+        upsertCollection(previousCollection);
+      }
       throw err;
     }
     return recipe;

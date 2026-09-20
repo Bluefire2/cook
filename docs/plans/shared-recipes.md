@@ -441,11 +441,11 @@ Vite + `dev:api`, `http://localhost:5173` (not `127.0.0.1`). Signed in.
 
 ### PR 1 status
 
-- [ ] 1. [core] Collection type, compact, membership helpers
-- [ ] 2. [core] Store kind + push/pull
-- [ ] 3. [core] Client memory + stores
-- [ ] 4. [ui] Library default-identical, then folders
-- [ ] 5. [core] Backup v3 + AGENTS.md
+- [x] 1. [core] Collection type, compact, membership helpers
+- [x] 2. [core] Store kind + push/pull
+- [x] 3. [core] Client memory + stores
+- [x] 4. [ui] Library default-identical, then folders
+- [x] 5. [core] Backup v3 + AGENTS.md
 - [ ] 6. [ui] Browser verification
 
 ## PR 2 — Collection view ACLs

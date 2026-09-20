@@ -1,9 +1,10 @@
 import { recipePhotoIds } from './recipePhotos';
-import type { ChatMessage, Recipe } from './types';
+import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 
 export type LibrarySnapshot = {
   recipes: ReadonlyMap<string, Recipe>;
+  collections: ReadonlyMap<string, Collection>;
   chat: ReadonlyMap<string, ChatMessage>;
   cook: ReadonlyMap<string, CookStateRow>;
   remotePhotoIds: ReadonlySet<string>;
@@ -16,6 +17,7 @@ const listeners = new Set<() => void>();
 function empty(loaded: boolean): LibrarySnapshot {
   return {
     recipes: new Map(),
+    collections: new Map(),
     chat: new Map(),
     cook: new Map(),
     remotePhotoIds: new Set(),
@@ -35,6 +37,7 @@ function emit(next: LibrarySnapshot): void {
 
 function cloneMaps(from: LibrarySnapshot): {
   recipes: Map<string, Recipe>;
+  collections: Map<string, Collection>;
   chat: Map<string, ChatMessage>;
   cook: Map<string, CookStateRow>;
   remotePhotoIds: Set<string>;
@@ -42,6 +45,7 @@ function cloneMaps(from: LibrarySnapshot): {
 } {
   return {
     recipes: new Map(from.recipes),
+    collections: new Map(from.collections),
     chat: new Map(from.chat),
     cook: new Map(from.cook),
     remotePhotoIds: new Set(from.remotePhotoIds),
@@ -73,12 +77,14 @@ export function clearLibrary(): void {
 
 export function replaceFromPull(next: {
   recipes: Map<string, Recipe>;
+  collections: Map<string, Collection>;
   chat: Map<string, ChatMessage>;
   cook: Map<string, CookStateRow>;
   remotePhotoIds: Set<string>;
 }): void {
   emit({
     recipes: next.recipes,
+    collections: next.collections,
     chat: next.chat,
     cook: next.cook,
     remotePhotoIds: next.remotePhotoIds,
@@ -182,6 +188,29 @@ export function listRecipes(): Recipe[] {
 
 export function getRecipe(id: string): Recipe | undefined {
   return snapshot.recipes.get(id);
+}
+
+export function listCollections(): Collection[] {
+  return [...snapshot.collections.values()].sort((a, b) => {
+    const name = a.name.localeCompare(b.name);
+    return name !== 0 ? name : a.id.localeCompare(b.id);
+  });
+}
+
+export function getCollection(id: string): Collection | undefined {
+  return snapshot.collections.get(id);
+}
+
+export function upsertCollection(collection: Collection): void {
+  const next = cloneMaps(snapshot);
+  next.collections.set(collection.id, collection);
+  emit({ ...snapshot, ...next });
+}
+
+export function removeCollectionLocal(id: string): void {
+  const next = cloneMaps(snapshot);
+  next.collections.delete(id);
+  emit({ ...snapshot, ...next });
 }
 
 export function listChat(recipeId: string): ChatMessage[] {

@@ -1,7 +1,7 @@
 import { FieldPath, Firestore, type Transaction } from '@google-cloud/firestore';
 import { firestoreConfig } from './env.ts';
 
-export type StoreKind = 'recipes' | 'chatMessages' | 'cookState' | 'photos';
+export type StoreKind = 'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections';
 
 export type CursorTuple = [number, string];
 
@@ -57,6 +57,10 @@ export function photoDocRef(uid: string, photoId: string) {
 
 export function recipeDocRef(uid: string, recipeId: string) {
   return colRef(uid, 'recipes').doc(recipeId);
+}
+
+export function collectionDocRef(uid: string, collectionId: string) {
+  return colRef(uid, 'collections').doc(collectionId);
 }
 
 export function photosColRef(uid: string) {
@@ -126,7 +130,7 @@ export function decodePullCursor(raw: string | null | undefined): PullCursor {
       return {};
     }
     const out: PullCursor = {};
-    const kinds: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos'];
+    const kinds: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos', 'collections'];
     for (const kind of kinds) {
       const entry = parsed[kind];
       if (!Array.isArray(entry) || entry.length !== 2) {
@@ -220,6 +224,38 @@ export function compactRecipeFields(recipe: Record<string, unknown>): Record<str
   return next;
 }
 
+export const MAX_NAMED_COLLECTIONS = 50;
+export const MAX_COLLECTION_RECIPE_IDS = 500;
+export const MAX_COLLECTION_NAME_LENGTH = 80;
+
+export function compactCollectionFields(
+  collection: Record<string, unknown>,
+): Record<string, unknown> {
+  const recipeIds: string[] = [];
+  const seen = new Set<string>();
+  if (Array.isArray(collection.recipeIds)) {
+    for (const id of collection.recipeIds) {
+      if (typeof id !== 'string' || id === '' || seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      recipeIds.push(id);
+      if (recipeIds.length >= MAX_COLLECTION_RECIPE_IDS) {
+        break;
+      }
+    }
+  }
+  const name =
+    typeof collection.name === 'string' ? collection.name.trim() : '';
+  return {
+    id: collection.id,
+    name,
+    recipeIds,
+    createdAt: collection.createdAt,
+    updatedAt: collection.updatedAt,
+  };
+}
+
 const MAX_GALLERY_PHOTOS = 8;
 
 function compactGalleryPhotoIds(
@@ -252,7 +288,7 @@ export type MutationResult =
       current?: Record<string, unknown>;
     };
 
-function isLiveDoc(data: Record<string, unknown> | undefined): boolean {
+export function isLiveDoc(data: Record<string, unknown> | undefined): boolean {
   if (!data) {
     return false;
   }
@@ -355,6 +391,49 @@ export async function listChangedSince(
     }
   }
   return { docs, cursor: nextCursor, hasMore };
+}
+
+export async function readDocData(
+  uid: string,
+  kind: StoreKind,
+  id: string,
+): Promise<Record<string, unknown> | undefined> {
+  const snap = await colRef(uid, kind).doc(id).get();
+  if (!snap.exists) {
+    return undefined;
+  }
+  return snap.data() as Record<string, unknown>;
+}
+
+/** Pages until `cap + 1` live docs or exhausted. Tombstones do not count. */
+export async function countLiveNamedCollections(
+  uid: string,
+  cap: number = MAX_NAMED_COLLECTIONS,
+): Promise<number> {
+  let live = 0;
+  let lastId: string | undefined;
+  while (true) {
+    let query = colRef(uid, 'collections').orderBy(FieldPath.documentId()).limit(50);
+    if (lastId !== undefined) {
+      query = query.startAfter(lastId);
+    }
+    const fetched = await query.get();
+    if (fetched.empty) {
+      return live;
+    }
+    for (const doc of fetched.docs) {
+      lastId = doc.id;
+      if (isLiveDoc(doc.data() as Record<string, unknown>)) {
+        live += 1;
+        if (live > cap) {
+          return live;
+        }
+      }
+    }
+    if (fetched.size < 50) {
+      return live;
+    }
+  }
 }
 
 export async function putDoc(
@@ -669,7 +748,9 @@ export type PushOpKind =
   | 'chat.put'
   | 'chat.clearForRecipe'
   | 'cookState.put'
-  | 'photo.delete';
+  | 'photo.delete'
+  | 'collection.put'
+  | 'collection.delete';
 
 export interface PushOpBase {
   kind: PushOpKind;
@@ -812,6 +893,47 @@ function validatePhotoDelete(payload: unknown): payload is { id: string; updated
   return isUuid(payload.id) && updatedAt !== undefined;
 }
 
+function validateCollectionPut(payload: unknown): payload is Record<string, unknown> {
+  if (!isPlainObject(payload)) {
+    return false;
+  }
+  if (!isUuid(payload.id)) {
+    return false;
+  }
+  if (typeof payload.name !== 'string') {
+    return false;
+  }
+  const name = payload.name.trim();
+  if (name === '' || name.length > MAX_COLLECTION_NAME_LENGTH) {
+    return false;
+  }
+  if (!Array.isArray(payload.recipeIds) || payload.recipeIds.length > MAX_COLLECTION_RECIPE_IDS) {
+    return false;
+  }
+  const seen = new Set<string>();
+  for (const id of payload.recipeIds) {
+    if (!isUuid(id) || seen.has(id)) {
+      return false;
+    }
+    seen.add(id);
+  }
+  if (finiteNumber(payload.createdAt) === undefined || finiteNumber(payload.updatedAt) === undefined) {
+    return false;
+  }
+  if (jsonSize(payload) >= 200_000) {
+    return false;
+  }
+  return true;
+}
+
+function validateCollectionDelete(payload: unknown): payload is { id: string; updatedAt: number } {
+  if (!isPlainObject(payload)) {
+    return false;
+  }
+  const updatedAt = finiteNumber(payload.updatedAt);
+  return isUuid(payload.id) && updatedAt !== undefined;
+}
+
 export function validatePushOp(op: unknown): { ok: true; op: { kind: PushOpKind; payload: unknown } } | { ok: false } {
   if (!isPlainObject(op)) {
     return { ok: false };
@@ -834,6 +956,10 @@ export function validatePushOp(op: unknown): { ok: true; op: { kind: PushOpKind;
       return validateCookStatePut(payload) ? { ok: true, op: { kind, payload } } : { ok: false };
     case 'photo.delete':
       return validatePhotoDelete(payload) ? { ok: true, op: { kind, payload } } : { ok: false };
+    case 'collection.put':
+      return validateCollectionPut(payload) ? { ok: true, op: { kind, payload } } : { ok: false };
+    case 'collection.delete':
+      return validateCollectionDelete(payload) ? { ok: true, op: { kind, payload } } : { ok: false };
     default:
       return { ok: false };
   }
@@ -846,7 +972,9 @@ export function isKnownPushKind(kind: unknown): kind is PushOpKind {
     kind === 'chat.put' ||
     kind === 'chat.clearForRecipe' ||
     kind === 'cookState.put' ||
-    kind === 'photo.delete'
+    kind === 'photo.delete' ||
+    kind === 'collection.put' ||
+    kind === 'collection.delete'
   );
 }
 

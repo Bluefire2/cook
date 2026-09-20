@@ -1,12 +1,13 @@
+import { compactCollection } from './compactCollection';
 import { compactRecipe } from './compactRecipe';
 import { MAX_PUSH_OPS, type PushOp } from './pushOps';
 import { invalidateSession } from './session';
-import type { ChatMessage, Recipe } from './types';
+import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 import { clearLibrary } from './libraryMemory';
 
 export type PullCursor = Partial<
-  Record<'recipes' | 'chatMessages' | 'cookState' | 'photos', [number, string]>
+  Record<'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections', [number, string]>
 >;
 
 export type PullChanges = {
@@ -14,6 +15,7 @@ export type PullChanges = {
   chatMessages: Record<string, unknown>[];
   cookState: Record<string, unknown>[];
   photos: Record<string, unknown>[];
+  collections?: Record<string, unknown>[];
 };
 
 export type PullPage = {
@@ -233,6 +235,7 @@ export function normalizeCookChange(
 export function applyPullChanges(
   acc: {
     recipes: Map<string, Recipe>;
+    collections: Map<string, Collection>;
     chat: Map<string, ChatMessage>;
     cook: Map<string, CookStateRow>;
     remotePhotoIds: Set<string>;
@@ -246,6 +249,15 @@ export function applyPullChanges(
       acc.recipes.delete(id);
     } else {
       acc.recipes.set(id, normalized);
+    }
+  }
+  for (const raw of changes.collections ?? []) {
+    const id = raw.id as string;
+    const normalized = normalizeCollectionChange(raw);
+    if (normalized === 'tombstone') {
+      acc.collections.delete(id);
+    } else {
+      acc.collections.set(id, normalized);
     }
   }
   for (const raw of changes.chatMessages) {
@@ -274,4 +286,17 @@ export function applyPullChanges(
       acc.remotePhotoIds.add(id);
     }
   }
+}
+
+export function normalizeCollectionChange(raw: Record<string, unknown>): Collection | 'tombstone' {
+  if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
+    return 'tombstone';
+  }
+  return compactCollection({
+    id: raw.id as string,
+    name: typeof raw.name === 'string' ? raw.name : '',
+    recipeIds: Array.isArray(raw.recipeIds) ? (raw.recipeIds as string[]) : [],
+    createdAt: raw.createdAt as number,
+    updatedAt: raw.updatedAt as number,
+  });
 }

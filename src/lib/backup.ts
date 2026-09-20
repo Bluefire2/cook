@@ -1,19 +1,22 @@
 import { isUsableRecipe } from './recipeShape';
 import type { CookStateRow } from './useCookState';
-import type { ChatMessage, Recipe } from './types';
+import type { ChatMessage, Collection, Recipe } from './types';
 import {
   addPendingBlob,
   getPendingBlob,
   listAllChat,
   listAllCook,
+  listCollections,
   listPhotoIds,
   listRecipes,
   markPhotoRemote,
   upsertChat,
+  upsertCollection,
   upsertCook,
   upsertRecipe,
 } from './libraryMemory';
 import { compactRecipe } from './compactRecipe';
+import { compactCollection, compactCollectionName } from './compactCollection';
 import { recipePhotoIds } from './recipePhotos';
 import { fetchPhotoBlob, postPhoto, pushOps } from './remote';
 import type { PushOp } from './pushOps';
@@ -27,12 +30,13 @@ interface BackupPhoto {
 
 interface BackupFile {
   app: 'cook';
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   exportedAt: number;
   recipes: unknown[];
   chatMessages: ChatMessage[];
   photos: BackupPhoto[];
   cookState?: CookStateRow[];
+  collections?: unknown[];
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -73,6 +77,7 @@ export async function exportLibrary(): Promise<Blob> {
   const recipes = listRecipes();
   const chatMessages = listAllChat();
   const cookState = listAllCook();
+  const collections = listCollections();
   const photoIds = listPhotoIds();
 
   const photos: BackupPhoto[] = [];
@@ -95,15 +100,36 @@ export async function exportLibrary(): Promise<Blob> {
 
   const backup: BackupFile = {
     app: 'cook',
-    version: 2,
+    version: 3,
     exportedAt: Date.now(),
     recipes,
     chatMessages,
     cookState,
+    collections,
     photos,
   };
 
   return new Blob([JSON.stringify(backup)], { type: 'application/json' });
+}
+
+function isUsableCollection(raw: unknown): raw is Collection {
+  if (typeof raw !== 'object' || raw === null) {
+    return false;
+  }
+  const row = raw as Record<string, unknown>;
+  if (typeof row.id !== 'string' || row.id === '') {
+    return false;
+  }
+  if (compactCollectionName(row.name) === undefined) {
+    return false;
+  }
+  if (!Array.isArray(row.recipeIds)) {
+    return false;
+  }
+  if (typeof row.createdAt !== 'number' || typeof row.updatedAt !== 'number') {
+    return false;
+  }
+  return true;
 }
 
 /** Merges a backup into the account library (existing ids get overwritten). */
@@ -134,6 +160,10 @@ export async function importLibrary(
   for (const recipe of recipes) {
     upsertRecipe(recipe);
   }
+  const collections = (backup.collections ?? []).filter(isUsableCollection).map(compactCollection);
+  for (const collection of collections) {
+    upsertCollection(collection);
+  }
   for (const message of chatMessages) {
     upsertChat(message);
   }
@@ -158,6 +188,9 @@ export async function importLibrary(
   const ops: PushOp[] = [];
   for (const recipe of recipes) {
     ops.push({ kind: 'recipe.put', payload: recipe });
+  }
+  for (const collection of collections) {
+    ops.push({ kind: 'collection.put', payload: collection });
   }
   for (const message of chatMessages) {
     ops.push({ kind: 'chat.put', payload: message });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   chunkByCost,
   chunkForBatch,
+  compactCollectionFields,
   compactRecipeFields,
   compareMutation,
   decodePullCursor,
@@ -48,6 +49,7 @@ describe('pull cursor', () => {
   it('round-trips per-collection cursors', () => {
     const cursor = {
       recipes: [100, '11111111-1111-4111-8111-111111111111'] as [number, string],
+      collections: [200, '22222222-2222-4222-8222-222222222222'] as [number, string],
     };
     const encoded = encodePullCursor(cursor);
     expect(decodePullCursor(encoded)).toEqual(cursor);
@@ -148,6 +150,51 @@ describe('validatePushOp', () => {
       }).ok,
     ).toBe(false);
   });
+
+  it('accepts a minimal collection.put', () => {
+    expect(
+      validatePushOp({
+        kind: 'collection.put',
+        payload: {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: 'Dinners',
+          recipeIds: [],
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('rejects collection.put with an empty name, overlong name, or non-UUID recipe id', () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    const base = { id, name: 'Dinners', recipeIds: [], createdAt: 1, updatedAt: 2 };
+    expect(validatePushOp({ kind: 'collection.put', payload: { ...base, name: '  ' } }).ok).toBe(
+      false,
+    );
+    expect(
+      validatePushOp({ kind: 'collection.put', payload: { ...base, name: 'x'.repeat(81) } }).ok,
+    ).toBe(false);
+    expect(
+      validatePushOp({
+        kind: 'collection.put',
+        payload: { ...base, recipeIds: ['not-a-uuid'] },
+      }).ok,
+    ).toBe(false);
+    const tooMany = Array.from({ length: 501 }, () => id);
+    expect(
+      validatePushOp({ kind: 'collection.put', payload: { ...base, recipeIds: tooMany } }).ok,
+    ).toBe(false);
+  });
+
+  it('accepts collection.delete', () => {
+    expect(
+      validatePushOp({
+        kind: 'collection.delete',
+        payload: { id: '11111111-1111-4111-8111-111111111111', updatedAt: 3 },
+      }).ok,
+    ).toBe(true);
+  });
 });
 
 describe('compactRecipeFields', () => {
@@ -181,6 +228,27 @@ describe('compactRecipeFields', () => {
         galleryPhotoIds: ['p1', 'g1', 'g1'],
       }).galleryPhotoIds,
     ).toEqual(['g1']);
+  });
+});
+
+describe('compactCollectionFields', () => {
+  it('trims the name and unique-ifies recipeIds', () => {
+    expect(
+      compactCollectionFields({
+        id: 'c1',
+        name: '  Dinners  ',
+        recipeIds: ['a', 'a', 'b'],
+        createdAt: 1,
+        updatedAt: 2,
+        extra: true,
+      }),
+    ).toEqual({
+      id: 'c1',
+      name: 'Dinners',
+      recipeIds: ['a', 'b'],
+      createdAt: 1,
+      updatedAt: 2,
+    });
   });
 });
 

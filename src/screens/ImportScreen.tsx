@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
+import { collectionStore, libraryHref } from '../lib/collectionStore';
 import { importRecipe, type ExtractedRecipe } from '../lib/importApi';
 import { recipeStore } from '../lib/recipeStore';
 import { backLink, inputFocus, primaryBtn } from '../lib/uiClasses';
@@ -8,6 +9,12 @@ import type { RecipeDraft } from '../lib/types';
 
 export default function ImportScreen() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const collectionId = params.get('c') ?? undefined;
+  const knownCollectionId = collectionId && collectionStore.get(collectionId)
+    ? collectionId
+    : undefined;
+  const backTo = libraryHref(knownCollectionId);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,14 +38,17 @@ export default function ImportScreen() {
   };
 
   const save = async (draft: RecipeDraft) => {
-    const recipe = await recipeStore.create(draft);
+    const recipe = await recipeStore.create(
+      draft,
+      knownCollectionId ? { collectionId: knownCollectionId } : undefined,
+    );
     navigate(`/recipe/${recipe.id}`, { replace: true });
   };
 
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
-        <Link to="/" className={backLink}>
+        <Link to={backTo} className={backLink}>
           &larr; Library
         </Link>
         <h1 className="mt-2 text-2xl font-bold">Import recipe</h1>
