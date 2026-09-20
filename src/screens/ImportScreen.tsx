@@ -179,7 +179,10 @@ export default function ImportScreen() {
               type="checkbox"
               checked={bulk}
               disabled={busy}
-              onChange={(e) => setBulk(e.target.checked)}
+              onChange={(e) => {
+                setBulk(e.target.checked);
+                setError(null);
+              }}
               className={`mt-1 h-4 w-4 shrink-0 accent-ink disabled:opacity-40 ${inputFocus}`}
             />
             <span>
