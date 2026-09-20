@@ -238,7 +238,18 @@ That job authenticates with Workload Identity Federation as
 the pool, provider, and service account once (project owner, always
 `--project=cooking-assistant-508423`):
 
+Git Bash on Windows: `gcloud` is often not on PATH, and MSYS rewrites
+arguments that look like `https://`, `gs://`, or `principalSet://` when it
+invokes `gcloud.cmd`. Start the session with this, then paste the rest:
+
 ```bash
+export MSYS_NO_PATHCONV=1
+if ! command -v gcloud >/dev/null 2>&1; then
+  PATH="$HOME/AppData/Local/Google Cloud SDK/google-cloud-sdk/bin:$PATH"
+  export PATH
+fi
+command -v gcloud >/dev/null 2>&1 || { echo "gcloud not found; add the Cloud SDK bin dir to PATH"; exit 1; }
+
 PROJECT=cooking-assistant-508423
 PROJECT_NUMBER=62867274312
 SA=sous-github-deploy@${PROJECT}.iam.gserviceaccount.com
