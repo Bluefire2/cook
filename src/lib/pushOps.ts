@@ -7,6 +7,8 @@ export type PushOp =
       kind: 'cookState.put';
       payload: import('./useCookState').CookStateRow & { updatedAt: number };
     }
-  | { kind: 'photo.delete'; payload: { id: string; updatedAt: number } };
+  | { kind: 'photo.delete'; payload: { id: string; updatedAt: number } }
+  | { kind: 'collection.put'; payload: import('./types').Collection }
+  | { kind: 'collection.delete'; payload: { id: string; updatedAt: number } };
 
 export const MAX_PUSH_OPS = 50;

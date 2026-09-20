@@ -26,14 +26,19 @@ one-shot `{ url }` call via `src/lib/importApi.ts`. Gemini request shape and
 - **Kinds:** empty; `singleUrl` (one URL token); `urlList` (two or more URL
   tokens, order preserved, exact-string dedupe); `text` (anything else,
   including mixed prose + links).
-- **One URL still previews**, even when the checkbox is on.
+- **One fresh URL still previews**, even when the checkbox is on. A batch
+  retry with one failed URL stays on the batch path and keeps its destination.
+- **One destination per batch.** Use a live starting `?c=` folder; otherwise
+  ask after input validation and before any extraction. Cancel starts no
+  requests. Keep the destination on retry; a deleted folder requires choosing
+  again. Editing the input starts a fresh selection.
 - **Cap** `MAX_BULK_IMPORT_URLS = 20` unique URLs.
 - **401 stops the loop.** Remaining URLs fail with
   `Please sign in again — your session expired.` Other per-URL errors
   continue.
 - **Summary stays on `/import`.** Do not auto-navigate, or the per-URL errors
-  disappear. **Back to library** goes home; **Try again** restores only the
-  failed URLs.
+  disappear. **Back to library** preserves the starting folder when live;
+  **Try again** restores only the failed URLs.
 - **No Recipe schema change.** No `api/import.ts` / Gemini / Vercel edits.
 
 ## Steps

@@ -1,12 +1,13 @@
+import { compactCollection } from './compactCollection';
 import { compactRecipe } from './compactRecipe';
 import { MAX_PUSH_OPS, type PushOp } from './pushOps';
 import { invalidateSession } from './session';
-import type { ChatMessage, Recipe } from './types';
+import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 import { clearLibrary } from './libraryMemory';
 
 export type PullCursor = Partial<
-  Record<'recipes' | 'chatMessages' | 'cookState' | 'photos', [number, string]>
+  Record<'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections', [number, string]>
 >;
 
 export type PullChanges = {
@@ -14,6 +15,7 @@ export type PullChanges = {
   chatMessages: Record<string, unknown>[];
   cookState: Record<string, unknown>[];
   photos: Record<string, unknown>[];
+  collections?: Record<string, unknown>[];
 };
 
 export type PullPage = {
@@ -83,6 +85,29 @@ export async function pullPage(cursor: PullCursor | null): Promise<PullPage | 's
   };
 }
 
+/**
+ * A 200 still carries per-op verdicts. `stale`, `already-deleted` and
+ * `recipe-deleted` are ordinary last-write-wins/cascade outcomes, but
+ * `invalid` and `unknown` mean the server threw the write away — report
+ * those so callers roll back instead of claiming a save that never landed.
+ */
+export function pushBatchRejected(body: unknown): boolean {
+  if (!body || typeof body !== 'object') {
+    return false;
+  }
+  const results = (body as { results?: unknown }).results;
+  if (!Array.isArray(results)) {
+    return false;
+  }
+  return results.some((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return false;
+    }
+    const { applied, reason } = entry as { applied?: unknown; reason?: unknown };
+    return applied === false && (reason === 'invalid' || reason === 'unknown');
+  });
+}
+
 export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
   for (let offset = 0; offset < ops.length; offset += MAX_PUSH_OPS) {
     const batch = ops.slice(offset, offset + MAX_PUSH_OPS);
@@ -99,6 +124,15 @@ export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
     }
     if (!response.ok) {
       return readErrorStatus(response);
+    }
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return 'error';
+    }
+    if (pushBatchRejected(body)) {
+      return 'error';
     }
   }
   return 'ok';
@@ -233,6 +267,7 @@ export function normalizeCookChange(
 export function applyPullChanges(
   acc: {
     recipes: Map<string, Recipe>;
+    collections: Map<string, Collection>;
     chat: Map<string, ChatMessage>;
     cook: Map<string, CookStateRow>;
     remotePhotoIds: Set<string>;
@@ -246,6 +281,15 @@ export function applyPullChanges(
       acc.recipes.delete(id);
     } else {
       acc.recipes.set(id, normalized);
+    }
+  }
+  for (const raw of changes.collections ?? []) {
+    const id = raw.id as string;
+    const normalized = normalizeCollectionChange(raw);
+    if (normalized === 'tombstone') {
+      acc.collections.delete(id);
+    } else {
+      acc.collections.set(id, normalized);
     }
   }
   for (const raw of changes.chatMessages) {
@@ -274,4 +318,17 @@ export function applyPullChanges(
       acc.remotePhotoIds.add(id);
     }
   }
+}
+
+export function normalizeCollectionChange(raw: Record<string, unknown>): Collection | 'tombstone' {
+  if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
+    return 'tombstone';
+  }
+  return compactCollection({
+    id: raw.id as string,
+    name: typeof raw.name === 'string' ? raw.name : '',
+    recipeIds: Array.isArray(raw.recipeIds) ? (raw.recipeIds as string[]) : [],
+    createdAt: raw.createdAt as number,
+    updatedAt: raw.updatedAt as number,
+  });
 }

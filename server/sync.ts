@@ -8,18 +8,24 @@ import {
 import {
   cascadeRecipeDelete,
   clearChatForRecipe,
+  compactCollectionFields,
   compactRecipeFields,
+  countLiveNamedCollections,
   decodePullCursor,
   isKnownPushKind,
+  isLiveDoc,
   listChangedSince,
+  MAX_NAMED_COLLECTIONS,
   putDoc,
+  readDocData,
+  tombstoneDoc,
   tombstonePhotoWithGcs,
   type PullCursor,
   type StoreKind,
   validatePushOp,
 } from './store.ts';
 
-const STORE_KINDS: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos'];
+const STORE_KINDS: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos', 'collections'];
 
 const MAX_PUSH_OPS = 50;
 const MAX_PUSH_BYTES = 1_000_000;
@@ -44,6 +50,9 @@ function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<stri
   delete copy.deletedAt;
   if (kind === 'recipes') {
     return compactRecipeFields(copy);
+  }
+  if (kind === 'collections') {
+    return compactCollectionFields(copy);
   }
   if (kind === 'photos') {
     return {
@@ -92,6 +101,7 @@ export async function syncPull(req: Request): Promise<Response> {
     chatMessages: [],
     cookState: [],
     photos: [],
+    collections: [],
   };
 
   let nextCursor: PullCursor = { ...cursor };
@@ -175,6 +185,24 @@ export async function applyPushOp(
     case 'photo.delete': {
       const body = payload as { id: string; updatedAt: number };
       return tombstonePhotoWithGcs(uid, body.id, body.updatedAt);
+    }
+    case 'collection.put': {
+      const body = payload as Record<string, unknown>;
+      const id = body.id as string;
+      const updatedAt = body.updatedAt as number;
+      const existing = await readDocData(uid, 'collections', id);
+      if (!isLiveDoc(existing)) {
+        const live = await countLiveNamedCollections(uid);
+        if (live >= MAX_NAMED_COLLECTIONS) {
+          return { applied: false, reason: 'invalid' };
+        }
+      }
+      const compact = compactCollectionFields(body);
+      return putDoc(uid, 'collections', id, compact, updatedAt);
+    }
+    case 'collection.delete': {
+      const body = payload as { id: string; updatedAt: number };
+      return tombstoneDoc(uid, 'collections', body.id, body.updatedAt);
     }
     default:
       return { applied: false, reason: 'unknown' };

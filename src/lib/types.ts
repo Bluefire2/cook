@@ -35,6 +35,15 @@ export interface Recipe {
   updatedAt: number;
 }
 
+/** A named folder of recipes. Unfiled recipes live in the implicit default collection. */
+export interface Collection {
+  id: string;
+  name: string;
+  recipeIds: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** A recipe as produced by extraction/modification, before it gets identity. */
 export type RecipeDraft = Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>;
 

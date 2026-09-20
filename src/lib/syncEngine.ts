@@ -10,7 +10,7 @@ import {
   markLoaded,
   replaceFromPull,
 } from './libraryMemory';
-import type { ChatMessage, Recipe } from './types';
+import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 
 export type SyncOutcome = 'ok' | 'error' | 'offline' | 'signedOut' | 'skipped';
@@ -96,6 +96,7 @@ export function decideSyncToast(result: SyncResult): SyncToastSpec | null {
 async function pullAll(): Promise<SyncResult> {
   const acc = {
     recipes: new Map<string, Recipe>(),
+    collections: new Map<string, Collection>(),
     chat: new Map<string, ChatMessage>(),
     cook: new Map<string, CookStateRow>(),
     remotePhotoIds: new Set<string>(),

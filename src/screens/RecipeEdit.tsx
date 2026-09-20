@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
+import CreateRecipeForm from '../components/CreateRecipeForm';
+import { libraryHref, useCollections } from '../lib/collectionStore';
 import { blankDraft } from '../lib/recipeDraft';
 import { recipeStore, useRecipe } from '../lib/recipeStore';
 import { backLink, primaryBtn } from '../lib/uiClasses';
@@ -41,20 +43,25 @@ function Screen({
 
 function CreateRecipe() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const collectionId = params.get('c') ?? undefined;
+  // Subscribed, not a one-shot store read: on a cold load of `?c=<id>` the
+  // pull has not landed yet, and only a subscriber re-renders once it does.
+  const collections = useCollections();
+  const knownCollectionId =
+    collectionId && collections?.some((c) => c.id === collectionId)
+      ? collectionId
+      : undefined;
+  const backTo = libraryHref(knownCollectionId);
   const [initial] = useState(blankDraft);
 
-  const create = async (draft: RecipeDraft) => {
-    const recipe = await recipeStore.create(draft);
-    navigate(`/recipe/${recipe.id}`, { replace: true });
-  };
-
   return (
-    <Screen heading="New recipe" backTo="/" backLabel="Library">
-      <RecipeForm
+    <Screen heading="New recipe" backTo={backTo} backLabel="Library">
+      <CreateRecipeForm
         initial={initial}
-        submitLabel="Save"
-        onSubmit={create}
-        onCancel={() => navigate('/')}
+        collectionId={collectionId}
+        onCreated={(recipe) => navigate(`/recipe/${recipe.id}`, { replace: true })}
+        onCancel={() => navigate(backTo)}
       />
     </Screen>
   );

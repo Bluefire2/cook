@@ -9,11 +9,17 @@ import {
   removeRecipeLocal,
   subscribe,
   upsertRecipe,
+  getCollection,
+  listCollections,
+  upsertCollection,
 } from './libraryMemory';
 import { postPhoto, pushOps } from './remote';
 import { compactRecipe } from './compactRecipe';
+import { compactCollection } from './compactCollection';
+import { wouldExceedRecipeIdCap } from './collectionMembership';
 import { recipePhotoIds } from './recipePhotos';
 import type { Recipe, RecipeDraft } from './types';
+import type { PushOp } from './pushOps';
 
 export { compactRecipe };
 
@@ -123,6 +129,7 @@ export const recipeStore = {
 
   async create(
     data: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>,
+    opts?: { collectionId?: string },
   ): Promise<Recipe> {
     const now = Date.now();
     const recipe = compactRecipe({
@@ -131,15 +138,42 @@ export const recipeStore = {
       createdAt: now,
       updatedAt: now,
     });
+    const collectionId = opts?.collectionId;
+    const previousCollection =
+      collectionId !== undefined ? getCollection(collectionId) : undefined;
+    let nextCollection = previousCollection;
+    if (collectionId !== undefined) {
+      if (!previousCollection) {
+        throw new Error('Collection not found.');
+      }
+      if (wouldExceedRecipeIdCap([...previousCollection.recipeIds, recipe.id])) {
+        throw new Error('This collection is full.');
+      }
+      nextCollection = compactCollection({
+        ...previousCollection,
+        recipeIds: [...previousCollection.recipeIds, recipe.id],
+        updatedAt: now,
+      });
+    }
     upsertRecipe(recipe);
+    if (nextCollection) {
+      upsertCollection(nextCollection);
+    }
     try {
       await uploadRecipePhotos(recipe);
-      const result = await pushOps([{ kind: 'recipe.put', payload: recipe }]);
+      const ops: PushOp[] = [{ kind: 'recipe.put', payload: recipe }];
+      if (nextCollection) {
+        ops.push({ kind: 'collection.put', payload: nextCollection });
+      }
+      const result = await pushOps(ops);
       if (result !== 'ok') {
         throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
       }
     } catch (err) {
       removeRecipeLocal(recipe.id);
+      if (previousCollection) {
+        upsertCollection(previousCollection);
+      }
       throw err;
     }
     return recipe;
@@ -148,11 +182,31 @@ export const recipeStore = {
   async remove(id: string): Promise<void> {
     const previous = getRecipe(id);
     const at = Date.now();
+    // Nothing else drops the id from collections, and a dead id still counts
+    // against the per-collection cap, so scrub membership alongside the recipe.
+    const staleIn = listCollections().filter((c) => c.recipeIds.includes(id));
+    const scrubbed = staleIn.map((c) =>
+      compactCollection({
+        ...c,
+        recipeIds: c.recipeIds.filter((recipeId) => recipeId !== id),
+        updatedAt: at,
+      }),
+    );
     removeRecipeLocal(id);
-    const result = await pushOps([{ kind: 'recipe.delete', payload: { id, updatedAt: at } }]);
+    for (const collection of scrubbed) {
+      upsertCollection(collection);
+    }
+    const ops: PushOp[] = [{ kind: 'recipe.delete', payload: { id, updatedAt: at } }];
+    for (const collection of scrubbed) {
+      ops.push({ kind: 'collection.put', payload: collection });
+    }
+    const result = await pushOps(ops);
     if (result !== 'ok') {
       if (previous) {
         upsertRecipe(previous);
+      }
+      for (const collection of staleIn) {
+        upsertCollection(collection);
       }
       throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't delete the recipe.");
     }

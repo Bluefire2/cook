@@ -49,8 +49,8 @@ can sit until `npm run build` or a container start.
 
 ```
 UI (screens, components)
-  → stores (recipeStore / chatStore / photoStore / useCookState)
-  → in-memory library + syncEngine/remote (the only modules that fetch)
+ → stores (recipeStore / collectionStore / chatStore / photoStore / useCookState)
+ → in-memory library + syncEngine/remote (the only modules that fetch)
 ```
 
 `syncEngine` and `remote` are the only client modules allowed to `fetch` for
@@ -189,6 +189,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/ask-voice-stt.md` | Implementing. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
 | `docs/plans/recipe-gallery.md` | In progress on branch `cursor/recipe-gallery-267b` (main photo + end-of-recipe gallery). |
+| `docs/plans/shared-recipes.md` | PR 1 implementing (named collections + implicit default). PR 2 view ACLs not started. |
 | `docs/plans/bulk-import.md` | Implementing. Opt-in bulk URL import on `/import`. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,

@@ -1,19 +1,24 @@
 import { isUsableRecipe } from './recipeShape';
 import type { CookStateRow } from './useCookState';
-import type { ChatMessage, Recipe } from './types';
+import type { ChatMessage, Collection, Recipe } from './types';
 import {
   addPendingBlob,
+  captureSnapshot,
   getPendingBlob,
   listAllChat,
   listAllCook,
+  listCollections,
   listPhotoIds,
   listRecipes,
   markPhotoRemote,
+  restoreSnapshot,
   upsertChat,
+  upsertCollection,
   upsertCook,
   upsertRecipe,
 } from './libraryMemory';
 import { compactRecipe } from './compactRecipe';
+import { compactCollection, compactCollectionName } from './compactCollection';
 import { recipePhotoIds } from './recipePhotos';
 import { fetchPhotoBlob, postPhoto, pushOps } from './remote';
 import type { PushOp } from './pushOps';
@@ -27,12 +32,13 @@ interface BackupPhoto {
 
 interface BackupFile {
   app: 'cook';
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   exportedAt: number;
   recipes: unknown[];
   chatMessages: ChatMessage[];
   photos: BackupPhoto[];
   cookState?: CookStateRow[];
+  collections?: unknown[];
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -73,6 +79,7 @@ export async function exportLibrary(): Promise<Blob> {
   const recipes = listRecipes();
   const chatMessages = listAllChat();
   const cookState = listAllCook();
+  const collections = listCollections();
   const photoIds = listPhotoIds();
 
   const photos: BackupPhoto[] = [];
@@ -95,15 +102,36 @@ export async function exportLibrary(): Promise<Blob> {
 
   const backup: BackupFile = {
     app: 'cook',
-    version: 2,
+    version: 3,
     exportedAt: Date.now(),
     recipes,
     chatMessages,
     cookState,
+    collections,
     photos,
   };
 
   return new Blob([JSON.stringify(backup)], { type: 'application/json' });
+}
+
+function isUsableCollection(raw: unknown): raw is Collection {
+  if (typeof raw !== 'object' || raw === null) {
+    return false;
+  }
+  const row = raw as Record<string, unknown>;
+  if (typeof row.id !== 'string' || row.id === '') {
+    return false;
+  }
+  if (compactCollectionName(row.name) === undefined) {
+    return false;
+  }
+  if (!Array.isArray(row.recipeIds)) {
+    return false;
+  }
+  if (typeof row.createdAt !== 'number' || typeof row.updatedAt !== 'number') {
+    return false;
+  }
+  return true;
 }
 
 /** Merges a backup into the account library (existing ids get overwritten). */
@@ -128,56 +156,76 @@ export async function importLibrary(
     })),
   );
 
-  for (const photo of photos) {
-    addPendingBlob(photo.id, photo.blob);
-  }
-  for (const recipe of recipes) {
-    upsertRecipe(recipe);
-  }
-  for (const message of chatMessages) {
-    upsertChat(message);
-  }
-  if (backup.cookState) {
-    for (const row of backup.cookState) {
-      upsertCook(row);
+  const previous = captureSnapshot();
+  try {
+    for (const photo of photos) {
+      addPendingBlob(photo.id, photo.blob);
     }
-  }
+    for (const recipe of recipes) {
+      upsertRecipe(recipe);
+    }
+    const collections = (backup.collections ?? [])
+      .filter(isUsableCollection)
+      .map(compactCollection);
+    for (const collection of collections) {
+      upsertCollection(collection);
+    }
+    for (const message of chatMessages) {
+      upsertChat(message);
+    }
+    if (backup.cookState) {
+      for (const row of backup.cookState) {
+        upsertCook(row);
+      }
+    }
 
-  for (const [photoId, recipeId] of photoAttribution) {
-    const photo = photos.find((p) => p.id === photoId);
-    if (!photo) {
-      continue;
+    for (const [photoId, recipeId] of photoAttribution) {
+      const photo = photos.find((p) => p.id === photoId);
+      if (!photo) {
+        continue;
+      }
+      const uploaded = await postPhoto(
+        photoId,
+        recipeId,
+        photo.createdAt,
+        photo.blob,
+      );
+      if (uploaded !== 'ok') {
+        throw new Error("Couldn't upload a photo from the backup.");
+      }
+      markPhotoRemote(photoId);
     }
-    const uploaded = await postPhoto(photoId, recipeId, photo.createdAt, photo.blob);
-    if (uploaded !== 'ok') {
-      throw new Error("Couldn't upload a photo from the backup.");
-    }
-    markPhotoRemote(photoId);
-  }
 
-  const ops: PushOp[] = [];
-  for (const recipe of recipes) {
-    ops.push({ kind: 'recipe.put', payload: recipe });
-  }
-  for (const message of chatMessages) {
-    ops.push({ kind: 'chat.put', payload: message });
-  }
-  if (backup.cookState) {
-    for (const row of backup.cookState) {
-      ops.push({
-        kind: 'cookState.put',
-        payload: { ...row, updatedAt: Date.now() },
-      });
+    const ops: PushOp[] = [];
+    for (const recipe of recipes) {
+      ops.push({ kind: 'recipe.put', payload: recipe });
     }
-  }
-  const result = await pushOps(ops);
-  if (result !== 'ok') {
-    throw new Error(
-      result === 'signedOut'
-        ? 'Please sign in again — your session expired.'
-        : "Couldn't import the backup.",
-    );
-  }
+    for (const collection of collections) {
+      ops.push({ kind: 'collection.put', payload: collection });
+    }
+    for (const message of chatMessages) {
+      ops.push({ kind: 'chat.put', payload: message });
+    }
+    if (backup.cookState) {
+      for (const row of backup.cookState) {
+        ops.push({
+          kind: 'cookState.put',
+          payload: { ...row, updatedAt: Date.now() },
+        });
+      }
+    }
+    const result = await pushOps(ops);
+    if (result !== 'ok') {
+      throw new Error(
+        result === 'signedOut'
+          ? 'Please sign in again — your session expired.'
+          : "Couldn't import the backup.",
+      );
+    }
 
-  return { imported: recipes.length, skipped };
+    return { imported: recipes.length, skipped };
+  } catch (err) {
+    restoreSnapshot(previous);
+    throw err;
+  }
 }
