@@ -91,7 +91,7 @@ export async function pullPage(cursor: PullCursor | null): Promise<PullPage | 's
  * `invalid` and `unknown` mean the server threw the write away — report
  * those so callers roll back instead of claiming a save that never landed.
  */
-function batchRejected(body: unknown): boolean {
+export function pushBatchRejected(body: unknown): boolean {
   if (!body || typeof body !== 'object') {
     return false;
   }
@@ -131,7 +131,7 @@ export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
     } catch {
       return 'error';
     }
-    if (batchRejected(body)) {
+    if (pushBatchRejected(body)) {
       return 'error';
     }
   }
