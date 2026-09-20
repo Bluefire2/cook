@@ -3,6 +3,7 @@ import type { CookStateRow } from './useCookState';
 import type { ChatMessage, Collection, Recipe } from './types';
 import {
   addPendingBlob,
+  captureSnapshot,
   getPendingBlob,
   listAllChat,
   listAllCook,
@@ -10,6 +11,7 @@ import {
   listPhotoIds,
   listRecipes,
   markPhotoRemote,
+  restoreSnapshot,
   upsertChat,
   upsertCollection,
   upsertCook,
@@ -154,63 +156,76 @@ export async function importLibrary(
     })),
   );
 
-  for (const photo of photos) {
-    addPendingBlob(photo.id, photo.blob);
-  }
-  for (const recipe of recipes) {
-    upsertRecipe(recipe);
-  }
-  const collections = (backup.collections ?? []).filter(isUsableCollection).map(compactCollection);
-  for (const collection of collections) {
-    upsertCollection(collection);
-  }
-  for (const message of chatMessages) {
-    upsertChat(message);
-  }
-  if (backup.cookState) {
-    for (const row of backup.cookState) {
-      upsertCook(row);
+  const previous = captureSnapshot();
+  try {
+    for (const photo of photos) {
+      addPendingBlob(photo.id, photo.blob);
     }
-  }
+    for (const recipe of recipes) {
+      upsertRecipe(recipe);
+    }
+    const collections = (backup.collections ?? [])
+      .filter(isUsableCollection)
+      .map(compactCollection);
+    for (const collection of collections) {
+      upsertCollection(collection);
+    }
+    for (const message of chatMessages) {
+      upsertChat(message);
+    }
+    if (backup.cookState) {
+      for (const row of backup.cookState) {
+        upsertCook(row);
+      }
+    }
 
-  for (const [photoId, recipeId] of photoAttribution) {
-    const photo = photos.find((p) => p.id === photoId);
-    if (!photo) {
-      continue;
+    for (const [photoId, recipeId] of photoAttribution) {
+      const photo = photos.find((p) => p.id === photoId);
+      if (!photo) {
+        continue;
+      }
+      const uploaded = await postPhoto(
+        photoId,
+        recipeId,
+        photo.createdAt,
+        photo.blob,
+      );
+      if (uploaded !== 'ok') {
+        throw new Error("Couldn't upload a photo from the backup.");
+      }
+      markPhotoRemote(photoId);
     }
-    const uploaded = await postPhoto(photoId, recipeId, photo.createdAt, photo.blob);
-    if (uploaded !== 'ok') {
-      throw new Error("Couldn't upload a photo from the backup.");
-    }
-    markPhotoRemote(photoId);
-  }
 
-  const ops: PushOp[] = [];
-  for (const recipe of recipes) {
-    ops.push({ kind: 'recipe.put', payload: recipe });
-  }
-  for (const collection of collections) {
-    ops.push({ kind: 'collection.put', payload: collection });
-  }
-  for (const message of chatMessages) {
-    ops.push({ kind: 'chat.put', payload: message });
-  }
-  if (backup.cookState) {
-    for (const row of backup.cookState) {
-      ops.push({
-        kind: 'cookState.put',
-        payload: { ...row, updatedAt: Date.now() },
-      });
+    const ops: PushOp[] = [];
+    for (const recipe of recipes) {
+      ops.push({ kind: 'recipe.put', payload: recipe });
     }
-  }
-  const result = await pushOps(ops);
-  if (result !== 'ok') {
-    throw new Error(
-      result === 'signedOut'
-        ? 'Please sign in again — your session expired.'
-        : "Couldn't import the backup.",
-    );
-  }
+    for (const collection of collections) {
+      ops.push({ kind: 'collection.put', payload: collection });
+    }
+    for (const message of chatMessages) {
+      ops.push({ kind: 'chat.put', payload: message });
+    }
+    if (backup.cookState) {
+      for (const row of backup.cookState) {
+        ops.push({
+          kind: 'cookState.put',
+          payload: { ...row, updatedAt: Date.now() },
+        });
+      }
+    }
+    const result = await pushOps(ops);
+    if (result !== 'ok') {
+      throw new Error(
+        result === 'signedOut'
+          ? 'Please sign in again — your session expired.'
+          : "Couldn't import the backup.",
+      );
+    }
 
-  return { imported: recipes.length, skipped };
+    return { imported: recipes.length, skipped };
+  } catch (err) {
+    restoreSnapshot(previous);
+    throw err;
+  }
 }

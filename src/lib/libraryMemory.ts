@@ -64,6 +64,14 @@ export function getSnapshot(): LibrarySnapshot {
   return snapshot;
 }
 
+export function captureSnapshot(): LibrarySnapshot {
+  return { ...cloneMaps(snapshot), loaded: snapshot.loaded };
+}
+
+export function restoreSnapshot(previous: LibrarySnapshot): void {
+  emit({ ...cloneMaps(previous), loaded: previous.loaded });
+}
+
 export function markLoaded(): void {
   if (snapshot.loaded) {
     return;
