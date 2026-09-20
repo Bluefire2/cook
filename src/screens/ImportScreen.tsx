@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
+import { SpinnerIcon } from '../lib/icons';
 import { importRecipe, type ExtractedRecipe } from '../lib/importApi';
 import {
   parseImportInput,
@@ -166,13 +167,13 @@ export default function ImportScreen() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             rows={5}
-            disabled={busy}
+            readOnly={busy}
             placeholder={
               bulk
                 ? 'Paste one recipe link per line…'
                 : 'Paste a recipe link, or the recipe text itself…'
             }
-            className={`w-full rounded-xl border border-line bg-surface px-4 py-3 shadow-sm disabled:opacity-40 ${inputFocus}`}
+            className={`w-full rounded-xl border border-line bg-surface px-4 py-3 shadow-sm ${inputFocus}`}
           />
           <label className="mt-3 flex cursor-pointer items-start gap-3">
             <input
@@ -201,9 +202,12 @@ export default function ImportScreen() {
           <button
             type="button"
             onClick={() => void extract()}
-            disabled={busy || input.trim() === ''}
-            className={`${primaryBtn} mt-3 w-full py-3`}
+            disabled={input.trim() === ''}
+            aria-busy={busy || undefined}
+            aria-disabled={busy || input.trim() === ''}
+            className={`${primaryBtn} mt-3 inline-flex w-full items-center justify-center gap-2 py-3 ${busy ? 'pointer-events-none' : ''}`}
           >
+            {busy && <SpinnerIcon className="block h-5 w-5 animate-spin" />}
             {busy
               ? 'Extracting…'
               : bulk
@@ -232,7 +236,7 @@ export default function ImportScreen() {
               </div>
               <p
                 className="mt-2 text-center text-sm text-ink-subtle"
-                aria-live="polite"
+                role="status"
               >
                 Reading recipe {progress.current} of {progress.total} — this
                 takes a few seconds.
@@ -240,7 +244,7 @@ export default function ImportScreen() {
             </div>
           )}
           {busy && !progress && (
-            <p className="mt-3 text-center text-sm text-ink-subtle">
+            <p className="mt-3 text-center text-sm text-ink-subtle" role="status">
               Reading the recipe — this takes a few seconds.
             </p>
           )}
