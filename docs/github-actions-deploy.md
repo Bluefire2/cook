@@ -59,7 +59,10 @@ $REPO = 'bluefire2/cook'
 
 & $gcloud iam service-accounts add-iam-policy-binding 62867274312-compute@developer.gserviceaccount.com --project=$P --member="serviceAccount:${SA}" --role=roles/iam.serviceAccountUser
 
-& $gcloud iam service-accounts add-iam-policy-binding "${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" --project=$P --member="serviceAccount:${SA}" --role=roles/iam.serviceAccountUser
+# Cloud Build's default worker is the Compute Engine SA above. The legacy
+# PROJECT_NUMBER@cloudbuild.gserviceaccount.com is not created in this project
+# — do not bind it. Confirm:
+#   & $gcloud builds get-default-service-account --project=$P
 
 # Source upload for gcloud builds submit. Skip if this bucket name differs.
 & $gcloud storage buckets add-iam-policy-binding "gs://${P}_cloudbuild" --member="serviceAccount:${SA}" --role=roles/storage.objectAdmin --project=$P
@@ -82,7 +85,9 @@ minute, describe again. `describe` succeeding but the binding still denied
 means this account is not `roles/owner` or `roles/iam.serviceAccountAdmin` on
 `$P`. `roles/editor` can create a service account and still cannot set IAM on
 it. The same `setIamPolicy` permission is required later for the Cloud Run
-runtime SA and the Cloud Build SA.
+runtime SA (the Compute Engine default). Do not bind
+`PROJECT_NUMBER@cloudbuild.gserviceaccount.com` — it does not exist in this
+project; Cloud Build runs as the Compute Engine SA.
 
 ## Git Bash
 
@@ -139,11 +144,9 @@ gcloud iam service-accounts add-iam-policy-binding \
   --member="serviceAccount:${SA}" \
   --role=roles/iam.serviceAccountUser
 
-gcloud iam service-accounts add-iam-policy-binding \
-  "${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-  --project="$PROJECT" \
-  --member="serviceAccount:${SA}" \
-  --role=roles/iam.serviceAccountUser
+# Cloud Build's default worker is the Compute Engine SA above. The legacy
+# PROJECT_NUMBER@cloudbuild.gserviceaccount.com is not created in this project.
+#   gcloud builds get-default-service-account --project="$PROJECT"
 
 # Source upload for gcloud builds submit. Skip if this bucket name differs.
 gcloud storage buckets add-iam-policy-binding "gs://${PROJECT}_cloudbuild" \
