@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
 import SaveToCollectionSheet from '../components/SaveToCollectionSheet';
 import { collectionStore, libraryHref } from '../lib/collectionStore';
+import { SpinnerIcon } from '../lib/icons';
 import { importRecipe, type ExtractedRecipe } from '../lib/importApi';
 import { recipeStore } from '../lib/recipeStore';
 import { backLink, inputFocus, primaryBtn } from '../lib/uiClasses';
@@ -65,6 +66,7 @@ export default function ImportScreen() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             rows={5}
+            readOnly={busy}
             placeholder="Paste a recipe link, or the recipe text itself…"
             className={`w-full rounded-xl border border-line bg-surface px-4 py-3 shadow-sm ${inputFocus}`}
           />
@@ -76,13 +78,16 @@ export default function ImportScreen() {
           <button
             type="button"
             onClick={() => void extract()}
-            disabled={busy || input.trim() === ''}
-            className={`${primaryBtn} mt-3 w-full py-3`}
+            disabled={input.trim() === ''}
+            aria-busy={busy || undefined}
+            aria-disabled={busy || input.trim() === ''}
+            className={`${primaryBtn} mt-3 inline-flex w-full items-center justify-center gap-2 py-3 ${busy ? 'pointer-events-none' : ''}`}
           >
+            {busy && <SpinnerIcon className="block h-5 w-5 animate-spin" />}
             {busy ? 'Extracting…' : 'Extract recipe'}
           </button>
           {busy && (
-            <p className="mt-3 text-center text-sm text-ink-subtle">
+            <p className="mt-3 text-center text-sm text-ink-subtle" role="status">
               Reading the recipe — this takes a few seconds.
             </p>
           )}
