@@ -6,7 +6,12 @@ https://sous.kyrylo.lol.
 
 **Actions → Deploy → Run workflow.** Pick `main` unless you intend to ship
 another ref. Tick **Omit RESEND_API_KEY** only for `SOUS_DISABLE_RESEND=1`.
-The job prints the live revision, then runs `bash scripts/deploy.sh`. Secrets
+The job prints the live revision, builds and pushes the image with Docker on
+the runner, then runs `SKIP_BUILD=1 bash scripts/deploy.sh` for the Cloud Run
+env map. It does **not** call `gcloud builds submit` — that command uploads
+to `gs://PROJECT_cloudbuild`, which rejects the WIF identity with
+"forbidden from accessing the bucket" even after bucket IAM. Local deploys
+still use Cloud Build (`bash scripts/deploy.sh` on your machine). Secrets
 are reused from the live service — do not put `GEMINI_API_KEY` or
 `SESSION_SECRET` in GitHub Secrets.
 
@@ -96,7 +101,8 @@ $REPO = 'bluefire2/cook'
 # — do not bind it. Confirm:
 #   & $gcloud builds get-default-service-account --project=$P
 
-# Source upload for gcloud builds submit. Skip if this bucket name differs.
+# Not used by GitHub Actions (the workflow builds with Docker on the runner).
+# Only needed if you run `gcloud builds submit` as the GitHub deploy SA.
 & $gcloud storage buckets add-iam-policy-binding "gs://${P}_cloudbuild" --member="serviceAccount:${SA}" --role=roles/storage.objectAdmin --project=$P
 ```
 
@@ -180,7 +186,7 @@ gcloud iam service-accounts add-iam-policy-binding \
 # PROJECT_NUMBER@cloudbuild.gserviceaccount.com is not created in this project.
 #   gcloud builds get-default-service-account --project="$PROJECT"
 
-# Source upload for gcloud builds submit. Skip if this bucket name differs.
+# Not used by GitHub Actions (the workflow builds with Docker on the runner).
 gcloud storage buckets add-iam-policy-binding "gs://${PROJECT}_cloudbuild" \
   --member="serviceAccount:${SA}" \
   --role=roles/storage.objectAdmin \
