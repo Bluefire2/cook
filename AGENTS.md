@@ -152,15 +152,19 @@ must die, not mint a new secret. Production env also includes **`MAIL_FROM`**,
 `SOUS_DISABLE_RESEND=1` to remove an existing key from the service).
 
 This deploys **straight to production**. There is no staging. Record the
-current revision before `bash scripts/deploy.sh`. The same script is what
-`.github/workflows/deploy.yml` runs; that workflow is **`workflow_dispatch`
-only** (never on push). It authenticates with Workload Identity Federation as
-`sous-github-deploy@cooking-assistant-508423.iam.gserviceaccount.com` and
-prints the live revision before calling the script. One-time pool / SA / IAM
-setup is in `docs/github-actions-deploy.md` (PowerShell and Git Bash). Do not
-add a `push` trigger.
+current revision before `bash scripts/deploy.sh`. `.github/workflows/deploy.yml`
+is **`workflow_dispatch` only** (never on push). It authenticates with Workload
+Identity Federation as
+`sous-github-deploy@cooking-assistant-508423.iam.gserviceaccount.com`, prints
+the live revision, builds the image with Docker on the runner, pushes it to
+Artifact Registry, then runs `SKIP_BUILD=1 bash scripts/deploy.sh`. Do not
+call `gcloud builds submit` from Actions — the default
+`gs://PROJECT_cloudbuild` bucket rejects the WIF identity. One-time pool /
+SA / IAM setup is in `docs/github-actions-deploy.md`. Do not add a `push`
+trigger.
 
-Docker is not installed locally; image builds run on Cloud Build.
+Docker is not installed locally; local `bash scripts/deploy.sh` still uses
+Cloud Build.
 
 ## Do not touch
 

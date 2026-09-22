@@ -59,7 +59,21 @@ jobs:
             --project="${PROJECT}" \
             --format='yaml(status.latestReadyRevisionName,status.url,spec.template.spec.containers[0].image)'
 
-      - name: Build and deploy
+      # gcloud builds submit uploads to gs://PROJECT_cloudbuild. That default
+      # bucket rejects this WIF identity even with storage.admin on the bucket
+      # (same error after serviceUsageConsumer). Build on the runner instead.
+      - name: Build and push image
+        run: |
+          IMAGE_TAG="$(date -u +%Y%m%d-%H%M%S)"
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/sous/${SERVICE_NAME}:${IMAGE_TAG}"
+          echo "Building ${IMAGE}"
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build -t "${IMAGE}" .
+          docker push "${IMAGE}"
+          echo "IMAGE=${IMAGE}" >> "${GITHUB_ENV}"
+
+      - name: Deploy
         env:
+          SKIP_BUILD: '1'
           SOUS_DISABLE_RESEND: ${{ inputs.disable_resend && '1' || '' }}
         run: bash scripts/deploy.sh

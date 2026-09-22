@@ -229,7 +229,8 @@ The same script can run from GitHub Actions. **Actions → Deploy → Run
 workflow** — it is `workflow_dispatch` only, never on push. Pick `main` unless
 you intend to ship another ref; every run replaces production. Tick **Omit
 RESEND_API_KEY** only when you want `SOUS_DISABLE_RESEND=1`. The job prints
-the live Cloud Run revision first, then calls `bash scripts/deploy.sh`.
+the live Cloud Run revision, builds and pushes the image with Docker on the
+runner (not `gcloud builds submit`), then `SKIP_BUILD=1 bash scripts/deploy.sh`.
 Secrets are reused from the live service; do not put `GEMINI_API_KEY` or
 `SESSION_SECRET` in GitHub Secrets.
 
