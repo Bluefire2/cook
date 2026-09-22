@@ -24,7 +24,9 @@ export type PullPage = {
   hasMore: boolean;
 };
 
-export type RemoteResult = 'ok' | 'signedOut' | 'error';
+export type RemoteResult = 'ok' | 'signedOut' | 'error' | 'invalid' | 'unknown' | 'cap';
+
+const DISCARDED_PUSH_REASONS = new Set(['invalid', 'unknown', 'cap']);
 
 function jsonHeaders(): HeadersInit {
   return { 'Content-Type': 'application/json' };
@@ -88,24 +90,34 @@ export async function pullPage(cursor: PullCursor | null): Promise<PullPage | 's
 /**
  * A 200 still carries per-op verdicts. `stale`, `already-deleted` and
  * `recipe-deleted` are ordinary last-write-wins/cascade outcomes, but
- * `invalid` and `unknown` mean the server threw the write away — report
- * those so callers roll back instead of claiming a save that never landed.
+ * `invalid`, `unknown`, and `cap` mean the server threw the write away —
+ * report those so callers roll back instead of claiming a save that never
+ * landed. `cap` is the live-collection limit, not a malformed payload.
  */
-export function pushBatchRejected(body: unknown): boolean {
+export function firstPushRejection(
+  body: unknown,
+): 'invalid' | 'unknown' | 'cap' | null {
   if (!body || typeof body !== 'object') {
-    return false;
+    return null;
   }
   const results = (body as { results?: unknown }).results;
   if (!Array.isArray(results)) {
-    return false;
+    return null;
   }
-  return results.some((entry) => {
+  for (const entry of results) {
     if (!entry || typeof entry !== 'object') {
-      return false;
+      continue;
     }
     const { applied, reason } = entry as { applied?: unknown; reason?: unknown };
-    return applied === false && (reason === 'invalid' || reason === 'unknown');
-  });
+    if (applied === false && typeof reason === 'string' && DISCARDED_PUSH_REASONS.has(reason)) {
+      return reason as 'invalid' | 'unknown' | 'cap';
+    }
+  }
+  return null;
+}
+
+export function pushBatchRejected(body: unknown): boolean {
+  return firstPushRejection(body) !== null;
 }
 
 export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
@@ -131,8 +143,9 @@ export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
     } catch {
       return 'error';
     }
-    if (pushBatchRejected(body)) {
-      return 'error';
+    const rejected = firstPushRejection(body);
+    if (rejected !== null) {
+      return rejected;
     }
   }
   return 'ok';

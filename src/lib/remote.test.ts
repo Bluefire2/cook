@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { pushBatchRejected, pushOps } from './remote';
+import { firstPushRejection, pushBatchRejected, pushOps } from './remote';
 import type { PushOp } from './pushOps';
 
 const op: PushOp = {
@@ -39,6 +39,25 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('firstPushRejection', () => {
+  it('returns the first discarded-write reason', () => {
+    expect(firstPushRejection(null)).toBeNull();
+    expect(firstPushRejection({ results: [{ applied: true }] })).toBeNull();
+    expect(
+      firstPushRejection({
+        results: [
+          { applied: false, reason: 'stale' },
+          { applied: false, reason: 'invalid' },
+          { applied: false, reason: 'unknown' },
+        ],
+      }),
+    ).toBe('invalid');
+    expect(
+      firstPushRejection({ results: [{ applied: false, reason: 'cap' }] }),
+    ).toBe('cap');
+  });
+});
+
 describe('pushBatchRejected', () => {
   it('is false when results are missing or applied', () => {
     expect(pushBatchRejected(null)).toBe(false);
@@ -47,12 +66,15 @@ describe('pushBatchRejected', () => {
     expect(pushBatchRejected({ results: [{ applied: false }] })).toBe(false);
   });
 
-  it('is true only for invalid and unknown', () => {
+  it('is true only for discarded writes', () => {
     expect(
       pushBatchRejected({ results: [{ applied: false, reason: 'invalid' }] }),
     ).toBe(true);
     expect(
       pushBatchRejected({ results: [{ applied: false, reason: 'unknown' }] }),
+    ).toBe(true);
+    expect(
+      pushBatchRejected({ results: [{ applied: false, reason: 'cap' }] }),
     ).toBe(true);
     expect(
       pushBatchRejected({ results: [{ applied: false, reason: 'stale' }] }),
@@ -72,8 +94,9 @@ describe('pushBatchRejected', () => {
 
 describe('pushOps', () => {
   it.each([
-    [{ applied: false, reason: 'invalid' }, 'error'],
-    [{ applied: false, reason: 'unknown' }, 'error'],
+    [{ applied: false, reason: 'invalid' }, 'invalid'],
+    [{ applied: false, reason: 'unknown' }, 'unknown'],
+    [{ applied: false, reason: 'cap' }, 'cap'],
     [{ applied: false, reason: 'stale' }, 'ok'],
     [{ applied: false, reason: 'already-deleted' }, 'ok'],
     [{ applied: false, reason: 'recipe-deleted' }, 'ok'],

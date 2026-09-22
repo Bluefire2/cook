@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   chunkByCost,
   chunkForBatch,
+  applyCollectionMembershipScrubs,
+  collectionDocsFromQuerySnap,
+  collectionsToScrub,
   compactCollectionFields,
   compactRecipeFields,
   compareMutation,
+  MAX_NAMED_COLLECTIONS,
+  namedCollectionCreateCapReason,
   decodePullCursor,
   encodePullCursor,
   isUuid,
@@ -231,6 +236,14 @@ describe('compactRecipeFields', () => {
   });
 });
 
+describe('namedCollectionCreateCapReason', () => {
+  it('returns cap only when the live count is already at the limit', () => {
+    expect(namedCollectionCreateCapReason(MAX_NAMED_COLLECTIONS - 1)).toBeUndefined();
+    expect(namedCollectionCreateCapReason(MAX_NAMED_COLLECTIONS)).toBe('cap');
+    expect(namedCollectionCreateCapReason(MAX_NAMED_COLLECTIONS + 1)).toBe('cap');
+  });
+});
+
 describe('compactCollectionFields', () => {
   it('trims the name and unique-ifies recipeIds', () => {
     expect(
@@ -249,6 +262,139 @@ describe('compactCollectionFields', () => {
       createdAt: 1,
       updatedAt: 2,
     });
+  });
+});
+
+describe('collectionsToScrub', () => {
+  const recipeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const otherId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+  it('drops the recipe id from a live collection that lists it', () => {
+    expect(
+      collectionsToScrub(
+        [
+          {
+            id: 'c1',
+            name: 'Dinners',
+            recipeIds: [recipeId, otherId],
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        ],
+        recipeId,
+        10,
+      ),
+    ).toEqual([
+      {
+        id: 'c1',
+        name: 'Dinners',
+        recipeIds: [otherId],
+        createdAt: 1,
+        updatedAt: 10,
+      },
+    ]);
+  });
+
+  it('skips tombstones and docs that do not list the id', () => {
+    expect(
+      collectionsToScrub(
+        [
+          {
+            id: 'tomb',
+            name: 'Gone',
+            recipeIds: [recipeId],
+            createdAt: 1,
+            updatedAt: 2,
+            deletedAt: 2,
+          },
+          {
+            id: 'other',
+            name: 'Other',
+            recipeIds: [otherId],
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        ],
+        recipeId,
+        10,
+      ),
+    ).toEqual([]);
+  });
+
+  it('still drops the id from a collection edited after the delete', () => {
+    expect(
+      collectionsToScrub(
+        [
+          {
+            id: 'newer',
+            name: 'Renamed',
+            recipeIds: [recipeId, otherId],
+            createdAt: 1,
+            updatedAt: 20,
+          },
+        ],
+        recipeId,
+        10,
+      ),
+    ).toEqual([
+      {
+        id: 'newer',
+        name: 'Renamed',
+        recipeIds: [otherId],
+        createdAt: 1,
+        updatedAt: 20,
+      },
+    ]);
+  });
+});
+
+describe('collection membership cascade glue', () => {
+  const recipeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+  it('maps query snapshots with the document id winning over data.id', () => {
+    expect(
+      collectionDocsFromQuerySnap([
+        {
+          id: 'from-path',
+          data: () => ({
+            id: 'from-body',
+            name: 'Dinners',
+            recipeIds: [recipeId],
+            createdAt: 1,
+            updatedAt: 2,
+          }),
+        },
+      ]),
+    ).toEqual([
+      {
+        id: 'from-path',
+        name: 'Dinners',
+        recipeIds: [recipeId],
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ]);
+  });
+
+  it('writes each scrub with the payload timestamp, not the delete time', async () => {
+    const writes: Array<{ id: string; writeAt: number; recipeIds: unknown }> = [];
+    await applyCollectionMembershipScrubs(
+      [
+        {
+          id: 'c1',
+          name: 'Dinners',
+          recipeIds: [recipeId],
+          createdAt: 1,
+          updatedAt: 20,
+        },
+      ],
+      recipeId,
+      10,
+      async (id, payload, writeAt) => {
+        writes.push({ id, writeAt, recipeIds: payload.recipeIds });
+      },
+    );
+    expect(writes).toEqual([{ id: 'c1', writeAt: 20, recipeIds: [] }]);
   });
 });
 

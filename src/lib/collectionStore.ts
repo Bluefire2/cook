@@ -14,23 +14,33 @@ import {
   subscribe,
   upsertCollection,
 } from './libraryMemory';
-import { pushOps } from './remote';
+import { pushOps, type RemoteResult } from './remote';
 import type { Collection } from './types';
 
-function saveError(result: 'ok' | 'signedOut' | 'error'): Error {
-  return new Error(
-    result === 'signedOut'
-      ? 'Please sign in again — your session expired.'
-      : "Couldn't save the collection.",
-  );
+export function collectionPushErrorMessage(result: RemoteResult, created = false): string {
+  if (result === 'signedOut') {
+    return 'Please sign in again — your session expired.';
+  }
+  if (created && result === 'cap') {
+    return `You can have up to ${MAX_NAMED_COLLECTIONS} collections.`;
+  }
+  return "Couldn't save the collection.";
 }
 
-async function pushCollection(next: Collection, previous: Collection | undefined): Promise<void> {
+function saveError(result: RemoteResult, created = false): Error {
+  return new Error(collectionPushErrorMessage(result, created));
+}
+
+async function pushCollection(
+  next: Collection,
+  previous: Collection | undefined,
+  created = false,
+): Promise<void> {
   upsertCollection(next);
   try {
     const result = await pushOps([{ kind: 'collection.put', payload: next }]);
     if (result !== 'ok') {
-      throw saveError(result);
+      throw saveError(result, created);
     }
   } catch (err) {
     if (previous) {
@@ -71,7 +81,7 @@ export const collectionStore = {
       createdAt: now,
       updatedAt: now,
     });
-    await pushCollection(collection, undefined);
+    await pushCollection(collection, undefined, true);
     return collection;
   },
 
