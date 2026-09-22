@@ -209,10 +209,14 @@ export async function postPhoto(
   return readErrorStatus(response);
 }
 
-export async function fetchPhotoBlob(id: string): Promise<Blob | null | 'signedOut'> {
+export async function fetchPhotoBlob(
+  id: string,
+  ownerSub?: string,
+): Promise<Blob | null | 'signedOut'> {
   let response: Response;
   try {
-    response = await fetch(`/api/photos/${encodeURIComponent(id)}`, {
+    const params = ownerSub ? `?owner=${encodeURIComponent(ownerSub)}` : '';
+    response = await fetch(`/api/photos/${encodeURIComponent(id)}${params}`, {
       credentials: 'same-origin',
       cache: 'no-store',
     });
@@ -339,4 +343,130 @@ export function normalizeCollectionChange(raw: Record<string, unknown>): Collect
     createdAt: raw.createdAt as number,
     updatedAt: raw.updatedAt as number,
   });
+}
+
+export type SharedPullChanges = {
+  collections: Record<string, unknown>[];
+  recipes: Record<string, unknown>[];
+  photos: Record<string, unknown>[];
+};
+
+export type SharedPullPage = {
+  changes: SharedPullChanges;
+  cursorToken: string;
+  hasMore: boolean;
+};
+
+export async function pullSharedPage(
+  cursorToken: string | null,
+): Promise<SharedPullPage | 'signedOut' | 'error'> {
+  const params = new URLSearchParams({ limit: '200' });
+  if (cursorToken) {
+    params.set('cursor', cursorToken);
+  }
+  let response: Response;
+  try {
+    response = await fetch(`/api/sync/shared?${params.toString()}`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+  } catch {
+    return 'error';
+  }
+  if (!response.ok) {
+    return readErrorStatus(response);
+  }
+  const body = (await response.json()) as {
+    changes?: SharedPullChanges;
+    cursorToken?: string;
+    hasMore?: boolean;
+  };
+  if (!body.changes) {
+    return 'error';
+  }
+  return {
+    changes: body.changes,
+    cursorToken: typeof body.cursorToken === 'string' ? body.cursorToken : '',
+    hasMore: Boolean(body.hasMore),
+  };
+}
+
+export type CollectionGrant = { sub: string; email: string; createdAt: number };
+
+export type GrantHttpResult =
+  | { kind: 'ok'; grants?: CollectionGrant[]; grant?: CollectionGrant }
+  | { kind: 'signedOut' }
+  | { kind: 'error'; message: string; status?: number };
+
+async function grantRequest(
+  path: string,
+  init?: RequestInit,
+): Promise<GrantHttpResult> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      ...init,
+    });
+  } catch {
+    return { kind: 'error', message: "Couldn't update sharing." };
+  }
+  if (response.status === 401 || response.status === 403) {
+    invalidateSession();
+    clearLibrary();
+    return { kind: 'signedOut' };
+  }
+  if (response.status === 503) {
+    return { kind: 'error', message: 'Sharing is temporarily unavailable.', status: 503 };
+  }
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  if (!response.ok) {
+    const message =
+      body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
+        ? (body as { error: string }).error
+        : "Couldn't update sharing.";
+    return { kind: 'error', message, status: response.status };
+  }
+  return {
+    kind: 'ok',
+    grants: (body as { grants?: CollectionGrant[] }).grants,
+    grant: (body as { grant?: CollectionGrant }).grant,
+  };
+}
+
+export async function listCollectionGrants(
+  collectionId: string,
+): Promise<GrantHttpResult> {
+  return grantRequest(`/api/collections/${encodeURIComponent(collectionId)}/grants`);
+}
+
+export async function addCollectionGrant(
+  collectionId: string,
+  email: string,
+): Promise<GrantHttpResult> {
+  return grantRequest(`/api/collections/${encodeURIComponent(collectionId)}/grants`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function revokeCollectionGrant(
+  collectionId: string,
+  sub: string,
+): Promise<GrantHttpResult> {
+  return grantRequest(
+    `/api/collections/${encodeURIComponent(collectionId)}/grants/revoke`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ sub }),
+    },
+  );
 }

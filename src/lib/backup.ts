@@ -5,10 +5,11 @@ import {
   addPendingBlob,
   captureSnapshot,
   getPendingBlob,
+  isSharedCollection,
+  isSharedRecipe,
   listAllChat,
   listAllCook,
   listCollections,
-  listPhotoIds,
   listRecipes,
   markPhotoRemote,
   restoreSnapshot,
@@ -76,17 +77,19 @@ function attributePhotos(
 }
 
 export async function exportLibrary(): Promise<Blob> {
-  const recipes = listRecipes();
+  const recipes = listRecipes().filter((recipe) => !isSharedRecipe(recipe.id));
   const chatMessages = listAllChat();
-  const cookState = listAllCook();
-  const collections = listCollections();
-  const photoIds = listPhotoIds();
+  const cookState = listAllCook().filter((row) => !isSharedRecipe(row.recipeId));
+  const collections = listCollections().filter(
+    (collection) => !isSharedCollection(collection.id),
+  );
+  const photoIds = [...attributePhotos(recipes, chatMessages).keys()];
 
   const photos: BackupPhoto[] = [];
   for (const id of photoIds) {
     let blob = getPendingBlob(id);
     if (!blob) {
-      const fetched = await fetchPhotoBlob(id);
+      const fetched = await fetchPhotoBlob(id, undefined);
       if (fetched === null || fetched === 'signedOut') {
         continue;
       }

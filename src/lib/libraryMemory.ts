@@ -2,6 +2,8 @@ import { recipePhotoIds } from './recipePhotos';
 import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 
+export type ItemOrigin = { kind: 'own' } | { kind: 'shared'; ownerSub: string };
+
 export type LibrarySnapshot = {
   recipes: ReadonlyMap<string, Recipe>;
   collections: ReadonlyMap<string, Collection>;
@@ -9,6 +11,9 @@ export type LibrarySnapshot = {
   cook: ReadonlyMap<string, CookStateRow>;
   remotePhotoIds: ReadonlySet<string>;
   pendingBlobs: ReadonlyMap<string, Blob>;
+  recipeOrigins: ReadonlyMap<string, ItemOrigin>;
+  collectionOrigins: ReadonlyMap<string, ItemOrigin>;
+  grantCounts: ReadonlyMap<string, number>;
   loaded: boolean;
 };
 
@@ -22,6 +27,9 @@ function empty(loaded: boolean): LibrarySnapshot {
     cook: new Map(),
     remotePhotoIds: new Set(),
     pendingBlobs: new Map(),
+    recipeOrigins: new Map(),
+    collectionOrigins: new Map(),
+    grantCounts: new Map(),
     loaded,
   };
 }
@@ -42,6 +50,9 @@ function cloneMaps(from: LibrarySnapshot): {
   cook: Map<string, CookStateRow>;
   remotePhotoIds: Set<string>;
   pendingBlobs: Map<string, Blob>;
+  recipeOrigins: Map<string, ItemOrigin>;
+  collectionOrigins: Map<string, ItemOrigin>;
+  grantCounts: Map<string, number>;
 } {
   return {
     recipes: new Map(from.recipes),
@@ -50,6 +61,9 @@ function cloneMaps(from: LibrarySnapshot): {
     cook: new Map(from.cook),
     remotePhotoIds: new Set(from.remotePhotoIds),
     pendingBlobs: new Map(from.pendingBlobs),
+    recipeOrigins: new Map(from.recipeOrigins),
+    collectionOrigins: new Map(from.collectionOrigins),
+    grantCounts: new Map(from.grantCounts),
   };
 }
 
@@ -90,6 +104,14 @@ export function replaceFromPull(next: {
   cook: Map<string, CookStateRow>;
   remotePhotoIds: Set<string>;
 }): void {
+  const recipeOrigins = new Map<string, ItemOrigin>();
+  for (const id of next.recipes.keys()) {
+    recipeOrigins.set(id, { kind: 'own' });
+  }
+  const collectionOrigins = new Map<string, ItemOrigin>();
+  for (const id of next.collections.keys()) {
+    collectionOrigins.set(id, { kind: 'own' });
+  }
   emit({
     recipes: next.recipes,
     collections: next.collections,
@@ -97,13 +119,51 @@ export function replaceFromPull(next: {
     cook: next.cook,
     remotePhotoIds: next.remotePhotoIds,
     pendingBlobs: snapshot.pendingBlobs,
+    recipeOrigins,
+    collectionOrigins,
+    grantCounts: snapshot.grantCounts,
     loaded: true,
   });
+}
+
+export function mergeSharedFromPull(next: {
+  recipes: Map<string, Recipe>;
+  collections: Map<string, Collection>;
+  remotePhotoIds: Set<string>;
+  recipeOrigins: Map<string, ItemOrigin>;
+  collectionOrigins: Map<string, ItemOrigin>;
+}): void {
+  const maps = cloneMaps(snapshot);
+  for (const [id, recipe] of next.recipes) {
+    if (maps.recipeOrigins.get(id)?.kind === 'own' || maps.recipes.has(id)) {
+      continue;
+    }
+    maps.recipes.set(id, recipe);
+    const origin = next.recipeOrigins.get(id);
+    if (origin) {
+      maps.recipeOrigins.set(id, origin);
+    }
+  }
+  for (const [id, collection] of next.collections) {
+    if (maps.collectionOrigins.get(id)?.kind === 'own' || maps.collections.has(id)) {
+      continue;
+    }
+    maps.collections.set(id, collection);
+    const origin = next.collectionOrigins.get(id);
+    if (origin) {
+      maps.collectionOrigins.set(id, origin);
+    }
+  }
+  for (const id of next.remotePhotoIds) {
+    maps.remotePhotoIds.add(id);
+  }
+  emit({ ...snapshot, ...maps });
 }
 
 export function upsertRecipe(recipe: Recipe): void {
   const next = cloneMaps(snapshot);
   next.recipes.set(recipe.id, recipe);
+  next.recipeOrigins.set(recipe.id, { kind: 'own' });
   emit({ ...snapshot, ...next });
 }
 
@@ -111,6 +171,7 @@ export function removeRecipeLocal(id: string): void {
   const next = cloneMaps(snapshot);
   const recipe = next.recipes.get(id);
   next.recipes.delete(id);
+  next.recipeOrigins.delete(id);
   next.cook.delete(id);
   for (const [messageId, message] of next.chat) {
     if (message.recipeId === id) {
@@ -212,13 +273,58 @@ export function getCollection(id: string): Collection | undefined {
 export function upsertCollection(collection: Collection): void {
   const next = cloneMaps(snapshot);
   next.collections.set(collection.id, collection);
+  if (!next.collectionOrigins.has(collection.id)) {
+    next.collectionOrigins.set(collection.id, { kind: 'own' });
+  }
   emit({ ...snapshot, ...next });
 }
 
 export function removeCollectionLocal(id: string): void {
   const next = cloneMaps(snapshot);
   next.collections.delete(id);
+  next.collectionOrigins.delete(id);
+  next.grantCounts.delete(id);
   emit({ ...snapshot, ...next });
+}
+
+export function getRecipeOrigin(id: string): ItemOrigin | undefined {
+  return snapshot.recipeOrigins.get(id);
+}
+
+export function getCollectionOrigin(id: string): ItemOrigin | undefined {
+  return snapshot.collectionOrigins.get(id);
+}
+
+export function isSharedRecipe(id: string): boolean {
+  return snapshot.recipeOrigins.get(id)?.kind === 'shared';
+}
+
+export function isSharedCollection(id: string): boolean {
+  return snapshot.collectionOrigins.get(id)?.kind === 'shared';
+}
+
+export function photoOwnerSub(photoId: string): string | undefined {
+  for (const recipe of snapshot.recipes.values()) {
+    if (!recipePhotoIds(recipe).includes(photoId)) {
+      continue;
+    }
+    const origin = snapshot.recipeOrigins.get(recipe.id);
+    if (origin?.kind === 'shared') {
+      return origin.ownerSub;
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
+export function setGrantCount(collectionId: string, count: number): void {
+  const next = cloneMaps(snapshot);
+  next.grantCounts.set(collectionId, count);
+  emit({ ...snapshot, ...next });
+}
+
+export function getGrantCount(collectionId: string): number | undefined {
+  return snapshot.grantCounts.get(collectionId);
 }
 
 export function listChat(recipeId: string): ChatMessage[] {

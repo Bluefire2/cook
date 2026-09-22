@@ -1,3 +1,4 @@
+import { cascadeCollectionGrants } from './grants.ts';
 import { drainGcsDeletes } from './photos.ts';
 import {
   membershipUnauthorized,
@@ -5,6 +6,11 @@ import {
   requireMember,
   storeUnavailable,
 } from './membership.ts';
+import {
+  buildSharedPullPage,
+  decodeSharedCursor,
+  encodeSharedCursor,
+} from './sharedPull.ts';
 import {
   cascadeRecipeDelete,
   clearChatForRecipe,
@@ -202,7 +208,9 @@ export async function applyPushOp(
     }
     case 'collection.delete': {
       const body = payload as { id: string; updatedAt: number };
-      return tombstoneDoc(uid, 'collections', body.id, body.updatedAt);
+      const result = await tombstoneDoc(uid, 'collections', body.id, body.updatedAt);
+      await cascadeCollectionGrants(uid, body.id, body.updatedAt);
+      return result;
     }
     default:
       return { applied: false, reason: 'unknown' };
@@ -275,6 +283,39 @@ export async function syncPush(req: Request): Promise<Response> {
   return jsonResponse({ results });
   } catch (err) {
     console.error('syncPush store error:', err);
+    return storeUnavailable();
+  }
+}
+
+export async function syncSharedPull(req: Request): Promise<Response> {
+  const access = await requireMember(req);
+  if (access.kind === 'denied') {
+    return membershipUnauthorized();
+  }
+  if (access.kind === 'unknown') {
+    return membershipUnavailable();
+  }
+
+  try {
+    const url = new URL(req.url);
+    const limitRaw = url.searchParams.get('limit');
+    let limit = 200;
+    if (limitRaw !== null) {
+      const parsed = Number(limitRaw);
+      if (Number.isFinite(parsed)) {
+        limit = Math.min(500, Math.max(1, Math.floor(parsed)));
+      }
+    }
+    const cursor = decodeSharedCursor(url.searchParams.get('cursor'));
+    const page = await buildSharedPullPage(access.sub, cursor, limit);
+    return jsonResponse({
+      changes: page.changes,
+      cursor: page.cursor,
+      cursorToken: encodeSharedCursor(page.cursor),
+      hasMore: page.hasMore,
+    });
+  } catch (err) {
+    console.error('syncSharedPull store error:', err);
     return storeUnavailable();
   }
 }

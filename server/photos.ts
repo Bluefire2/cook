@@ -9,6 +9,7 @@ import {
   requireMember,
   storeUnavailable,
 } from './membership.ts';
+import { sessionCanViewOwnerPhoto } from './grants.ts';
 import {
   compareMutation,
   gcsDeletesColRef,
@@ -593,7 +594,18 @@ export async function photosGet(req: Request): Promise<Response> {
     return jsonError('Bad request', 400);
   }
 
-  const uid = access.sub;
+  const ownerParam = new URL(req.url).searchParams.get('owner');
+  const uid =
+    ownerParam === null || ownerParam === '' || ownerParam === access.sub
+      ? access.sub
+      : ownerParam;
+  if (uid !== access.sub) {
+    const allowed = await sessionCanViewOwnerPhoto(access.sub, uid, photoId);
+    if (!allowed) {
+      return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+    }
+  }
+
   const snap = await photoDocRef(uid, photoId).get();
   if (!snap.exists) {
     return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });

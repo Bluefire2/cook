@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import RecipeForm from '../components/RecipeForm';
 import CreateRecipeForm from '../components/CreateRecipeForm';
 import { libraryHref, useCollections } from '../lib/collectionStore';
+import { isSharedCollection, isSharedRecipe } from '../lib/libraryMemory';
 import { blankDraft } from '../lib/recipeDraft';
 import { recipeStore, useRecipe } from '../lib/recipeStore';
 import { backLink, primaryBtn } from '../lib/uiClasses';
@@ -49,7 +50,8 @@ function CreateRecipe() {
   // pull has not landed yet, and only a subscriber re-renders once it does.
   const collections = useCollections();
   const knownCollectionId =
-    collectionId && collections?.some((c) => c.id === collectionId)
+    collectionId &&
+    collections?.some((c) => c.id === collectionId && !isSharedCollection(c.id))
       ? collectionId
       : undefined;
   const backTo = libraryHref(knownCollectionId);
@@ -59,7 +61,7 @@ function CreateRecipe() {
     <Screen heading="New recipe" backTo={backTo} backLabel="Library">
       <CreateRecipeForm
         initial={initial}
-        collectionId={collectionId}
+        collectionId={knownCollectionId}
         onCreated={(recipe) => navigate(`/recipe/${recipe.id}`, { replace: true })}
         onCancel={() => navigate(backTo)}
       />
@@ -76,7 +78,7 @@ function EditRecipe({ id }: { id: string }) {
       <div className="p-6 text-center text-ink-muted">Loading recipe…</div>
     );
   }
-  if (recipe === null) {
+  if (recipe === null || isSharedRecipe(id)) {
     return (
       <div className="p-6 text-center text-ink-muted">
         Recipe not found.{' '}

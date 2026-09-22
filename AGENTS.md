@@ -57,7 +57,11 @@ UI (screens, components)
 library data. Screens must not `fetch`. Do not add fields to `Recipe`,
 `ChatMessage`, or `CookStateRow` — `compactRecipe` strips unknown keys, and
 `src/lib/recipeStore.test.ts` asserts the exact key set. That test is a
-schema lock; do not "fix" it by expanding the allow-list.
+schema lock; do not "fix" it by expanding the allow-list. Collections are a
+separate store kind. View-only grants live under
+`collections/{id}/grants/{viewerSub}` plus a reverse
+`incomingShares/{viewerSub}` index; they are REST, not LWW push. Shared
+rows stay in the owner's tree and carry origin metadata beside `Recipe`.
 
 The recipe library is **not** stored in IndexedDB. On boot, `discardLegacyCookDb`
 deletes the old Dexie database named `cook` if it is still present. Backups
@@ -189,7 +193,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/ask-voice-stt.md` | Implementing. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
 | `docs/plans/recipe-gallery.md` | In progress on branch `cursor/recipe-gallery-267b` (main photo + end-of-recipe gallery). |
-| `docs/plans/shared-recipes.md` | PR 1 implementing (named collections + implicit default). PR 2 view ACLs not started. |
+| `docs/plans/shared-recipes.md` | PR 1 done. PR 2 view-only collection grants implementing. |
 | `docs/plans/bulk-import.md` | Implementing. Opt-in bulk URL import on `/import`. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,

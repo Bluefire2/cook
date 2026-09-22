@@ -44,8 +44,10 @@ Sous is a personal recipe book with a Gemini cooking assistant, not a public
 SaaS. It exists for one person. Libraries are keyed by Google `sub`, not a
 shared household account. A second person **requests access** from the 403 page;
 the owner approves at **`/admin`**; **no redeploy** is involved, and that person
-gets **their own empty library**. No shared library is designed. A second
-identity was out of scope for the Phase 2 cutover.
+gets **their own empty library**. An admitted member can later be granted
+view-only access to a **named collection** by email; that is not a household
+`uid` and does not share the default library. A second identity was out of
+scope for the Phase 2 cutover.
 
 ## Why (billing and data)
 
@@ -120,9 +122,9 @@ Use **`/admin`** (Settings → Invitations for owners): they request access from
 the 403 page and you approve there, **or** you mint a single-use invite link
 and they sign in through it. **Do not** add an ordinary member to
 `ALLOWED_EMAILS` — every address in that variable is an **administrator** who
-can approve and remove members. Do not invent household sharing, a shared
-`uid`, or a "fix" that makes blank mean everyone. Unverified Google emails
-stay denied.
+can approve and remove members. Do not invent a household `uid` or a "fix"
+that makes blank mean everyone. Named-collection view grants are the only
+sharing path. Unverified Google emails stay denied.
 
 ## Access requests
 

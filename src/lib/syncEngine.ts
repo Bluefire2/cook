@@ -2,13 +2,18 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   applyPullChanges,
   mergePullCursor,
+  normalizeCollectionChange,
+  normalizeRecipeChange,
   pullPage,
+  pullSharedPage,
   type PullCursor,
 } from './remote';
 import {
   clearLibrary,
   markLoaded,
+  mergeSharedFromPull,
   replaceFromPull,
+  type ItemOrigin,
 } from './libraryMemory';
 import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
@@ -118,7 +123,64 @@ async function pullAll(): Promise<SyncResult> {
       break;
     }
   }
+  const sharedRecipes = new Map<string, Recipe>();
+  const sharedCollections = new Map<string, Collection>();
+  const sharedPhotos = new Set<string>();
+  const recipeOrigins = new Map<string, ItemOrigin>();
+  const collectionOrigins = new Map<string, ItemOrigin>();
+  let sharedCursor: string | null = null;
+  let sharedPages = 0;
+  while (true) {
+    const page = await pullSharedPage(sharedPages === 0 ? null : sharedCursor);
+    if (page === 'signedOut') {
+      return { outcome: 'signedOut', pushed: 0, applied: 0 };
+    }
+    if (page === 'error') {
+      return { outcome: 'error', pushed: 0, applied: 0 };
+    }
+    for (const raw of page.changes.collections) {
+      const id = raw.id as string;
+      const normalized = normalizeCollectionChange(raw);
+      if (normalized === 'tombstone') {
+        continue;
+      }
+      sharedCollections.set(id, normalized);
+      if (typeof raw.ownerSub === 'string' && raw.ownerSub !== '') {
+        collectionOrigins.set(id, { kind: 'shared', ownerSub: raw.ownerSub });
+      }
+    }
+    for (const raw of page.changes.recipes) {
+      const id = raw.id as string;
+      const normalized = normalizeRecipeChange(raw);
+      if (normalized === 'tombstone') {
+        continue;
+      }
+      sharedRecipes.set(id, normalized);
+      if (typeof raw.ownerSub === 'string' && raw.ownerSub !== '') {
+        recipeOrigins.set(id, { kind: 'shared', ownerSub: raw.ownerSub });
+      }
+    }
+    for (const raw of page.changes.photos) {
+      const id = raw.id as string;
+      if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
+        continue;
+      }
+      sharedPhotos.add(id);
+    }
+    sharedCursor = page.cursorToken;
+    sharedPages += 1;
+    if (!page.hasMore) {
+      break;
+    }
+  }
   replaceFromPull(acc);
+  mergeSharedFromPull({
+    recipes: sharedRecipes,
+    collections: sharedCollections,
+    remotePhotoIds: sharedPhotos,
+    recipeOrigins,
+    collectionOrigins,
+  });
   return { outcome: 'ok', pushed: 0, applied: 0 };
 }
 

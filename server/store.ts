@@ -356,6 +356,41 @@ function tombstonePayload(
   };
 }
 
+export async function sharedParentLive(
+  sessionSub: string,
+  recipeId: string,
+): Promise<boolean> {
+  const items = await getFirestore()
+    .collection('incomingShares')
+    .doc(sessionSub)
+    .collection('items')
+    .get();
+  for (const doc of items.docs) {
+    const data = doc.data() as Record<string, unknown>;
+    if (!isLiveDoc(data)) {
+      continue;
+    }
+    const ownerSub = data.ownerSub;
+    const collectionId = data.collectionId;
+    if (typeof ownerSub !== 'string' || typeof collectionId !== 'string') {
+      continue;
+    }
+    const collection = await readDocData(ownerSub, 'collections', collectionId);
+    if (collection === undefined || !isLiveDoc(collection)) {
+      continue;
+    }
+    const ids = Array.isArray(collection.recipeIds) ? collection.recipeIds : [];
+    if (!ids.includes(recipeId)) {
+      continue;
+    }
+    const recipe = await readDocData(ownerSub, 'recipes', recipeId);
+    if (recipe !== undefined && isLiveDoc(recipe)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function readRecipeLive(
   tx: Transaction,
   uid: string,
@@ -512,7 +547,13 @@ export async function putDoc(
     if (parentRecipeId !== null) {
       const live = await readRecipeLive(tx, uid, parentRecipeId);
       if (!live) {
-        return { applied: false, reason: 'recipe-deleted' };
+        if (kind === 'photos') {
+          return { applied: false, reason: 'recipe-deleted' };
+        }
+        const shared = await sharedParentLive(uid, parentRecipeId);
+        if (!shared) {
+          return { applied: false, reason: 'recipe-deleted' };
+        }
       }
     }
 

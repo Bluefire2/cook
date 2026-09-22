@@ -1,0 +1,376 @@
+import { FieldPath } from '@google-cloud/firestore';
+import { isAllowed } from './allowlist.ts';
+import { allowedEmails } from './env.ts';
+import { readMember } from './members.ts';
+import { canViewPhoto } from './shareAuth.ts';
+import {
+  collectionDocRef,
+  getStoreFirestore,
+  isLiveDoc,
+  isUuid,
+  readDocData,
+} from './store.ts';
+
+export const MAX_LIVE_GRANTS = 20;
+export const NO_ACCOUNT_MESSAGE = 'No Sous account with that email';
+
+export type LiveGrant = {
+  viewerSub: string;
+  email: string;
+  collectionId: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type GrantTombstone = {
+  viewerSub: string;
+  updatedAt: number;
+  deletedAt: number;
+};
+
+export type IncomingShareDoc = {
+  ownerSub: string;
+  collectionId: string;
+  ownerEmail?: string;
+  updatedAt: number;
+  deletedAt?: number;
+};
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+export function normalizeShareEmail(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') {
+    return undefined;
+  }
+  const email = raw.trim().toLowerCase();
+  if (email === '' || !email.includes('@') || email.length > 320) {
+    return undefined;
+  }
+  return email;
+}
+
+export function shareGrantId(ownerSub: string, collectionId: string): string {
+  return `${ownerSub}_${collectionId}`;
+}
+
+export function parseGrantDoc(
+  raw: unknown,
+  expectedViewerSub: string,
+): LiveGrant | GrantTombstone | null {
+  if (!isPlainObject(raw)) {
+    return null;
+  }
+  if (typeof raw.viewerSub !== 'string' || raw.viewerSub !== expectedViewerSub) {
+    return null;
+  }
+  const updatedAt = finiteNumber(raw.updatedAt);
+  if (updatedAt === undefined) {
+    return null;
+  }
+  const deletedAt = finiteNumber(raw.deletedAt);
+  if (deletedAt !== undefined) {
+    return { viewerSub: raw.viewerSub, updatedAt, deletedAt };
+  }
+  if (typeof raw.email !== 'string' || raw.email === '') {
+    return null;
+  }
+  if (typeof raw.collectionId !== 'string' || !isUuid(raw.collectionId)) {
+    return null;
+  }
+  const createdAt = finiteNumber(raw.createdAt);
+  if (createdAt === undefined) {
+    return null;
+  }
+  return {
+    viewerSub: raw.viewerSub,
+    email: raw.email,
+    collectionId: raw.collectionId,
+    createdAt,
+    updatedAt,
+  };
+}
+
+export function isLiveGrant(
+  grant: LiveGrant | GrantTombstone | null,
+): grant is LiveGrant {
+  return grant !== null && !('deletedAt' in grant);
+}
+
+export function addGrantTransition(input: {
+  existing: LiveGrant | GrantTombstone | null;
+  viewerSub: string;
+  email: string;
+  collectionId: string;
+  now: number;
+  liveCount: number;
+}):
+  | { kind: 'write'; doc: LiveGrant }
+  | { kind: 'idempotent'; doc: LiveGrant }
+  | { kind: 'cap' } {
+  if (isLiveGrant(input.existing)) {
+    return { kind: 'idempotent', doc: input.existing };
+  }
+  if (input.liveCount >= MAX_LIVE_GRANTS) {
+    return { kind: 'cap' };
+  }
+  return {
+    kind: 'write',
+    doc: {
+      viewerSub: input.viewerSub,
+      email: input.email,
+      collectionId: input.collectionId,
+      createdAt: input.now,
+      updatedAt: input.now,
+    },
+  };
+}
+
+export function revokeGrantTransition(input: {
+  existing: LiveGrant | GrantTombstone | null;
+  viewerSub: string;
+  now: number;
+}): { kind: 'write'; doc: GrantTombstone } | { kind: 'already'; doc: GrantTombstone } {
+  if (input.existing !== null && 'deletedAt' in input.existing) {
+    return { kind: 'already', doc: input.existing };
+  }
+  return {
+    kind: 'write',
+    doc: {
+      viewerSub: input.viewerSub,
+      updatedAt: input.now,
+      deletedAt: input.now,
+    },
+  };
+}
+
+export function incomingShareFromGrant(
+  ownerSub: string,
+  collectionId: string,
+  grant: LiveGrant | GrantTombstone,
+  ownerEmail?: string,
+): IncomingShareDoc {
+  return incomingSharePayload(ownerSub, collectionId, grant.updatedAt, {
+    ...(ownerEmail ? { ownerEmail } : {}),
+    ...('deletedAt' in grant ? { deletedAt: grant.deletedAt } : {}),
+  });
+}
+
+export function incomingSharePayload(
+  ownerSub: string,
+  collectionId: string,
+  updatedAt: number,
+  extra?: { ownerEmail?: string; deletedAt?: number },
+): IncomingShareDoc {
+  const share: IncomingShareDoc = { ownerSub, collectionId, updatedAt };
+  if (extra?.ownerEmail) {
+    share.ownerEmail = extra.ownerEmail;
+  }
+  if (extra?.deletedAt !== undefined) {
+    share.deletedAt = extra.deletedAt;
+  }
+  return share;
+}
+
+export type ShareTarget =
+  | { kind: 'ok'; sub: string; email: string }
+  | { kind: 'self' }
+  | { kind: 'notFound' }
+  | { kind: 'unknown' };
+
+export type UserEmailRow = { sub: string; email: string; lastSeenAt: number };
+
+export async function resolveShareTarget(input: {
+  email: string;
+  actorSub: string;
+  actorEmail: string;
+  queryUsersByEmail: (email: string) => Promise<UserEmailRow[]>;
+  isOwnerEmail: (email: string) => boolean;
+  readMemberStatus: (sub: string) => Promise<'active' | 'revoked' | null>;
+}): Promise<ShareTarget> {
+  if (input.email === input.actorEmail.trim().toLowerCase()) {
+    return { kind: 'self' };
+  }
+  let rows: UserEmailRow[];
+  try {
+    rows = await input.queryUsersByEmail(input.email);
+  } catch {
+    return { kind: 'unknown' };
+  }
+  if (rows.length === 0) {
+    return { kind: 'notFound' };
+  }
+  rows.sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+  const picked = rows[0];
+  if (picked.sub === input.actorSub) {
+    return { kind: 'self' };
+  }
+  if (input.isOwnerEmail(picked.email)) {
+    return { kind: 'ok', sub: picked.sub, email: picked.email };
+  }
+  try {
+    const status = await input.readMemberStatus(picked.sub);
+    if (status === 'active') {
+      return { kind: 'ok', sub: picked.sub, email: picked.email };
+    }
+    return { kind: 'notFound' };
+  } catch {
+    return { kind: 'unknown' };
+  }
+}
+
+export async function queryUsersByEmail(email: string): Promise<UserEmailRow[]> {
+  const snap = await getStoreFirestore()
+    .collection('users')
+    .where('email', '==', email)
+    .get();
+  const rows: UserEmailRow[] = [];
+  for (const doc of snap.docs) {
+    const data = doc.data() as Record<string, unknown>;
+    const storedEmail = typeof data.email === 'string' ? data.email : email;
+    const lastSeenAt =
+      typeof data.lastSeenAt === 'number' && Number.isFinite(data.lastSeenAt)
+        ? data.lastSeenAt
+        : 0;
+    rows.push({ sub: doc.id, email: storedEmail, lastSeenAt });
+  }
+  return rows;
+}
+
+export async function lookupAdmittedSubByEmail(
+  email: string,
+  actor: { sub: string; email: string },
+): Promise<ShareTarget> {
+  return resolveShareTarget({
+    email,
+    actorSub: actor.sub,
+    actorEmail: actor.email,
+    queryUsersByEmail,
+    isOwnerEmail: (candidate) => isAllowed(candidate, true, allowedEmails()),
+    readMemberStatus: async (sub) => {
+      const member = await readMember(sub);
+      return member?.status ?? null;
+    },
+  });
+}
+
+export function grantColRef(ownerSub: string, collectionId: string) {
+  return collectionDocRef(ownerSub, collectionId).collection('grants');
+}
+
+export function incomingShareRef(viewerSub: string, grantId: string) {
+  return getStoreFirestore()
+    .collection('incomingShares')
+    .doc(viewerSub)
+    .collection('items')
+    .doc(grantId);
+}
+
+export function incomingSharesCol(viewerSub: string) {
+  return getStoreFirestore()
+    .collection('incomingShares')
+    .doc(viewerSub)
+    .collection('items');
+}
+
+export async function listLiveIncomingShares(
+  viewerSub: string,
+): Promise<Array<{ grantId: string; ownerSub: string; collectionId: string }>> {
+  const snap = await incomingSharesCol(viewerSub)
+    .orderBy(FieldPath.documentId())
+    .get();
+  const out: Array<{ grantId: string; ownerSub: string; collectionId: string }> =
+    [];
+  for (const doc of snap.docs) {
+    const data = doc.data() as Record<string, unknown>;
+    if (!isLiveDoc(data)) {
+      continue;
+    }
+    if (typeof data.ownerSub !== 'string' || data.ownerSub === '') {
+      continue;
+    }
+    if (typeof data.collectionId !== 'string' || !isUuid(data.collectionId)) {
+      continue;
+    }
+    out.push({
+      grantId: doc.id,
+      ownerSub: data.ownerSub,
+      collectionId: data.collectionId,
+    });
+  }
+  return out;
+}
+
+export async function sessionCanViewOwnerPhoto(
+  viewerSub: string,
+  ownerSub: string,
+  photoId: string,
+): Promise<boolean> {
+  const shares = await listLiveIncomingShares(viewerSub);
+  for (const share of shares) {
+    if (share.ownerSub !== ownerSub) {
+      continue;
+    }
+    const collection = await readDocData(ownerSub, 'collections', share.collectionId);
+    if (collection === undefined || !isLiveDoc(collection)) {
+      continue;
+    }
+    const ids = Array.isArray(collection.recipeIds) ? collection.recipeIds : [];
+    const recipes: Record<string, unknown>[] = [];
+    for (const recipeId of ids) {
+      if (typeof recipeId !== 'string') {
+        continue;
+      }
+      const recipe = await readDocData(ownerSub, 'recipes', recipeId);
+      if (recipe) {
+        recipes.push({ ...recipe, id: recipeId });
+      }
+    }
+    if (
+      canViewPhoto(
+        photoId,
+        {
+          ownerSub: share.ownerSub,
+          collectionId: share.collectionId,
+          grantId: share.grantId,
+        },
+        collection,
+        recipes,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export async function cascadeCollectionGrants(
+  ownerSub: string,
+  collectionId: string,
+  at: number,
+): Promise<void> {
+  const snap = await grantColRef(ownerSub, collectionId).get();
+  const db = getStoreFirestore();
+  const grantId = shareGrantId(ownerSub, collectionId);
+  for (const doc of snap.docs) {
+    const existing = parseGrantDoc(doc.data(), doc.id);
+    const next = revokeGrantTransition({
+      existing,
+      viewerSub: doc.id,
+      now: at,
+    });
+    await db.runTransaction(async (tx) => {
+      tx.set(doc.ref, next.doc, { merge: false });
+      tx.set(
+        incomingShareRef(doc.id, grantId),
+        incomingSharePayload(ownerSub, collectionId, at, { deletedAt: at }),
+        { merge: false },
+      );
+    });
+  }
+}

@@ -40,7 +40,12 @@ import { inviteLandingGet } from '../server/invites.ts';
 import { withMembership } from '../server/membership.ts';
 import { photosGet, photosPost } from '../server/photos.ts';
 import { sttPost } from '../server/stt.ts';
-import { syncPull, syncPush } from '../server/sync.ts';
+import {
+  collectionGrantsGet,
+  collectionGrantsPost,
+  collectionGrantsRevokePost,
+} from '../server/grantsHttp.ts';
+import { syncPull, syncPush, syncSharedPull } from '../server/sync.ts';
 
 type ApiHandler = (req: Request) => Promise<Response>;
 
@@ -65,6 +70,7 @@ const apiRoutes: ApiRoute[] = [
   { method: 'GET', path: '/api/auth/session', handler: authSession },
   { method: 'POST', path: '/api/auth/signout', handler: authSignout },
   { method: 'GET', path: '/api/sync/pull', handler: syncPull },
+  { method: 'GET', path: '/api/sync/shared', handler: syncSharedPull },
   { method: 'POST', path: '/api/sync/push', handler: syncPush },
 ];
 
@@ -240,6 +246,24 @@ function matchApiRoute(pathname: string, method: string): ApiHandler | 'wrongMet
       }
       return 'wrongMethod';
     }
+  }
+
+  const grantsMatch = pathname.match(/^\/api\/collections\/[^/]+\/grants$/);
+  if (grantsMatch) {
+    if (method === 'GET') {
+      return collectionGrantsGet;
+    }
+    if (method === 'POST') {
+      return collectionGrantsPost;
+    }
+    return 'wrongMethod';
+  }
+  const revokeMatch = pathname.match(/^\/api\/collections\/[^/]+\/grants\/revoke$/);
+  if (revokeMatch) {
+    if (method === 'POST') {
+      return collectionGrantsRevokePost;
+    }
+    return 'wrongMethod';
   }
 
   return null;

@@ -9,13 +9,29 @@ import { moveRecipe, wouldExceedRecipeIdCap } from './collectionMembership';
 import {
   getCollection,
   getSnapshot,
+  isSharedCollection,
+  isSharedRecipe,
   listCollections,
   removeCollectionLocal,
+  setGrantCount,
   subscribe,
   upsertCollection,
 } from './libraryMemory';
-import { pushOps, type RemoteResult } from './remote';
+import {
+  addCollectionGrant,
+  listCollectionGrants,
+  pushOps,
+  revokeCollectionGrant,
+  type CollectionGrant,
+  type RemoteResult,
+} from './remote';
 import type { Collection } from './types';
+
+function rejectShared(id: string): void {
+  if (isSharedCollection(id)) {
+    throw new Error('This shared collection is view-only.');
+  }
+}
 
 function saveError(result: RemoteResult, created = false): Error {
   if (result === 'signedOut') {
@@ -82,6 +98,7 @@ export const collectionStore = {
   },
 
   async rename(id: string, name: string): Promise<void> {
+    rejectShared(id);
     const existing = getCollection(id);
     if (!existing) {
       throw new Error('Collection not found.');
@@ -101,6 +118,7 @@ export const collectionStore = {
   },
 
   async remove(id: string): Promise<void> {
+    rejectShared(id);
     const previous = getCollection(id);
     const at = Date.now();
     removeCollectionLocal(id);
@@ -113,7 +131,58 @@ export const collectionStore = {
     }
   },
 
+  async listGrants(id: string): Promise<CollectionGrant[]> {
+    rejectShared(id);
+    const result = await listCollectionGrants(id);
+    if (result.kind === 'signedOut') {
+      throw new Error('Please sign in again — your session expired.');
+    }
+    if (result.kind === 'error') {
+      throw new Error(result.message);
+    }
+    const grants = result.grants ?? [];
+    setGrantCount(id, grants.length);
+    return grants;
+  },
+
+  async addGrant(id: string, email: string): Promise<CollectionGrant> {
+    rejectShared(id);
+    const result = await addCollectionGrant(id, email);
+    if (result.kind === 'signedOut') {
+      throw new Error('Please sign in again — your session expired.');
+    }
+    if (result.kind === 'error') {
+      throw new Error(result.message);
+    }
+    if (!result.grant) {
+      throw new Error("Couldn't update sharing.");
+    }
+    const grants = await collectionStore.listGrants(id).catch(() => null);
+    if (grants) {
+      setGrantCount(id, grants.length);
+    }
+    return result.grant;
+  },
+
+  async revokeGrant(id: string, sub: string): Promise<void> {
+    rejectShared(id);
+    const result = await revokeCollectionGrant(id, sub);
+    if (result.kind === 'signedOut') {
+      throw new Error('Please sign in again — your session expired.');
+    }
+    if (result.kind === 'error') {
+      throw new Error(result.message);
+    }
+    const grants = await collectionStore.listGrants(id).catch(() => null);
+    if (grants) {
+      setGrantCount(id, grants.length);
+    }
+  },
+
   async moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {
+    if (isSharedRecipe(recipeId) || (dest !== 'default' && isSharedCollection(dest))) {
+      throw new Error('This shared collection is view-only.');
+    }
     if (dest !== 'default') {
       const destCollection = getCollection(dest);
       if (!destCollection) {
