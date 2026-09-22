@@ -52,6 +52,9 @@ describe('firstPushRejection', () => {
         ],
       }),
     ).toBe('invalid');
+    expect(
+      firstPushRejection({ results: [{ applied: false, reason: 'cap' }] }),
+    ).toBe('cap');
   });
 });
 
@@ -63,12 +66,15 @@ describe('pushBatchRejected', () => {
     expect(pushBatchRejected({ results: [{ applied: false }] })).toBe(false);
   });
 
-  it('is true only for invalid and unknown', () => {
+  it('is true only for discarded writes', () => {
     expect(
       pushBatchRejected({ results: [{ applied: false, reason: 'invalid' }] }),
     ).toBe(true);
     expect(
       pushBatchRejected({ results: [{ applied: false, reason: 'unknown' }] }),
+    ).toBe(true);
+    expect(
+      pushBatchRejected({ results: [{ applied: false, reason: 'cap' }] }),
     ).toBe(true);
     expect(
       pushBatchRejected({ results: [{ applied: false, reason: 'stale' }] }),
@@ -90,6 +96,7 @@ describe('pushOps', () => {
   it.each([
     [{ applied: false, reason: 'invalid' }, 'invalid'],
     [{ applied: false, reason: 'unknown' }, 'unknown'],
+    [{ applied: false, reason: 'cap' }, 'cap'],
     [{ applied: false, reason: 'stale' }, 'ok'],
     [{ applied: false, reason: 'already-deleted' }, 'ok'],
     [{ applied: false, reason: 'recipe-deleted' }, 'ok'],

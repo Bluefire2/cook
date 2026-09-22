@@ -15,7 +15,7 @@ import {
   isKnownPushKind,
   isLiveDoc,
   listChangedSince,
-  MAX_NAMED_COLLECTIONS,
+  namedCollectionCreateCapReason,
   putDoc,
   readDocData,
   tombstoneDoc,
@@ -193,8 +193,9 @@ export async function applyPushOp(
       const existing = await readDocData(uid, 'collections', id);
       if (!isLiveDoc(existing)) {
         const live = await countLiveNamedCollections(uid);
-        if (live >= MAX_NAMED_COLLECTIONS) {
-          return { applied: false, reason: 'invalid' };
+        const cap = namedCollectionCreateCapReason(live);
+        if (cap) {
+          return { applied: false, reason: cap };
         }
       }
       const compact = compactCollectionFields(body);

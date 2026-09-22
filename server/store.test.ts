@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   chunkByCost,
   chunkForBatch,
+  applyCollectionMembershipScrubs,
+  collectionDocsFromQuerySnap,
   collectionsToScrub,
   compactCollectionFields,
   compactRecipeFields,
   compareMutation,
+  MAX_NAMED_COLLECTIONS,
+  namedCollectionCreateCapReason,
   decodePullCursor,
   encodePullCursor,
   isUuid,
@@ -232,6 +236,14 @@ describe('compactRecipeFields', () => {
   });
 });
 
+describe('namedCollectionCreateCapReason', () => {
+  it('returns cap only when the live count is already at the limit', () => {
+    expect(namedCollectionCreateCapReason(MAX_NAMED_COLLECTIONS - 1)).toBeUndefined();
+    expect(namedCollectionCreateCapReason(MAX_NAMED_COLLECTIONS)).toBe('cap');
+    expect(namedCollectionCreateCapReason(MAX_NAMED_COLLECTIONS + 1)).toBe('cap');
+  });
+});
+
 describe('compactCollectionFields', () => {
   it('trims the name and unique-ifies recipeIds', () => {
     expect(
@@ -283,7 +295,7 @@ describe('collectionsToScrub', () => {
     ]);
   });
 
-  it('skips tombstones, docs that do not list the id, and losing LWW', () => {
+  it('skips tombstones and docs that do not list the id', () => {
     expect(
       collectionsToScrub(
         [
@@ -302,10 +314,21 @@ describe('collectionsToScrub', () => {
             createdAt: 1,
             updatedAt: 2,
           },
+        ],
+        recipeId,
+        10,
+      ),
+    ).toEqual([]);
+  });
+
+  it('still drops the id from a collection edited after the delete', () => {
+    expect(
+      collectionsToScrub(
+        [
           {
-            id: 'stale',
-            name: 'Newer',
-            recipeIds: [recipeId],
+            id: 'newer',
+            name: 'Renamed',
+            recipeIds: [recipeId, otherId],
             createdAt: 1,
             updatedAt: 20,
           },
@@ -313,7 +336,65 @@ describe('collectionsToScrub', () => {
         recipeId,
         10,
       ),
-    ).toEqual([]);
+    ).toEqual([
+      {
+        id: 'newer',
+        name: 'Renamed',
+        recipeIds: [otherId],
+        createdAt: 1,
+        updatedAt: 20,
+      },
+    ]);
+  });
+});
+
+describe('collection membership cascade glue', () => {
+  const recipeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+  it('maps query snapshots with the document id winning over data.id', () => {
+    expect(
+      collectionDocsFromQuerySnap([
+        {
+          id: 'from-path',
+          data: () => ({
+            id: 'from-body',
+            name: 'Dinners',
+            recipeIds: [recipeId],
+            createdAt: 1,
+            updatedAt: 2,
+          }),
+        },
+      ]),
+    ).toEqual([
+      {
+        id: 'from-path',
+        name: 'Dinners',
+        recipeIds: [recipeId],
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ]);
+  });
+
+  it('writes each scrub with the payload timestamp, not the delete time', async () => {
+    const writes: Array<{ id: string; writeAt: number; recipeIds: unknown }> = [];
+    await applyCollectionMembershipScrubs(
+      [
+        {
+          id: 'c1',
+          name: 'Dinners',
+          recipeIds: [recipeId],
+          createdAt: 1,
+          updatedAt: 20,
+        },
+      ],
+      recipeId,
+      10,
+      async (id, payload, writeAt) => {
+        writes.push({ id, writeAt, recipeIds: payload.recipeIds });
+      },
+    );
+    expect(writes).toEqual([{ id: 'c1', writeAt: 20, recipeIds: [] }]);
   });
 });
 
