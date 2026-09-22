@@ -225,6 +225,12 @@ export function compactRecipeFields(recipe: Record<string, unknown>): Record<str
 }
 
 export const MAX_NAMED_COLLECTIONS = 50;
+
+export function namedCollectionCreateCapReason(
+  live: number,
+): 'cap' | undefined {
+  return live >= MAX_NAMED_COLLECTIONS ? 'cap' : undefined;
+}
 export const MAX_COLLECTION_RECIPE_IDS = 500;
 export const MAX_COLLECTION_NAME_LENGTH = 80;
 
@@ -257,8 +263,10 @@ export function compactCollectionFields(
 }
 
 /**
- * Live collections that still list `recipeId` and would accept a put at `at`.
- * Used by recipe-delete cascade so a stale membership cannot leak after share.
+ * Live collections that still list `recipeId`. A collection saved after the
+ * recipe delete keeps other edits; `updatedAt` is raised so the membership
+ * put is not rejected as stale. Tombstones and docs that do not list the id
+ * are skipped.
  */
 export function collectionsToScrub(
   docs: Record<string, unknown>[],
@@ -275,19 +283,42 @@ export function collectionsToScrub(
       continue;
     }
     const stored = readStoredMutationState(doc);
-    const cmp = compareMutation(stored, at, 'put');
-    if (!cmp.allow) {
-      continue;
-    }
+    const writeAt = Math.max(at, stored?.updatedAt ?? 0);
     next.push(
       compactCollectionFields({
         ...doc,
         recipeIds: recipeIds.filter((id) => id !== recipeId),
-        updatedAt: at,
+        updatedAt: writeAt,
       }),
     );
   }
   return next;
+}
+
+export function collectionDocsFromQuerySnap(
+  docs: ReadonlyArray<{ id: string; data: () => Record<string, unknown> | undefined }>,
+): Record<string, unknown>[] {
+  return docs.map((doc) => ({ ...(doc.data() ?? {}), id: doc.id }));
+}
+
+export async function applyCollectionMembershipScrubs(
+  docs: Record<string, unknown>[],
+  recipeId: string,
+  at: number,
+  write: (
+    id: string,
+    payload: Record<string, unknown>,
+    writeAt: number,
+  ) => Promise<unknown>,
+): Promise<void> {
+  for (const payload of collectionsToScrub(docs, recipeId, at)) {
+    const id = payload.id;
+    const writeAt = finiteNumber(payload.updatedAt);
+    if (typeof id !== 'string' || writeAt === undefined) {
+      continue;
+    }
+    await write(id, payload, writeAt);
+  }
 }
 
 const MAX_GALLERY_PHOTOS = 8;
@@ -759,24 +790,24 @@ export async function cascadeRecipeDelete(
     });
   }
 
+  // Query and puts are separate steps, not one transaction. putDoc
+  // re-checks last-write-wins. At most 50 live collections, so serial
+  // writes are fine. Native single-field indexes cover array-contains
+  // on `recipeIds` (no firestore.indexes.json in this repo).
   const collectionSnap = await colRef(uid, 'collections')
     .where('recipeIds', 'array-contains', recipeId)
     .get();
-  const scrubbed = collectionsToScrub(
-    collectionSnap.docs.map((doc) => {
-      const data = doc.data() as Record<string, unknown>;
-      return { ...data, id: doc.id };
-    }),
+  await applyCollectionMembershipScrubs(
+    collectionDocsFromQuerySnap(
+      collectionSnap.docs.map((doc) => ({
+        id: doc.id,
+        data: () => doc.data() as Record<string, unknown>,
+      })),
+    ),
     recipeId,
     at,
+    (id, payload, writeAt) => putDoc(uid, 'collections', id, payload, writeAt),
   );
-  for (const payload of scrubbed) {
-    const id = payload.id;
-    if (typeof id !== 'string') {
-      continue;
-    }
-    await putDoc(uid, 'collections', id, payload, at);
-  }
 
   return { photoIds: [...photoIds], gcsPending: photoIds.size > 0 };
 }

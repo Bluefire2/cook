@@ -33,14 +33,18 @@ function rejectShared(id: string): void {
   }
 }
 
-function saveError(result: RemoteResult, created = false): Error {
+export function collectionPushErrorMessage(result: RemoteResult, created = false): string {
   if (result === 'signedOut') {
-    return new Error('Please sign in again — your session expired.');
+    return 'Please sign in again — your session expired.';
   }
-  if (created && result === 'invalid') {
-    return new Error(`You can have up to ${MAX_NAMED_COLLECTIONS} collections.`);
+  if (created && result === 'cap') {
+    return `You can have up to ${MAX_NAMED_COLLECTIONS} collections.`;
   }
-  return new Error("Couldn't save the collection.");
+  return "Couldn't save the collection.";
+}
+
+function saveError(result: RemoteResult, created = false): Error {
+  return new Error(collectionPushErrorMessage(result, created));
 }
 
 async function pushCollection(
