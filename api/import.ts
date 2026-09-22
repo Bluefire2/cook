@@ -196,8 +196,41 @@ const MAX_SOURCE_CHARS = 60000;
 export const maxDuration = 60;
 
 /**
+ * News-article recipes live in these regions, often after a long nav that
+ * would eat the 60k text cap. First match wins: article is more specific
+ * than main. Nested tags of the same name take the first close — good enough
+ * for the text fallback; Recipe JSON-LD is preferred when present.
+ */
+function primaryRegion(html: string): string {
+  const patterns = [
+    /<article\b[\s\S]*?<\/article>/i,
+    /<main\b[\s\S]*?<\/main>/i,
+    /<([a-z0-9]+)[^>]*\brole=["']main["'][^>]*>[\s\S]*?<\/\1>/i,
+  ];
+  for (const re of patterns) {
+    const match = html.match(re);
+    if (match) {
+      return match[0];
+    }
+  }
+  return html;
+}
+
+function stripToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .slice(0, MAX_SOURCE_CHARS);
+}
+
+/**
  * Prefers the schema.org/Recipe JSON-LD block most recipe sites embed
- * (compact and unambiguous); falls back to the page's stripped text.
+ * (compact and unambiguous); falls back to the page's stripped text,
+ * preferring `<article>` / `<main>` so a news-article recipe is not lost
+ * behind nav chrome.
  */
 export function extractRecipeSource(html: string): string {
   const ldBlocks = html.matchAll(
@@ -220,13 +253,7 @@ export function extractRecipeSource(html: string): string {
     }
   }
 
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .slice(0, MAX_SOURCE_CHARS);
+  return stripToText(primaryRegion(html));
 }
 
 export type PageFetchResult =

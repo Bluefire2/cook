@@ -85,4 +85,29 @@ describe('extractRecipeSource', () => {
     const html = `<p>${'word '.repeat(20000)}</p>`;
     expect(extractRecipeSource(html)).toHaveLength(60000);
   });
+
+  it('prefers article text when nav chrome would eat the cap', () => {
+    const nav = `<nav>${'Menu item '.repeat(8000)}</nav>`;
+    const html = `${nav}<article><h1>Kapusnyak</h1><p>Ingredients: sauerkraut</p></article>`;
+    const text = extractRecipeSource(html);
+    expect(text).toContain('Kapusnyak');
+    expect(text).toContain('sauerkraut');
+    expect(text).not.toContain('Menu item');
+  });
+
+  it('prefers main when there is no article', () => {
+    const nav = `<nav>${'Menu item '.repeat(8000)}</nav>`;
+    const html = `${nav}<main class="Page-main"><h2>Ingredients</h2><p>pork shoulder</p></main>`;
+    const text = extractRecipeSource(html);
+    expect(text).toContain('Ingredients');
+    expect(text).toContain('pork shoulder');
+    expect(text).not.toContain('Menu item');
+  });
+
+  it('still prefers a Recipe JSON-LD node over article text', () => {
+    const html =
+      ldBlock(JSON.stringify(RECIPE)) +
+      '<article><h1>A different dish</h1></article>';
+    expect(JSON.parse(extractRecipeSource(html))).toEqual(RECIPE);
+  });
 });
