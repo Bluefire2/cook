@@ -14,23 +14,29 @@ import {
   subscribe,
   upsertCollection,
 } from './libraryMemory';
-import { pushOps } from './remote';
+import { pushOps, type RemoteResult } from './remote';
 import type { Collection } from './types';
 
-function saveError(result: 'ok' | 'signedOut' | 'error'): Error {
-  return new Error(
-    result === 'signedOut'
-      ? 'Please sign in again — your session expired.'
-      : "Couldn't save the collection.",
-  );
+function saveError(result: RemoteResult, created = false): Error {
+  if (result === 'signedOut') {
+    return new Error('Please sign in again — your session expired.');
+  }
+  if (created && result === 'invalid') {
+    return new Error(`You can have up to ${MAX_NAMED_COLLECTIONS} collections.`);
+  }
+  return new Error("Couldn't save the collection.");
 }
 
-async function pushCollection(next: Collection, previous: Collection | undefined): Promise<void> {
+async function pushCollection(
+  next: Collection,
+  previous: Collection | undefined,
+  created = false,
+): Promise<void> {
   upsertCollection(next);
   try {
     const result = await pushOps([{ kind: 'collection.put', payload: next }]);
     if (result !== 'ok') {
-      throw saveError(result);
+      throw saveError(result, created);
     }
   } catch (err) {
     if (previous) {
@@ -71,7 +77,7 @@ export const collectionStore = {
       createdAt: now,
       updatedAt: now,
     });
-    await pushCollection(collection, undefined);
+    await pushCollection(collection, undefined, true);
     return collection;
   },
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { pushBatchRejected, pushOps } from './remote';
+import { firstPushRejection, pushBatchRejected, pushOps } from './remote';
 import type { PushOp } from './pushOps';
 
 const op: PushOp = {
@@ -39,6 +39,22 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('firstPushRejection', () => {
+  it('returns the first discarded-write reason', () => {
+    expect(firstPushRejection(null)).toBeNull();
+    expect(firstPushRejection({ results: [{ applied: true }] })).toBeNull();
+    expect(
+      firstPushRejection({
+        results: [
+          { applied: false, reason: 'stale' },
+          { applied: false, reason: 'invalid' },
+          { applied: false, reason: 'unknown' },
+        ],
+      }),
+    ).toBe('invalid');
+  });
+});
+
 describe('pushBatchRejected', () => {
   it('is false when results are missing or applied', () => {
     expect(pushBatchRejected(null)).toBe(false);
@@ -72,8 +88,8 @@ describe('pushBatchRejected', () => {
 
 describe('pushOps', () => {
   it.each([
-    [{ applied: false, reason: 'invalid' }, 'error'],
-    [{ applied: false, reason: 'unknown' }, 'error'],
+    [{ applied: false, reason: 'invalid' }, 'invalid'],
+    [{ applied: false, reason: 'unknown' }, 'unknown'],
     [{ applied: false, reason: 'stale' }, 'ok'],
     [{ applied: false, reason: 'already-deleted' }, 'ok'],
     [{ applied: false, reason: 'recipe-deleted' }, 'ok'],

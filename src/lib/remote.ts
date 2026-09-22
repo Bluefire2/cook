@@ -24,7 +24,7 @@ export type PullPage = {
   hasMore: boolean;
 };
 
-export type RemoteResult = 'ok' | 'signedOut' | 'error';
+export type RemoteResult = 'ok' | 'signedOut' | 'error' | 'invalid' | 'unknown';
 
 function jsonHeaders(): HeadersInit {
   return { 'Content-Type': 'application/json' };
@@ -91,21 +91,28 @@ export async function pullPage(cursor: PullCursor | null): Promise<PullPage | 's
  * `invalid` and `unknown` mean the server threw the write away — report
  * those so callers roll back instead of claiming a save that never landed.
  */
-export function pushBatchRejected(body: unknown): boolean {
+export function firstPushRejection(body: unknown): 'invalid' | 'unknown' | null {
   if (!body || typeof body !== 'object') {
-    return false;
+    return null;
   }
   const results = (body as { results?: unknown }).results;
   if (!Array.isArray(results)) {
-    return false;
+    return null;
   }
-  return results.some((entry) => {
+  for (const entry of results) {
     if (!entry || typeof entry !== 'object') {
-      return false;
+      continue;
     }
     const { applied, reason } = entry as { applied?: unknown; reason?: unknown };
-    return applied === false && (reason === 'invalid' || reason === 'unknown');
-  });
+    if (applied === false && (reason === 'invalid' || reason === 'unknown')) {
+      return reason;
+    }
+  }
+  return null;
+}
+
+export function pushBatchRejected(body: unknown): boolean {
+  return firstPushRejection(body) !== null;
 }
 
 export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
@@ -131,8 +138,9 @@ export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
     } catch {
       return 'error';
     }
-    if (pushBatchRejected(body)) {
-      return 'error';
+    const rejected = firstPushRejection(body);
+    if (rejected !== null) {
+      return rejected;
     }
   }
   return 'ok';

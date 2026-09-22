@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   chunkByCost,
   chunkForBatch,
+  collectionsToScrub,
   compactCollectionFields,
   compactRecipeFields,
   compareMutation,
@@ -249,6 +250,70 @@ describe('compactCollectionFields', () => {
       createdAt: 1,
       updatedAt: 2,
     });
+  });
+});
+
+describe('collectionsToScrub', () => {
+  const recipeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const otherId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+  it('drops the recipe id from a live collection that lists it', () => {
+    expect(
+      collectionsToScrub(
+        [
+          {
+            id: 'c1',
+            name: 'Dinners',
+            recipeIds: [recipeId, otherId],
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        ],
+        recipeId,
+        10,
+      ),
+    ).toEqual([
+      {
+        id: 'c1',
+        name: 'Dinners',
+        recipeIds: [otherId],
+        createdAt: 1,
+        updatedAt: 10,
+      },
+    ]);
+  });
+
+  it('skips tombstones, docs that do not list the id, and losing LWW', () => {
+    expect(
+      collectionsToScrub(
+        [
+          {
+            id: 'tomb',
+            name: 'Gone',
+            recipeIds: [recipeId],
+            createdAt: 1,
+            updatedAt: 2,
+            deletedAt: 2,
+          },
+          {
+            id: 'other',
+            name: 'Other',
+            recipeIds: [otherId],
+            createdAt: 1,
+            updatedAt: 2,
+          },
+          {
+            id: 'stale',
+            name: 'Newer',
+            recipeIds: [recipeId],
+            createdAt: 1,
+            updatedAt: 20,
+          },
+        ],
+        recipeId,
+        10,
+      ),
+    ).toEqual([]);
   });
 });
 

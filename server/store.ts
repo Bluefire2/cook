@@ -256,6 +256,40 @@ export function compactCollectionFields(
   };
 }
 
+/**
+ * Live collections that still list `recipeId` and would accept a put at `at`.
+ * Used by recipe-delete cascade so a stale membership cannot leak after share.
+ */
+export function collectionsToScrub(
+  docs: Record<string, unknown>[],
+  recipeId: string,
+  at: number,
+): Record<string, unknown>[] {
+  const next: Record<string, unknown>[] = [];
+  for (const doc of docs) {
+    if (!isLiveDoc(doc)) {
+      continue;
+    }
+    const recipeIds = Array.isArray(doc.recipeIds) ? doc.recipeIds : [];
+    if (!recipeIds.includes(recipeId)) {
+      continue;
+    }
+    const stored = readStoredMutationState(doc);
+    const cmp = compareMutation(stored, at, 'put');
+    if (!cmp.allow) {
+      continue;
+    }
+    next.push(
+      compactCollectionFields({
+        ...doc,
+        recipeIds: recipeIds.filter((id) => id !== recipeId),
+        updatedAt: at,
+      }),
+    );
+  }
+  return next;
+}
+
 const MAX_GALLERY_PHOTOS = 8;
 
 function compactGalleryPhotoIds(
@@ -682,6 +716,25 @@ export async function cascadeRecipeDelete(
         }
       }
     });
+  }
+
+  const collectionSnap = await colRef(uid, 'collections')
+    .where('recipeIds', 'array-contains', recipeId)
+    .get();
+  const scrubbed = collectionsToScrub(
+    collectionSnap.docs.map((doc) => {
+      const data = doc.data() as Record<string, unknown>;
+      return { ...data, id: doc.id };
+    }),
+    recipeId,
+    at,
+  );
+  for (const payload of scrubbed) {
+    const id = payload.id;
+    if (typeof id !== 'string') {
+      continue;
+    }
+    await putDoc(uid, 'collections', id, payload, at);
   }
 
   return { photoIds: [...photoIds], gcsPending: photoIds.size > 0 };
