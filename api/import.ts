@@ -323,6 +323,7 @@ export async function extractRecipeDraft(source: string): Promise<ExtractionResu
     },
   });
 
+  const sourceHead = source.replace(/\s+/g, ' ').trim().slice(0, 240);
   let recipe: Record<string, unknown>;
   try {
     const parsed: unknown = JSON.parse(result.text ?? '');
@@ -331,9 +332,43 @@ export async function extractRecipeDraft(source: string): Promise<ExtractionResu
     }
     recipe = parsed as Record<string, unknown>;
   } catch {
+    console.info('sous extractRecipeDraft', {
+      model: MODEL,
+      hasGeminiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()),
+      sourceChars: source.length,
+      via: source.trimStart().startsWith('{') ? 'ld+json' : 'text',
+      sourceHead,
+      ok: false,
+      status: 502,
+    });
     return { ok: false, status: 502, error: 'Extraction failed — no structured result.' };
   }
-  if (recipe.title === 'NOT_A_RECIPE') {
+
+  const sections = recipe.ingredientSections;
+  let ingredientCount: number | undefined;
+  if (Array.isArray(sections)) {
+    ingredientCount = 0;
+    for (const section of sections) {
+      if (section && typeof section === 'object' && Array.isArray((section as { items?: unknown }).items)) {
+        ingredientCount += (section as { items: unknown[] }).items.length;
+      }
+    }
+  }
+
+  const ok = recipe.title !== 'NOT_A_RECIPE';
+  console.info('sous extractRecipeDraft', {
+    model: MODEL,
+    hasGeminiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()),
+    sourceChars: source.length,
+    via: source.trimStart().startsWith('{') ? 'ld+json' : 'text',
+    sourceHead,
+    title: typeof recipe.title === 'string' ? recipe.title : undefined,
+    ingredientCount,
+    stepCount: Array.isArray(recipe.steps) ? recipe.steps.length : undefined,
+    ok,
+    status: ok ? 200 : 422,
+  });
+  if (!ok) {
     return { ok: false, status: 422, error: "Couldn't find a recipe in that content." };
   }
   return { ok: true, recipe };
@@ -361,6 +396,13 @@ export async function POST(req: Request): Promise<Response> {
       { status: 400 },
     );
   }
+
+  console.info('sous import', {
+    via: body.url ? 'url' : 'text',
+    url: body.url,
+    sourceChars: source.length,
+    sourceHead: source.replace(/\s+/g, ' ').trim().slice(0, 240),
+  });
 
   const extracted = await extractRecipeDraft(source);
   if (!extracted.ok) {

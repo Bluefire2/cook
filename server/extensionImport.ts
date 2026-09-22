@@ -48,6 +48,22 @@ function corsHeaders(req: Request): Record<string, string> {
   };
 }
 
+const SOURCE_MARKERS = ['ingredient', 'ingredients', 'recipe', 'kapusnyak', 'sauerkraut', 'pork'];
+
+function importSourceDebug(url: string, html: string, source: string) {
+  const haystack = `${html}\n${source}`.toLowerCase();
+  return {
+    url,
+    htmlChars: html.length,
+    sourceChars: source.length,
+    via: source.trimStart().startsWith('{') ? 'ld+json' : 'text',
+    hasMain: /<main\b/i.test(html),
+    hasArticle: /<article\b/i.test(html),
+    hits: SOURCE_MARKERS.filter((word) => haystack.includes(word)),
+    sourceHead: source.replace(/\s+/g, ' ').trim().slice(0, 240),
+  };
+}
+
 function jsonResponse(req: Request, body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -129,14 +145,26 @@ export async function extensionImport(req: Request): Promise<Response> {
   }
 
   const source = extractRecipeSource(html);
+  const debug = importSourceDebug(url, html, source);
+  console.info('sous extensionImport', debug);
 
   if (source.trim() === '') {
-    return jsonResponse(req, { error: 'Could not read that page.' }, 422);
+    return jsonResponse(req, { error: 'Could not read that page.', debug }, 422);
   }
 
   const extracted = await extractRecipeDraft(source);
+  console.info('sous extensionImport extract', {
+    url,
+    ok: extracted.ok,
+    status: extracted.ok ? 200 : extracted.status,
+    error: extracted.ok ? undefined : extracted.error,
+  });
   if (!extracted.ok) {
-    return jsonResponse(req, { error: extracted.error }, extracted.status);
+    return jsonResponse(
+      req,
+      { error: extracted.error, debug: { ...debug, extractStatus: extracted.status } },
+      extracted.status,
+    );
   }
 
   const payload = recipePutFromExtraction(extracted.recipe, {

@@ -95,6 +95,11 @@ export async function runImport(tabId, url, html) {
   try {
     for (const target of targets) {
       let response;
+      console.info('sous extensionImport request', {
+        origin: target.origin,
+        url,
+        htmlChars: html.length,
+      });
       try {
         response = await post(target, body);
       } catch (err) {
@@ -111,6 +116,13 @@ export async function runImport(tabId, url, html) {
       }
 
       const data = await response.json().catch(() => null);
+      console.info('sous extensionImport response', {
+        origin: target.origin,
+        status: response.status,
+        ok: response.ok,
+        error: data && data.error,
+        debug: data && data.debug,
+      });
       if (!response.ok || !data || typeof data.id !== 'string') {
         await writeState(tabId, {
           phase: 'error',
