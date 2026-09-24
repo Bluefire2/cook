@@ -15,6 +15,12 @@ type ReadDocData = (
   id: string,
 ) => Promise<Record<string, unknown> | undefined>;
 
+type ReadDocsData = (
+  uid: string,
+  kind: StoreKind,
+  ids: readonly string[],
+) => Promise<Array<Record<string, unknown> | undefined>>;
+
 export type BuildSharedPullPageInput = {
   viewerSub: string;
   cursor: SharedCursor;
@@ -24,7 +30,9 @@ export type BuildSharedPullPageInput = {
     viewerSub: string,
     grantId: string,
   ) => Promise<LiveIncomingShare | undefined>;
+  ownerAdmitted: (ownerSub: string) => Promise<boolean>;
   readDocData: ReadDocData;
+  readDocsData: ReadDocsData;
 };
 
 export function encodeSharedCursor(cursor: SharedCursor): string {
@@ -101,6 +109,9 @@ export async function buildSharedPullPage(
     ) {
       continue;
     }
+    if (!(await input.ownerAdmitted(share.ownerSub))) {
+      continue;
+    }
     const collection = await input.readDocData(
       share.ownerSub,
       'collections',
@@ -130,16 +141,16 @@ export async function buildSharedPullPage(
       continue;
     }
     const pageIds = pending.slice(0, input.limit);
+    const recipeDocs =
+      pageIds.length > 0
+        ? await input.readDocsData(share.ownerSub, 'recipes', pageIds)
+        : [];
     const recipes: Record<string, unknown>[] = [];
-    const photos: Record<string, unknown>[] = [];
-    for (const recipeId of pageIds) {
-      const recipe = await input.readDocData(
-        share.ownerSub,
-        'recipes',
-        recipeId,
-      );
+    const recipePhotoRefs: Array<{ recipeId: string; photoIds: string[] }> = [];
+    pageIds.forEach((recipeId, index) => {
+      const recipe = recipeDocs[index];
       if (!canViewRecipe(recipeId, share, collection, recipe)) {
-        continue;
+        return;
       }
       const compact = compactRecipeFields({ ...recipe, id: recipeId });
       recipes.push({ ...compact, ownerSub: share.ownerSub });
@@ -154,12 +165,22 @@ export async function buildSharedPullPage(
           }
         }
       }
+      recipePhotoRefs.push({ recipeId, photoIds });
+    });
+    const uniquePhotoIds = [
+      ...new Set(recipePhotoRefs.flatMap((ref) => ref.photoIds)),
+    ];
+    const photoDocs =
+      uniquePhotoIds.length > 0
+        ? await input.readDocsData(share.ownerSub, 'photos', uniquePhotoIds)
+        : [];
+    const photoById = new Map(
+      uniquePhotoIds.map((id, index) => [id, photoDocs[index]]),
+    );
+    const photos: Record<string, unknown>[] = [];
+    for (const { recipeId, photoIds } of recipePhotoRefs) {
       for (const photoId of photoIds) {
-        const photo = await input.readDocData(
-          share.ownerSub,
-          'photos',
-          photoId,
-        );
+        const photo = photoById.get(photoId);
         if (photo === undefined || !isLiveDoc(photo)) {
           continue;
         }
