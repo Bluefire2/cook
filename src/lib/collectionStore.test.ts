@@ -8,11 +8,20 @@ import {
   mergeSharedFromPull,
   upsertCollection,
 } from './libraryMemory';
-import { pushOps } from './remote';
+import {
+  addCollectionGrant,
+  listCollectionGrants,
+  pushOps,
+  revokeCollectionGrant,
+} from './remote';
+import type { CollectionGrant } from './remote';
 import type { Collection } from './types';
 
 vi.mock('./remote', () => ({
+  addCollectionGrant: vi.fn(),
+  listCollectionGrants: vi.fn(),
   pushOps: vi.fn(),
+  revokeCollectionGrant: vi.fn(),
 }));
 
 function collection(id: string, name: string): Collection {
@@ -27,7 +36,10 @@ function collection(id: string, name: string): Collection {
 
 afterEach(() => {
   clearLibrary();
+  vi.mocked(addCollectionGrant).mockReset();
+  vi.mocked(listCollectionGrants).mockReset();
   vi.mocked(pushOps).mockReset();
+  vi.mocked(revokeCollectionGrant).mockReset();
 });
 
 describe('collectionPushErrorMessage', () => {
@@ -97,5 +109,34 @@ describe('collectionStore.create cap', () => {
       `You can have up to ${MAX_NAMED_COLLECTIONS} collections.`,
     );
     expect(pushOps).not.toHaveBeenCalled();
+  });
+});
+
+describe('collectionStore grant mutations', () => {
+  it('adds a grant without listing grants internally', async () => {
+    const grant: CollectionGrant = {
+      sub: 'member-sub',
+      email: 'member@example.com',
+      createdAt: 123,
+    };
+    vi.mocked(addCollectionGrant).mockResolvedValue({ kind: 'ok', grant });
+
+    await expect(collectionStore.addGrant('collection-id', grant.email)).resolves.toEqual(grant);
+
+    expect(addCollectionGrant).toHaveBeenCalledTimes(1);
+    expect(addCollectionGrant).toHaveBeenCalledWith('collection-id', grant.email);
+    expect(listCollectionGrants).not.toHaveBeenCalled();
+  });
+
+  it('revokes a grant without listing grants internally', async () => {
+    vi.mocked(revokeCollectionGrant).mockResolvedValue({ kind: 'ok' });
+
+    await expect(
+      collectionStore.revokeGrant('collection-id', 'member-sub'),
+    ).resolves.toBeUndefined();
+
+    expect(revokeCollectionGrant).toHaveBeenCalledTimes(1);
+    expect(revokeCollectionGrant).toHaveBeenCalledWith('collection-id', 'member-sub');
+    expect(listCollectionGrants).not.toHaveBeenCalled();
   });
 });

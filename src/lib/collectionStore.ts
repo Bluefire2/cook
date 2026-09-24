@@ -162,10 +162,6 @@ export const collectionStore = {
     if (!result.grant) {
       throw new Error("Couldn't update sharing.");
     }
-    const grants = await collectionStore.listGrants(id).catch(() => null);
-    if (grants) {
-      setGrantCount(id, grants.length);
-    }
     return result.grant;
   },
 
@@ -177,10 +173,6 @@ export const collectionStore = {
     }
     if (result.kind === 'error') {
       throw new Error(result.message);
-    }
-    const grants = await collectionStore.listGrants(id).catch(() => null);
-    if (grants) {
-      setGrantCount(id, grants.length);
     }
   },
 
