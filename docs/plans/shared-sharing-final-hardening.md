@@ -68,6 +68,10 @@ gaps before PR #23 merges, without expanding the sharing product.
   an arbitrary reverse incoming-share row.
 - A collection cascade retry uses the stored tombstone's finite
   `deletedAt`/`updatedAt` timestamp, not the stale request timestamp.
+- Every per-viewer cascade transaction also reads the collection and proceeds
+  only while it remains a canonical tombstone with
+  `updatedAt === deletedAt === cascadeAt`. A concurrent collection revival
+  conflicts/retries and then skips the grant writes.
 
 ## Steps (sequential)
 
@@ -141,6 +145,14 @@ referenced by owned recipes/owned-parent chat—as appropriate, comparing IDs
 within their namespace. The key regression is that a legacy file containing
 IDs visible only through an incoming share must still clone.
 
+Define the complete imported ID universe before remapping. Recipe-id mappings
+must include ids from recipe entities plus every collection membership,
+chat-message parent, and cook-state parent reference. Photo-id mappings must
+include backup photo entities plus every recipe and chat reference. Repeated
+references share one generated id. In clone mode, no reference may fall
+through to an original canonical owner/shared id merely because its parent
+entity is absent from the backup.
+
 Decide once before optimistic upserts, uploads, or push operations, then pass
 that one mode to `remapBackupImport`. Keep new exports writing
 `exportedBySub`. Update the misleading comment that currently says missing
@@ -157,6 +169,8 @@ showing:
 - explicit foreign provenance clones despite an owned collision;
 - collections, photos, chat, and cook references all follow the single
   preserve-or-clone decision.
+- orphan collection/chat/cook recipe references and orphan photo references
+  are remapped consistently rather than retaining canonical foreign ids.
 
 ### 3. [core] Bound shared-photo authorization reads per candidate
 
@@ -227,10 +241,11 @@ next sign-in/backfill. No emulator is required.
 `server/grantsHttp.ts`, `server/grantsHttp.test.ts`.
 
 Add a pure safe-Firestore-document-ID validator for the viewer `sub` accepted
-by revoke. Reject empty/whitespace-altered values, slash-containing values,
-and overlong/otherwise unsafe document IDs. Validate the exact body value and
-return 400 before constructing `grantColRef(...).doc(sub)` or
-`incomingShareRef(sub, ...)`.
+by revoke. Accept only a nonempty string unchanged by trim, containing no
+slash, not equal to `.` or `..`, not matching the reserved `^__.*__$` form,
+and no longer than Firestore's 1,500-byte UTF-8 document-id limit. Validate
+the exact body value and return 400 before constructing
+`grantColRef(...).doc(sub)` or `incomingShareRef(sub, ...)`.
 
 Change the pure revoke transition to distinguish:
 
@@ -244,10 +259,18 @@ Inside the transaction, read the authoritative forward grant first. Map
 write to an incoming-share path derived from request input. Only `write`
 tombstones both forward grant and matching reverse incoming share.
 
-Add pure transition/status tests for valid IDs, slash and other malformed IDs,
-missing grant → generic 404/no-write outcome, live grant → paired writes, and
-already-tombstoned grant → 200/no-write outcome. Keep errors generic so revoke
-does not disclose more than current behavior.
+Extract an injected revoke orchestration seam whose dependencies
+construct/read the authoritative forward grant and perform the paired write
+only after validation. Production dependencies wrap the real Firestore refs
+and transaction. Tests must prove malformed input invokes neither dependency
+(therefore no `.doc()`); missing and already outcomes invoke no paired write;
+only a live grant invokes one paired write.
+
+Add pure/orchestration/status tests for valid IDs, trim changes, slash,
+reserved ids, byte-limit overflow, missing grant → generic 404/no-write
+outcome, live grant → paired writes, and already-tombstoned grant →
+200/no-write outcome. Keep errors generic so revoke does not disclose more
+than current behavior.
 
 ### 6. [core] Retry collection-delete cascade from an existing tombstone
 
@@ -268,10 +291,21 @@ request that committed the collection tombstone but failed during the
 post-tombstone grant cascade. It must not let an older delete revoke grants on
 a collection that has since been recreated or updated live.
 
+Make the cascade itself race-safe: in every per-viewer transaction, read the
+collection document before the forward/reverse grant writes and require a
+canonical tombstone whose finite `updatedAt` and `deletedAt` both equal the
+requested cascade timestamp. If the collection is missing, malformed, live,
+or tombstoned at a different timestamp, skip both grant writes. Because the
+collection read participates in the transaction, a concurrent revival causes
+a retry that observes the live collection and skips.
+
 Add table-driven pure tests for applied delete, same/newer stored tombstone,
 malformed tombstone, stale delete against a newer live collection, and absent
 current state. Assert the retry uses stored `deletedAt`/`updatedAt`, not the
-incoming stale request timestamp.
+incoming stale request timestamp. Add cascade-decision tests for exact
+collection tombstone match, timestamp mismatch, malformed/missing, and live
+collection; inspect the transaction implementation to confirm the collection
+read occurs before any grant/share write.
 
 ### 7. [ui] Show `SharedIcon` only for incoming collections
 
@@ -308,10 +342,20 @@ and chat-only photos are absent while owned rows remain. Assert
 section of `docs/plans/shared-recipes.md` where it remains the durable product
 decision record.
 
-Document, without implementing new product behavior:
+Reconcile the durable parent plan as well as documenting current limits:
 
 - shared pull is a full positional reread of live incoming grants and current
   collection contents, not an `updatedAt` delta;
+- successful sync publishes owned and shared rows atomically, while a non-auth
+  shared failure publishes the completed owned-only snapshot;
+- email lookup uses `emailLower` first and exact normalized `email` only as a
+  legacy lowercase-profile fallback;
+- shared photo authorization uses requested photo metadata only as a
+  parent-recipe index, then still requires the fresh share, live collection,
+  `canViewRecipe`, and `recipeListsPhoto`; photo metadata alone never
+  authorizes;
+- backup export omits viewer chat and attachments whose parent recipe is
+  shared;
 - viewers have no leave-shared-collection flow yet;
 - viewer-owned chat for a shared recipe can remain orphaned after revoke;
 - Ask text is available but Ask photo attachments are intentionally
@@ -325,6 +369,9 @@ Document, without implementing new product behavior:
 Keep legal copy unchanged unless implementation alters data handling beyond
 this plan (not expected). Do not add leave UI, orphan cleanup, Ask
 attachments, rate limiting, a new email index service, or deployment work.
+Replace contradictory statements in `docs/plans/shared-recipes.md`; do not
+leave the old `users.email` lookup, photo-metadata prohibition, backup-chat,
+or publication behavior authoritative beside the new decisions.
 
 ### 10. [core] Run focused and full automated merge gates
 
