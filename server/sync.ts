@@ -1,4 +1,8 @@
-import { cascadeCollectionGrants } from './grants.ts';
+import {
+  cascadeCollectionGrants,
+  listLiveIncomingShares,
+  readLiveIncomingShare,
+} from './grants.ts';
 import { drainGcsDeletes } from './photos.ts';
 import {
   membershipUnauthorized,
@@ -335,7 +339,14 @@ export async function syncSharedPull(req: Request): Promise<Response> {
       }
     }
     const cursor = decodeSharedCursor(url.searchParams.get('cursor'));
-    const page = await buildSharedPullPage(access.sub, cursor, limit);
+    const page = await buildSharedPullPage({
+      viewerSub: access.sub,
+      cursor,
+      limit,
+      listLiveIncomingShares,
+      readLiveIncomingShare,
+      readDocData,
+    });
     return jsonResponse({
       changes: page.changes,
       cursor: page.cursor,

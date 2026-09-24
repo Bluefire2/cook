@@ -9,7 +9,11 @@ import {
   requireMember,
   storeUnavailable,
 } from './membership.ts';
-import { sessionCanViewOwnerPhoto } from './grants.ts';
+import {
+  listLiveIncomingShares,
+  readLiveIncomingShare,
+  sessionCanViewOwnerPhoto,
+} from './grants.ts';
 import {
   compareMutation,
   gcsDeletesColRef,
@@ -17,6 +21,7 @@ import {
   isUuid,
   photoDocRef,
   photosColRef,
+  readDocData,
   readStoredMutationState,
   recipeDocRef,
   type CompareMutationResult,
@@ -600,7 +605,14 @@ export async function photosGet(req: Request): Promise<Response> {
       ? access.sub
       : ownerParam;
   if (uid !== access.sub) {
-    const allowed = await sessionCanViewOwnerPhoto(access.sub, uid, photoId);
+    const allowed = await sessionCanViewOwnerPhoto({
+      viewerSub: access.sub,
+      ownerSub: uid,
+      photoId,
+      listLiveIncomingShares,
+      readLiveIncomingShare,
+      readDocData,
+    });
     if (!allowed) {
       return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
     }

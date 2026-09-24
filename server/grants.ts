@@ -8,7 +8,7 @@ import {
   getStoreFirestore,
   isLiveDoc,
   isUuid,
-  readDocData,
+  type StoreKind,
 } from './store.ts';
 
 export const MAX_LIVE_GRANTS = 20;
@@ -34,6 +34,12 @@ export type IncomingShareDoc = {
   ownerEmail?: string;
   updatedAt: number;
   deletedAt?: number;
+};
+
+export type LiveIncomingShare = {
+  grantId: string;
+  ownerSub: string;
+  collectionId: string;
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -368,7 +374,7 @@ export function incomingSharesCol(viewerSub: string) {
 
 export async function listLiveIncomingShares(
   viewerSub: string,
-): Promise<Array<{ grantId: string; ownerSub: string; collectionId: string }>> {
+): Promise<LiveIncomingShare[]> {
   const snap = await incomingSharesCol(viewerSub)
     .orderBy(FieldPath.documentId())
     .get();
@@ -394,17 +400,68 @@ export async function listLiveIncomingShares(
   return out;
 }
 
-export async function sessionCanViewOwnerPhoto(
+export async function readLiveIncomingShare(
   viewerSub: string,
-  ownerSub: string,
-  photoId: string,
+  grantId: string,
+): Promise<LiveIncomingShare | undefined> {
+  const snap = await incomingShareRef(viewerSub, grantId).get();
+  if (!snap.exists) {
+    return undefined;
+  }
+  const share = parseIncomingShareDoc(snap.data());
+  if (share === undefined || share.deletedAt !== undefined) {
+    return undefined;
+  }
+  return {
+    grantId,
+    ownerSub: share.ownerSub,
+    collectionId: share.collectionId,
+  };
+}
+
+type ReadDocData = (
+  uid: string,
+  kind: StoreKind,
+  id: string,
+) => Promise<Record<string, unknown> | undefined>;
+
+export type SessionCanViewOwnerPhotoInput = {
+  viewerSub: string;
+  ownerSub: string;
+  photoId: string;
+  listLiveIncomingShares: (viewerSub: string) => Promise<LiveIncomingShare[]>;
+  readLiveIncomingShare: (
+    viewerSub: string,
+    grantId: string,
+  ) => Promise<LiveIncomingShare | undefined>;
+  readDocData: ReadDocData;
+};
+
+export async function sessionCanViewOwnerPhoto(
+  input: SessionCanViewOwnerPhotoInput,
 ): Promise<boolean> {
-  const shares = await listLiveIncomingShares(viewerSub);
+  const shares = await input.listLiveIncomingShares(input.viewerSub);
   for (const share of shares) {
-    if (share.ownerSub !== ownerSub) {
+    if (share.ownerSub !== input.ownerSub) {
       continue;
     }
-    const collection = await readDocData(ownerSub, 'collections', share.collectionId);
+    const current = await input.readLiveIncomingShare(
+      input.viewerSub,
+      share.grantId,
+    );
+    if (
+      current === undefined ||
+      current.grantId !== share.grantId ||
+      current.ownerSub !== share.ownerSub ||
+      current.collectionId !== share.collectionId
+    ) {
+      continue;
+    }
+    const collection = await input.readDocData(
+      input.ownerSub,
+      'collections',
+      share.collectionId,
+    );
     if (collection === undefined || !isLiveDoc(collection)) {
       continue;
     }
@@ -414,14 +471,18 @@ export async function sessionCanViewOwnerPhoto(
       if (typeof recipeId !== 'string') {
         continue;
       }
-      const recipe = await readDocData(ownerSub, 'recipes', recipeId);
+      const recipe = await input.readDocData(
+        input.ownerSub,
+        'recipes',
+        recipeId,
+      );
       if (recipe) {
         recipes.push({ ...recipe, id: recipeId });
       }
     }
     if (
       canViewPhoto(
-        photoId,
+        input.photoId,
         {
           ownerSub: share.ownerSub,
           collectionId: share.collectionId,

@@ -1,13 +1,31 @@
-import { listLiveIncomingShares } from './grants.ts';
+import type { LiveIncomingShare } from './grants.ts';
 import { canViewCollection } from './shareAuth.ts';
 import {
   compactCollectionFields,
   compactRecipeFields,
   isLiveDoc,
-  readDocData,
+  type StoreKind,
 } from './store.ts';
 
 export type SharedCursor = { grantId: string; recipeId: string };
+
+type ReadDocData = (
+  uid: string,
+  kind: StoreKind,
+  id: string,
+) => Promise<Record<string, unknown> | undefined>;
+
+export type BuildSharedPullPageInput = {
+  viewerSub: string;
+  cursor: SharedCursor;
+  limit: number;
+  listLiveIncomingShares: (viewerSub: string) => Promise<LiveIncomingShare[]>;
+  readLiveIncomingShare: (
+    viewerSub: string,
+    grantId: string,
+  ) => Promise<LiveIncomingShare | undefined>;
+  readDocData: ReadDocData;
+};
 
 export function encodeSharedCursor(cursor: SharedCursor): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
@@ -40,9 +58,7 @@ function afterRecipeCursor(recipeId: string, cursorRecipeId: string): boolean {
 }
 
 export async function buildSharedPullPage(
-  viewerSub: string,
-  cursor: SharedCursor,
-  limit: number,
+  input: BuildSharedPullPageInput,
 ): Promise<{
   changes: {
     collections: Record<string, unknown>[];
@@ -52,16 +68,19 @@ export async function buildSharedPullPage(
   cursor: SharedCursor;
   hasMore: boolean;
 }> {
-  const shares = await listLiveIncomingShares(viewerSub);
+  const shares = await input.listLiveIncomingShares(input.viewerSub);
   const start = shares.findIndex((share) => {
-    if (cursor.grantId === '') {
+    if (input.cursor.grantId === '') {
       return true;
     }
-    return share.grantId > cursor.grantId || share.grantId === cursor.grantId;
+    return (
+      share.grantId > input.cursor.grantId ||
+      share.grantId === input.cursor.grantId
+    );
   });
   const empty = {
     changes: { collections: [], recipes: [], photos: [] },
-    cursor,
+    cursor: input.cursor,
     hasMore: false,
   };
   if (start === -1) {
@@ -69,8 +88,20 @@ export async function buildSharedPullPage(
   }
 
   for (let i = start; i < shares.length; i += 1) {
-    const share = shares[i];
-    const collection = await readDocData(
+    const candidate = shares[i];
+    const share = await input.readLiveIncomingShare(
+      input.viewerSub,
+      candidate.grantId,
+    );
+    if (
+      share === undefined ||
+      share.grantId !== candidate.grantId ||
+      share.ownerSub !== candidate.ownerSub ||
+      share.collectionId !== candidate.collectionId
+    ) {
+      continue;
+    }
+    const collection = await input.readDocData(
       share.ownerSub,
       'collections',
       share.collectionId,
@@ -92,16 +123,21 @@ export async function buildSharedPullPage(
       ? collection.recipeIds.filter((id): id is string => typeof id === 'string')
       : [];
     listed.sort();
-    const resume = share.grantId === cursor.grantId ? cursor.recipeId : '';
+    const resume =
+      share.grantId === input.cursor.grantId ? input.cursor.recipeId : '';
     const pending = listed.filter((id) => afterRecipeCursor(id, resume));
-    if (share.grantId === cursor.grantId && pending.length === 0) {
+    if (share.grantId === input.cursor.grantId && pending.length === 0) {
       continue;
     }
-    const pageIds = pending.slice(0, limit);
+    const pageIds = pending.slice(0, input.limit);
     const recipes: Record<string, unknown>[] = [];
     const photos: Record<string, unknown>[] = [];
     for (const recipeId of pageIds) {
-      const recipe = await readDocData(share.ownerSub, 'recipes', recipeId);
+      const recipe = await input.readDocData(
+        share.ownerSub,
+        'recipes',
+        recipeId,
+      );
       if (recipe === undefined || !isLiveDoc(recipe)) {
         continue;
       }
@@ -119,7 +155,11 @@ export async function buildSharedPullPage(
         }
       }
       for (const photoId of photoIds) {
-        const photo = await readDocData(share.ownerSub, 'photos', photoId);
+        const photo = await input.readDocData(
+          share.ownerSub,
+          'photos',
+          photoId,
+        );
         if (photo === undefined || !isLiveDoc(photo)) {
           continue;
         }
