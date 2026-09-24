@@ -25,7 +25,7 @@ import {
   MAX_NAMED_COLLECTIONS,
   putDoc,
   readDocData,
-  readRecipeDocsById,
+  readTombstonedRecipeIds,
   recipeIdsWithoutTombstones,
   tombstoneDoc,
   tombstonePhotoWithGcs,
@@ -220,14 +220,14 @@ export async function applyPushOp(
       const addedRecipeIds = addedCollectionRecipeIds(existing, recipeIds);
       // This preflight is intentionally outside putDoc's transaction. A concurrent
       // recipe delete may briefly win this race, but its membership cascade converges.
-      const recipeById = await readRecipeDocsById(uid, addedRecipeIds);
+      const tombstonedRecipeIds = await readTombstonedRecipeIds(uid, addedRecipeIds);
       return putDoc(
         uid,
         'collections',
         id,
         {
           ...compact,
-          recipeIds: recipeIdsWithoutTombstones(recipeIds, recipeById),
+          recipeIds: recipeIdsWithoutTombstones(recipeIds, tombstonedRecipeIds),
         },
         updatedAt,
       );

@@ -245,17 +245,13 @@ describe('recipeIdsWithoutTombstones', () => {
     expect(
       recipeIdsWithoutTombstones(
         [liveId, goneId, missingId],
-        new Map([
-          [liveId, { id: liveId, updatedAt: 2 }],
-          [goneId, { id: goneId, updatedAt: 3, deletedAt: 3 }],
-          [missingId, undefined],
-        ]),
+        new Set([goneId]),
       ),
     ).toEqual([liveId, missingId]);
   });
 
-  it('keeps every id when recipe docs have not been loaded', () => {
-    expect(recipeIdsWithoutTombstones([liveId, goneId], new Map())).toEqual([
+  it('keeps every id not known to be tombstoned', () => {
+    expect(recipeIdsWithoutTombstones([liveId, goneId], new Set())).toEqual([
       liveId,
       goneId,
     ]);

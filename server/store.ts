@@ -509,15 +509,16 @@ export async function readDocData(
  */
 export function recipeIdsWithoutTombstones(
   recipeIds: readonly string[],
-  recipeById: ReadonlyMap<string, Record<string, unknown> | undefined>,
+  tombstonedRecipeIds: ReadonlySet<string>,
 ): string[] {
-  return recipeIds.filter((id) => {
-    const data = recipeById.get(id);
-    return data === undefined || isLiveDoc(data);
-  });
+  return recipeIds.filter((id) => !tombstonedRecipeIds.has(id));
 }
 
-/** Only newly listed ids need a tombstone read; existing membership was checked on its prior put. */
+/**
+ * Only newly listed ids need a tombstone read; existing membership was checked
+ * on its prior put and relies on the recipe-delete cascade. If that cascade
+ * fails after tombstoning, retrying recipe.delete is what scrubs the stored id.
+ */
 export function addedCollectionRecipeIds(
   existing: Record<string, unknown> | undefined,
   nextRecipeIds: readonly string[],
@@ -531,14 +532,14 @@ export function addedCollectionRecipeIds(
   return nextRecipeIds.filter((id) => !previous.has(id));
 }
 
-export async function readRecipeDocsById(
+export async function readTombstonedRecipeIds(
   uid: string,
   ids: readonly string[],
-): Promise<Map<string, Record<string, unknown> | undefined>> {
+): Promise<Set<string>> {
   const unique = [...new Set(ids)];
-  const out = new Map<string, Record<string, unknown> | undefined>();
+  const tombstoned = new Set<string>();
   if (unique.length === 0) {
-    return out;
+    return tombstoned;
   }
   for (const chunk of chunkForBatch(unique, 100)) {
     const snaps = await getFirestore().getAll(
@@ -547,13 +548,15 @@ export async function readRecipeDocsById(
     );
     chunk.forEach((id, i) => {
       const snap = snaps[i];
-      out.set(
-        id,
-        snap?.exists ? (snap.data() as Record<string, unknown>) : undefined,
-      );
+      if (
+        snap?.exists &&
+        !isLiveDoc(snap.data() as Record<string, unknown>)
+      ) {
+        tombstoned.add(id);
+      }
     });
   }
-  return out;
+  return tombstoned;
 }
 
 /** Pages until `cap + 1` live docs or exhausted. Tombstones do not count. */
