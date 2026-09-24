@@ -1,5 +1,8 @@
 import { FieldPath, Firestore, type Transaction } from '@google-cloud/firestore';
+import type { PushRejectReason } from '../src/lib/pushReasons.ts';
 import { firestoreConfig } from './env.ts';
+
+export type { PushRejectReason };
 
 export type StoreKind = 'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections';
 
@@ -225,12 +228,6 @@ export function compactRecipeFields(recipe: Record<string, unknown>): Record<str
 }
 
 export const MAX_NAMED_COLLECTIONS = 50;
-
-export function namedCollectionCreateCapReason(
-  live: number,
-): 'cap' | undefined {
-  return live >= MAX_NAMED_COLLECTIONS ? 'cap' : undefined;
-}
 export const MAX_COLLECTION_RECIPE_IDS = 500;
 export const MAX_COLLECTION_NAME_LENGTH = 80;
 
@@ -349,7 +346,7 @@ export type MutationResult =
   | { applied: true; serverUpdatedAt: number }
   | {
       applied: false;
-      reason?: string;
+      reason?: PushRejectReason;
       current?: Record<string, unknown>;
     };
 
@@ -503,6 +500,45 @@ export async function readDocData(
     return undefined;
   }
   return snap.data() as Record<string, unknown>;
+}
+
+/**
+ * Keep ids whose recipe docs are missing (same-batch create) or live.
+ * Drop ids whose recipe docs are tombstones so a stale collection.put
+ * cannot briefly re-list a deleted recipe.
+ */
+export function recipeIdsWithoutTombstones(
+  recipeIds: readonly string[],
+  recipeById: ReadonlyMap<string, Record<string, unknown> | undefined>,
+): string[] {
+  return recipeIds.filter((id) => {
+    const data = recipeById.get(id);
+    return data === undefined || isLiveDoc(data);
+  });
+}
+
+export async function readRecipeDocsById(
+  uid: string,
+  ids: readonly string[],
+): Promise<Map<string, Record<string, unknown> | undefined>> {
+  const unique = [...new Set(ids)];
+  const out = new Map<string, Record<string, unknown> | undefined>();
+  if (unique.length === 0) {
+    return out;
+  }
+  for (const chunk of chunkForBatch(unique, 100)) {
+    const snaps = await getFirestore().getAll(
+      ...chunk.map((id) => colRef(uid, 'recipes').doc(id)),
+    );
+    chunk.forEach((id, i) => {
+      const snap = snaps[i];
+      out.set(
+        id,
+        snap?.exists ? (snap.data() as Record<string, unknown>) : undefined,
+      );
+    });
+  }
+  return out;
 }
 
 /** Pages until `cap + 1` live docs or exhausted. Tombstones do not count. */
@@ -798,12 +834,7 @@ export async function cascadeRecipeDelete(
     .where('recipeIds', 'array-contains', recipeId)
     .get();
   await applyCollectionMembershipScrubs(
-    collectionDocsFromQuerySnap(
-      collectionSnap.docs.map((doc) => ({
-        id: doc.id,
-        data: () => doc.data() as Record<string, unknown>,
-      })),
-    ),
+    collectionDocsFromQuerySnap(collectionSnap.docs),
     recipeId,
     at,
     (id, payload, writeAt) => putDoc(uid, 'collections', id, payload, writeAt),

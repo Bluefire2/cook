@@ -8,8 +8,7 @@ import {
   compactCollectionFields,
   compactRecipeFields,
   compareMutation,
-  MAX_NAMED_COLLECTIONS,
-  namedCollectionCreateCapReason,
+  recipeIdsWithoutTombstones,
   decodePullCursor,
   encodePullCursor,
   isUuid,
@@ -236,11 +235,29 @@ describe('compactRecipeFields', () => {
   });
 });
 
-describe('namedCollectionCreateCapReason', () => {
-  it('returns cap only when the live count is already at the limit', () => {
-    expect(namedCollectionCreateCapReason(MAX_NAMED_COLLECTIONS - 1)).toBeUndefined();
-    expect(namedCollectionCreateCapReason(MAX_NAMED_COLLECTIONS)).toBe('cap');
-    expect(namedCollectionCreateCapReason(MAX_NAMED_COLLECTIONS + 1)).toBe('cap');
+describe('recipeIdsWithoutTombstones', () => {
+  const liveId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const goneId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const missingId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+  it('drops tombstoned recipe ids and keeps live and missing ones', () => {
+    expect(
+      recipeIdsWithoutTombstones(
+        [liveId, goneId, missingId],
+        new Map([
+          [liveId, { id: liveId, updatedAt: 2 }],
+          [goneId, { id: goneId, updatedAt: 3, deletedAt: 3 }],
+          [missingId, undefined],
+        ]),
+      ),
+    ).toEqual([liveId, missingId]);
+  });
+
+  it('keeps every id when recipe docs have not been loaded', () => {
+    expect(recipeIdsWithoutTombstones([liveId, goneId], new Map())).toEqual([
+      liveId,
+      goneId,
+    ]);
   });
 });
 

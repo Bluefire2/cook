@@ -21,13 +21,16 @@ import {
   isKnownPushKind,
   isLiveDoc,
   listChangedSince,
-  namedCollectionCreateCapReason,
+  MAX_NAMED_COLLECTIONS,
   putDoc,
   readDocData,
+  readRecipeDocsById,
+  recipeIdsWithoutTombstones,
   tombstoneDoc,
   tombstonePhotoWithGcs,
   type MutationResult,
   type PullCursor,
+  type PushRejectReason,
   type StoreKind,
   validatePushOp,
 } from './store.ts';
@@ -143,14 +146,14 @@ export async function syncPull(req: Request): Promise<Response> {
 export type PushResult = {
   index: number;
   applied: boolean;
-  reason?: string;
+  reason?: PushRejectReason;
   current?: Record<string, unknown>;
 };
 
 export async function applyPushOp(
   uid: string,
   op: { kind: string; payload: unknown },
-): Promise<{ applied: boolean; reason?: string; current?: Record<string, unknown> }> {
+): Promise<{ applied: boolean; reason?: PushRejectReason; current?: Record<string, unknown> }> {
   if (!isKnownPushKind(op.kind)) {
     return { applied: false, reason: 'unknown' };
   }
@@ -205,13 +208,25 @@ export async function applyPushOp(
       const existing = await readDocData(uid, 'collections', id);
       if (!isLiveDoc(existing)) {
         const live = await countLiveNamedCollections(uid);
-        const cap = namedCollectionCreateCapReason(live);
-        if (cap) {
-          return { applied: false, reason: cap };
+        if (live >= MAX_NAMED_COLLECTIONS) {
+          return { applied: false, reason: 'cap' };
         }
       }
       const compact = compactCollectionFields(body);
-      return putDoc(uid, 'collections', id, compact, updatedAt);
+      const recipeIds = Array.isArray(compact.recipeIds)
+        ? compact.recipeIds.filter((recipeId): recipeId is string => typeof recipeId === 'string')
+        : [];
+      const recipeById = await readRecipeDocsById(uid, recipeIds);
+      return putDoc(
+        uid,
+        'collections',
+        id,
+        {
+          ...compact,
+          recipeIds: recipeIdsWithoutTombstones(recipeIds, recipeById),
+        },
+        updatedAt,
+      );
     }
     case 'collection.delete': {
       const body = payload as { id: string; updatedAt: number };

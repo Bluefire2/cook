@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { firstPushRejection, pushBatchRejected, pushOps } from './remote';
+import { firstPushRejection, pushOps } from './remote';
 import type { PushOp } from './pushOps';
+import { isDiscardedPushReason } from './pushReasons';
 
 const op: PushOp = {
   kind: 'recipe.delete',
@@ -39,10 +40,22 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('isDiscardedPushReason', () => {
+  it('accepts only invalid, unknown, and cap', () => {
+    expect(isDiscardedPushReason('invalid')).toBe(true);
+    expect(isDiscardedPushReason('unknown')).toBe(true);
+    expect(isDiscardedPushReason('cap')).toBe(true);
+    expect(isDiscardedPushReason('caps')).toBe(false);
+    expect(isDiscardedPushReason('stale')).toBe(false);
+  });
+});
+
 describe('firstPushRejection', () => {
   it('returns the first discarded-write reason', () => {
     expect(firstPushRejection(null)).toBeNull();
+    expect(firstPushRejection({})).toBeNull();
     expect(firstPushRejection({ results: [{ applied: true }] })).toBeNull();
+    expect(firstPushRejection({ results: [{ applied: false }] })).toBeNull();
     expect(
       firstPushRejection({
         results: [
@@ -55,40 +68,28 @@ describe('firstPushRejection', () => {
     expect(
       firstPushRejection({ results: [{ applied: false, reason: 'cap' }] }),
     ).toBe('cap');
-  });
-});
-
-describe('pushBatchRejected', () => {
-  it('is false when results are missing or applied', () => {
-    expect(pushBatchRejected(null)).toBe(false);
-    expect(pushBatchRejected({})).toBe(false);
-    expect(pushBatchRejected({ results: [{ applied: true }] })).toBe(false);
-    expect(pushBatchRejected({ results: [{ applied: false }] })).toBe(false);
+    expect(
+      firstPushRejection({ results: [{ applied: false, reason: 'unknown' }] }),
+    ).toBe('unknown');
   });
 
-  it('is true only for discarded writes', () => {
+  it('ignores ordinary last-write-wins and cascade outcomes', () => {
     expect(
-      pushBatchRejected({ results: [{ applied: false, reason: 'invalid' }] }),
-    ).toBe(true);
+      firstPushRejection({ results: [{ applied: false, reason: 'stale' }] }),
+    ).toBeNull();
     expect(
-      pushBatchRejected({ results: [{ applied: false, reason: 'unknown' }] }),
-    ).toBe(true);
-    expect(
-      pushBatchRejected({ results: [{ applied: false, reason: 'cap' }] }),
-    ).toBe(true);
-    expect(
-      pushBatchRejected({ results: [{ applied: false, reason: 'stale' }] }),
-    ).toBe(false);
-    expect(
-      pushBatchRejected({
+      firstPushRejection({
         results: [{ applied: false, reason: 'already-deleted' }],
       }),
-    ).toBe(false);
+    ).toBeNull();
     expect(
-      pushBatchRejected({
+      firstPushRejection({
         results: [{ applied: false, reason: 'recipe-deleted' }],
       }),
-    ).toBe(false);
+    ).toBeNull();
+    expect(
+      firstPushRejection({ results: [{ applied: false, reason: 'caps' }] }),
+    ).toBeNull();
   });
 });
 

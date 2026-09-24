@@ -1,6 +1,10 @@
 import { compactCollection } from './compactCollection';
 import { compactRecipe } from './compactRecipe';
 import { MAX_PUSH_OPS, type PushOp } from './pushOps';
+import {
+  isDiscardedPushReason,
+  type DiscardedPushReason,
+} from './pushReasons';
 import { invalidateSession } from './session';
 import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
@@ -24,9 +28,11 @@ export type PullPage = {
   hasMore: boolean;
 };
 
-export type RemoteResult = 'ok' | 'signedOut' | 'error' | 'invalid' | 'unknown' | 'cap';
-
-const DISCARDED_PUSH_REASONS = new Set(['invalid', 'unknown', 'cap']);
+export type RemoteResult =
+  | 'ok'
+  | 'signedOut'
+  | 'error'
+  | DiscardedPushReason;
 
 function jsonHeaders(): HeadersInit {
   return { 'Content-Type': 'application/json' };
@@ -94,9 +100,7 @@ export async function pullPage(cursor: PullCursor | null): Promise<PullPage | 's
  * report those so callers roll back instead of claiming a save that never
  * landed. `cap` is the live-collection limit, not a malformed payload.
  */
-export function firstPushRejection(
-  body: unknown,
-): 'invalid' | 'unknown' | 'cap' | null {
+export function firstPushRejection(body: unknown): DiscardedPushReason | null {
   if (!body || typeof body !== 'object') {
     return null;
   }
@@ -109,15 +113,11 @@ export function firstPushRejection(
       continue;
     }
     const { applied, reason } = entry as { applied?: unknown; reason?: unknown };
-    if (applied === false && typeof reason === 'string' && DISCARDED_PUSH_REASONS.has(reason)) {
-      return reason as 'invalid' | 'unknown' | 'cap';
+    if (applied === false && typeof reason === 'string' && isDiscardedPushReason(reason)) {
+      return reason;
     }
   }
   return null;
-}
-
-export function pushBatchRejected(body: unknown): boolean {
-  return firstPushRejection(body) !== null;
 }
 
 export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
