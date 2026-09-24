@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { resolveCollectionDestination } from '../lib/collectionDestination';
 import { useCollections } from '../lib/collectionStore';
 import { getSnapshot } from '../lib/libraryMemory';
@@ -11,6 +11,13 @@ import { primaryBtn, secondaryBtn } from '../lib/uiClasses';
 import RecipeForm from './RecipeForm';
 import SaveToCollectionSheet from './SaveToCollectionSheet';
 
+export type CreateRecipeSubmitStatus = {
+  /** Same disabled condition as the form's own Save button. */
+  locked: boolean;
+  /** A write is in flight and the collection sheet is not already showing it. */
+  saving: boolean;
+};
+
 /** Owns a staged creation draft until saved or explicitly abandoned. */
 export default function CreateRecipeForm({
   initial,
@@ -18,7 +25,7 @@ export default function CreateRecipeForm({
   onCreated,
   onCancel,
   formId,
-  onSubmitLockedChange,
+  onSubmitStatusChange,
 }: {
   initial: RecipeDraft;
   collectionId?: string;
@@ -26,8 +33,8 @@ export default function CreateRecipeForm({
   onCancel: () => void;
   /** Lets a Save button outside this form submit it (the import header). */
   formId?: string;
-  /** True while another save must not start (loading, or a save already underway). */
-  onSubmitLockedChange?: (locked: boolean) => void;
+  /** Header Save state. Pass a stable callback; this runs in a layout effect. */
+  onSubmitStatusChange?: (status: CreateRecipeSubmitStatus) => void;
 }) {
   const collections = useCollections();
   const destination = resolveCollectionDestination(collections, collectionId);
@@ -38,6 +45,7 @@ export default function CreateRecipeForm({
   const [canSubmit, setCanSubmit] = useState(true);
   const inFlight = useRef(false);
   const stagedPhotoIds = useRef<string[]>([]);
+  const failureRef = useRef<HTMLDivElement>(null);
 
   const discardPhotos = () => {
     for (const id of stagedPhotoIds.current) {
@@ -54,9 +62,13 @@ export default function CreateRecipeForm({
     if (draft && destination.kind === 'choose' && !busy) setChoosing(true);
   }, [draft, destination.kind, busy]);
   const submitLocked = destination.kind === 'loading' || draft !== null || !canSubmit;
+  const saving = busy && !choosing;
+  useLayoutEffect(() => {
+    onSubmitStatusChange?.({ locked: submitLocked, saving });
+  }, [submitLocked, saving, onSubmitStatusChange]);
   useEffect(() => {
-    onSubmitLockedChange?.(submitLocked);
-  }, [submitLocked, onSubmitLockedChange]);
+    if (error) failureRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [error]);
 
   const cancelDraft = () => {
     if (inFlight.current) return;
@@ -118,7 +130,7 @@ export default function CreateRecipeForm({
         <SaveToCollectionSheet onSave={(id) => save(draft, id)} onCancel={cancelDraft} />
       )}
       {draft && error && !choosing && destination.kind === 'save' && (
-        <div>
+        <div ref={failureRef}>
           <p role="alert" className="mt-2 text-sm text-danger">{error}</p>
           <button type="button" disabled={busy} onClick={() => void saveDirect(draft)} className={`${primaryBtn} mt-2 px-4 py-2`}>
             Try again

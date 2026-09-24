@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactElement, ReactNode } from 'react';
 import { encodeImageForStorage } from '../lib/image';
 import { photoStore, useObjectUrl, usePhotoUrl } from '../lib/photoStore';
@@ -370,7 +370,8 @@ export default function RecipeForm({
   /** Sets the form's `id` so a `type="submit" form=…` button can live
    * outside the form (e.g. a second Save button up in the screen header). */
   formId?: string;
-  /** Mirrors whether the submit button is enabled, for a header Save button. */
+  /** Mirrors whether the submit button is enabled, for a header Save.
+   * Pass a stable callback; this runs in a layout effect. */
   onCanSubmitChange?: (canSubmit: boolean) => void;
 }): ReactElement {
   const [form, setForm] = useState(() => fromDraft(initial));
@@ -461,7 +462,7 @@ export default function RecipeForm({
     form.sections.length > 1 || form.sections.some((s) => s.name.trim() !== '');
 
   const canSubmit = form.title.trim() !== '' && !busy;
-  useEffect(() => {
+  useLayoutEffect(() => {
     onCanSubmitChange?.(canSubmit);
   }, [canSubmit, onCanSubmitChange]);
 
