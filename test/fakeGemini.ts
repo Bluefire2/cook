@@ -1,9 +1,13 @@
 /**
  * Test double for `RecipeImportDeps`. Returns a real `GenerateContentResponse`
  * so `.text` is the SDK's own getter, not a hand-written stand-in.
+ *
+ * Lives outside `server/` because the Dockerfile copies `server/` into the
+ * runtime image and `server/membership.test.ts` scans every non-test file
+ * there as production code.
  */
 import { GenerateContentResponse, type GenerateContentParameters } from '@google/genai';
-import type { RecipeImportDeps } from './recipeImport.ts';
+import type { RecipeImportDeps } from '../server/recipeImport.ts';
 
 export function fakeImportDeps(reply: string | undefined): {
   deps: RecipeImportDeps;

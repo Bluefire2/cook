@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fakeImportDeps } from './fakeGemini.ts';
+import { fakeImportDeps } from '../test/fakeGemini.ts';
 import { importPost } from './importRoute.ts';
 
 const RECIPE = {
@@ -114,7 +114,7 @@ describe('POST /api/import', () => {
     });
     expect(await post({ text: 'soup' }, JSON.stringify({ servings: 2 }))).toMatchObject({
       status: 502,
-      body: { error: 'Extraction failed — no structured result.' },
+      body: { error: 'Extraction produced an unusable recipe.' },
     });
   });
 });

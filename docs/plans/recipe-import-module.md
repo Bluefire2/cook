@@ -161,7 +161,8 @@ Callers:
 - `server/extensionImport.ts`: `importFromHtml` → `recipePutFromExtraction`
   (which takes the already-normalized recipe) → `applyPushOp`. Its body, size,
   URL, CORS and auth checks are unchanged.
-- `server/recipeImport.eval.ts`: `importFromHtml` / `importFromSource` with
+- `evals/recipeImport.eval.ts` (branch `eval-import-sites`, stacked on this
+  one): `importFromHtml` / `importFromSource` with
   `recipeImportDepsFromEnv()`.
 
 ## Status and copy mapping (must not change)
@@ -176,7 +177,7 @@ Callers:
 | `empty_source` | 400 `Provide a URL or recipe text.` | 422 `Could not read that page.` |
 | `parse_error` | 502 `Extraction failed — no structured result.` | 502 same |
 | `not_a_recipe` | 422 `Couldn't find a recipe in that content.` | 422 same |
-| `unusable` | 502 `Extraction failed — no structured result.` | 502 `Extraction produced an unusable recipe.` |
+| `unusable` | 502 `Extraction produced an unusable recipe.` | 502 same |
 
 ## Steps
 
@@ -200,13 +201,15 @@ Callers:
 6. `[core]` Tests (pure, no network — see Tests below). Move
    `src/lib/extractRecipeSource.test.ts` to `server/recipeImport.test.ts`
    unchanged apart from the import path.
-7. `[core]` Move `src/lib/import.eval.ts` to `server/recipeImport.eval.ts`;
-   point `vitest.eval.config.ts` `include` at `server/**/*.eval.ts`; drop the
-   "module scope" comment there (the `.env.local` loader stays, for the key).
-   Goldens are normalized with `normalizeImportedRecipe`, not the client's
-   `normalizeRecipeDraft`. Existing `evals/import/` fixtures and thresholds
-   unchanged. Writing goldens for `evals/import-sites/` is the **next**
-   slice, not this one.
+7. `[core]` Delete `src/lib/import.eval.ts` (it imports the old
+   `api/import.ts` exports). The eval harness is rebuilt on the
+   `eval-import-sites` branch as `evals/recipeImport.eval.ts`, outside
+   `server/` so it is not copied into the runtime image: `vitest.eval.config.ts`
+   `include` points at `evals/**/*.eval.ts`, the "module scope" comment goes
+   (the `.env.local` loader stays, for the key), and goldens are normalized
+   with `normalizeImportedRecipe`, not the client's `normalizeRecipeDraft`.
+   Existing `evals/import/` fixtures and thresholds unchanged. Until that
+   branch merges, `npm run test:import` has no eval files.
 8. `[core]` `src/lib/importApi.ts`: add the `ImportedRecipe` → `RecipeDraft`
    type assertion (type-only import from `../../server/recipeImport`; check
    `tsc -b` accepts the cross-project reference, else put the assertion in a
@@ -237,7 +240,7 @@ Unit tests stay pure (AGENTS.md: no emulators, no DOM library):
 
 - `npm run build` (the only type gate on `server/`) and `npm test`.
 - `npm run test:import` before and after on the existing `evals/import/`
-  fixtures: same pass/fail set. A single failure is re-run before diagnosing
+  fixtures (after on `eval-import-sites`): same pass/fail set. A single failure is re-run before diagnosing
   (Gemini is non-deterministic).
 - Browser, Vite + `dev:api` signed in at `http://localhost:5173` (restart
   `dev:api` after the `server/` changes): single URL import, paste import,

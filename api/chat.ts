@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { GoogleGenAI, Type, type Content, type Part, type Schema } from '@google/genai';
 
-// NOTE: Duplicated in api/import.ts and server/session.ts + server/allowlist.ts.
+// NOTE: Duplicated in server/session.ts + server/allowlist.ts.
 // This inline copy is the Vercel gate and must stay in sync with those files.
 // On Cloud Run it is bypassed by an explicit authorizedSub argument after
 // requireMember passed in scripts/server.ts; server/membership.ts is authoritative.
@@ -122,7 +122,7 @@ export function sessionSub(req: Request): string | null {
   return row.sub;
 }
 
-// NOTE: Duplicated in api/import.ts. Vercel's function runtime transpiles
+// NOTE: Duplicated in server/recipeImport.ts. Vercel's function runtime transpiles
 // each api/ entrypoint in isolation and cannot import sibling helper files,
 // so the schema must live inline. Keep both copies in sync.
 const RECIPE_SCHEMA: Schema = {

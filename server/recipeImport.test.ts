@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecipeDraft } from '../src/lib/types.ts';
-import { fakeImportDeps } from './fakeGemini.ts';
+import { fakeImportDeps } from '../test/fakeGemini.ts';
 import {
   extractRecipeSource,
   fetchPageHtml,

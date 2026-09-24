@@ -73,6 +73,29 @@ describe('recipePutFromExtraction', () => {
     ]);
   });
 
+  it('ignores identity and unknown keys on a recipe that skipped normalization', () => {
+    const unnormalized = {
+      ...MINIMAL,
+      id: 'model-chosen-id',
+      createdAt: 1,
+      updatedAt: 1,
+      sourceUrl: 'https://attacker.example',
+      photoId: 'not-from-a-model',
+    };
+    const payload = recipePutFromExtraction(unnormalized, {
+      id: ID,
+      now: NOW,
+      sourceUrl: 'https://example.com/recipe',
+    });
+    expect(payload).toMatchObject({
+      id: ID,
+      createdAt: NOW,
+      updatedAt: NOW,
+      sourceUrl: 'https://example.com/recipe',
+    });
+    expect('photoId' in (payload ?? {})).toBe(false);
+  });
+
   it('omits sourceUrl when there is none', () => {
     for (const sourceUrl of [undefined, '', '   ']) {
       const payload = recipePutFromExtraction(normalized(MINIMAL), { id: ID, now: NOW, sourceUrl });

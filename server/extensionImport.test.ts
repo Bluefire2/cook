@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { extensionImport, isExtensionOrigin } from './extensionImport.ts';
-import { fakeImportDeps } from './fakeGemini.ts';
+import { fakeImportDeps } from '../test/fakeGemini.ts';
 import * as recipeImport from './recipeImport.ts';
 import { SESSION_HEADER_NAME, signSession } from './session.ts';
 
