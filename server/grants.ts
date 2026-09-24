@@ -149,6 +149,39 @@ export function revokeGrantTransition(input: {
   };
 }
 
+export function collectionLiveForGrant(
+  txRead: Record<string, unknown> | undefined,
+): boolean {
+  return isLiveDoc(txRead);
+}
+
+export function incomingShareCascadeDoc(
+  existing: IncomingShareDoc | undefined,
+  ownerSub: string,
+  collectionId: string,
+  cascadeAt: number,
+): IncomingShareDoc | null {
+  if (existing !== undefined && existing.updatedAt > cascadeAt) {
+    return null;
+  }
+  return incomingSharePayload(ownerSub, collectionId, cascadeAt, { deletedAt: cascadeAt });
+}
+
+export function grantCascadeRevoke(
+  existing: LiveGrant | GrantTombstone | null,
+  viewerSub: string,
+  cascadeAt: number,
+): GrantTombstone | null {
+  if (existing !== null && existing.updatedAt > cascadeAt) {
+    return null;
+  }
+  return {
+    viewerSub,
+    updatedAt: cascadeAt,
+    deletedAt: cascadeAt,
+  };
+}
+
 export function incomingShareFromGrant(
   ownerSub: string,
   collectionId: string,

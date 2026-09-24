@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_LIVE_GRANTS,
   addGrantTransition,
+  collectionLiveForGrant,
+  grantCascadeRevoke,
+  incomingShareCascadeDoc,
   incomingShareFromGrant,
   normalizeShareEmail,
   parseGrantDoc,
@@ -156,6 +159,110 @@ describe('revokeGrantTransition', () => {
         now: 9,
       }).kind,
     ).toBe('already');
+  });
+});
+
+describe('collectionLiveForGrant', () => {
+  it('matches isLiveDoc for collection reads', () => {
+    expect(collectionLiveForGrant(undefined)).toBe(false);
+    expect(collectionLiveForGrant({ updatedAt: 1 })).toBe(true);
+    expect(collectionLiveForGrant({ updatedAt: 1, deletedAt: 2 })).toBe(false);
+  });
+});
+
+describe('incomingShareCascadeDoc', () => {
+  const ownerSub = 'owner';
+  const cascadeAt = 100;
+
+  it('tombstones when absent or updatedAt is at or before cascadeAt', () => {
+    expect(incomingShareCascadeDoc(undefined, ownerSub, collectionId, cascadeAt)).toEqual({
+      ownerSub,
+      collectionId,
+      updatedAt: cascadeAt,
+      deletedAt: cascadeAt,
+    });
+    expect(
+      incomingShareCascadeDoc(
+        { ownerSub, collectionId, updatedAt: cascadeAt },
+        ownerSub,
+        collectionId,
+        cascadeAt,
+      ),
+    ).toEqual({
+      ownerSub,
+      collectionId,
+      updatedAt: cascadeAt,
+      deletedAt: cascadeAt,
+    });
+    expect(
+      incomingShareCascadeDoc(
+        { ownerSub, collectionId, updatedAt: 50 },
+        ownerSub,
+        collectionId,
+        cascadeAt,
+      ),
+    ).toEqual({
+      ownerSub,
+      collectionId,
+      updatedAt: cascadeAt,
+      deletedAt: cascadeAt,
+    });
+  });
+
+  it('skips when a newer live share has updatedAt after cascadeAt', () => {
+    expect(
+      incomingShareCascadeDoc(
+        { ownerSub, collectionId, updatedAt: cascadeAt + 1 },
+        ownerSub,
+        collectionId,
+        cascadeAt,
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('grantCascadeRevoke', () => {
+  const cascadeAt = 100;
+  const liveGrant = {
+    viewerSub,
+    email: 'a@b.c',
+    collectionId,
+    createdAt: 1,
+    updatedAt: 50,
+  };
+
+  it('tombstones when absent or updatedAt is at or before cascadeAt', () => {
+    expect(grantCascadeRevoke(null, viewerSub, cascadeAt)).toEqual({
+      viewerSub,
+      updatedAt: cascadeAt,
+      deletedAt: cascadeAt,
+    });
+    expect(grantCascadeRevoke(liveGrant, viewerSub, cascadeAt)).toEqual({
+      viewerSub,
+      updatedAt: cascadeAt,
+      deletedAt: cascadeAt,
+    });
+    expect(
+      grantCascadeRevoke(
+        { viewerSub, updatedAt: cascadeAt, deletedAt: cascadeAt },
+        viewerSub,
+        cascadeAt,
+      ),
+    ).toEqual({
+      viewerSub,
+      updatedAt: cascadeAt,
+      deletedAt: cascadeAt,
+    });
+  });
+
+  it('skips when a live grant has updatedAt after cascadeAt', () => {
+    expect(
+      grantCascadeRevoke(
+        { ...liveGrant, updatedAt: cascadeAt + 1 },
+        viewerSub,
+        cascadeAt,
+      ),
+    ).toBeNull();
   });
 });
 

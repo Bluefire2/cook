@@ -266,6 +266,16 @@ export function listCollections(): Collection[] {
   });
 }
 
+export function countOwnedNamedCollections(): number {
+  let count = 0;
+  for (const id of snapshot.collections.keys()) {
+    if (snapshot.collectionOrigins.get(id)?.kind !== 'shared') {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export function getCollection(id: string): Collection | undefined {
   return snapshot.collections.get(id);
 }
