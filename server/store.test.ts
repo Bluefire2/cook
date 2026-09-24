@@ -14,8 +14,37 @@ import {
   encodePullCursor,
   isUuid,
   messageIdsToClearAtBoundary,
+  userProfileUpsertFields,
   validatePushOp,
 } from './store.ts';
+
+describe('userProfileUpsertFields', () => {
+  it('derives emailLower while preserving the original email and name', () => {
+    expect(
+      userProfileUpsertFields(
+        { email: '  Alex@Example.COM ', name: 'Alex Example' },
+        123,
+        true,
+      ),
+    ).toEqual({
+      email: '  Alex@Example.COM ',
+      emailLower: 'alex@example.com',
+      name: 'Alex Example',
+      lastSeenAt: 123,
+      createdAt: 123,
+    });
+  });
+
+  it('keeps existing merge semantics for an omitted name and createdAt', () => {
+    expect(
+      userProfileUpsertFields({ email: 'alex@example.com' }, 456, false),
+    ).toEqual({
+      email: 'alex@example.com',
+      emailLower: 'alex@example.com',
+      lastSeenAt: 456,
+    });
+  });
+});
 
 describe('compareMutation', () => {
   it('rejects stale puts', () => {

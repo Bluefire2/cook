@@ -9,6 +9,7 @@ import {
   normalizeShareEmail,
   parseGrantDoc,
   parseIncomingShareDoc,
+  queryShareProfileRows,
   resolveShareTarget,
   revokeGrantTransition,
   sessionCanViewOwnerPhoto,
@@ -93,6 +94,201 @@ describe('normalizeShareEmail', () => {
   });
 });
 
+describe('queryShareProfileRows', () => {
+  type StoredProfile = {
+    sub: string;
+    email: string;
+    emailLower?: string;
+    lastSeenAt: number;
+  };
+
+  function exactProfileQuery(
+    profiles: StoredProfile[],
+    calls: string[],
+  ) {
+    return async (field: 'emailLower' | 'email', email: string) => {
+      calls.push(`${field}:${email}`);
+      return profiles
+        .filter((profile) => profile[field] === email)
+        .map(({ sub, email: storedEmail, lastSeenAt }) => ({
+          sub,
+          email: storedEmail,
+          lastSeenAt,
+        }));
+    };
+  }
+
+  it('uses emailLower first and does not fall back after a primary match', async () => {
+    const calls: string[] = [];
+    const rows = await queryShareProfileRows(
+      'alex@example.com',
+      exactProfileQuery(
+        [
+          {
+            sub: 'new-profile',
+            email: 'Alex@Example.com',
+            emailLower: 'alex@example.com',
+            lastSeenAt: 10,
+          },
+          {
+            sub: 'legacy-profile',
+            email: 'alex@example.com',
+            lastSeenAt: 20,
+          },
+        ],
+        calls,
+      ),
+    );
+
+    expect(rows.map((row) => row.sub)).toEqual(['new-profile']);
+    expect(calls).toEqual(['emailLower:alex@example.com']);
+  });
+
+  it('falls back to an exact normalized email for a lowercase legacy profile', async () => {
+    const calls: string[] = [];
+    const rows = await queryShareProfileRows(
+      'legacy@example.com',
+      exactProfileQuery(
+        [
+          {
+            sub: 'legacy-profile',
+            email: 'legacy@example.com',
+            lastSeenAt: 10,
+          },
+        ],
+        calls,
+      ),
+    );
+
+    expect(rows.map((row) => row.sub)).toEqual(['legacy-profile']);
+    expect(calls).toEqual([
+      'emailLower:legacy@example.com',
+      'email:legacy@example.com',
+    ]);
+  });
+
+  it('cannot find a mixed-case legacy profile until emailLower is backfilled', async () => {
+    const profile: StoredProfile = {
+      sub: 'legacy-profile',
+      email: 'Legacy@Example.com',
+      lastSeenAt: 10,
+    };
+    const before = await queryShareProfileRows(
+      'legacy@example.com',
+      exactProfileQuery([profile], []),
+    );
+    expect(before).toEqual([]);
+
+    profile.emailLower = 'legacy@example.com';
+    const after = await queryShareProfileRows(
+      'legacy@example.com',
+      exactProfileQuery([profile], []),
+    );
+    expect(after.map((row) => row.sub)).toEqual(['legacy-profile']);
+  });
+
+  it('propagates primary and fallback query failures', async () => {
+    await expect(
+      queryShareProfileRows('target@example.com', async () => {
+        throw new Error('primary unavailable');
+      }),
+    ).rejects.toThrow('primary unavailable');
+
+    await expect(
+      queryShareProfileRows('target@example.com', async (field) => {
+        if (field === 'emailLower') {
+          return [];
+        }
+        throw new Error('fallback unavailable');
+      }),
+    ).rejects.toThrow('fallback unavailable');
+  });
+});
+
+describe('resolveShareTarget', () => {
+  const base = {
+    email: 'target@example.com',
+    actorSub: 'actor',
+    actorEmail: 'actor@example.com',
+  };
+
+  it('selects the latest profile and admits an active member', async () => {
+    const memberReads: string[] = [];
+    const target = await resolveShareTarget({
+      ...base,
+      queryUsers: async () => [
+        { sub: 'older', email: 'target@example.com', lastSeenAt: 1 },
+        { sub: 'latest', email: 'Target@Example.com', lastSeenAt: 9 },
+      ],
+      isOwnerEmail: () => false,
+      readMemberStatus: async (sub) => {
+        memberReads.push(sub);
+        return 'active';
+      },
+    });
+
+    expect(target).toEqual({
+      kind: 'ok',
+      sub: 'latest',
+      email: 'Target@Example.com',
+    });
+    expect(memberReads).toEqual(['latest']);
+  });
+
+  it('rejects self by the selected profile sub', async () => {
+    const target = await resolveShareTarget({
+      ...base,
+      queryUsers: async () => [
+        { sub: 'actor', email: 'other@example.com', lastSeenAt: 1 },
+      ],
+      isOwnerEmail: () => false,
+      readMemberStatus: async () => 'active',
+    });
+    expect(target).toEqual({ kind: 'self' });
+  });
+
+  it('admits an owner without reading membership', async () => {
+    let memberRead = false;
+    const target = await resolveShareTarget({
+      ...base,
+      queryUsers: async () => [
+        { sub: 'owner', email: 'Owner@Example.com', lastSeenAt: 1 },
+      ],
+      isOwnerEmail: (email) => email === 'Owner@Example.com',
+      readMemberStatus: async () => {
+        memberRead = true;
+        return null;
+      },
+    });
+    expect(target).toEqual({
+      kind: 'ok',
+      sub: 'owner',
+      email: 'Owner@Example.com',
+    });
+    expect(memberRead).toBe(false);
+  });
+
+  it('keeps no match as notFound and query failure as unknown', async () => {
+    const notFound = await resolveShareTarget({
+      ...base,
+      queryUsers: async () => [],
+      isOwnerEmail: () => false,
+      readMemberStatus: async () => 'active',
+    });
+    expect(notFound).toEqual({ kind: 'notFound' });
+
+    const unknown = await resolveShareTarget({
+      ...base,
+      queryUsers: async () => {
+        throw new Error('query unavailable');
+      },
+      isOwnerEmail: () => false,
+      readMemberStatus: async () => 'active',
+    });
+    expect(unknown).toEqual({ kind: 'unknown' });
+  });
+});
+
 describe('parseGrantDoc', () => {
   it('parses a live grant and a tombstone', () => {
     expect(
@@ -140,7 +336,7 @@ describe('addGrantTransition', () => {
       email: 'me@example.com',
       actorSub: 'me',
       actorEmail: 'me@example.com',
-      queryUsersByEmail: async () => [],
+      queryUsers: async () => [],
       isOwnerEmail: () => false,
       readMemberStatus: async () => null,
     });
@@ -152,7 +348,7 @@ describe('addGrantTransition', () => {
       email: 'revoked@example.com',
       actorSub: 'me',
       actorEmail: 'me@example.com',
-      queryUsersByEmail: async () => [
+      queryUsers: async () => [
         { sub: 'r1', email: 'revoked@example.com', lastSeenAt: 9 },
       ],
       isOwnerEmail: () => false,
@@ -164,7 +360,7 @@ describe('addGrantTransition', () => {
       email: 'x@y.z',
       actorSub: 'me',
       actorEmail: 'me@example.com',
-      queryUsersByEmail: async () => [{ sub: 'x', email: 'x@y.z', lastSeenAt: 1 }],
+      queryUsers: async () => [{ sub: 'x', email: 'x@y.z', lastSeenAt: 1 }],
       isOwnerEmail: () => false,
       readMemberStatus: async () => {
         throw new Error('blip');

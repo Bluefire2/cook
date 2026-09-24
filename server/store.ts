@@ -451,18 +451,28 @@ export async function upsertUser(
   const now = Date.now();
   await getFirestore().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
-    const base: Record<string, unknown> = {
-      email: profile.email,
-      lastSeenAt: now,
-    };
-    if (profile.name !== undefined) {
-      base.name = profile.name;
-    }
-    if (!snap.exists) {
-      base.createdAt = now;
-    }
+    const base = userProfileUpsertFields(profile, now, !snap.exists);
     tx.set(ref, base, { merge: true });
   });
+}
+
+export function userProfileUpsertFields(
+  profile: { email: string; name?: string },
+  now: number,
+  isNew: boolean,
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    email: profile.email,
+    emailLower: profile.email.trim().toLowerCase(),
+    lastSeenAt: now,
+  };
+  if (profile.name !== undefined) {
+    fields.name = profile.name;
+  }
+  if (isNew) {
+    fields.createdAt = now;
+  }
+  return fields;
 }
 
 export async function listChangedSince(

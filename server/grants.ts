@@ -270,12 +270,27 @@ export type ShareTarget =
   | { kind: 'unknown' };
 
 export type UserEmailRow = { sub: string; email: string; lastSeenAt: number };
+export type UserEmailField = 'emailLower' | 'email';
+
+export async function queryShareProfileRows(
+  email: string,
+  queryUsersByField: (
+    field: UserEmailField,
+    email: string,
+  ) => Promise<UserEmailRow[]>,
+): Promise<UserEmailRow[]> {
+  const rows = await queryUsersByField('emailLower', email);
+  if (rows.length > 0) {
+    return rows;
+  }
+  return queryUsersByField('email', email);
+}
 
 export async function resolveShareTarget(input: {
   email: string;
   actorSub: string;
   actorEmail: string;
-  queryUsersByEmail: (email: string) => Promise<UserEmailRow[]>;
+  queryUsers: (email: string) => Promise<UserEmailRow[]>;
   isOwnerEmail: (email: string) => boolean;
   readMemberStatus: (sub: string) => Promise<'active' | 'revoked' | null>;
 }): Promise<ShareTarget> {
@@ -284,7 +299,7 @@ export async function resolveShareTarget(input: {
   }
   let rows: UserEmailRow[];
   try {
-    rows = await input.queryUsersByEmail(input.email);
+    rows = await input.queryUsers(input.email);
   } catch {
     return { kind: 'unknown' };
   }
@@ -310,10 +325,13 @@ export async function resolveShareTarget(input: {
   }
 }
 
-export async function queryUsersByEmail(email: string): Promise<UserEmailRow[]> {
+export async function queryUsersByField(
+  field: UserEmailField,
+  email: string,
+): Promise<UserEmailRow[]> {
   const snap = await getStoreFirestore()
     .collection('users')
-    .where('email', '==', email)
+    .where(field, '==', email)
     .get();
   const rows: UserEmailRow[] = [];
   for (const doc of snap.docs) {
@@ -328,6 +346,10 @@ export async function queryUsersByEmail(email: string): Promise<UserEmailRow[]> 
   return rows;
 }
 
+export async function queryUsersByEmail(email: string): Promise<UserEmailRow[]> {
+  return queryShareProfileRows(email, queryUsersByField);
+}
+
 export async function lookupAdmittedSubByEmail(
   email: string,
   actor: { sub: string; email: string },
@@ -336,7 +358,7 @@ export async function lookupAdmittedSubByEmail(
     email,
     actorSub: actor.sub,
     actorEmail: actor.email,
-    queryUsersByEmail,
+    queryUsers: queryUsersByEmail,
     isOwnerEmail: (candidate) => isAllowed(candidate, true, allowedEmails()),
     readMemberStatus: async (sub) => {
       const member = await readMember(sub);
