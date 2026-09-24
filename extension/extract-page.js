@@ -4,7 +4,7 @@
  * arrives in `args`, and every helper is nested inside the function body.
  *
  * This prunes the DOM; it does not parse recipes. `extractRecipeSource` in
- * `api/import.ts` stays the only thing that knows what a schema.org/Recipe
+ * `server/recipeImport.ts` stays the only thing that knows what a schema.org/Recipe
  * block looks like.
  */
 export function grabPageSource(maxChars) {
