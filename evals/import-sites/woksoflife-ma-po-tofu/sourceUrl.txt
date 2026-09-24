@@ -1,2 +1,6 @@
 https://thewoksoflife.com/ma-po-tofu-real-deal/
+# Site: The Woks of Life
+# Recipe: Mapo Tofu: The Real Deal
+# Author: Kaitlin (The Woks of Life)
+# Rights: Content belongs to its author and publisher; cached here only so evals run offline.
 # Fetched 2026-09-23 with curl (desktop Chrome UA): HTTP 200

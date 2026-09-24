@@ -1,2 +1,6 @@
 https://natashaskitchen.com/classic-russian-borscht-recipe/
+# Site: Natasha's Kitchen
+# Recipe: Classic Borscht (Beet Soup)
+# Author: Natasha Kravchuk
+# Rights: Content belongs to its author and publisher; cached here only so evals run offline.
 # Fetched 2026-09-23 with curl (desktop Chrome UA): HTTP 200

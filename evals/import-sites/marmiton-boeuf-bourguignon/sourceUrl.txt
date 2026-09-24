@@ -1,2 +1,6 @@
 https://www.marmiton.org/recettes/recette_boeuf-bourguignon_18889.aspx
+# Site: Marmiton
+# Recipe: Boeuf bourguignon
+# Author: Marmiton contributor (listed as "Anonyme")
+# Rights: Content belongs to its author and publisher; cached here only so evals run offline.
 # Fetched 2026-09-23 with curl (desktop Chrome UA): HTTP 200

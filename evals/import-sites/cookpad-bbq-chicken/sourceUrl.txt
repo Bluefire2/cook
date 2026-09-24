@@ -1,3 +1,8 @@
 https://cookpad.com/us/recipes/347447-easy-chicken-fried-rice
+# Site: Cookpad
+# Recipe: Easy Sweet & Sour BBQ Chicken
+# Author: ChefDoogles (Cookpad user)
+# Note: The URL slug says "chicken fried rice"; the page is this recipe.
+# Rights: Content belongs to its author and publisher; cached here only so evals run offline.
 # Fetched 2026-09-23 with curl (desktop Chrome UA): HTTP 200
 # Redirected to: https://cookpad.com/eng/recipes/347447

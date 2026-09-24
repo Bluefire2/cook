@@ -1,1 +1,5 @@
 https://redbeansanderic.com/chef-isaac-toups-chicken-and-sausage-gumbo/
+# Site: Red Beans and Eric
+# Recipe: Chef Isaac Toups Chicken and Sausage Gumbo
+# Author: Red Beans and Eric (recipe credited to chef Isaac Toups)
+# Rights: Content belongs to its author and publisher; cached here only so evals run offline.

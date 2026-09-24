@@ -1,4 +1,9 @@
 https://www.seriouseats.com/all-american-beef-stew-recipe
+# Site: Serious Eats
+# Recipe: All-American Beef Stew
+# Author: J. Kenji López-Alt
+# Note: Cached from a Wayback Machine snapshot (see below).
+# Rights: Content belongs to its author and publisher; cached here only so evals run offline.
 # Live fetch from this environment returns HTTP 402. page.html is the
 # 2024-01-15 Wayback original-bytes snapshot:
 # https://web.archive.org/web/20240115020217id_/https://www.seriouseats.com/all-american-beef-stew-recipe

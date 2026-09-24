@@ -1,2 +1,6 @@
 https://cooking.nytimes.com/recipes/1015819-chocolate-chip-cookies
+# Site: NYT Cooking (The New York Times)
+# Recipe: Best Chocolate Chip Cookies
+# Author: David Leite
+# Rights: Content belongs to its author and publisher; cached here only so evals run offline.
 # Fetched 2026-09-23 with curl (desktop Chrome UA): HTTP 200
