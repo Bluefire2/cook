@@ -67,7 +67,7 @@ export default function CreateRecipeForm({
     onSubmitStatusChange?.({ locked: submitLocked, saving });
   }, [submitLocked, saving, onSubmitStatusChange]);
   useEffect(() => {
-    if (error) failureRef.current?.scrollIntoView({ block: 'nearest' });
+    if (error) failureRef.current?.scrollIntoView({ block: 'center' });
   }, [error]);
 
   const cancelDraft = () => {
