@@ -7,12 +7,14 @@ import {
   grantColRef,
   incomingSharePayload,
   incomingShareRef,
+  isSafeFirestoreDocumentId,
   isLiveGrant,
   lookupAdmittedSubByEmail,
   normalizeShareEmail,
+  orchestrateGrantRevoke,
   parseGrantDoc,
-  revokeGrantTransition,
   shareGrantId,
+  type RevokeGrantOutcome,
 } from './grants.ts';
 import {
   membershipUnauthorized,
@@ -43,6 +45,18 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function notFound(): Response {
   return jsonResponse({ error: 'Not found' }, 404);
+}
+
+export function revokeGrantHttpResponse(
+  outcome: RevokeGrantOutcome,
+): Response {
+  if (outcome.kind === 'badRequest') {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+  if (outcome.kind === 'missing') {
+    return notFound();
+  }
+  return jsonResponse({ ok: true });
 }
 
 /** Maps in-transaction owner collection read to grant-post HTTP status. */
@@ -265,14 +279,6 @@ export async function collectionGrantsRevokePost(req: Request): Promise<Response
   if (collectionId === null) {
     return jsonResponse({ error: 'Bad request' }, 400);
   }
-  const access = await requireOwnedLiveCollection(req, collectionId);
-  const early = accessResponse(access);
-  if (early) {
-    return early;
-  }
-  if (access.kind !== 'ok') {
-    return notFound();
-  }
 
   const raw = await readBoundedText(req, BODY_LIMIT);
   if (raw === null) {
@@ -285,35 +291,58 @@ export async function collectionGrantsRevokePost(req: Request): Promise<Response
     return jsonResponse({ error: 'Bad request' }, 400);
   }
   const sub =
-    body && typeof body === 'object' && typeof (body as { sub?: unknown }).sub === 'string'
-      ? (body as { sub: string }).sub.trim()
-      : '';
-  if (sub === '') {
+    body && typeof body === 'object'
+      ? (body as { sub?: unknown }).sub
+      : undefined;
+  if (!isSafeFirestoreDocumentId(sub)) {
     return jsonResponse({ error: 'Bad request' }, 400);
   }
 
+  const access = await requireOwnedLiveCollection(req, collectionId);
+  const early = accessResponse(access);
+  if (early) {
+    return early;
+  }
+  if (access.kind !== 'ok') {
+    return notFound();
+  }
+
   try {
-    const grantRef = grantColRef(access.sub, collectionId).doc(sub);
-    const shareRef = incomingShareRef(sub, shareGrantId(access.sub, collectionId));
-    const db = getStoreFirestore();
-    await db.runTransaction(async (tx) => {
-      const snap = await tx.get(grantRef);
-      const existing = parseGrantDoc(snap.exists ? snap.data() : undefined, sub);
-      const next = revokeGrantTransition({
-        existing,
-        viewerSub: sub,
-        now: Date.now(),
-      });
-      tx.set(grantRef, next.doc, { merge: false });
-      tx.set(
-        shareRef,
-        incomingSharePayload(access.sub, collectionId, next.doc.updatedAt, {
-          deletedAt: next.doc.deletedAt,
-        }),
-        { merge: false },
-      );
+    const outcome = await orchestrateGrantRevoke(sub, Date.now(), {
+      runTransaction: async (work) => {
+        const db = getStoreFirestore();
+        return db.runTransaction(async (tx) => {
+          const grantRef = grantColRef(access.sub, collectionId).doc(sub);
+          return work({
+            readForwardGrant: async (viewerSub) => {
+              const snap = await tx.get(grantRef);
+              return parseGrantDoc(
+                snap.exists ? snap.data() : undefined,
+                viewerSub,
+              );
+            },
+            writePair: async (viewerSub, tombstone) => {
+              const shareRef = incomingShareRef(
+                viewerSub,
+                shareGrantId(access.sub, collectionId),
+              );
+              tx.set(grantRef, tombstone, { merge: false });
+              tx.set(
+                shareRef,
+                incomingSharePayload(
+                  access.sub,
+                  collectionId,
+                  tombstone.updatedAt,
+                  { deletedAt: tombstone.deletedAt },
+                ),
+                { merge: false },
+              );
+            },
+          });
+        });
+      },
     });
-    return jsonResponse({ ok: true });
+    return revokeGrantHttpResponse(outcome);
   } catch (err) {
     console.error('collectionGrantsRevokePost store error:', err);
     return storeUnavailable();

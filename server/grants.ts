@@ -65,6 +65,19 @@ export function normalizeShareEmail(raw: unknown): string | undefined {
   return email;
 }
 
+export function isSafeFirestoreDocumentId(raw: unknown): raw is string {
+  return (
+    typeof raw === 'string' &&
+    raw !== '' &&
+    raw.trim() === raw &&
+    !raw.includes('/') &&
+    raw !== '.' &&
+    raw !== '..' &&
+    !/^__[\s\S]*__$/.test(raw) &&
+    new TextEncoder().encode(raw).byteLength <= 1_500
+  );
+}
+
 export function shareGrantId(ownerSub: string, collectionId: string): string {
   return `${ownerSub}_${collectionId}`;
 }
@@ -145,7 +158,13 @@ export function revokeGrantTransition(input: {
   existing: LiveGrant | GrantTombstone | null;
   viewerSub: string;
   now: number;
-}): { kind: 'write'; doc: GrantTombstone } | { kind: 'already'; doc: GrantTombstone } {
+}):
+  | { kind: 'missing' }
+  | { kind: 'write'; doc: GrantTombstone }
+  | { kind: 'already'; doc: GrantTombstone } {
+  if (input.existing === null) {
+    return { kind: 'missing' };
+  }
   if (input.existing !== null && 'deletedAt' in input.existing) {
     return { kind: 'already', doc: input.existing };
   }
@@ -157,6 +176,45 @@ export function revokeGrantTransition(input: {
       deletedAt: input.now,
     },
   };
+}
+
+export type RevokeGrantTransition = ReturnType<typeof revokeGrantTransition>;
+export type RevokeGrantOutcome =
+  | { kind: 'badRequest' }
+  | RevokeGrantTransition;
+
+export type RevokeGrantTransaction = {
+  readForwardGrant: (
+    viewerSub: string,
+  ) => Promise<LiveGrant | GrantTombstone | null>;
+  writePair: (
+    viewerSub: string,
+    tombstone: GrantTombstone,
+  ) => Promise<void>;
+};
+
+export type RevokeGrantDependencies = {
+  runTransaction: (
+    work: (tx: RevokeGrantTransaction) => Promise<RevokeGrantTransition>,
+  ) => Promise<RevokeGrantTransition>;
+};
+
+export async function orchestrateGrantRevoke(
+  viewerSub: unknown,
+  now: number,
+  dependencies: RevokeGrantDependencies,
+): Promise<RevokeGrantOutcome> {
+  if (!isSafeFirestoreDocumentId(viewerSub)) {
+    return { kind: 'badRequest' };
+  }
+  return dependencies.runTransaction(async (tx) => {
+    const existing = await tx.readForwardGrant(viewerSub);
+    const next = revokeGrantTransition({ existing, viewerSub, now });
+    if (next.kind === 'write') {
+      await tx.writePair(viewerSub, next.doc);
+    }
+    return next;
+  });
 }
 
 export function collectionLiveForGrant(

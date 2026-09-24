@@ -6,14 +6,19 @@ import {
   collectionLiveForGrant,
   grantCascadeRevoke,
   incomingShareCascadeDoc,
+  isSafeFirestoreDocumentId,
   normalizeShareEmail,
+  orchestrateGrantRevoke,
   parseGrantDoc,
   parseIncomingShareDoc,
   queryShareProfileRows,
   resolveShareTarget,
   revokeGrantTransition,
   sessionCanViewOwnerPhoto,
+  type GrantTombstone,
+  type LiveGrant,
   type LiveIncomingShare,
+  type RevokeGrantDependencies,
   type SessionCanViewOwnerPhotoInput,
 } from './grants.ts';
 import type { StoreKind } from './store.ts';
@@ -91,6 +96,31 @@ describe('normalizeShareEmail', () => {
     expect(normalizeShareEmail('  Alex@Example.com ')).toBe('alex@example.com');
     expect(normalizeShareEmail('')).toBeUndefined();
     expect(normalizeShareEmail('no-at')).toBeUndefined();
+  });
+});
+
+describe('isSafeFirestoreDocumentId', () => {
+  it('accepts unchanged document ids through the 1,500-byte UTF-8 limit', () => {
+    expect(isSafeFirestoreDocumentId('viewer-123')).toBe(true);
+    expect(isSafeFirestoreDocumentId('üser')).toBe(true);
+    expect(isSafeFirestoreDocumentId('a'.repeat(1_500))).toBe(true);
+    expect(isSafeFirestoreDocumentId('é'.repeat(750))).toBe(true);
+  });
+
+  it.each([
+    undefined,
+    '',
+    ' viewer',
+    'viewer ',
+    'viewer/sub',
+    '.',
+    '..',
+    '__viewer__',
+    '__',
+    'a'.repeat(1_501),
+    'é'.repeat(751),
+  ])('rejects unsafe document id %j', (candidate) => {
+    expect(isSafeFirestoreDocumentId(candidate)).toBe(false);
   });
 });
 
@@ -401,7 +431,15 @@ describe('addGrantTransition', () => {
 });
 
 describe('revokeGrantTransition', () => {
-  it('tombstones a live grant and is a no-op on an existing tombstone', () => {
+  it('distinguishes missing, live, and already-tombstoned grants', () => {
+    expect(
+      revokeGrantTransition({
+        existing: null,
+        viewerSub,
+        now: 9,
+      }),
+    ).toEqual({ kind: 'missing' });
+
     const write = revokeGrantTransition({
       existing: {
         viewerSub,
@@ -417,13 +455,136 @@ describe('revokeGrantTransition', () => {
       kind: 'write',
       doc: { viewerSub, updatedAt: 9, deletedAt: 9 },
     });
+    const stored = { viewerSub, updatedAt: 4, deletedAt: 4 };
     expect(
       revokeGrantTransition({
-        existing: { viewerSub, updatedAt: 4, deletedAt: 4 },
+        existing: stored,
         viewerSub,
         now: 9,
-      }).kind,
-    ).toBe('already');
+      }),
+    ).toEqual({ kind: 'already', doc: stored });
+  });
+});
+
+describe('orchestrateGrantRevoke', () => {
+  function dependenciesFor(
+    existing: LiveGrant | GrantTombstone | null,
+    calls: string[],
+    writes: Array<{ viewerSub: string; tombstone: GrantTombstone }>,
+  ): RevokeGrantDependencies {
+    return {
+      runTransaction: async (work) => {
+        calls.push('transaction');
+        return work({
+          readForwardGrant: async (requestedViewerSub) => {
+            calls.push(`read:${requestedViewerSub}`);
+            return existing;
+          },
+          writePair: async (requestedViewerSub, tombstone) => {
+            calls.push(`write:${requestedViewerSub}`);
+            writes.push({ viewerSub: requestedViewerSub, tombstone });
+          },
+        });
+      },
+    };
+  }
+
+  it('does not invoke a transaction, read, or write dependency for malformed input', async () => {
+    for (const malformed of [
+      '',
+      ' viewer ',
+      'viewer/sub',
+      '.',
+      '..',
+      '__viewer__',
+      'a'.repeat(1_501),
+    ]) {
+      const calls: string[] = [];
+      const writes: Array<{
+        viewerSub: string;
+        tombstone: GrantTombstone;
+      }> = [];
+      await expect(
+        orchestrateGrantRevoke(
+          malformed,
+          9,
+          dependenciesFor(null, calls, writes),
+        ),
+      ).resolves.toEqual({ kind: 'badRequest' });
+      expect(calls).toEqual([]);
+      expect(writes).toEqual([]);
+    }
+  });
+
+  it('reads the authoritative grant but does not write when it is missing', async () => {
+    const calls: string[] = [];
+    const writes: Array<{
+      viewerSub: string;
+      tombstone: GrantTombstone;
+    }> = [];
+    await expect(
+      orchestrateGrantRevoke(
+        viewerSub,
+        9,
+        dependenciesFor(null, calls, writes),
+      ),
+    ).resolves.toEqual({ kind: 'missing' });
+    expect(calls).toEqual(['transaction', `read:${viewerSub}`]);
+    expect(writes).toEqual([]);
+  });
+
+  it('returns the stored tombstone without a paired write', async () => {
+    const calls: string[] = [];
+    const writes: Array<{
+      viewerSub: string;
+      tombstone: GrantTombstone;
+    }> = [];
+    const stored = { viewerSub, updatedAt: 4, deletedAt: 4 };
+    await expect(
+      orchestrateGrantRevoke(
+        viewerSub,
+        9,
+        dependenciesFor(stored, calls, writes),
+      ),
+    ).resolves.toEqual({ kind: 'already', doc: stored });
+    expect(calls).toEqual(['transaction', `read:${viewerSub}`]);
+    expect(writes).toEqual([]);
+  });
+
+  it('performs exactly one paired write for a live grant', async () => {
+    const calls: string[] = [];
+    const writes: Array<{
+      viewerSub: string;
+      tombstone: GrantTombstone;
+    }> = [];
+    const live: LiveGrant = {
+      viewerSub,
+      email: 'viewer@example.com',
+      collectionId,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    await expect(
+      orchestrateGrantRevoke(
+        viewerSub,
+        9,
+        dependenciesFor(live, calls, writes),
+      ),
+    ).resolves.toEqual({
+      kind: 'write',
+      doc: { viewerSub, updatedAt: 9, deletedAt: 9 },
+    });
+    expect(calls).toEqual([
+      'transaction',
+      `read:${viewerSub}`,
+      `write:${viewerSub}`,
+    ]);
+    expect(writes).toEqual([
+      {
+        viewerSub,
+        tombstone: { viewerSub, updatedAt: 9, deletedAt: 9 },
+      },
+    ]);
   });
 });
 
