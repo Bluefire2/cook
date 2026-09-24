@@ -149,6 +149,13 @@ unavailable. Backup export omits shared-parent chat and its attachments.
 There is no viewer leave flow. Viewer-owned shared-parent chat can remain
 orphaned server-side after revoke; do not invent cleanup as part of sharing.
 
+Grants are inert while their owner is not admitted (not in `ALLOWED_EMAILS`
+and no active `members/{sub}`): shared pull skips them and shared photo reads
+404. Unknown owner membership is 503. Grant docs are kept, so re-admitting the
+owner restores their shares. Backup clone ids are derived from the importing
+`sub` and the original id (`cloneUuid`), so re-importing a file overwrites
+the earlier clone; do not switch back to random UUIDs.
+
 ## Cloud and deploy
 
 | | |
