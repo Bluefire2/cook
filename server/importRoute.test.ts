@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fakeImportDeps } from './fakeGemini.ts';
+import { fakeImportDeps } from '../test/fakeGemini.ts';
 import { importPost } from './importRoute.ts';
 
 const RECIPE = {
