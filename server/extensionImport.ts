@@ -19,9 +19,6 @@ const MAX_HTML_CHARS = 600_000;
 const TOO_LARGE = 'Page was too large to import.';
 const UNUSABLE = 'Extraction produced an unusable recipe.';
 
-// A Gemini extraction regularly outlasts a 10s default, same as `/api/import`.
-export const maxDuration = 60;
-
 interface ExtensionImportBody {
   url?: unknown;
   html?: unknown;

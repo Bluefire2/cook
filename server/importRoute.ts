@@ -15,10 +15,6 @@ import {
   type RecipeImportDeps,
 } from './recipeImport.ts';
 
-// This handler awaits a complete non-streaming extraction, which regularly
-// outlasts a 10s default and would surface as a timeout, not an error.
-export const maxDuration = 60;
-
 interface ImportRequestBody {
   /** URL of a recipe page to fetch and extract. */
   url?: string;
