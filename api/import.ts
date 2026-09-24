@@ -1,9 +1,10 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { GoogleGenAI, Type, type Schema } from '@google/genai';
 
-// NOTE: Duplicated in api/chat.ts and server/session.ts. Vercel's function
-// runtime transpiles each api/ entrypoint in isolation and cannot import
-// sibling helper files, so the check must live inline. Keep all three in sync.
+// NOTE: Duplicated in api/chat.ts and server/session.ts + server/allowlist.ts.
+// This inline copy is the Vercel gate and must stay in sync with those files.
+// On Cloud Run it is bypassed by an explicit authorizedSub argument after
+// requireMember passed in scripts/server.ts; server/membership.ts is authoritative.
 
 const SESSION_COOKIE_NAME = 'sous_session';
 
@@ -266,47 +267,93 @@ export type PageFetchResult =
  * each other under Vercel's isolated transpile, and nothing here imports a
  * sibling. The Chrome extension does not call this — it sends the tab HTML.
  */
-export async function fetchPageHtml(rawUrl: string): Promise<PageFetchResult> {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return { ok: false, status: 422, error: 'That does not look like a web address.' };
-  }
-  // Scheme check only (matches RecipeView's http/https allowlist); does not block private or link-local destinations.
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return { ok: false, status: 422, error: 'Only http and https URLs are supported.' };
-  }
-
-  let page: Response;
-  try {
-    page = await fetch(parsed.href, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-        Accept: 'text/html',
-      },
-      redirect: 'follow',
-    });
-  } catch {
-    return { ok: false, status: 422, error: 'Could not reach that URL.' };
-  }
-  if (!page.ok) {
-    return {
-      ok: false,
-      status: 422,
-      error: `The site refused the request (${page.status}). Try pasting the recipe text instead.`,
-    };
-  }
-  return { ok: true, html: await page.text() };
+export async function fetchPageHtml(rawUrl: string): Promise<PageFetchResult> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { ok: false, status: 422, error: 'That does not look like a web address.' };
+  }
+  // Scheme check only (matches RecipeView's http/https allowlist); does not block private or link-local destinations.
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, status: 422, error: 'Only http and https URLs are supported.' };
+  }
+
+  let page: Response;
+  try {
+    page = await fetch(parsed.href, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+        Accept: 'text/html',
+      },
+      redirect: 'follow',
+    });
+  } catch {
+    return { ok: false, status: 422, error: 'Could not reach that URL.' };
+  }
+  if (!page.ok) {
+    return {
+      ok: false,
+      status: 422,
+      error: `The site refused the request (${page.status}). Try pasting the recipe text instead.`,
+    };
+  }
+  return { ok: true, html: await page.text() };
 }
 
-export type ExtractionResult =
-  | { ok: true; recipe: Record<string, unknown> }
-  | { ok: false; status: number; error: string };
+export type GenerateRecipeResult =
+  | { status: 'ok'; recipe: Record<string, unknown> }
+  | { status: 'not_a_recipe' }
+  | { status: 'parse_error' };
 
-/** The Gemini half of an import: source material in, recipe fields out. */
-export async function extractRecipeDraft(source: string): Promise<ExtractionResult> {
+function logExtraction(
+  source: string,
+  recipe: Record<string, unknown> | null,
+  outcome: { ok: boolean; status: number },
+): void {
+  const sourceHead = source.replace(/\s+/g, ' ').trim().slice(0, 240);
+  let ingredientCount: number | undefined;
+  let stepCount: number | undefined;
+  let title: string | undefined;
+  if (recipe) {
+    if (typeof recipe.title === 'string') title = recipe.title;
+    if (Array.isArray(recipe.steps)) stepCount = recipe.steps.length;
+    const sections = recipe.ingredientSections;
+    if (Array.isArray(sections)) {
+      ingredientCount = 0;
+      for (const section of sections) {
+        if (
+          section &&
+          typeof section === 'object' &&
+          Array.isArray((section as { items?: unknown }).items)
+        ) {
+          ingredientCount += (section as { items: unknown[] }).items.length;
+        }
+      }
+    }
+  }
+  console.info('sous extractRecipeDraft', {
+    model: MODEL,
+    hasGeminiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()),
+    sourceChars: source.length,
+    via: source.trimStart().startsWith('{') ? 'ld+json' : 'text',
+    sourceHead,
+    title,
+    ingredientCount,
+    stepCount,
+    ok: outcome.ok,
+    status: outcome.status,
+  });
+}
+
+/**
+ * Structured Gemini extraction used by POST /api/import (text and URL paths).
+ * Kept in this file because Vercel cannot import api/ siblings.
+ */
+export async function generateRecipeFromSource(
+  source: string,
+): Promise<GenerateRecipeResult> {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const result = await ai.models.generateContent({
     model: MODEL,
@@ -323,7 +370,6 @@ export async function extractRecipeDraft(source: string): Promise<ExtractionResu
     },
   });
 
-  const sourceHead = source.replace(/\s+/g, ' ').trim().slice(0, 240);
   let recipe: Record<string, unknown>;
   try {
     const parsed: unknown = JSON.parse(result.text ?? '');
@@ -332,50 +378,39 @@ export async function extractRecipeDraft(source: string): Promise<ExtractionResu
     }
     recipe = parsed as Record<string, unknown>;
   } catch {
-    console.info('sous extractRecipeDraft', {
-      model: MODEL,
-      hasGeminiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()),
-      sourceChars: source.length,
-      via: source.trimStart().startsWith('{') ? 'ld+json' : 'text',
-      sourceHead,
-      ok: false,
-      status: 502,
-    });
-    return { ok: false, status: 502, error: 'Extraction failed — no structured result.' };
+    logExtraction(source, null, { ok: false, status: 502 });
+    return { status: 'parse_error' };
   }
-
-  const sections = recipe.ingredientSections;
-  let ingredientCount: number | undefined;
-  if (Array.isArray(sections)) {
-    ingredientCount = 0;
-    for (const section of sections) {
-      if (section && typeof section === 'object' && Array.isArray((section as { items?: unknown }).items)) {
-        ingredientCount += (section as { items: unknown[] }).items.length;
-      }
-    }
+  if (recipe.title === 'NOT_A_RECIPE') {
+    logExtraction(source, recipe, { ok: false, status: 422 });
+    return { status: 'not_a_recipe' };
   }
-
-  const ok = recipe.title !== 'NOT_A_RECIPE';
-  console.info('sous extractRecipeDraft', {
-    model: MODEL,
-    hasGeminiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()),
-    sourceChars: source.length,
-    via: source.trimStart().startsWith('{') ? 'ld+json' : 'text',
-    sourceHead,
-    title: typeof recipe.title === 'string' ? recipe.title : undefined,
-    ingredientCount,
-    stepCount: Array.isArray(recipe.steps) ? recipe.steps.length : undefined,
-    ok,
-    status: ok ? 200 : 422,
-  });
-  if (!ok) {
-    return { ok: false, status: 422, error: "Couldn't find a recipe in that content." };
-  }
-  return { ok: true, recipe };
+  logExtraction(source, recipe, { ok: true, status: 200 });
+  return { status: 'ok', recipe };
 }
 
-export async function POST(req: Request): Promise<Response> {
-  if (sessionSub(req) === null) {
+export type ExtractionResult =
+  | { ok: true; recipe: Record<string, unknown> }
+  | { ok: false; status: number; error: string };
+
+/** The Gemini half of an extension import: source material in, recipe fields out. */
+export async function extractRecipeDraft(source: string): Promise<ExtractionResult> {
+  const extracted = await generateRecipeFromSource(source);
+  if (extracted.status === 'parse_error') {
+    return { ok: false, status: 502, error: 'Extraction failed — no structured result.' };
+  }
+  if (extracted.status === 'not_a_recipe') {
+    return { ok: false, status: 422, error: "Couldn't find a recipe in that content." };
+  }
+  return { ok: true, recipe: extracted.recipe };
+}
+
+export async function POST(req: Request, ctx?: { authorizedSub?: string }): Promise<Response> {
+  const authorized =
+    typeof ctx?.authorizedSub === 'string' && ctx.authorizedSub !== ''
+      ? ctx.authorizedSub
+      : sessionSub(req);
+  if (authorized === null) {
     return new Response('Unauthorized', { status: 401 });
   }
 
@@ -404,9 +439,18 @@ export async function POST(req: Request): Promise<Response> {
     sourceHead: source.replace(/\s+/g, ' ').trim().slice(0, 240),
   });
 
-  const extracted = await extractRecipeDraft(source);
-  if (!extracted.ok) {
-    return Response.json({ error: extracted.error }, { status: extracted.status });
+  const extracted = await generateRecipeFromSource(source);
+  if (extracted.status === 'parse_error') {
+    return Response.json(
+      { error: 'Extraction failed — no structured result.' },
+      { status: 502 },
+    );
+  }
+  if (extracted.status === 'not_a_recipe') {
+    return Response.json(
+      { error: "Couldn't find a recipe in that content." },
+      { status: 422 },
+    );
   }
 
   return Response.json({ recipe: { ...extracted.recipe, sourceUrl: body.url } });

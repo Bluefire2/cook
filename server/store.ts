@@ -1,7 +1,7 @@
 import { FieldPath, Firestore, type Transaction } from '@google-cloud/firestore';
 import { firestoreConfig } from './env.ts';
 
-export type StoreKind = 'recipes' | 'chatMessages' | 'cookState' | 'photos';
+export type StoreKind = 'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections';
 
 export type CursorTuple = [number, string];
 
@@ -24,11 +24,15 @@ function finiteNumber(value: unknown): number | undefined {
 
 let firestoreClient: Firestore | null = null;
 
-function getFirestore(): Firestore {
+export function getStoreFirestore(): Firestore {
   if (firestoreClient === null) {
     firestoreClient = new Firestore(firestoreConfig());
   }
   return firestoreClient;
+}
+
+function getFirestore(): Firestore {
+  return getStoreFirestore();
 }
 
 function userRef(uid: string) {
@@ -39,8 +43,34 @@ function colRef(uid: string, kind: StoreKind) {
   return userRef(uid).collection(kind);
 }
 
-function gcsDeletesRef(uid: string) {
+export function gcsDeletesColRef(uid: string) {
   return userRef(uid).collection('gcsDeletes');
+}
+
+function gcsDeletesRef(uid: string) {
+  return gcsDeletesColRef(uid);
+}
+
+export function photoDocRef(uid: string, photoId: string) {
+  return colRef(uid, 'photos').doc(photoId);
+}
+
+export function recipeDocRef(uid: string, recipeId: string) {
+  return colRef(uid, 'recipes').doc(recipeId);
+}
+
+export function collectionDocRef(uid: string, collectionId: string) {
+  return colRef(uid, 'collections').doc(collectionId);
+}
+
+export function photosColRef(uid: string) {
+  return colRef(uid, 'photos');
+}
+
+export function readStoredMutationState(
+  data: Record<string, unknown> | undefined,
+): StoredMutationState | null {
+  return readStoredState(data);
 }
 
 export interface StoredMutationState {
@@ -100,7 +130,7 @@ export function decodePullCursor(raw: string | null | undefined): PullCursor {
       return {};
     }
     const out: PullCursor = {};
-    const kinds: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos'];
+    const kinds: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos', 'collections'];
     for (const kind of kinds) {
       const entry = parsed[kind];
       if (!Array.isArray(entry) || entry.length !== 2) {
@@ -184,7 +214,135 @@ export function compactRecipeFields(recipe: Record<string, unknown>): Record<str
       next[key] = recipe[key];
     }
   }
+  const galleryPhotoIds = compactGalleryPhotoIds(
+    recipe.galleryPhotoIds,
+    typeof recipe.photoId === 'string' ? recipe.photoId : undefined,
+  );
+  if (galleryPhotoIds !== undefined) {
+    next.galleryPhotoIds = galleryPhotoIds;
+  }
   return next;
+}
+
+export const MAX_NAMED_COLLECTIONS = 50;
+
+export function namedCollectionCreateCapReason(
+  live: number,
+): 'cap' | undefined {
+  return live >= MAX_NAMED_COLLECTIONS ? 'cap' : undefined;
+}
+export const MAX_COLLECTION_RECIPE_IDS = 500;
+export const MAX_COLLECTION_NAME_LENGTH = 80;
+
+export function compactCollectionFields(
+  collection: Record<string, unknown>,
+): Record<string, unknown> {
+  const recipeIds: string[] = [];
+  const seen = new Set<string>();
+  if (Array.isArray(collection.recipeIds)) {
+    for (const id of collection.recipeIds) {
+      if (typeof id !== 'string' || id === '' || seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      recipeIds.push(id);
+      if (recipeIds.length >= MAX_COLLECTION_RECIPE_IDS) {
+        break;
+      }
+    }
+  }
+  const name =
+    typeof collection.name === 'string' ? collection.name.trim() : '';
+  return {
+    id: collection.id,
+    name,
+    recipeIds,
+    createdAt: collection.createdAt,
+    updatedAt: collection.updatedAt,
+  };
+}
+
+/**
+ * Live collections that still list `recipeId`. A collection saved after the
+ * recipe delete keeps other edits; `updatedAt` is raised so the membership
+ * put is not rejected as stale. Tombstones and docs that do not list the id
+ * are skipped.
+ */
+export function collectionsToScrub(
+  docs: Record<string, unknown>[],
+  recipeId: string,
+  at: number,
+): Record<string, unknown>[] {
+  const next: Record<string, unknown>[] = [];
+  for (const doc of docs) {
+    if (!isLiveDoc(doc)) {
+      continue;
+    }
+    const recipeIds = Array.isArray(doc.recipeIds) ? doc.recipeIds : [];
+    if (!recipeIds.includes(recipeId)) {
+      continue;
+    }
+    const stored = readStoredMutationState(doc);
+    const writeAt = Math.max(at, stored?.updatedAt ?? 0);
+    next.push(
+      compactCollectionFields({
+        ...doc,
+        recipeIds: recipeIds.filter((id) => id !== recipeId),
+        updatedAt: writeAt,
+      }),
+    );
+  }
+  return next;
+}
+
+export function collectionDocsFromQuerySnap(
+  docs: ReadonlyArray<{ id: string; data: () => Record<string, unknown> | undefined }>,
+): Record<string, unknown>[] {
+  return docs.map((doc) => ({ ...(doc.data() ?? {}), id: doc.id }));
+}
+
+export async function applyCollectionMembershipScrubs(
+  docs: Record<string, unknown>[],
+  recipeId: string,
+  at: number,
+  write: (
+    id: string,
+    payload: Record<string, unknown>,
+    writeAt: number,
+  ) => Promise<unknown>,
+): Promise<void> {
+  for (const payload of collectionsToScrub(docs, recipeId, at)) {
+    const id = payload.id;
+    const writeAt = finiteNumber(payload.updatedAt);
+    if (typeof id !== 'string' || writeAt === undefined) {
+      continue;
+    }
+    await write(id, payload, writeAt);
+  }
+}
+
+const MAX_GALLERY_PHOTOS = 8;
+
+function compactGalleryPhotoIds(
+  ids: unknown,
+  coverId: string | undefined,
+): string[] | undefined {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return undefined;
+  }
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const id of ids) {
+    if (typeof id !== 'string' || id === '' || id === coverId || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    next.push(id);
+    if (next.length >= MAX_GALLERY_PHOTOS) {
+      break;
+    }
+  }
+  return next.length > 0 ? next : undefined;
 }
 
 export type MutationResult =
@@ -195,7 +353,7 @@ export type MutationResult =
       current?: Record<string, unknown>;
     };
 
-function isLiveDoc(data: Record<string, unknown> | undefined): boolean {
+export function isLiveDoc(data: Record<string, unknown> | undefined): boolean {
   if (!data) {
     return false;
   }
@@ -300,6 +458,49 @@ export async function listChangedSince(
   return { docs, cursor: nextCursor, hasMore };
 }
 
+export async function readDocData(
+  uid: string,
+  kind: StoreKind,
+  id: string,
+): Promise<Record<string, unknown> | undefined> {
+  const snap = await colRef(uid, kind).doc(id).get();
+  if (!snap.exists) {
+    return undefined;
+  }
+  return snap.data() as Record<string, unknown>;
+}
+
+/** Pages until `cap + 1` live docs or exhausted. Tombstones do not count. */
+export async function countLiveNamedCollections(
+  uid: string,
+  cap: number = MAX_NAMED_COLLECTIONS,
+): Promise<number> {
+  let live = 0;
+  let lastId: string | undefined;
+  while (true) {
+    let query = colRef(uid, 'collections').orderBy(FieldPath.documentId()).limit(50);
+    if (lastId !== undefined) {
+      query = query.startAfter(lastId);
+    }
+    const fetched = await query.get();
+    if (fetched.empty) {
+      return live;
+    }
+    for (const doc of fetched.docs) {
+      lastId = doc.id;
+      if (isLiveDoc(doc.data() as Record<string, unknown>)) {
+        live += 1;
+        if (live > cap) {
+          return live;
+        }
+      }
+    }
+    if (fetched.size < 50) {
+      return live;
+    }
+  }
+}
+
 export async function putDoc(
   uid: string,
   kind: StoreKind,
@@ -401,21 +602,23 @@ export async function tombstoneDoc(
   });
 }
 
-async function tombstonePhotoWithGcs(
+export async function tombstonePhotoWithGcs(
   uid: string,
   photoId: string,
   at: number,
-): Promise<void> {
+): Promise<MutationResult> {
   const serverUpdatedAt = Date.now();
-  await getFirestore().runTransaction(async (tx) => {
+  return getFirestore().runTransaction(async (tx) => {
     const photoRef = colRef(uid, 'photos').doc(photoId);
     const snap = await tx.get(photoRef);
-    const stored = readStoredState(
-      snap.exists ? (snap.data() as Record<string, unknown>) : undefined,
-    );
+    const storedRaw = snap.exists ? (snap.data() as Record<string, unknown>) : null;
+    const stored = readStoredState(storedRaw ?? undefined);
     const cmp = compareMutation(stored, at, 'tombstone');
     if (!cmp.allow) {
-      return;
+      return {
+        applied: false,
+        current: storedRaw ?? undefined,
+      };
     }
     tx.set(photoRef, tombstonePayload(photoId, at, serverUpdatedAt), { merge: false });
     tx.set(
@@ -423,6 +626,7 @@ async function tombstonePhotoWithGcs(
       { photoId, createdAt: Date.now() },
       { merge: true },
     );
+    return { applied: true, serverUpdatedAt };
   });
 }
 
@@ -432,6 +636,7 @@ export async function cascadeRecipeDelete(
   at: number,
 ): Promise<{ photoIds: string[]; gcsPending: boolean }> {
   let recipePhotoId: string | undefined;
+  const recipeGalleryIds: string[] = [];
 
   await getFirestore().runTransaction(async (tx) => {
     const recipeRef = colRef(uid, 'recipes').doc(recipeId);
@@ -440,6 +645,13 @@ export async function cascadeRecipeDelete(
       const data = snap.data() as Record<string, unknown>;
       if (isLiveDoc(data) && isUuid(data.photoId)) {
         recipePhotoId = data.photoId as string;
+      }
+      if (isLiveDoc(data) && Array.isArray(data.galleryPhotoIds)) {
+        for (const pid of data.galleryPhotoIds) {
+          if (isUuid(pid)) {
+            recipeGalleryIds.push(pid);
+          }
+        }
       }
       const stored = readStoredState(data);
       const cmp = compareMutation(stored, at, 'tombstone');
@@ -456,6 +668,9 @@ export async function cascadeRecipeDelete(
   const photoIds = new Set<string>();
   if (recipePhotoId !== undefined) {
     photoIds.add(recipePhotoId);
+  }
+  for (const pid of recipeGalleryIds) {
+    photoIds.add(pid);
   }
 
   const chatSnap = await colRef(uid, 'chatMessages').where('recipeId', '==', recipeId).get();
@@ -534,6 +749,25 @@ export async function cascadeRecipeDelete(
     });
   }
 
+  // Query and puts are separate steps, not one transaction. putDoc
+  // re-checks last-write-wins. At most 50 live collections, so serial
+  // writes are fine. Native single-field indexes cover array-contains
+  // on `recipeIds` (no firestore.indexes.json in this repo).
+  const collectionSnap = await colRef(uid, 'collections')
+    .where('recipeIds', 'array-contains', recipeId)
+    .get();
+  await applyCollectionMembershipScrubs(
+    collectionDocsFromQuerySnap(
+      collectionSnap.docs.map((doc) => ({
+        id: doc.id,
+        data: () => doc.data() as Record<string, unknown>,
+      })),
+    ),
+    recipeId,
+    at,
+    (id, payload, writeAt) => putDoc(uid, 'collections', id, payload, writeAt),
+  );
+
   return { photoIds: [...photoIds], gcsPending: photoIds.size > 0 };
 }
 
@@ -598,7 +832,9 @@ export type PushOpKind =
   | 'chat.put'
   | 'chat.clearForRecipe'
   | 'cookState.put'
-  | 'photo.delete';
+  | 'photo.delete'
+  | 'collection.put'
+  | 'collection.delete';
 
 export interface PushOpBase {
   kind: PushOpKind;
@@ -630,6 +866,19 @@ function validateRecipePut(payload: unknown): payload is Record<string, unknown>
   }
   if (finiteNumber(payload.createdAt) === undefined || finiteNumber(payload.updatedAt) === undefined) {
     return false;
+  }
+  if (payload.galleryPhotoIds !== undefined) {
+    if (
+      !Array.isArray(payload.galleryPhotoIds) ||
+      payload.galleryPhotoIds.length > MAX_GALLERY_PHOTOS
+    ) {
+      return false;
+    }
+    for (const pid of payload.galleryPhotoIds) {
+      if (!isUuid(pid)) {
+        return false;
+      }
+    }
   }
   if (jsonSize(payload) >= 200_000) {
     return false;
@@ -728,6 +977,47 @@ function validatePhotoDelete(payload: unknown): payload is { id: string; updated
   return isUuid(payload.id) && updatedAt !== undefined;
 }
 
+function validateCollectionPut(payload: unknown): payload is Record<string, unknown> {
+  if (!isPlainObject(payload)) {
+    return false;
+  }
+  if (!isUuid(payload.id)) {
+    return false;
+  }
+  if (typeof payload.name !== 'string') {
+    return false;
+  }
+  const name = payload.name.trim();
+  if (name === '' || name.length > MAX_COLLECTION_NAME_LENGTH) {
+    return false;
+  }
+  if (!Array.isArray(payload.recipeIds) || payload.recipeIds.length > MAX_COLLECTION_RECIPE_IDS) {
+    return false;
+  }
+  const seen = new Set<string>();
+  for (const id of payload.recipeIds) {
+    if (!isUuid(id) || seen.has(id)) {
+      return false;
+    }
+    seen.add(id);
+  }
+  if (finiteNumber(payload.createdAt) === undefined || finiteNumber(payload.updatedAt) === undefined) {
+    return false;
+  }
+  if (jsonSize(payload) >= 200_000) {
+    return false;
+  }
+  return true;
+}
+
+function validateCollectionDelete(payload: unknown): payload is { id: string; updatedAt: number } {
+  if (!isPlainObject(payload)) {
+    return false;
+  }
+  const updatedAt = finiteNumber(payload.updatedAt);
+  return isUuid(payload.id) && updatedAt !== undefined;
+}
+
 export function validatePushOp(op: unknown): { ok: true; op: { kind: PushOpKind; payload: unknown } } | { ok: false } {
   if (!isPlainObject(op)) {
     return { ok: false };
@@ -750,6 +1040,10 @@ export function validatePushOp(op: unknown): { ok: true; op: { kind: PushOpKind;
       return validateCookStatePut(payload) ? { ok: true, op: { kind, payload } } : { ok: false };
     case 'photo.delete':
       return validatePhotoDelete(payload) ? { ok: true, op: { kind, payload } } : { ok: false };
+    case 'collection.put':
+      return validateCollectionPut(payload) ? { ok: true, op: { kind, payload } } : { ok: false };
+    case 'collection.delete':
+      return validateCollectionDelete(payload) ? { ok: true, op: { kind, payload } } : { ok: false };
     default:
       return { ok: false };
   }
@@ -762,7 +1056,9 @@ export function isKnownPushKind(kind: unknown): kind is PushOpKind {
     kind === 'chat.put' ||
     kind === 'chat.clearForRecipe' ||
     kind === 'cookState.put' ||
-    kind === 'photo.delete'
+    kind === 'photo.delete' ||
+    kind === 'collection.put' ||
+    kind === 'collection.delete'
   );
 }
 

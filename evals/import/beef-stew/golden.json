@@ -1,0 +1,154 @@
+{
+  "title": "All-American Beef Stew",
+  "description": "Tender chuck beef coated in a rich, intense sauce, with vegetables added in stages so they keep their texture and flavor.",
+  "servings": 6,
+  "prepMinutes": 5,
+  "cookMinutes": 190,
+  "ingredientSections": [
+    {
+      "items": [
+        {
+          "quantity": 4,
+          "unit": "cup",
+          "item": "chicken stock",
+          "note": "950 ml, homemade or low-sodium"
+        },
+        {
+          "quantity": 3,
+          "unit": "tbsp",
+          "item": "tomato paste",
+          "note": "75 g"
+        },
+        {
+          "quantity": 3,
+          "item": "anchovy fillets",
+          "note": "oil- or salt-packed, rinsed; or 1 tbsp fish sauce"
+        },
+        {
+          "quantity": 4,
+          "unit": "packet",
+          "item": "powdered unflavored gelatin",
+          "note": "30 g total"
+        },
+        {
+          "quantity": 1,
+          "unit": "tbsp",
+          "item": "soy sauce"
+        },
+        {
+          "quantity": 1,
+          "unit": "tbsp",
+          "item": "Worcestershire sauce"
+        },
+        {
+          "quantity": 2,
+          "unit": "tbsp",
+          "item": "vegetable oil"
+        },
+        {
+          "quantity": 3,
+          "unit": "lb",
+          "item": "boneless beef chuck roast",
+          "note": "1.25 kg, cut into 3 steaks"
+        },
+        {
+          "item": "kosher salt and freshly ground black pepper"
+        },
+        {
+          "quantity": 10,
+          "unit": "oz",
+          "item": "white button mushrooms",
+          "note": "quartered"
+        },
+        {
+          "quantity": 4,
+          "item": "medium carrots",
+          "note": "2 left whole, 2 cut into bite-sized pieces"
+        },
+        {
+          "quantity": 8,
+          "unit": "oz",
+          "item": "pearl onions",
+          "note": "frozen or fresh; thawed if frozen, peeled if fresh"
+        },
+        {
+          "quantity": 1,
+          "item": "yellow onion",
+          "note": "large, unpeeled, split in half"
+        },
+        {
+          "quantity": 2,
+          "item": "celery stalks",
+          "note": "small"
+        },
+        {
+          "quantity": 3,
+          "item": "garlic cloves",
+          "note": "unpeeled"
+        },
+        {
+          "quantity": 1,
+          "unit": "cup",
+          "item": "sherry",
+          "note": "or dry vermouth or red wine"
+        },
+        {
+          "quantity": 2,
+          "unit": "tbsp",
+          "item": "all-purpose flour"
+        },
+        {
+          "quantity": 2,
+          "item": "bay leaves"
+        },
+        {
+          "quantity": 4,
+          "item": "thyme sprigs"
+        },
+        {
+          "quantity": 1,
+          "unit": "lb",
+          "item": "Yukon gold potatoes",
+          "note": "peeled and cubed"
+        },
+        {
+          "quantity": 4,
+          "unit": "oz",
+          "item": "frozen peas"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "text": "Combine the stock, tomato paste, anchovies, gelatin, soy sauce, and Worcestershire sauce in a blender and blend on high speed until homogenous. Set aside."
+    },
+    {
+      "text": "Adjust the oven rack to the lowest position and preheat the oven to 300°F (150°C). In a large Dutch oven, heat the oil over medium-high heat until shimmering. Season the beef all over with salt and pepper and add it to the pot. Cook, turning occasionally, until well browned on 2 sides, about 10 minutes, then transfer to a rimmed baking sheet or large plate."
+    },
+    {
+      "text": "Add the mushrooms to the Dutch oven and cook, stirring, until they release their liquid and begin to brown, about 6 minutes, lowering the heat as needed to prevent scorching. Add the diced carrots and pearl onions and cook, stirring, until well browned on all sides. Season with salt and pepper, transfer to a bowl, and set aside."
+    },
+    {
+      "text": "Add the halved yellow onion cut-side down along with the whole carrots, celery stalks, and garlic. Cook, turning the carrots, celery, and garlic occasionally, until all the vegetables are well browned, about 4 minutes."
+    },
+    {
+      "text": "Add the wine or sherry, scrape up the browned bits with a wooden spoon, and cook until reduced by three-quarters, about 3 minutes. Add the broth mixture, bring to a simmer, and remove from the heat."
+    },
+    {
+      "text": "Cut the seared steaks into 1.5- to 2-inch chunks and toss with the flour in a large bowl. Add the beef and any accumulated juices to the Dutch oven along with the bay leaves and thyme sprigs. Stir to combine and return to a simmer over medium heat. Transfer to the oven, cover with the lid partially open, and cook until the beef is starting to become tender, about 1.5 hours, keeping a slow, steady simmer the whole time and adjusting the oven temperature if necessary."
+    },
+    {
+      "text": "Remove the stew from the oven. Using tongs, fish out and discard the whole carrots, celery, thyme, bay leaves, onion, and garlic. Add the potatoes and the reserved sautéed mushrooms, pearl onions, and carrots, return to the oven, and continue cooking, partially covered, until the beef, potatoes, and carrots are tender and the broth has thickened, 45 minutes to 1 hour."
+    },
+    {
+      "text": "Remove from the oven. If necessary, place over a burner and simmer up to 15 minutes to reduce to the consistency you want. Stir in the peas and season to taste with salt and pepper. Serve immediately, or refrigerate for up to 5 days and reheat to serve."
+    }
+  ],
+  "tags": [
+    "beef",
+    "stew",
+    "comfort",
+    "winter"
+  ]
+}

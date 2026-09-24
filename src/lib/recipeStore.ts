@@ -1,124 +1,135 @@
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from './db';
-import { enqueue } from './outbox';
+import { useMemo, useSyncExternalStore } from 'react';
+import {
+  dropPhoto,
+  getPendingBlob,
+  getRecipe,
+  getSnapshot,
+  listRecipes,
+  markPhotoRemote,
+  removeRecipeLocal,
+  subscribe,
+  upsertRecipe,
+  getCollection,
+  listCollections,
+  upsertCollection,
+} from './libraryMemory';
+import { postPhoto, pushOps } from './remote';
+import { compactRecipe } from './compactRecipe';
+import { compactCollection } from './compactCollection';
+import { wouldExceedRecipeIdCap } from './collectionMembership';
+import { recipePhotoIds } from './recipePhotos';
 import type { Recipe, RecipeDraft } from './types';
+import type { PushOp } from './pushOps';
 
-/**
- * Called inside the transaction that rewrote the reference, so a save that
- * rolls back keeps its blob instead of leaving a recipe pointing at nothing.
- * Photos are the only thing here big enough to exhaust a device's quota, so an
- * unreferenced one cannot just be left behind.
- */
-async function deleteReplacedPhoto(
-  tx: import('dexie').Transaction,
-  before: string | undefined,
-  after: string | undefined,
+export { compactRecipe };
+
+async function uploadPhotoIfNeeded(
+  photoId: string | undefined,
+  recipeId: string,
+  updatedAt: number,
 ): Promise<void> {
-  if (before !== undefined && before !== after) {
-    await db.photos.delete(before);
-    await enqueue(tx, {
-      kind: 'photo.delete',
-      payload: { id: before, updatedAt: Date.now() },
-    });
+  if (photoId === undefined) {
+    return;
+  }
+  const blob = getPendingBlob(photoId);
+  if (!blob) {
+    return;
+  }
+  const result = await postPhoto(photoId, recipeId, updatedAt, blob);
+  if (result !== 'ok') {
+    throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the photo.");
+  }
+  markPhotoRemote(photoId);
+}
+
+async function uploadRecipePhotos(recipe: Recipe): Promise<void> {
+  for (const photoId of recipePhotoIds(recipe)) {
+    await uploadPhotoIfNeeded(photoId, recipe.id, recipe.updatedAt);
   }
 }
 
-/**
- * `put` replaces the whole record, so an explicit `undefined` would sit in
- * IndexedDB as a key the editor never writes. Drop those keys so apply and
- * save leave the same shape.
- */
-export function compactRecipe(recipe: Recipe): Recipe {
-  const next: Recipe = {
-    id: recipe.id,
-    createdAt: recipe.createdAt,
-    updatedAt: recipe.updatedAt,
-    title: recipe.title,
-    servings: recipe.servings,
-    ingredientSections: recipe.ingredientSections,
-    steps: recipe.steps,
-    tags: recipe.tags,
-  };
-  if (recipe.description !== undefined) next.description = recipe.description;
-  if (recipe.sourceUrl !== undefined) next.sourceUrl = recipe.sourceUrl;
-  if (recipe.prepMinutes !== undefined) next.prepMinutes = recipe.prepMinutes;
-  if (recipe.cookMinutes !== undefined) next.cookMinutes = recipe.cookMinutes;
-  if (recipe.notes !== undefined) next.notes = recipe.notes;
-  if (recipe.photoId !== undefined) next.photoId = recipe.photoId;
-  return next;
-}
-
-async function enqueueRecipePhotoOps(
-  tx: import('dexie').Transaction,
-  recipe: Recipe,
+async function deleteRemovedPhotos(
+  previous: Recipe | undefined,
+  next: Recipe,
 ): Promise<void> {
-  await enqueue(tx, { kind: 'recipe.put', payload: recipe });
-  if (recipe.photoId !== undefined) {
-    const photo = await db.photos.get(recipe.photoId);
-    await enqueue(tx, {
-      kind: 'photo.put',
-      payload: {
-        id: recipe.photoId,
-        recipeId: recipe.id,
-        updatedAt: photo?.createdAt ?? Date.now(),
-      },
-    });
+  const keep = new Set(recipePhotoIds(next));
+  for (const photoId of previous ? recipePhotoIds(previous) : []) {
+    if (keep.has(photoId)) {
+      continue;
+    }
+    const at = Date.now();
+    const result = await pushOps([
+      { kind: 'photo.delete', payload: { id: photoId, updatedAt: at } },
+    ]);
+    if (result === 'ok') {
+      dropPhoto(photoId);
+    }
   }
 }
 
 export const recipeStore = {
-  list(): Promise<Recipe[]> {
-    return db.recipes.orderBy('updatedAt').reverse().toArray();
+  list(): Recipe[] {
+    return listRecipes();
   },
 
-  get(id: string): Promise<Recipe | undefined> {
-    return db.recipes.get(id);
+  get(id: string): Recipe | undefined {
+    return getRecipe(id);
   },
 
   async save(recipe: Recipe): Promise<void> {
-    await db.transaction('rw', [db.recipes, db.photos, db.outbox], async (tx) => {
-      const previous = await db.recipes.get(recipe.id);
-      const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
-      await db.recipes.put(next);
-      await deleteReplacedPhoto(tx, previous?.photoId, next.photoId);
-      await enqueueRecipePhotoOps(tx, next);
-    });
+    const previous = getRecipe(recipe.id);
+    const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
+    upsertRecipe(next);
+    try {
+      await uploadRecipePhotos(next);
+      const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
+      if (result !== 'ok') {
+        throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
+      }
+      await deleteRemovedPhotos(previous, next);
+    } catch (err) {
+      if (previous) {
+        upsertRecipe(previous);
+      } else {
+        removeRecipeLocal(next.id);
+      }
+      throw err;
+    }
   },
 
   /**
    * Merges a draft into the recipe with this id. Every field is named rather
    * than spread because drafts come from the `update_recipe` tool, whose schema
-   * cannot express `sourceUrl` or `photoId` — a spread would blank them.
+   * cannot express `sourceUrl`, `photoId`, or `galleryPhotoIds` — a spread
+   * would blank them.
    */
   async applyDraft(id: string, draft: RecipeDraft): Promise<void> {
-    await db.transaction('rw', [db.recipes, db.photos, db.outbox], async (tx) => {
-      const existing = await db.recipes.get(id);
-      if (!existing) throw new Error(`No recipe with id ${id}.`);
-      const photoId = draft.photoId ?? existing.photoId;
-      const next = compactRecipe({
-        id: existing.id,
-        createdAt: existing.createdAt,
-        updatedAt: Date.now(),
-        title: draft.title,
-        description: draft.description,
-        servings: draft.servings,
-        prepMinutes: draft.prepMinutes,
-        cookMinutes: draft.cookMinutes,
-        ingredientSections: draft.ingredientSections,
-        steps: draft.steps,
-        tags: draft.tags,
-        notes: draft.notes,
-        sourceUrl: draft.sourceUrl ?? existing.sourceUrl,
-        photoId,
-      });
-      await db.recipes.put(next);
-      await deleteReplacedPhoto(tx, existing.photoId, next.photoId);
-      await enqueueRecipePhotoOps(tx, next);
+    const existing = getRecipe(id);
+    if (!existing) throw new Error(`No recipe with id ${id}.`);
+    const photoId = draft.photoId ?? existing.photoId;
+    const galleryPhotoIds = draft.galleryPhotoIds ?? existing.galleryPhotoIds;
+    await recipeStore.save({
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt,
+      title: draft.title,
+      description: draft.description,
+      servings: draft.servings,
+      prepMinutes: draft.prepMinutes,
+      cookMinutes: draft.cookMinutes,
+      ingredientSections: draft.ingredientSections,
+      steps: draft.steps,
+      tags: draft.tags,
+      notes: draft.notes,
+      sourceUrl: draft.sourceUrl ?? existing.sourceUrl,
+      photoId,
+      galleryPhotoIds,
     });
   },
 
   async create(
     data: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>,
+    opts?: { collectionId?: string },
   ): Promise<Recipe> {
     const now = Date.now();
     const recipe = compactRecipe({
@@ -127,52 +138,100 @@ export const recipeStore = {
       createdAt: now,
       updatedAt: now,
     });
-    await db.transaction('rw', [db.recipes, db.photos, db.outbox], async (tx) => {
-      await db.recipes.add(recipe);
-      await enqueueRecipePhotoOps(tx, recipe);
-    });
+    const collectionId = opts?.collectionId;
+    const previousCollection =
+      collectionId !== undefined ? getCollection(collectionId) : undefined;
+    let nextCollection = previousCollection;
+    if (collectionId !== undefined) {
+      if (!previousCollection) {
+        throw new Error('Collection not found.');
+      }
+      if (wouldExceedRecipeIdCap([...previousCollection.recipeIds, recipe.id])) {
+        throw new Error('This collection is full.');
+      }
+      nextCollection = compactCollection({
+        ...previousCollection,
+        recipeIds: [...previousCollection.recipeIds, recipe.id],
+        updatedAt: now,
+      });
+    }
+    upsertRecipe(recipe);
+    if (nextCollection) {
+      upsertCollection(nextCollection);
+    }
+    try {
+      await uploadRecipePhotos(recipe);
+      const ops: PushOp[] = [{ kind: 'recipe.put', payload: recipe }];
+      if (nextCollection) {
+        ops.push({ kind: 'collection.put', payload: nextCollection });
+      }
+      const result = await pushOps(ops);
+      if (result !== 'ok') {
+        throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
+      }
+    } catch (err) {
+      removeRecipeLocal(recipe.id);
+      if (previousCollection) {
+        upsertCollection(previousCollection);
+      }
+      throw err;
+    }
     return recipe;
   },
 
   async remove(id: string): Promise<void> {
+    const previous = getRecipe(id);
     const at = Date.now();
-    await db.transaction(
-      'rw',
-      [db.recipes, db.chatMessages, db.photos, db.cookState, db.outbox],
-      async (tx) => {
-        const recipe = await db.recipes.get(id);
-        const messages = await db.chatMessages
-          .where('recipeId')
-          .equals(id)
-          .toArray();
-
-        await enqueue(tx, {
-          kind: 'recipe.delete',
-          payload: { id, updatedAt: at },
-        });
-
-        await db.recipes.delete(id);
-        await db.chatMessages.where('recipeId').equals(id).delete();
-        await db.cookState.delete(id);
-        // Nothing else references these, so they go with the recipe or never.
-        await db.photos.bulkDelete([
-          ...(recipe?.photoId !== undefined ? [recipe.photoId] : []),
-          ...messages.flatMap((m) => m.photoIds ?? []),
-        ]);
-      },
+    // Nothing else drops the id from collections, and a dead id still counts
+    // against the per-collection cap, so scrub membership alongside the recipe.
+    const staleIn = listCollections().filter((c) => c.recipeIds.includes(id));
+    const scrubbed = staleIn.map((c) =>
+      compactCollection({
+        ...c,
+        recipeIds: c.recipeIds.filter((recipeId) => recipeId !== id),
+        updatedAt: at,
+      }),
     );
+    removeRecipeLocal(id);
+    for (const collection of scrubbed) {
+      upsertCollection(collection);
+    }
+    const ops: PushOp[] = [{ kind: 'recipe.delete', payload: { id, updatedAt: at } }];
+    for (const collection of scrubbed) {
+      ops.push({ kind: 'collection.put', payload: collection });
+    }
+    const result = await pushOps(ops);
+    if (result !== 'ok') {
+      if (previous) {
+        upsertRecipe(previous);
+      }
+      for (const collection of staleIn) {
+        upsertCollection(collection);
+      }
+      throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't delete the recipe.");
+    }
   },
 };
 
 /** Reactive list of all recipes, newest first. `undefined` while loading. */
 export function useRecipes(): Recipe[] | undefined {
-  return useLiveQuery(() => recipeStore.list(), []);
+  const snap = useSyncExternalStore(subscribe, getSnapshot);
+  return useMemo(() => {
+    if (!snap.loaded) {
+      return undefined;
+    }
+    return listRecipes();
+  }, [snap]);
 }
 
 /** Reactive single recipe. `undefined` while loading, `null` if not found. */
 export function useRecipe(id: string | undefined): Recipe | null | undefined {
-  return useLiveQuery(
-    async () => (id ? ((await recipeStore.get(id)) ?? null) : null),
-    [id],
-  );
+  const snap = useSyncExternalStore(subscribe, getSnapshot);
+  if (!snap.loaded) {
+    return undefined;
+  }
+  if (!id) {
+    return null;
+  }
+  return snap.recipes.get(id) ?? null;
 }

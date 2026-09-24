@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Guidance for agents working in this repo. The product is **Sous**; the npm
-package, Dexie database, backup marker, and directories are still named
+package, backup marker, and directories are still named
 `cook`.
 
 ## What this is
@@ -41,6 +41,7 @@ may fail. Use `http://localhost:5173`.
 
 ```
 npm test          # Vitest over src/ and server/
+npm run test:import  # live Gemini paste-to-recipe evals; needs GEMINI_API_KEY
 npm run build     # tsc -b && vite build — the only type gate on server/
 ```
 
@@ -52,18 +53,19 @@ can sit until `npm run build` or a container start.
 
 ```
 UI (screens, components)
-  → stores (recipeStore / chatStore / photoStore / useCookState)
-  → Dexie `cook`  and  syncEngine (the only modules that touch `db` and fetch)
+ → stores (recipeStore / collectionStore / chatStore / photoStore / useCookState)
+ → in-memory library + syncEngine/remote (the only modules that fetch)
 ```
 
-`syncEngine` is the only client module allowed to import both `db` and
-`fetch`. Screens must not `fetch`. Do not add fields to `Recipe`,
+`syncEngine` and `remote` are the only client modules allowed to `fetch` for
+library data. Screens must not `fetch`. Do not add fields to `Recipe`,
 `ChatMessage`, or `CookStateRow` — `compactRecipe` strips unknown keys, and
 `src/lib/recipeStore.test.ts` asserts the exact key set. That test is a
 schema lock; do not "fix" it by expanding the allow-list.
 
-Dexie database name is **`cook`**. Versions 1–3 `stores()` declarations are
-history. **Do not edit v1/v2/v3.** Add a new version if a table must change.
+The recipe library is **not** stored in IndexedDB. On boot, `discardLegacyCookDb`
+deletes the old Dexie database named `cook` if it is still present. Backups
+still use `app: 'cook'` and `cook-backup-` filenames.
 
 ## Auth
 
@@ -72,15 +74,36 @@ No refresh tokens, no extra Google APIs, no Auth.js.
 
 - Cookie `sous_session`: `base64url(JSON).HMAC`, payload `{v,sub,email,iat,exp}`.
   HttpOnly, SameSite=Lax, Path=/, Secure on https, 90 days.
-- `ALLOWED_EMAILS` is fail-closed (blank = nobody). Re-checked on every
- protected request, not only at cookie issue time.
+  `readSession` is cryptographic only. Protected routes call **`requireMember`**
+  (or **`requireOwner`** for `/api/admin/*`).
+- **Two-tier admission:** `ALLOWED_EMAILS` is the fail-closed **owner/admin**
+  set (blank = nobody), re-parsed from env on **every** protected request with
+  **no cache**. Firestore **`members/{sub}`** with `status: 'active'` is the
+  member tier, keyed by Google **`sub`**. Owners short-circuit before any
+  member read. Approve ordinary people from **`/admin`**, not by editing
+  `ALLOWED_EMAILS` (every address there is an admin). Owners can also mint a
+  single-use 7-day bearer invite URL on `/admin`; the first verified Google
+  account that finishes consent from that link is written as an active member
+  and listed under Approved.
+- **401 = denied** (client may invalidate the session). **503 = unknown**
+  (Firestore blip — do not sign the user out). Membership **denied** must never
+  map to 503; membership **unknown** must never map to 401.
+- **Revocation bound:** only **active** members are cached, for **60 seconds**
+  per container instance. Removing someone from `members/{sub}` takes effect
+  within that bound; removing an owner from `ALLOWED_EMAILS` takes effect on
+  the very next request.
+- **`api/chat.ts` / `api/import.ts`:** on Cloud Run, `withMembership` passes an
+  in-process **`authorizedSub`** argument after `requireMember` passed. The
+  inline **`sessionSub`** copy remains the **Vercel** gate and must stay in sync
+  with `server/session.ts` + `server/allowlist.ts`.
 - **One exception to cookie-only auth:** `POST /api/extension/import` reads the
- same token from an `X-Sous-Session` header and **never** from the cookie
- (`sessionFromHeader`, no fallback). The Chrome extension reads the cookie with
- `chrome.cookies.get` and forwards it, because a `SameSite=Lax` cookie is not
- dependably attached to an extension-initiated request. Do not extend header
- auth to any other route, and do not add `Access-Control-Allow-Credentials` to
- this one.
+  same token from an `X-Sous-Session` header and **never** from the cookie
+  (`readHeaderSession`, no fallback), then applies the same membership decision
+  as `requireMember` (`requireHeaderMember`). The Chrome extension reads the
+  cookie with `chrome.cookies.get` and forwards it, because a `SameSite=Lax`
+  cookie is not dependably attached to an extension-initiated request. Do not
+  extend header auth to any other route, and do not add
+  `Access-Control-Allow-Credentials` to this one.
 - OAuth callback **must not** use `Response.redirect()` (immutable Headers;
   `Set-Cookie` would be dropped). Build a `Response` with a `Location` header
   and always clear `sous_oauth`.
@@ -92,41 +115,23 @@ not 3001). Production: `https://sous.kyrylo.lol/api/auth/callback/google`.
 
 ## Sync
 
-Server is source of truth (Firestore `users/{uid}/…`). IndexedDB is a cache.
-LWW on client `updatedAt`; **tombstones**, never hard-deletes (a missing doc
-is invisible to another device's cursor). `uid` comes only from the session —
-ignore `uid`/`sub` in bodies.
+Server is source of truth (Firestore `users/{uid}/…`). The client holds the
+library **in memory** after a pull. LWW on `updatedAt`; **tombstones**, never
+hard-deletes (a missing doc is invisible to another device's cursor). `uid`
+comes only from the session — ignore `uid`/`sub` in bodies.
 
-Sync runs on sign-in, `online`, tab-visible (≥30s debounce), after backup
-import, and on demand. **No polling timer.**
+Pull runs on sign-in, `online`, tab-visible (≥30s debounce), and Refresh in
+Settings. Writes go through `POST /api/sync/push` immediately. **No polling
+timer. No outbox. No AccountGate.**
 
-Ownership (`cook.ownerUid`):
+`photoStore.add(blob)` keeps the bytes in memory until the parent recipe/chat
+write POSTs `/api/photos/:id`. `usePhotoUrl` fetches the blob for the session
+(not IndexedDB).
 
-| owner vs sub | rows | action |
-| --- | --- | --- |
-| equal | — | sync |
-| different | — | wipe cache, pull (no prompt) |
-| absent | empty | claim, pull |
-| absent | present | `needsMigration` — never wipe, never push |
-
-`AccountGate` is the export-first screen for that last row. Do not toast over
-it. `confirmMigration()` calls `runSyncInner` directly so it cannot join an
-unrelated in-flight `sync()`.
-
-`photoStore.add(blob)` is **local-only**. Parent writes enqueue `photo.put`.
-`sweepUnreferenced` is cache eviction and **must not enqueue** (that would
-delete server photos other devices still need). `getBlob` is a pure local
-read (used from `useLiveQuery`); do not fetch inside it.
-
-**Today** `splitDrainBatch` still skips `photo.put` (no `/api/photos` yet).
-That skip is superseded by `docs/plans/photos-and-deploy-docs.md`. Until that
-lands, pending photo rows and a non-zero Settings count are expected.
-
-Toasts (`SyncToast`): "Synced" only when a run actually pushed or applied a
-**material** change; failures show "Couldn't sync". No-op app-open syncs stay
-silent. `sync()` is deliberately **not** `async`; do not put
-`finally { inFlight = null }` inside the IIFE — that wedges sync after a
-signed-out run. See `docs/plans/sync-toast.md`.
+Toasts (`SyncToast`): refresh errors show "Couldn't refresh". No-op app-open
+pulls stay silent. `sync()` returns a Promise so Settings can await Refresh.
+Clear `inFlight` in `.then`/`.catch` on that Promise, not with `finally`
+inside the IIFE — that wedges sync after a signed-out run.
 
 ## Cloud and deploy
 
@@ -150,17 +155,28 @@ the production library.
 Never `--set-env-vars` (`ALLOWED_EMAILS` is comma-separated). Never put a
 secret on a `gcloud` command line. `SESSION_SECRET` may be generated only if
 `services describe` **succeeded** and the var was absent; a failed describe
-must die, not mint a new secret.
+must die, not mint a new secret. Production env also includes **`MAIL_FROM`**,
+**`OWNER_NOTIFY_EMAIL`**, and optional **`RESEND_API_KEY`** (omit with
+`SOUS_DISABLE_RESEND=1` to remove an existing key from the service).
 
 This deploys **straight to production**. There is no staging. Record the
-current revision before `bash scripts/deploy.sh`.
+current revision before `bash scripts/deploy.sh`. `.github/workflows/deploy.yml`
+is **`workflow_dispatch` only** (never on push). It authenticates with Workload
+Identity Federation as
+`sous-github-deploy@cooking-assistant-508423.iam.gserviceaccount.com`, prints
+the live revision, builds the image with Docker on the runner, pushes it to
+Artifact Registry, then runs `SKIP_BUILD=1 bash scripts/deploy.sh`. Do not
+call `gcloud builds submit` from Actions — the default
+`gs://PROJECT_cloudbuild` bucket rejects the WIF identity. One-time pool /
+SA / IAM setup is in `docs/github-actions-deploy.md`. Do not add a `push`
+trigger.
 
-Docker is not installed locally; image builds run on Cloud Build.
+Docker is not installed locally; local `bash scripts/deploy.sh` still uses
+Cloud Build.
 
 ## Do not touch
 
-- Dexie name `cook`, v1/v2/v3 `stores()`, `app: 'cook'` backups,
-  `cook-backup-` filenames
+- `app: 'cook'` backups, `cook-backup-` filenames
 - `vercel.json`, Vercel env, or `https://cook-seven-mu.vercel.app` (chat/import
   401 there is intended)
 - Dockerfile Node pin, multi-stage shape, or `CMD` (only `COPY server` was
@@ -181,11 +197,18 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | --- | --- |
 | `docs/plans/sous-oauth-db.md` | Parent. Identity + sync (1–17) done. |
 | `docs/plans/sync-toast.md` | Done (`b4b43b6`). |
-| `docs/plans/photos-and-deploy-docs.md` | **Next repo slice:** steps 18–19 (GCS photos, deploy.sh, README, legal rewrite). |
-| `docs/plans/deploy-and-end-state.md` | Steps 20–22 (production deploy, consent In production, two-device / iOS PWA check). Forbidden until 18–19 land. |
-| `docs/plans/chrome-extension-import.md` | `extension/` + `POST /api/extension/import`, built and verified locally. Deploys nothing: the production half waits on the same deploy 18–19 gate. |
+| `docs/plans/photos-and-deploy-docs.md` | Done (GCS photos, deploy.sh, README, legal rewrite). |
+| `docs/plans/invitation-flow.md` | In progress on branch `invitation-flow` (request access → `/admin` → Firestore membership). |
+| `docs/plans/invite-links.md` | Implementing. Owner-minted single-use 7-day bearer invite links that admit on Google consent. |
+| `docs/plans/deploy-and-end-state.md` | Production cutover (`sous-00004-mpx`) and consent In production done. |
+| `docs/plans/server-backed-library.md` | Done: drop IndexedDB; in-memory library over pull/push. |
+| `docs/plans/ask-voice-stt.md` | Implementing. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
+| `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
+| `docs/plans/recipe-gallery.md` | In progress on branch `cursor/recipe-gallery-267b` (main photo + end-of-recipe gallery). |
+| `docs/plans/shared-recipes.md` | PR 1 implementing (named collections + implicit default). PR 2 view ACLs not started. |
+| `docs/plans/bulk-import.md` | Implementing. Opt-in bulk URL import on `/import`. |
+| `docs/plans/chrome-extension-import.md` | Built: `extension/` + `POST /api/extension/import`. Not deployed. |
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
-| `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan (resync vs in-flight pull, Dexie lease ownership, malformed 200 push bodies). |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
@@ -195,7 +218,13 @@ invent other OAuth workarounds.
 
 Unit tests cover **pure** logic only. There is no fake-indexeddb, no Firestore
 emulator in CI, no GCS mock, no DOM testing library — do not add them for one
-feature.
+feature. `.github/workflows/ci.yml` stays `tsc -b` + `npm test` on push/PR.
+
+Live paste-to-recipe evals are `npm run test:import` (`src/**/*.eval.ts`,
+`vitest.eval.config.ts`). They call Gemini against fixtures in `evals/import/`
+and need `GEMINI_API_KEY` from `.env.local` (same as `dev:api`). Website
+fixtures use cached `page.html` (never fetch at eval time). Do not fold them
+into `npm test` or CI.
 
 UI and layout changes: exercise the flow in the browser (not a screenshot).
 Vite + `dev:api`, signed in at `localhost:5173`. Check other routes that share
@@ -208,9 +237,10 @@ guard — run it against Cloud Run after a production deploy, not only locally.
 
 ## Product copy
 
-Settings and `/privacy` `/terms` currently still describe identity-first /
-device-only storage in places. Step 19 rewrites legal pages for Firestore +
-GCS **before** any public Branding URL is filled. That rewrite must also cover
-the extension's new data flow: rendered page HTML, possibly from a page behind
-a login, is sent to the server and on to Gemini. Do not ship consent
-Homepage/Privacy/Terms URLs until that rewrite is in `dist/`.
+`/about` is a short public page that says what the app is for. `/privacy`
+and `/terms` describe Firestore + GCS and that there is no on-device recipe
+database. Theme preference and `cook.session` stay in localStorage. Do not
+describe IndexedDB, offline edits, or a local library. The Chrome extension
+sends rendered page HTML, possibly from a page behind a login, to the server
+and on to Gemini; `/privacy` and `/terms` must describe that before the
+extension is offered beyond the owner.

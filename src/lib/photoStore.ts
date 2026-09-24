@@ -1,62 +1,66 @@
-import { useEffect, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from './db';
-import { enqueue } from './outbox';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import {
+  addPendingBlob,
+  cachePhotoBlob,
+  dropPhoto,
+  getPendingBlob,
+  getSnapshot,
+  subscribe,
+} from './libraryMemory';
+import { fetchPhotoBlob, pushOps } from './remote';
+
+const ensureLocalInFlight = new Map<string, Promise<void>>();
+
+async function ensureLocalOnce(id: string): Promise<void> {
+  if (getPendingBlob(id)) {
+    return;
+  }
+  const blob = await fetchPhotoBlob(id);
+  if (blob === 'signedOut' || blob === null) {
+    return;
+  }
+  cachePhotoBlob(id, blob);
+}
 
 export const photoStore = {
   async add(blob: Blob): Promise<string> {
     const id = crypto.randomUUID();
-    await db.photos.add({ id, blob, createdAt: Date.now() });
+    addPendingBlob(id, blob);
     return id;
   },
 
   async getBlob(id: string): Promise<Blob | undefined> {
-    const photo = await db.photos.get(id);
-    return photo?.blob;
+    return getPendingBlob(id);
+  },
+
+  ensureLocal(id: string): Promise<void> {
+    let pending = ensureLocalInFlight.get(id);
+    if (!pending) {
+      pending = ensureLocalOnce(id).finally(() => {
+        ensureLocalInFlight.delete(id);
+      });
+      ensureLocalInFlight.set(id, pending);
+    }
+    return pending;
+  },
+
+  /**
+   * Forget a blob that was staged but never attached to a saved recipe.
+   * Local only: nothing was uploaded yet, so there is nothing to tombstone.
+   */
+  discardLocal(id: string): void {
+    dropPhoto(id);
   },
 
   async remove(id: string): Promise<void> {
     const at = Date.now();
-    await db.transaction('rw', [db.photos, db.outbox], async (tx) => {
-      await db.photos.delete(id);
-      await enqueue(tx, {
-        kind: 'photo.delete',
-        payload: { id, updatedAt: at },
-      });
-    });
-  },
-
-  /**
-   * Deletes photo blobs nothing references. Store-on-send is the primary leak
-   * fix; the age window only avoids deleting a blob another tab wrote
-   * milliseconds ago and has not yet referenced from a message.
-   */
-  async sweepUnreferenced(olderThanMs = 5 * 60 * 1000): Promise<number> {
-    const cutoff = Date.now() - olderThanMs;
-    return db.transaction('rw', [db.recipes, db.chatMessages, db.photos], async () => {
-      const referenced = new Set<string>();
-      for (const recipe of await db.recipes.toArray()) {
-        if (recipe.photoId) referenced.add(recipe.photoId);
-      }
-      for (const message of await db.chatMessages.toArray()) {
-        for (const id of message.photoIds ?? []) referenced.add(id);
-      }
-      const toDelete = (await db.photos.toArray())
-        .filter((p) => !referenced.has(p.id) && p.createdAt <= cutoff)
-        .map((p) => p.id);
-      await db.photos.bulkDelete(toDelete);
-      return toDelete.length;
-    });
+    dropPhoto(id);
+    await pushOps([{ kind: 'photo.delete', payload: { id, updatedAt: at } }]);
   },
 };
 
 /**
  * Object URL for a blob, revoked once it is replaced or the caller unmounts.
- * An unrevoked URL pins its blob until the document goes away, and here that
- * document is an installed PWA that stays alive for weeks. The Library mints
- * one per photo card, so without this every trip into a recipe and back left
- * another whole set of them behind: measured at 40 recipes, five round trips
- * stranded 165 blobs.
  */
 export function useObjectUrl(blob: Blob | undefined): string | undefined {
   const [url, setUrl] = useState<string>();
@@ -79,9 +83,10 @@ export function useObjectUrl(blob: Blob | undefined): string | undefined {
  * or when there is no photo.
  */
 export function usePhotoUrl(id: string | undefined): string | undefined {
-  const blob = useLiveQuery(
-    async () => (id ? photoStore.getBlob(id) : undefined),
-    [id],
-  );
+  const snap = useSyncExternalStore(subscribe, getSnapshot);
+  const blob = id ? snap.pendingBlobs.get(id) : undefined;
+  useEffect(() => {
+    if (id) void photoStore.ensureLocal(id);
+  }, [id]);
   return useObjectUrl(blob);
 }

@@ -1,32 +1,34 @@
-import { sessionFrom } from './session.ts';
+import { drainGcsDeletes } from './photos.ts';
+import {
+  membershipUnauthorized,
+  membershipUnavailable,
+  requireMember,
+  storeUnavailable,
+} from './membership.ts';
 import {
   cascadeRecipeDelete,
   clearChatForRecipe,
+  compactCollectionFields,
   compactRecipeFields,
+  countLiveNamedCollections,
   decodePullCursor,
   isKnownPushKind,
+  isLiveDoc,
   listChangedSince,
+  namedCollectionCreateCapReason,
   putDoc,
+  readDocData,
   tombstoneDoc,
+  tombstonePhotoWithGcs,
   type PullCursor,
   type StoreKind,
   validatePushOp,
 } from './store.ts';
 
-const STORE_KINDS: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos'];
+const STORE_KINDS: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos', 'collections'];
 
 const MAX_PUSH_OPS = 50;
 const MAX_PUSH_BYTES = 1_000_000;
-
-function unauthorized(): Response {
-  return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-    status: 401,
-    headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-store',
-    },
-  });
-}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -49,6 +51,9 @@ function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<stri
   if (kind === 'recipes') {
     return compactRecipeFields(copy);
   }
+  if (kind === 'collections') {
+    return compactCollectionFields(copy);
+  }
   if (kind === 'photos') {
     return {
       id: copy.id,
@@ -70,11 +75,15 @@ function mergeCursors(prev: PullCursor, kind: StoreKind, cursor: [number, string
 }
 
 export async function syncPull(req: Request): Promise<Response> {
-  const session = sessionFrom(req);
-  if (!session) {
-    return unauthorized();
+  const access = await requireMember(req);
+  if (access.kind === 'denied') {
+    return membershipUnauthorized();
+  }
+  if (access.kind === 'unknown') {
+    return membershipUnavailable();
   }
 
+  try {
   const url = new URL(req.url);
   const limitRaw = url.searchParams.get('limit');
   let limit = 200;
@@ -92,13 +101,14 @@ export async function syncPull(req: Request): Promise<Response> {
     chatMessages: [],
     cookState: [],
     photos: [],
+    collections: [],
   };
 
   let nextCursor: PullCursor = { ...cursor };
   let hasMore = false;
 
   for (const kind of STORE_KINDS) {
-    const page = await listChangedSince(session.sub, kind, cursor[kind], limit);
+    const page = await listChangedSince(access.sub, kind, cursor[kind], limit);
     changes[kind] = page.docs.map((doc) => docToChange(kind, doc));
     nextCursor = mergeCursors(nextCursor, kind, page.cursor);
     if (page.hasMore) {
@@ -107,11 +117,15 @@ export async function syncPull(req: Request): Promise<Response> {
   }
 
   return jsonResponse({
-    user: { sub: session.sub, email: session.email },
+    user: { sub: access.sub, email: access.email },
     changes,
     cursor: nextCursor,
     hasMore,
   });
+  } catch (err) {
+    console.error('syncPull store error:', err);
+    return storeUnavailable();
+  }
 }
 
 export type PushResult = {
@@ -170,7 +184,26 @@ export async function applyPushOp(
     }
     case 'photo.delete': {
       const body = payload as { id: string; updatedAt: number };
-      return tombstoneDoc(uid, 'photos', body.id, body.updatedAt);
+      return tombstonePhotoWithGcs(uid, body.id, body.updatedAt);
+    }
+    case 'collection.put': {
+      const body = payload as Record<string, unknown>;
+      const id = body.id as string;
+      const updatedAt = body.updatedAt as number;
+      const existing = await readDocData(uid, 'collections', id);
+      if (!isLiveDoc(existing)) {
+        const live = await countLiveNamedCollections(uid);
+        const cap = namedCollectionCreateCapReason(live);
+        if (cap) {
+          return { applied: false, reason: cap };
+        }
+      }
+      const compact = compactCollectionFields(body);
+      return putDoc(uid, 'collections', id, compact, updatedAt);
+    }
+    case 'collection.delete': {
+      const body = payload as { id: string; updatedAt: number };
+      return tombstoneDoc(uid, 'collections', body.id, body.updatedAt);
     }
     default:
       return { applied: false, reason: 'unknown' };
@@ -178,9 +211,12 @@ export async function applyPushOp(
 }
 
 export async function syncPush(req: Request): Promise<Response> {
-  const session = sessionFrom(req);
-  if (!session) {
-    return unauthorized();
+  const access = await requireMember(req);
+  if (access.kind === 'denied') {
+    return membershipUnauthorized();
+  }
+  if (access.kind === 'unknown') {
+    return membershipUnavailable();
   }
 
   let raw: string;
@@ -210,8 +246,9 @@ export async function syncPush(req: Request): Promise<Response> {
     return jsonResponse({ error: 'Too many ops; batch your requests' }, 413);
   }
 
-  const uid = session.sub;
+  const uid = access.sub;
 
+  try {
   const results: PushResult[] = [];
   for (let index = 0; index < ops.length; index++) {
     const op = ops[index];
@@ -234,7 +271,13 @@ export async function syncPush(req: Request): Promise<Response> {
     });
   }
 
+  await drainGcsDeletes(uid);
+
   return jsonResponse({ results });
+  } catch (err) {
+    console.error('syncPush store error:', err);
+    return storeUnavailable();
+  }
 }
 
 export { encodePullCursor, decodePullCursor } from './store.ts';

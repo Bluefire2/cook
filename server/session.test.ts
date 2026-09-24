@@ -1,16 +1,20 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   clearedSessionCookie,
+  inviteCookie,
   oauthCookie,
   readCookie,
   readHeaderSession,
   readSession,
   safeReturnTo,
   sessionCookie,
-  sessionFrom,
   sessionFromHeader,
+  signAccessRequestTx,
+  signInviteTx,
   signOauthTx,
   signSession,
+  verifyAccessRequestTx,
+  verifyInviteTx,
   verifyOauthTx,
   verifySession,
 } from './session.ts';
@@ -88,12 +92,16 @@ describe('readSession', () => {
     expect(readSession(req)).toEqual({ status: 'unusable' });
   });
 
-  it('is unusable when allowlist misses', () => {
+  it('is ok for any valid cookie — membership is enforced by requireMember', () => {
     const token = signSession({ sub: 'sub-1', email: 'not@listed.com' }, nowMs());
     const req = new Request('http://localhost/', {
       headers: { cookie: `sous_session=${token}` },
     });
-    expect(readSession(req)).toEqual({ status: 'unusable' });
+    const result = readSession(req);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.session.email).toBe('not@listed.com');
+    }
   });
 
   it('is ok for a valid allowlisted cookie', () => {
@@ -115,7 +123,6 @@ describe('readSession', () => {
       headers: { cookie: `sous_session=${token}` },
     });
     expect(readSession(req)).toEqual({ status: 'unusable' });
-    expect(sessionFrom(req)).toBeNull();
   });
 
   it('is absent when secret is blank and no cookie', () => {
@@ -159,9 +166,13 @@ describe('readHeaderSession', () => {
     expect(sessionFromHeader(withHeader(`${payload}x.${signature}`))).toBeNull();
   });
 
-  it('rejects a well-signed token whose email left the allowlist', () => {
+  it('is ok for any valid header token — membership is enforced by requireHeaderMember', () => {
     const token = signSession({ sub: 'sub-1', email: 'removed@example.com' }, nowMs());
-    expect(readHeaderSession(withHeader(token))).toEqual({ status: 'unusable' });
+    const result = readHeaderSession(withHeader(token));
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.session.email).toBe('removed@example.com');
+    }
   });
 
   it('ignores the cookie, and the cookie path ignores the header', () => {
@@ -170,7 +181,7 @@ describe('readHeaderSession', () => {
       headers: { cookie: `sous_session=${token}` },
     });
     expect(readHeaderSession(cookieOnly)).toEqual({ status: 'absent' });
-    expect(sessionFrom(withHeader(token))).toBeNull();
+    expect(readSession(withHeader(token))).toEqual({ status: 'absent' });
   });
 });
 
@@ -232,6 +243,53 @@ describe('safeReturnTo', () => {
   });
 });
 
+describe('signAccessRequestTx / verifyAccessRequestTx', () => {
+  it('round-trips access request identity', () => {
+    const now = nowMs();
+    const token = signAccessRequestTx(
+      { sub: 'sub-a', email: 'a@example.com', name: 'A' },
+      now,
+    );
+    expect(verifyAccessRequestTx(token, now)).toEqual({
+      sub: 'sub-a',
+      email: 'a@example.com',
+      name: 'A',
+      iat: now,
+      exp: now + 10 * 60 * 1000,
+    });
+  });
+
+  it('rejects expired tokens', () => {
+    const now = nowMs();
+    const token = signAccessRequestTx({ sub: 'sub-a', email: 'a@example.com' }, now);
+    expect(verifyAccessRequestTx(token, now + 11 * 60 * 1000)).toBeNull();
+  });
+
+  it('rejects session, oauth, and invite tokens', () => {
+    const now = nowMs();
+    const sessionToken = signSession({ sub: 'sub-a', email: 'a@example.com' }, now);
+    const oauthToken = signOauthTx(
+      { state: 's', nonce: 'n', verifier: 'v', returnTo: '/' },
+      now,
+    );
+    const inviteToken = signInviteTx(
+      { id: 'a'.repeat(64) },
+      now,
+    );
+    expect(verifyAccessRequestTx(sessionToken, now)).toBeNull();
+    expect(verifyAccessRequestTx(oauthToken, now)).toBeNull();
+    expect(verifyAccessRequestTx(inviteToken, now)).toBeNull();
+  });
+});
+
+describe('verifySession rejects accessreq tokens', () => {
+  it('returns null for accessreq family', () => {
+    const now = nowMs();
+    const token = signAccessRequestTx({ sub: 'sub-a', email: 'a@example.com' }, now);
+    expect(verifySession(token, now)).toBeNull();
+  });
+});
+
 describe('signOauthTx / verifyOauthTx', () => {
   it('round-trips oauth transaction fields', () => {
     const token = signOauthTx(
@@ -244,5 +302,62 @@ describe('signOauthTx / verifyOauthTx', () => {
       verifier: 'ver',
       returnTo: '/settings',
     });
+    expect(verifyOauthTx(token, nowMs())?.invite).toBeUndefined();
+  });
+
+  it('round-trips an optional invite hash', () => {
+    const invite = 'ab'.repeat(32);
+    const token = signOauthTx(
+      { state: 'st', nonce: 'no', verifier: 'ver', returnTo: '/', invite },
+      nowMs(),
+    );
+    expect(verifyOauthTx(token, nowMs())).toMatchObject({ invite });
+  });
+
+  it('rejects invite, session, and accessreq tokens', () => {
+    const now = nowMs();
+    const inviteToken = signInviteTx({ id: 'b'.repeat(64) }, now);
+    const sessionToken = signSession({ sub: 's', email: 'a@b.c' }, now);
+    const accessreq = signAccessRequestTx({ sub: 's', email: 'a@b.c' }, now);
+    expect(verifyOauthTx(inviteToken, now)).toBeNull();
+    expect(verifyOauthTx(sessionToken, now)).toBeNull();
+    expect(verifyOauthTx(accessreq, now)).toBeNull();
+  });
+});
+
+describe('signInviteTx / verifyInviteTx', () => {
+  it('round-trips the invite document id', () => {
+    const now = nowMs();
+    const id = 'c'.repeat(64);
+    const token = signInviteTx({ id }, now);
+    expect(verifyInviteTx(token, now)).toEqual({
+      id,
+      iat: now,
+      exp: now + 10 * 60 * 1000,
+    });
+  });
+
+  it('rejects expired tokens', () => {
+    const now = nowMs();
+    const token = signInviteTx({ id: 'd'.repeat(64) }, now);
+    expect(verifyInviteTx(token, now + 11 * 60 * 1000)).toBeNull();
+  });
+
+  it('rejects session, oauth, and accessreq tokens', () => {
+    const now = nowMs();
+    const sessionToken = signSession({ sub: 's', email: 'a@b.c' }, now);
+    const oauthToken = signOauthTx(
+      { state: 's', nonce: 'n', verifier: 'v', returnTo: '/' },
+      now,
+    );
+    const accessreq = signAccessRequestTx({ sub: 's', email: 'a@b.c' }, now);
+    expect(verifyInviteTx(sessionToken, now)).toBeNull();
+    expect(verifyInviteTx(oauthToken, now)).toBeNull();
+    expect(verifyInviteTx(accessreq, now)).toBeNull();
+  });
+
+  it('sets the invite cookie Max-Age to 10 minutes', () => {
+    expect(inviteCookie('tok', { secure: true })).toContain('Max-Age=600');
+    expect(inviteCookie('tok', { secure: true })).toContain('HttpOnly');
   });
 });
