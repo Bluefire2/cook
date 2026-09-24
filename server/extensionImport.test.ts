@@ -11,7 +11,6 @@ vi.mock('../api/import.ts', async (importOriginal) => {
   return {
     ...actual,
     extractRecipeSource: vi.fn(actual.extractRecipeSource),
-    extractRecipeDraft: vi.fn(actual.extractRecipeDraft),
   };
 });
 
@@ -85,59 +84,5 @@ describe('extensionImport html is required', () => {
 
   it('rejects whitespace html without fetching or extracting', async () => {
     await expectRejectedUnread({ url: 'https://apnews.com/article/example', html: '  \n\t  ' });
-  });
-});
-
-describe('extensionImport source debug', () => {
-  beforeEach(() => {
-    process.env.SESSION_SECRET = 'test-secret-for-session-hmac';
-    process.env.ALLOWED_EMAILS = 'allowed@example.com';
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('includes compact source debug when Gemini finds no recipe', async () => {
-    vi.mocked(importApi.extractRecipeDraft).mockResolvedValue({
-      ok: false,
-      status: 422,
-      error: "Couldn't find a recipe in that content.",
-    });
-    const html = '<main><h1>Kapusnyak</h1><p>Ingredients: pork and sauerkraut</p></main>';
-    const token = signSession({ sub: 'sub-1', email: 'allowed@example.com' }, Date.now());
-    const response = await extensionImport(
-      new Request('http://localhost/api/extension/import', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          [SESSION_HEADER_NAME]: token,
-        },
-        body: JSON.stringify({ url: 'https://apnews.com/article/example', html }),
-      }),
-    );
-    expect(response.status).toBe(422);
-    const body = (await response.json()) as {
-      error: string;
-      debug: {
-        via: string;
-        hasMain: boolean;
-        extractStatus: number;
-        hits: string[];
-        sourceHead: string;
-        htmlChars: number;
-        sourceChars: number;
-      };
-    };
-    expect(body.error).toBe("Couldn't find a recipe in that content.");
-    expect(body.debug.via).toBe('text');
-    expect(body.debug.hasMain).toBe(true);
-    expect(body.debug.extractStatus).toBe(422);
-    expect(body.debug.htmlChars).toBe(html.length);
-    expect(body.debug.sourceChars).toBeGreaterThan(0);
-    expect(body.debug.hits).toEqual(
-      expect.arrayContaining(['ingredient', 'ingredients', 'kapusnyak', 'sauerkraut', 'pork']),
-    );
-    expect(body.debug.sourceHead).toMatch(/Kapusnyak/);
   });
 });

@@ -66,7 +66,7 @@ export default function RecipeView() {
 
   /**
    * A link from the Chrome extension is the first this device hears of a recipe
-   * that was saved on the server, so an id missing from the library means "pull"
+   * that was saved on the server, so an id missing from the library means "pull
    * and see", not "gone". Settled is tracked as the id it settled for: React
    * Router reuses this element across an id change, and the neutral state has
    * to be the initial one or not-found paints for a frame first.

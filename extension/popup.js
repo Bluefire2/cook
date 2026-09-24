@@ -67,9 +67,6 @@ async function grabFromTab(id) {
     });
     const result = injection && injection.result;
     if (result && typeof result.url === 'string' && typeof result.html === 'string') {
-      if (result.debug) {
-        console.info('sous grab', result.debug);
-      }
       return result;
     }
   } catch (err) {
@@ -146,7 +143,7 @@ function render(state) {
   }
 
   if (state.phase === 'working') {
-    setStatus('Reading the recipe…', null, true);
+    setStatus(state.detail || 'Reading the recipe…', null, true);
     return;
   }
 

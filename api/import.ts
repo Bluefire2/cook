@@ -196,25 +196,162 @@ const MAX_SOURCE_CHARS = 60000;
 // outlasts Vercel's 10s default and would surface as a timeout, not an error.
 export const maxDuration = 60;
 
+interface HtmlTag {
+  lower: string;
+  start: number;
+  after: number;
+  closing: boolean;
+  selfClosing: boolean;
+  roleMain: boolean;
+}
+
 /**
- * News-article recipes live in these regions, often after a long nav that
- * would eat the 60k text cap. First match wins: article is more specific
- * than main. Nested tags of the same name take the first close — good enough
- * for the text fallback; Recipe JSON-LD is preferred when present.
+ * A `<` starts a tag only when a name follows (`<article`, `</div>`). Bare
+ * comparisons in the copy (`heat to <350°F, don't`) are not tags: treating the
+ * apostrophe as an attribute quote would swallow every tag after it.
  */
-function primaryRegion(html: string): string {
-  const patterns = [
-    /<article\b[\s\S]*?<\/article>/i,
-    /<main\b[\s\S]*?<\/main>/i,
-    /<([a-z0-9]+)[^>]*\brole=["']main["'][^>]*>[\s\S]*?<\/\1>/i,
-  ];
-  for (const re of patterns) {
-    const match = html.match(re);
-    if (match) {
-      return match[0];
+function isTagStart(html: string, lt: number): boolean {
+  let i = lt + 1;
+  if (html[i] === '/') i += 1;
+  while (html[i] === ' ' || html[i] === '\n' || html[i] === '\t' || html[i] === '\r') i += 1;
+  const c = html[i];
+  return c !== undefined && ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
+}
+
+/** Index of the next `>` that is not inside a quoted attribute. */
+function tagEnd(html: string, openAt: number): number {
+  let quote: string | null = null;
+  for (let i = openAt + 1; i < html.length; i++) {
+    const c = html[i];
+    if (quote) {
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      quote = c;
+      continue;
+    }
+    if (c === '>') return i;
+  }
+  return -1;
+}
+
+/**
+ * Tags outside comments, scripts, and styles. Balancing uses these so a nested
+ * `<div>` or `<article>` does not end the region at the first closing tag.
+ */
+function scanTags(html: string): HtmlTag[] {
+  const tags: HtmlTag[] = [];
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf('<', i);
+    if (lt === -1) break;
+    if (html.startsWith('<!--', lt)) {
+      const end = html.indexOf('-->', lt + 4);
+      i = end === -1 ? html.length : end + 3;
+      continue;
+    }
+    if (html.startsWith('<!', lt) || html.startsWith('<?', lt)) {
+      const end = html.indexOf('>', lt + 2);
+      i = end === -1 ? html.length : end + 1;
+      continue;
+    }
+    if (!isTagStart(html, lt)) {
+      i = lt + 1;
+      continue;
+    }
+    const end = tagEnd(html, lt);
+    if (end === -1) break;
+    const raw = html.slice(lt + 1, end);
+    const closing = raw.startsWith('/');
+    const body = closing ? raw.slice(1) : raw;
+    const nameMatch = /^([A-Za-z][\w:-]*)/.exec(body.trimStart());
+    if (!nameMatch) {
+      i = end + 1;
+      continue;
+    }
+    const name = nameMatch[1];
+    const selfClosing = /\/\s*$/.test(raw) && !closing;
+    const roleMain = /\brole\s*=\s*(?:["']main["']|main\b)/i.test(raw);
+    tags.push({
+      lower: name.toLowerCase(),
+      start: lt,
+      after: end + 1,
+      closing,
+      selfClosing,
+      roleMain,
+    });
+    i = end + 1;
+    if (!closing && !selfClosing && (name.toLowerCase() === 'script' || name.toLowerCase() === 'style')) {
+      const closeRe = new RegExp(`</${name}\\s*>`, 'i');
+      const found = closeRe.exec(html.slice(i));
+      i = found ? i + found.index + found[0].length : html.length;
     }
   }
-  return html;
+  return tags;
+}
+
+function balancedElement(html: string, tags: HtmlTag[], openAt: number): string | null {
+  const open = tags[openAt];
+  if (open.closing || open.selfClosing) return null;
+  let depth = 1;
+  for (let i = openAt + 1; i < tags.length; i++) {
+    const tag = tags[i];
+    if (tag.lower !== open.lower || tag.selfClosing) continue;
+    if (tag.closing) {
+      depth -= 1;
+      if (depth === 0) return html.slice(open.start, tag.after);
+    } else {
+      depth += 1;
+    }
+  }
+  return null;
+}
+
+function regionTextLength(region: string): number {
+  return region.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length;
+}
+
+function longestRegion(
+  html: string,
+  tags: HtmlTag[],
+  include: (tag: HtmlTag) => boolean,
+): string | null {
+  let best: string | null = null;
+  let bestLen = -1;
+  for (let i = 0; i < tags.length; i++) {
+    if (!include(tags[i])) continue;
+    const region = balancedElement(html, tags, i);
+    if (region === null) continue;
+    const len = regionTextLength(region);
+    if (len > bestLen) {
+      best = region;
+      bestLen = len;
+    }
+  }
+  return best;
+}
+
+/**
+ * News-article recipes live in these regions, often after a long nav that
+ * would eat the 60k text cap. The longest balanced `<article>` wins, so a
+ * header teaser or a nested related-story card does not replace the story.
+ * A short article beside a larger `<main>` / `role="main"` yields to that
+ * region. Recipe JSON-LD is preferred when it actually has ingredients or steps.
+ */
+function primaryRegion(html: string): string {
+  const tags = scanTags(html);
+  const article = longestRegion(html, tags, (tag) => tag.lower === 'article');
+  const main = longestRegion(
+    html,
+    tags,
+    (tag) => tag.lower === 'main' || tag.roleMain,
+  );
+  if (article && main) {
+    if (regionTextLength(article) * 2 >= regionTextLength(main)) return article;
+    return main;
+  }
+  return article ?? main ?? html;
 }
 
 function stripToText(html: string): string {
@@ -227,11 +364,38 @@ function stripToText(html: string): string {
     .slice(0, MAX_SOURCE_CHARS);
 }
 
+function collectedText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(collectedText).join(' ');
+  if (value && typeof value === 'object') {
+    const row = value as { text?: unknown; name?: unknown };
+    return `${collectedText(row.text)} ${collectedText(row.name)}`;
+  }
+  return '';
+}
+
+/**
+ * A Recipe node that lists ingredients or steps but leaves them blank (Maangchi
+ * publishes `recipeIngredient: []` and HowToSteps with only a position) is not
+ * a recipe. A node that omits both fields is left alone: older fixtures and
+ * partial blocks still go to Gemini as JSON-LD.
+ */
+function recipeJsonLdHasBody(node: object): boolean {
+  const row = node as { recipeIngredient?: unknown; recipeInstructions?: unknown };
+  const listsIngredients = Object.prototype.hasOwnProperty.call(node, 'recipeIngredient');
+  const listsInstructions = Object.prototype.hasOwnProperty.call(node, 'recipeInstructions');
+  if (!listsIngredients && !listsInstructions) return true;
+  return (
+    collectedText(row.recipeIngredient).trim() !== '' ||
+    collectedText(row.recipeInstructions).trim() !== ''
+  );
+}
+
 /**
  * Prefers the schema.org/Recipe JSON-LD block most recipe sites embed
  * (compact and unambiguous); falls back to the page's stripped text,
  * preferring `<article>` / `<main>` so a news-article recipe is not lost
- * behind nav chrome.
+ * behind nav chrome. An empty Recipe block does not count.
  */
 export function extractRecipeSource(html: string): string {
   const ldBlocks = html.matchAll(
@@ -244,8 +408,10 @@ export function extractRecipeSource(html: string): string {
         ? parsed
         : ((parsed as { '@graph'?: unknown[] })['@graph'] ?? [parsed]);
       for (const node of nodes) {
+        if (typeof node !== 'object' || node === null) continue;
         const type = (node as { '@type'?: string | string[] })['@type'];
-        if (type === 'Recipe' || (Array.isArray(type) && type.includes('Recipe'))) {
+        const isRecipe = type === 'Recipe' || (Array.isArray(type) && type.includes('Recipe'));
+        if (isRecipe && recipeJsonLdHasBody(node)) {
           return JSON.stringify(node).slice(0, MAX_SOURCE_CHARS);
         }
       }
@@ -267,85 +433,45 @@ export type PageFetchResult =
  * each other under Vercel's isolated transpile, and nothing here imports a
  * sibling. The Chrome extension does not call this — it sends the tab HTML.
  */
-export async function fetchPageHtml(rawUrl: string): Promise<PageFetchResult> {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return { ok: false, status: 422, error: 'That does not look like a web address.' };
-  }
-  // Scheme check only (matches RecipeView's http/https allowlist); does not block private or link-local destinations.
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return { ok: false, status: 422, error: 'Only http and https URLs are supported.' };
-  }
-
-  let page: Response;
-  try {
-    page = await fetch(parsed.href, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-        Accept: 'text/html',
-      },
-      redirect: 'follow',
-    });
-  } catch {
-    return { ok: false, status: 422, error: 'Could not reach that URL.' };
-  }
-  if (!page.ok) {
-    return {
-      ok: false,
-      status: 422,
-      error: `The site refused the request (${page.status}). Try pasting the recipe text instead.`,
-    };
-  }
-  return { ok: true, html: await page.text() };
+export async function fetchPageHtml(rawUrl: string): Promise<PageFetchResult> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { ok: false, status: 422, error: 'That does not look like a web address.' };
+  }
+  // Scheme check only (matches RecipeView's http/https allowlist); does not block private or link-local destinations.
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, status: 422, error: 'Only http and https URLs are supported.' };
+  }
+
+  let page: Response;
+  try {
+    page = await fetch(parsed.href, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+        Accept: 'text/html',
+      },
+      redirect: 'follow',
+    });
+  } catch {
+    return { ok: false, status: 422, error: 'Could not reach that URL.' };
+  }
+  if (!page.ok) {
+    return {
+      ok: false,
+      status: 422,
+      error: `The site refused the request (${page.status}). Try pasting the recipe text instead.`,
+    };
+  }
+  return { ok: true, html: await page.text() };
 }
 
 export type GenerateRecipeResult =
   | { status: 'ok'; recipe: Record<string, unknown> }
   | { status: 'not_a_recipe' }
   | { status: 'parse_error' };
-
-function logExtraction(
-  source: string,
-  recipe: Record<string, unknown> | null,
-  outcome: { ok: boolean; status: number },
-): void {
-  const sourceHead = source.replace(/\s+/g, ' ').trim().slice(0, 240);
-  let ingredientCount: number | undefined;
-  let stepCount: number | undefined;
-  let title: string | undefined;
-  if (recipe) {
-    if (typeof recipe.title === 'string') title = recipe.title;
-    if (Array.isArray(recipe.steps)) stepCount = recipe.steps.length;
-    const sections = recipe.ingredientSections;
-    if (Array.isArray(sections)) {
-      ingredientCount = 0;
-      for (const section of sections) {
-        if (
-          section &&
-          typeof section === 'object' &&
-          Array.isArray((section as { items?: unknown }).items)
-        ) {
-          ingredientCount += (section as { items: unknown[] }).items.length;
-        }
-      }
-    }
-  }
-  console.info('sous extractRecipeDraft', {
-    model: MODEL,
-    hasGeminiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()),
-    sourceChars: source.length,
-    via: source.trimStart().startsWith('{') ? 'ld+json' : 'text',
-    sourceHead,
-    title,
-    ingredientCount,
-    stepCount,
-    ok: outcome.ok,
-    status: outcome.status,
-  });
-}
 
 /**
  * Structured Gemini extraction used by POST /api/import (text and URL paths).
@@ -378,14 +504,11 @@ export async function generateRecipeFromSource(
     }
     recipe = parsed as Record<string, unknown>;
   } catch {
-    logExtraction(source, null, { ok: false, status: 502 });
     return { status: 'parse_error' };
   }
   if (recipe.title === 'NOT_A_RECIPE') {
-    logExtraction(source, recipe, { ok: false, status: 422 });
     return { status: 'not_a_recipe' };
   }
-  logExtraction(source, recipe, { ok: true, status: 200 });
   return { status: 'ok', recipe };
 }
 
@@ -431,13 +554,6 @@ export async function POST(req: Request, ctx?: { authorizedSub?: string }): Prom
       { status: 400 },
     );
   }
-
-  console.info('sous import', {
-    via: body.url ? 'url' : 'text',
-    url: body.url,
-    sourceChars: source.length,
-    sourceHead: source.replace(/\s+/g, ' ').trim().slice(0, 240),
-  });
 
   const extracted = await generateRecipeFromSource(source);
   if (extracted.status === 'parse_error') {
