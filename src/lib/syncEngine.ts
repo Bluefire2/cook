@@ -7,6 +7,8 @@ import {
   pullPage,
   pullSharedPage,
   type PullCursor,
+  type PullPage,
+  type SharedPullPage,
 } from './remote';
 import {
   clearLibrary,
@@ -25,6 +27,13 @@ export interface SyncResult {
   pushed: number;
   applied: number;
 }
+
+export type PullDependencies = {
+  pullPage: (cursor: PullCursor | null) => Promise<PullPage | 'signedOut' | 'error'>;
+  pullSharedPage: (
+    cursorToken: string | null,
+  ) => Promise<SharedPullPage | 'signedOut' | 'error'>;
+};
 
 export type SyncFinishedListener = (result: SyncResult) => void;
 
@@ -98,7 +107,7 @@ export function decideSyncToast(result: SyncResult): SyncToastSpec | null {
   return null;
 }
 
-async function pullAll(): Promise<SyncResult> {
+export async function pullAll(dependencies: PullDependencies): Promise<SyncResult> {
   const acc = {
     recipes: new Map<string, Recipe>(),
     collections: new Map<string, Collection>(),
@@ -108,21 +117,29 @@ async function pullAll(): Promise<SyncResult> {
   };
   let cursor: PullCursor = {};
   let pages = 0;
-  while (true) {
-    const page = await pullPage(pages === 0 ? null : cursor);
-    if (page === 'signedOut') {
-      return { outcome: 'signedOut', pushed: 0, applied: 0 };
+  try {
+    while (true) {
+      const page = await dependencies.pullPage(pages === 0 ? null : cursor);
+      if (page === 'signedOut') {
+        clearLibrary();
+        return { outcome: 'signedOut', pushed: 0, applied: 0 };
+      }
+      if (page === 'error') {
+        return { outcome: 'error', pushed: 0, applied: 0 };
+      }
+      applyPullChanges(acc, page.changes);
+      cursor = mergePullCursor(cursor, page.cursor);
+      pages += 1;
+      if (!page.hasMore) {
+        break;
+      }
     }
-    if (page === 'error') {
-      return { outcome: 'error', pushed: 0, applied: 0 };
-    }
-    applyPullChanges(acc, page.changes);
-    cursor = mergePullCursor(cursor, page.cursor);
-    pages += 1;
-    if (!page.hasMore) {
-      break;
-    }
+  } catch {
+    return { outcome: 'error', pushed: 0, applied: 0 };
   }
+
+  replaceFromPull(acc);
+
   const sharedRecipes = new Map<string, Recipe>();
   const sharedCollections = new Map<string, Collection>();
   const sharedPhotos = new Set<string>();
@@ -130,50 +147,57 @@ async function pullAll(): Promise<SyncResult> {
   const collectionOrigins = new Map<string, ItemOrigin>();
   let sharedCursor: string | null = null;
   let sharedPages = 0;
-  while (true) {
-    const page = await pullSharedPage(sharedPages === 0 ? null : sharedCursor);
-    if (page === 'signedOut') {
-      return { outcome: 'signedOut', pushed: 0, applied: 0 };
-    }
-    if (page === 'error') {
-      return { outcome: 'error', pushed: 0, applied: 0 };
-    }
-    for (const raw of page.changes.collections) {
-      const id = raw.id as string;
-      const normalized = normalizeCollectionChange(raw);
-      if (normalized === 'tombstone') {
-        continue;
+  try {
+    while (true) {
+      const page = await dependencies.pullSharedPage(
+        sharedPages === 0 ? null : sharedCursor,
+      );
+      if (page === 'signedOut') {
+        clearLibrary();
+        return { outcome: 'signedOut', pushed: 0, applied: 0 };
       }
-      sharedCollections.set(id, normalized);
-      if (typeof raw.ownerSub === 'string' && raw.ownerSub !== '') {
-        collectionOrigins.set(id, { kind: 'shared', ownerSub: raw.ownerSub });
+      if (page === 'error') {
+        return { outcome: 'error', pushed: 0, applied: 0 };
+      }
+      for (const raw of page.changes.collections) {
+        const id = raw.id as string;
+        const normalized = normalizeCollectionChange(raw);
+        if (normalized === 'tombstone') {
+          continue;
+        }
+        sharedCollections.set(id, normalized);
+        if (typeof raw.ownerSub === 'string' && raw.ownerSub !== '') {
+          collectionOrigins.set(id, { kind: 'shared', ownerSub: raw.ownerSub });
+        }
+      }
+      for (const raw of page.changes.recipes) {
+        const id = raw.id as string;
+        const normalized = normalizeRecipeChange(raw);
+        if (normalized === 'tombstone') {
+          continue;
+        }
+        sharedRecipes.set(id, normalized);
+        if (typeof raw.ownerSub === 'string' && raw.ownerSub !== '') {
+          recipeOrigins.set(id, { kind: 'shared', ownerSub: raw.ownerSub });
+        }
+      }
+      for (const raw of page.changes.photos) {
+        const id = raw.id as string;
+        if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
+          continue;
+        }
+        sharedPhotos.add(id);
+      }
+      sharedCursor = page.cursorToken;
+      sharedPages += 1;
+      if (!page.hasMore) {
+        break;
       }
     }
-    for (const raw of page.changes.recipes) {
-      const id = raw.id as string;
-      const normalized = normalizeRecipeChange(raw);
-      if (normalized === 'tombstone') {
-        continue;
-      }
-      sharedRecipes.set(id, normalized);
-      if (typeof raw.ownerSub === 'string' && raw.ownerSub !== '') {
-        recipeOrigins.set(id, { kind: 'shared', ownerSub: raw.ownerSub });
-      }
-    }
-    for (const raw of page.changes.photos) {
-      const id = raw.id as string;
-      if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
-        continue;
-      }
-      sharedPhotos.add(id);
-    }
-    sharedCursor = page.cursorToken;
-    sharedPages += 1;
-    if (!page.hasMore) {
-      break;
-    }
+  } catch {
+    return { outcome: 'error', pushed: 0, applied: 0 };
   }
-  replaceFromPull(acc);
+
   mergeSharedFromPull({
     recipes: sharedRecipes,
     collections: sharedCollections,
@@ -193,7 +217,7 @@ async function runOnce(): Promise<SyncResult> {
   }
   setSnapshot({ status: 'loading' });
   try {
-    const result = await pullAll();
+    const result = await pullAll({ pullPage, pullSharedPage });
     if (result.outcome === 'signedOut') {
       setSnapshot({ status: 'signedOut' });
       return result;
