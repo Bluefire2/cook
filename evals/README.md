@@ -11,7 +11,9 @@ page was fetched. The table below lists the same information in one place.
 
 ## `evals/import/`
 
-Wired into `server/recipeImport.eval.ts`, with `golden.json` expected results.
+Wired into `evals/recipeImport.eval.ts`, with `golden.json` expected results.
+The harness lives here rather than in `server/` so it is not copied into the
+runtime image.
 
 | Fixture | Site | Recipe | Author | Notes |
 | --- | --- | --- | --- | --- |
