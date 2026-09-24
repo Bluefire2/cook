@@ -81,34 +81,42 @@ format bump. Keep `app: 'cook'`, `cook-backup-` filenames, and backup version
 `src/lib/remote.ts`, `src/lib/remote.test.ts`, `src/lib/syncEngine.ts`,
 `src/lib/syncEngine.test.ts`.
 
-Add a server-built, opaque scope generation to the separate shared cursor.
-Keep `grantId` and `recipeId` as the positional fields; add a version and
-scope digest rather than reusing the owned pull cursor.
+Add a server-built, authenticated scope generation to the separate shared
+cursor. Keep `grantId` and `recipeId` as the positional fields; add a version
+and scope digest rather than reusing the owned pull cursor. Sign the complete
+continuation payload `{ v, viewerSub, generation, grantId, recipeId }` with
+HMAC-SHA256 using the existing server secret. Reject/restart on an invalid
+signature or viewer mismatch. A caller must never be able to splice a position
+from one cursor into a newly obtained generation.
 
 Build the digest from a canonical, deterministically sorted description of the
 authorization surface visible to the session:
 
 - every live incoming share's `grantId`, stored `ownerSub`, `collectionId`,
-  and authoritative share `updatedAt`;
+  and Firestore document `updateTime`;
 - whether the referenced collection is currently live;
 - for a live collection, its id and complete ordered `recipeIds` membership
-  (plus its mutation identity so revoke/re-grant or delete/undelete cannot
-  return to the same generation accidentally).
+  plus the collection snapshot's Firestore `updateTime`, so revoke/re-grant
+  or delete/undelete cannot return to the same generation accidentally.
 
 Use Node's built-in cryptography for the digest; do not add a dependency and
 do not place raw ACL data in the cursor. Extend `LiveIncomingShare` or add a
-scope-only parsed type so `updatedAt` comes from the stored reverse index, not
-from client input.
+scope-only parsed type so mutation identity comes from Firestore snapshot
+metadata, not client input or millisecond `Date.now()`. Build the canonical
+scope in one Firestore read-only transaction: query the session's reverse
+shares, then read every referenced collection before finishing the
+transaction. This avoids hashing a hybrid assembled from different database
+moments.
 
-At the first page, establish the scope generation. Before returning a
-single-page completion, and before returning the final page of a multi-page
-attempt, rebuild the generation after page reads. If it differs from the
-established value, return a typed `shared-snapshot-changed` response with no
-changes. A continuation with a malformed, missing, or mismatched generation
-must never be treated as permission to continue from its position. Existing
-per-grant `readLiveIncomingShare` and `canViewCollection` /
-`canViewRecipe` checks stay in place to close the within-page authorization
-window.
+At the first page, establish the scope generation. Rebuild and compare it
+inside a read-only transaction on every continuation and again after every
+page read, including a single-page completion and the final page. If it
+differs from the verified starting generation, return a typed
+`shared-snapshot-changed` response with no changes. A continuation with a
+malformed, unsigned, missing, or mismatched generation must never be treated
+as permission to continue from its position. Existing per-grant
+`readLiveIncomingShare` and `canViewCollection` / `canViewRecipe` checks stay
+in place to close the within-page authorization window.
 
 `pullSharedPage` maps only the typed snapshot-change response to a new
 `'restart'` result. Old clients that do not understand it fail closed through
@@ -123,6 +131,8 @@ Regression tests:
 
 - codec round-trip includes the opaque generation, while a legacy/start
   cursor can begin only at page 1;
+- cursor signature binds version, viewer, generation, and both positional
+  fields; tampering or replay under another viewer restarts safely;
 - stable single-page and multi-page pulls complete with the same generation;
 - revoke a grant after page 1 but before the final request: the final request
   returns restart/no changes, and `syncEngine` publishes none of page 1;
@@ -158,6 +168,14 @@ best-effort across requests: a failure after recipe push can leave accepted
 server rows that the next refresh reveals. Do not add compensating deletes or
 a new import endpoint in this fix.
 
+Before optimistic or remote writes, sanitize dangling dependent rows in the
+backup graph: omit chat/cook rows whose `recipeId` is not present in the
+backup's usable recipe set, and omit photos attributable only to those rows.
+Do not synthesize parent recipes and do not attempt photo upload against a
+parent absent from the parent phase. This preserves all recipe entities in
+version-1/2/3 backups while making explicit that legacy orphan dependents are
+not restorable under the server's parent invariant.
+
 Regression tests must record call order, not merely final arguments:
 
 - explicit foreign-provenance clone: remapped `recipe.put` completes before
@@ -170,6 +188,9 @@ Regression tests must record call order, not merely final arguments:
 - same-account preserve mode remains overwrite-by-id/idempotent;
 - photo-free imports do not make an unnecessary upload call and still execute
   parent before dependent pushes.
+- the existing orphan-chat-photo export fixture can be imported without any
+  orphan photo upload or dependent push; sanitization happens before local or
+  remote mutation.
 
 ### 3. [core] Make collection delete and grant revocation one server-ordered transition
 
@@ -178,20 +199,27 @@ Regression tests must record call order, not merely final arguments:
 
 Replace the current `tombstoneDoc(...body.updatedAt)` followed by an
 independent client-timestamp cascade with a collection-specific,
-dependency-injected delete orchestration. The production implementation must
+dependency-injected delete orchestration. Add an internal
+`active: true | false` field to forward grant documents. Grant add/revoke and
+delete-cascade writes maintain it; it is not part of any client grant shape.
+Because sharing is undeployed, old development grants without `active` are
+reset/re-shared rather than backfilled. The production implementation must
 use one Firestore transaction for the collection decision and all currently
 live forward/reverse grant pairs:
 
 - read the collection and apply the existing client-LWW
   `compareMutation` decision;
-- if the delete applies, enumerate/read forward grants and matching reverse
-  incoming shares before any write;
+- if the delete applies, query forward grants with `active == true` and
+  `limit(MAX_LIVE_GRANTS + 1)`, then read matching reverse incoming shares
+  before any write;
 - derive a server-side cascade order that is at least every authoritative
-  grant/share order read in the transaction (never `body.updatedAt`);
+  grant/share order read in the transaction (never `body.updatedAt`), using
+  `max(Date.now(), ...pairUpdatedAt) + 1`;
 - write the collection tombstone with its existing client
-  `updatedAt === deletedAt` plus normal `serverUpdatedAt`;
+  `updatedAt === deletedAt` plus normal `serverUpdatedAt` and an internal
+  `grantCascadeAt` equal to the authoritative cascade order;
 - tombstone each pre-delete forward/reverse pair at the server cascade order
-  in the same transaction.
+  with `active: false` on the forward side, in the same transaction.
 
 The 20-live-grant product cap keeps the paired write count bounded. Ensure all
 transaction reads, including the grant query and reverse point reads, happen
@@ -199,14 +227,16 @@ before writes. A concurrent grant add already reads the collection in its own
 transaction; the shared collection read/write makes Firestore retry one side,
 so an add cannot commit against a tombstoned collection.
 
-Retain the retry-healing behavior from the previous hardening: if the current
-collection is already a canonical tombstone, rerun the ACL cleanup using its
-stored server mutation identity; if the current collection is missing,
-malformed, or live and newer than the delete request, do not revoke. Remove
-the old rule that allows a pre-delete live pair to survive solely because its
-server timestamp is greater than the client's delete timestamp. If the
-collection is later undeleted, all prior grant pairs remain tombstoned and the
-owner must explicitly share again.
+Retain retry-healing behavior from the previous hardening: if the current
+collection is already a canonical tombstone, rerun the bounded live-grant
+query and ACL cleanup using exactly its stored `grantCascadeAt`; if the
+current collection is missing, malformed, or live and newer than the delete
+request, do not revoke. Remove the old rule that allows a pre-delete live pair
+to survive solely because its server timestamp is greater than the client's
+delete timestamp. If the collection is later undeleted, all prior grant pairs
+remain tombstoned and the owner must explicitly share again. All transaction
+reads—including the bounded grant query and reverse point reads—must finish
+before the first write.
 
 Keep pure transition/orchestration seams so tests require no emulator.
 Regression tests:
@@ -219,7 +249,7 @@ Regression tests:
 - a transaction conflict/retry cannot commit grant add and collection delete
   as simultaneously live;
 - retrying an already-stored tombstone heals a leftover live pair using stored
-  server mutation identity, not the stale request timestamp;
+  `grantCascadeAt`, not the stale request timestamp;
 - stale delete against a newer live/undeleted collection performs no ACL
   writes;
 - undeleting after a completed delete does not make the old reverse share
@@ -263,6 +293,12 @@ the persisted parent sidecar and the currently visible `recipeOrigins`.
 Run photo attribution after this filtering. Do not serialize sidecars into
 the backup and do not import provenance from backup JSON.
 
+Apply the same classifier in `ownedBackupGraphIds()`: when a chat/cook row's
+persisted sidecar is shared, exclude that row's id, parent recipe reference,
+and attachment photo ids from owned-overlap evidence even after
+`recipeOrigins` has disappeared. Keep one shared-parent classifier for export
+and ownership detection so the policies cannot drift.
+
 Regression tests:
 
 - a hostile chat/cook payload cannot choose or clear stored provenance;
@@ -276,6 +312,8 @@ Regression tests:
   though `recipeOrigins` no longer contains the parent;
 - optimistic chat/cook created while the share is live is omitted before a
   subsequent pull;
+- overlap only through revoked shared-parent sidecars does not select
+  preserve mode for a provenance-less foreign backup;
 - owned-parent rows and legacy non-shared orphan rows retain their existing
   export behavior;
 - clear/tombstone/sign-out removes the corresponding sidecar state;
@@ -338,13 +376,15 @@ server edits. Use an owner and a second admitted member; do not deploy.
 - No production data migration is expected: PR #23 sharing has not been
   deployed. The shared cursor is request-scoped and is not persisted; an old
   opaque cursor is treated as a safe restart/failure, never as authorization.
-- Existing version-1/2/3 backups remain importable. New imports keep version 3
-  and only change remote write order.
-- Collection and grant document shapes remain readable. The server-side
-  cascade order/internal mutation identity is additive; no client consumes
-  it. Development data left by the pre-fix branch can be healed by repeating
-  collection delete before undelete. No production backfill script belongs in
-  this PR.
+- Existing version-1/2/3 recipe entities remain importable. New imports keep
+  version 3 and change remote write order; dangling chat/cook rows and photos
+  without a usable recipe in the same backup are sanitized before mutation
+  because the server cannot accept them.
+- Collection and grant document shapes remain readable. `active`,
+  `grantCascadeAt`, and server-side mutation identity are internal/additive;
+  no client consumes them. Sharing is undeployed, so development grants made
+  before `active` are reset and re-shared for testing rather than migrated.
+  No production backfill script belongs in this PR.
 - `sharedParentOwnerSub` is additive server metadata and absent on legacy
   rows. Absence continues to mean “no persisted evidence of shared parent,”
   preserving owned legacy/orphan backup behavior. Because sharing is
