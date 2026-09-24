@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyPushOp, syncPull, syncPush } from './sync.ts';
+import { applyPushOp, shouldCascadeCollectionDelete, syncPull, syncPush } from './sync.ts';
 import { compareMutation, decodePullCursor, encodePullCursor, validatePushOp } from './store.ts';
 
 beforeEach(() => {
@@ -60,5 +60,19 @@ describe('syncPull unauthorized', () => {
   it('returns 401 without cookie', async () => {
     const res = await syncPull(new Request('http://localhost/api/sync/pull'));
     expect(res.status).toBe(401);
+  });
+});
+
+describe('shouldCascadeCollectionDelete', () => {
+  it('cascades only when tombstone delete was applied', () => {
+    expect(shouldCascadeCollectionDelete({ applied: true, serverUpdatedAt: 50 })).toBe(true);
+    expect(
+      shouldCascadeCollectionDelete({
+        applied: false,
+        reason: 'stale',
+        current: { updatedAt: 100 },
+      }),
+    ).toBe(false);
+    expect(shouldCascadeCollectionDelete({ applied: false, reason: 'stale' })).toBe(false);
   });
 });

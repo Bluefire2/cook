@@ -26,10 +26,16 @@ import {
   readDocData,
   tombstoneDoc,
   tombstonePhotoWithGcs,
+  type MutationResult,
   type PullCursor,
   type StoreKind,
   validatePushOp,
 } from './store.ts';
+
+/** Cascade grants only when the delete tombstone was applied (stale LWW rejects skip cascade). */
+export function shouldCascadeCollectionDelete(result: MutationResult): boolean {
+  return result.applied === true;
+}
 
 const STORE_KINDS: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos', 'collections'];
 
@@ -210,7 +216,9 @@ export async function applyPushOp(
     case 'collection.delete': {
       const body = payload as { id: string; updatedAt: number };
       const result = await tombstoneDoc(uid, 'collections', body.id, body.updatedAt);
-      await cascadeCollectionGrants(uid, body.id, body.updatedAt);
+      if (shouldCascadeCollectionDelete(result)) {
+        await cascadeCollectionGrants(uid, body.id, body.updatedAt);
+      }
       return result;
     }
     default:
