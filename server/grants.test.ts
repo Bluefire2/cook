@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_LIVE_GRANTS,
   addGrantTransition,
+  cascadeGrantPairTransition,
   collectionLiveForGrant,
   grantCascadeRevoke,
   incomingShareCascadeDoc,
   incomingShareFromGrant,
   normalizeShareEmail,
   parseGrantDoc,
+  parseIncomingShareDoc,
   resolveShareTarget,
   revokeGrantTransition,
   shareGrantId,
@@ -263,6 +265,84 @@ describe('grantCascadeRevoke', () => {
         cascadeAt,
       ),
     ).toBeNull();
+  });
+});
+
+describe('cascadeGrantPairTransition', () => {
+  const ownerSub = 'owner';
+  const cascadeAt = 100;
+
+  it('tombstones both sides when neither doc is newer than cascadeAt', () => {
+    const result = cascadeGrantPairTransition({
+      existingGrant: {
+        viewerSub,
+        email: 'a@b.c',
+        collectionId,
+        createdAt: 1,
+        updatedAt: 50,
+      },
+      existingShare: { ownerSub, collectionId, updatedAt: 50 },
+      viewerSub,
+      ownerSub,
+      collectionId,
+      cascadeAt,
+    });
+    expect(result).toEqual({
+      grant: { viewerSub, updatedAt: cascadeAt, deletedAt: cascadeAt },
+      share: {
+        ownerSub,
+        collectionId,
+        updatedAt: cascadeAt,
+        deletedAt: cascadeAt,
+      },
+    });
+  });
+
+  it('skips both when either side is newer than cascadeAt', () => {
+    expect(
+      cascadeGrantPairTransition({
+        existingGrant: {
+          viewerSub,
+          email: 'a@b.c',
+          collectionId,
+          createdAt: 1,
+          updatedAt: cascadeAt + 1,
+        },
+        existingShare: { ownerSub, collectionId, updatedAt: 50 },
+        viewerSub,
+        ownerSub,
+        collectionId,
+        cascadeAt,
+      }),
+    ).toBeNull();
+    expect(
+      cascadeGrantPairTransition({
+        existingGrant: null,
+        existingShare: { ownerSub, collectionId, updatedAt: cascadeAt + 1 },
+        viewerSub,
+        ownerSub,
+        collectionId,
+        cascadeAt,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('parseIncomingShareDoc', () => {
+  it('parses a stored incoming share', () => {
+    expect(
+      parseIncomingShareDoc({
+        ownerSub: 'owner',
+        collectionId,
+        updatedAt: 3,
+        ownerEmail: 'o@e.c',
+      }),
+    ).toEqual({
+      ownerSub: 'owner',
+      collectionId,
+      updatedAt: 3,
+      ownerEmail: 'o@e.c',
+    });
   });
 });
 

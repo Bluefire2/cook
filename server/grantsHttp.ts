@@ -3,6 +3,7 @@ import {
   NO_ACCOUNT_MESSAGE,
   addGrantTransition,
   cascadeCollectionGrants,
+  collectionLiveForGrant,
   grantColRef,
   incomingSharePayload,
   incomingShareRef,
@@ -20,7 +21,13 @@ import {
   requireMember,
   storeUnavailable,
 } from './membership.ts';
-import { getStoreFirestore, isLiveDoc, isUuid, readDocData } from './store.ts';
+import {
+  collectionDocRef,
+  getStoreFirestore,
+  isLiveDoc,
+  isUuid,
+  readDocData,
+} from './store.ts';
 
 const BODY_LIMIT = 8_000;
 
@@ -36,6 +43,13 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function notFound(): Response {
   return jsonResponse({ error: 'Not found' }, 404);
+}
+
+/** Maps in-transaction owner collection read to grant-post HTTP status. */
+export function grantPostHttpStatusForCollectionRead(
+  collectionData: Record<string, unknown> | undefined,
+): 404 | null {
+  return collectionLiveForGrant(collectionData) ? null : 404;
 }
 
 export function collectionIdFromPath(pathname: string): string | null {
@@ -182,6 +196,13 @@ export async function collectionGrantsPost(req: Request): Promise<Response> {
     const db = getStoreFirestore();
     const outcome = await db.runTransaction(async (tx) => {
       const allGrants = await tx.get(grantColRef(access.sub, collectionId));
+      const collectionSnap = await tx.get(collectionDocRef(access.sub, collectionId));
+      const collectionData = collectionSnap.exists
+        ? (collectionSnap.data() as Record<string, unknown>)
+        : undefined;
+      if (grantPostHttpStatusForCollectionRead(collectionData) === 404) {
+        return { kind: 'collectionMissing' as const };
+      }
       const grantSnap = allGrants.docs.find((doc) => doc.id === target.sub);
       const existing = parseGrantDoc(
         grantSnap?.exists ? grantSnap.data() : undefined,
@@ -217,6 +238,9 @@ export async function collectionGrantsPost(req: Request): Promise<Response> {
       );
       return { kind: 'write' as const, doc: next.doc };
     });
+    if (outcome.kind === 'collectionMissing') {
+      return notFound();
+    }
     if (outcome.kind === 'cap') {
       return jsonResponse(
         { error: `This collection already has ${MAX_LIVE_GRANTS} people` },

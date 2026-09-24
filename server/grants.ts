@@ -182,6 +182,61 @@ export function grantCascadeRevoke(
   };
 }
 
+export function parseIncomingShareDoc(raw: unknown): IncomingShareDoc | undefined {
+  if (!isPlainObject(raw)) {
+    return undefined;
+  }
+  if (typeof raw.ownerSub !== 'string' || raw.ownerSub === '') {
+    return undefined;
+  }
+  if (typeof raw.collectionId !== 'string' || !isUuid(raw.collectionId)) {
+    return undefined;
+  }
+  const updatedAt = finiteNumber(raw.updatedAt);
+  if (updatedAt === undefined) {
+    return undefined;
+  }
+  const share: IncomingShareDoc = {
+    ownerSub: raw.ownerSub,
+    collectionId: raw.collectionId,
+    updatedAt,
+  };
+  if (typeof raw.ownerEmail === 'string' && raw.ownerEmail !== '') {
+    share.ownerEmail = raw.ownerEmail;
+  }
+  const deletedAt = finiteNumber(raw.deletedAt);
+  if (deletedAt !== undefined) {
+    share.deletedAt = deletedAt;
+  }
+  return share;
+}
+
+/** Both sides tombstone or both skip; never write one side alone. */
+export function cascadeGrantPairTransition(input: {
+  existingGrant: LiveGrant | GrantTombstone | null;
+  existingShare: IncomingShareDoc | undefined;
+  viewerSub: string;
+  ownerSub: string;
+  collectionId: string;
+  cascadeAt: number;
+}): { grant: GrantTombstone; share: IncomingShareDoc } | null {
+  const grant = grantCascadeRevoke(
+    input.existingGrant,
+    input.viewerSub,
+    input.cascadeAt,
+  );
+  const share = incomingShareCascadeDoc(
+    input.existingShare,
+    input.ownerSub,
+    input.collectionId,
+    input.cascadeAt,
+  );
+  if (grant === null || share === null) {
+    return null;
+  }
+  return { grant, share };
+}
+
 export function incomingShareFromGrant(
   ownerSub: string,
   collectionId: string,
@@ -391,19 +446,32 @@ export async function cascadeCollectionGrants(
   const db = getStoreFirestore();
   const grantId = shareGrantId(ownerSub, collectionId);
   for (const doc of snap.docs) {
-    const existing = parseGrantDoc(doc.data(), doc.id);
-    const next = revokeGrantTransition({
-      existing,
-      viewerSub: doc.id,
-      now: at,
-    });
+    const viewerSub = doc.id;
+    const grantRef = grantColRef(ownerSub, collectionId).doc(viewerSub);
+    const shareRef = incomingShareRef(viewerSub, grantId);
     await db.runTransaction(async (tx) => {
-      tx.set(doc.ref, next.doc, { merge: false });
-      tx.set(
-        incomingShareRef(doc.id, grantId),
-        incomingSharePayload(ownerSub, collectionId, at, { deletedAt: at }),
-        { merge: false },
+      const grantSnap = await tx.get(grantRef);
+      const shareSnap = await tx.get(shareRef);
+      const existingGrant = parseGrantDoc(
+        grantSnap.exists ? grantSnap.data() : undefined,
+        viewerSub,
       );
+      const existingShare = shareSnap.exists
+        ? parseIncomingShareDoc(shareSnap.data())
+        : undefined;
+      const next = cascadeGrantPairTransition({
+        existingGrant,
+        existingShare,
+        viewerSub,
+        ownerSub,
+        collectionId,
+        cascadeAt: at,
+      });
+      if (next === null) {
+        return;
+      }
+      tx.set(grantRef, next.grant, { merge: false });
+      tx.set(shareRef, next.share, { merge: false });
     });
   }
 }
