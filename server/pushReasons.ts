@@ -1,4 +1,6 @@
-/** Per-op push reject reasons. Shared by the Node sync path and the client. */
+// Keep this module dependency-free and browser-safe: src/lib/pushReasons.ts
+// re-exports it into the Vite client bundle as well as the Node sync path.
+/** Per-op push reject reasons shared by the Node sync path and the client. */
 export type PushRejectReason =
   | 'invalid'
   | 'unknown'
