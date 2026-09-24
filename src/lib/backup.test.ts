@@ -52,7 +52,7 @@ describe('importLibrary', () => {
       { type: 'application/json' },
     );
 
-    await expect(importLibrary(file)).rejects.toThrow("Couldn't import the backup.");
+    await expect(importLibrary(file, 'test-sub')).rejects.toThrow("Couldn't import the backup.");
     expect(listRecipes()).toEqual([]);
     expect(listCollections()).toEqual([]);
   });

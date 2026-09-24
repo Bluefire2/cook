@@ -23,6 +23,10 @@ import { compactCollection, compactCollectionName } from './compactCollection';
 import { recipePhotoIds } from './recipePhotos';
 import { fetchPhotoBlob, postPhoto, pushOps } from './remote';
 import type { PushOp } from './pushOps';
+import {
+  remapBackupImport,
+  shouldCloneBackupIds,
+} from './backupImportRemap';
 
 interface BackupPhoto {
   id: string;
@@ -35,6 +39,8 @@ interface BackupFile {
   app: 'cook';
   version: 1 | 2 | 3;
   exportedAt: number;
+  /** Google `sub` of the account that exported this file (optional on legacy backups). */
+  exportedBySub?: string;
   recipes: unknown[];
   chatMessages: ChatMessage[];
   photos: BackupPhoto[];
@@ -76,7 +82,7 @@ function attributePhotos(
   return map;
 }
 
-export async function exportLibrary(): Promise<Blob> {
+export async function exportLibrary(currentSub: string): Promise<Blob> {
   const recipes = listRecipes().filter((recipe) => !isSharedRecipe(recipe.id));
   const chatMessages = listAllChat();
   const cookState = listAllCook().filter((row) => !isSharedRecipe(row.recipeId));
@@ -107,6 +113,7 @@ export async function exportLibrary(): Promise<Blob> {
     app: 'cook',
     version: 3,
     exportedAt: Date.now(),
+    exportedBySub: currentSub,
     recipes,
     chatMessages,
     cookState,
@@ -137,9 +144,10 @@ function isUsableCollection(raw: unknown): raw is Collection {
   return true;
 }
 
-/** Merges a backup into the account library (existing ids get overwritten). */
+/** Merges a backup into the account library (existing ids get overwritten when same account). */
 export async function importLibrary(
   file: Blob,
+  currentSub: string,
 ): Promise<{ imported: number; skipped: number }> {
   const backup = JSON.parse(await file.text()) as BackupFile;
   if (backup.app !== 'cook' || !Array.isArray(backup.recipes)) {
@@ -148,12 +156,32 @@ export async function importLibrary(
 
   const recipes = backup.recipes.filter(isUsableRecipe).map(compactRecipe);
   const skipped = backup.recipes.length - recipes.length;
+  const collections = (backup.collections ?? [])
+    .filter(isUsableCollection)
+    .map(compactCollection);
   const chatMessages = backup.chatMessages ?? [];
-  const photoAttribution = attributePhotos(recipes, chatMessages);
+  const cookState = backup.cookState ?? [];
+  const clone = shouldCloneBackupIds(backup.exportedBySub, currentSub);
+  const remapped = remapBackupImport(
+    {
+      recipes,
+      collections,
+      chatMessages,
+      cookState,
+      backupPhotoIds: (backup.photos ?? []).map((p) => p.id),
+    },
+    clone,
+    () => crypto.randomUUID(),
+  );
+  const importRecipes = remapped.recipes;
+  const importCollections = remapped.collections;
+  const importChat = remapped.chatMessages;
+  const importCook = remapped.cookState;
+  const photoAttribution = attributePhotos(importRecipes, importChat);
 
   const photos = await Promise.all(
     (backup.photos ?? []).map(async (p) => ({
-      id: p.id,
+      id: remapped.photoIdMap.get(p.id) ?? p.id,
       blob: await (await fetch(`data:${p.type};base64,${p.base64}`)).blob(),
       createdAt: p.createdAt,
     })),
@@ -164,22 +192,17 @@ export async function importLibrary(
     for (const photo of photos) {
       addPendingBlob(photo.id, photo.blob);
     }
-    for (const recipe of recipes) {
+    for (const recipe of importRecipes) {
       upsertRecipe(recipe);
     }
-    const collections = (backup.collections ?? [])
-      .filter(isUsableCollection)
-      .map(compactCollection);
-    for (const collection of collections) {
+    for (const collection of importCollections) {
       upsertCollection(collection);
     }
-    for (const message of chatMessages) {
+    for (const message of importChat) {
       upsertChat(message);
     }
-    if (backup.cookState) {
-      for (const row of backup.cookState) {
-        upsertCook(row);
-      }
+    for (const row of importCook) {
+      upsertCook(row);
     }
 
     for (const [photoId, recipeId] of photoAttribution) {
@@ -200,22 +223,20 @@ export async function importLibrary(
     }
 
     const ops: PushOp[] = [];
-    for (const recipe of recipes) {
+    for (const recipe of importRecipes) {
       ops.push({ kind: 'recipe.put', payload: recipe });
     }
-    for (const collection of collections) {
+    for (const collection of importCollections) {
       ops.push({ kind: 'collection.put', payload: collection });
     }
-    for (const message of chatMessages) {
+    for (const message of importChat) {
       ops.push({ kind: 'chat.put', payload: message });
     }
-    if (backup.cookState) {
-      for (const row of backup.cookState) {
-        ops.push({
-          kind: 'cookState.put',
-          payload: { ...row, updatedAt: Date.now() },
-        });
-      }
+    for (const row of importCook) {
+      ops.push({
+        kind: 'cookState.put',
+        payload: { ...row, updatedAt: Date.now() },
+      });
     }
     const result = await pushOps(ops);
     if (result !== 'ok') {
@@ -226,7 +247,7 @@ export async function importLibrary(
       );
     }
 
-    return { imported: recipes.length, skipped };
+    return { imported: importRecipes.length, skipped };
   } catch (err) {
     restoreSnapshot(previous);
     throw err;
