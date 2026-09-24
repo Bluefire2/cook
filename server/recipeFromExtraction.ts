@@ -14,12 +14,22 @@ export function recipePutFromExtraction(
   recipe: ImportedRecipe,
   options: { id: string; now: number; sourceUrl?: string },
 ): Record<string, unknown> | null {
+  // Fields are copied by name, not spread: TypeScript lets an object with extra
+  // keys (an `id`, a `photoId`) pass as an `ImportedRecipe`.
   const payload: Record<string, unknown> = {
     id: options.id,
     createdAt: options.now,
     updatedAt: options.now,
-    ...recipe,
+    title: recipe.title,
+    servings: recipe.servings,
+    ingredientSections: recipe.ingredientSections,
+    steps: recipe.steps,
+    tags: recipe.tags,
   };
+  if (recipe.description !== undefined) payload.description = recipe.description;
+  if (recipe.notes !== undefined) payload.notes = recipe.notes;
+  if (recipe.prepMinutes !== undefined) payload.prepMinutes = recipe.prepMinutes;
+  if (recipe.cookMinutes !== undefined) payload.cookMinutes = recipe.cookMinutes;
 
   const sourceUrl = options.sourceUrl?.trim();
   if (sourceUrl) payload.sourceUrl = sourceUrl;
