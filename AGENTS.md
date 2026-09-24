@@ -14,11 +14,18 @@ build step) that imports the page you are reading. It is excluded from the
 image and from `tsc`; nothing else depends on it.
 
 It is a **Vite SPA + a hand-written Node server**, not Next.js, not Auth.js.
-New HTTP routes go in `server/`, not `api/`. The two files under `api/`
-(`chat.ts`, `import.ts`) exist because Vercel still hosts a copy of those
-handlers; they **cannot import siblings**, so session verification is
-duplicated inline there. Keep those copies in sync with `server/session.ts`
-and `server/allowlist.ts`.
+New HTTP routes go in `server/`, not `api/`. `api/chat.ts` exists because
+Vercel still hosts a copy of that handler; it **cannot import siblings**, so
+session verification is duplicated inline there. Keep that copy in sync with
+`server/session.ts` and `server/allowlist.ts`. `api/import.ts` is a Vercel-only
+stub that always returns 401; Cloud Run serves `/api/import` from
+`server/importRoute.ts`.
+
+Recipe import (web URL/paste, extension, evals) is one pipeline in
+`server/recipeImport.ts`: `importFromHtml` / `importFromSource` take the
+Gemini client and model as arguments and return an `ImportOutcome`; routes map
+outcomes to HTTP. `normalizeImportedRecipe` is the only cleanup of model
+output for import.
 
 ## How to run it
 
@@ -92,7 +99,7 @@ No refresh tokens, no extra Google APIs, no Auth.js.
   per container instance. Removing someone from `members/{sub}` takes effect
   within that bound; removing an owner from `ALLOWED_EMAILS` takes effect on
   the very next request.
-- **`api/chat.ts` / `api/import.ts`:** on Cloud Run, `withMembership` passes an
+- **`api/chat.ts`:** on Cloud Run, `withMembership` passes an
   in-process **`authorizedSub`** argument after `requireMember` passed. The
   inline **`sessionSub`** copy remains the **Vercel** gate and must stay in sync
   with `server/session.ts` + `server/allowlist.ts`.
@@ -208,6 +215,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/shared-recipes.md` | PR 1 implementing (named collections + implicit default). PR 2 view ACLs not started. |
 | `docs/plans/bulk-import.md` | Implementing. Opt-in bulk URL import on `/import`. |
 | `docs/plans/chrome-extension-import.md` | Built: `extension/` + `POST /api/extension/import`. Not deployed. |
+| `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web, extension, evals. `api/import.ts` is a 401 stub. Not deployed. |
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
@@ -220,7 +228,7 @@ Unit tests cover **pure** logic only. There is no fake-indexeddb, no Firestore
 emulator in CI, no GCS mock, no DOM testing library — do not add them for one
 feature. `.github/workflows/ci.yml` stays `tsc -b` + `npm test` on push/PR.
 
-Live paste-to-recipe evals are `npm run test:import` (`src/**/*.eval.ts`,
+Live paste-to-recipe evals are `npm run test:import` (`server/**/*.eval.ts`,
 `vitest.eval.config.ts`). They call Gemini against fixtures in `evals/import/`
 and need `GEMINI_API_KEY` from `.env.local` (same as `dev:api`). Website
 fixtures use cached `page.html` (never fetch at eval time). Do not fold them

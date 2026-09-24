@@ -7,9 +7,9 @@
  * and `compactRecipeFields` keep their single home in `server/sync.ts`.
  */
 import { randomUUID } from 'node:crypto';
-import { extractRecipeDraft, extractRecipeSource } from '../api/import.ts';
 import { requireHeaderMember } from './membership.ts';
 import { recipePutFromExtraction } from './recipeFromExtraction.ts';
+import { importFromHtml, recipeImportDepsFromEnv, type RecipeImportDeps } from './recipeImport.ts';
 import { applyPushOp } from './sync.ts';
 
 /** Buffered then measured, matching `syncPush`'s `raw.length` convention. */
@@ -17,6 +17,7 @@ const MAX_BODY_CHARS = 1_500_000;
 /** The extension caps itself at 400 000; this is the server refusing to be the one that runs out of memory. */
 const MAX_HTML_CHARS = 600_000;
 const TOO_LARGE = 'Page was too large to import.';
+const UNUSABLE = 'Extraction produced an unusable recipe.';
 
 // A Gemini extraction regularly outlasts a 10s default, same as `/api/import`.
 export const maxDuration = 60;
@@ -80,7 +81,10 @@ export function extensionImportOptions(req: Request): Promise<Response> {
   );
 }
 
-export async function extensionImport(req: Request): Promise<Response> {
+export async function extensionImport(
+  req: Request,
+  deps?: RecipeImportDeps,
+): Promise<Response> {
   const access = await requireHeaderMember(req);
   if (access.kind === 'denied') {
     return jsonResponse(req, { error: 'Unauthorized' }, 401);
@@ -131,23 +135,27 @@ export async function extensionImport(req: Request): Promise<Response> {
     return jsonResponse(req, { error: 'Could not read that page.' }, 422);
   }
 
-  const source = extractRecipeSource(html);
-  if (source.trim() === '') {
-    return jsonResponse(req, { error: 'Could not read that page.' }, 422);
+  const outcome = await importFromHtml(html, deps ?? recipeImportDepsFromEnv());
+  switch (outcome.kind) {
+    case 'ok':
+      break;
+    case 'empty_source':
+      return jsonResponse(req, { error: 'Could not read that page.' }, 422);
+    case 'not_a_recipe':
+      return jsonResponse(req, { error: "Couldn't find a recipe in that content." }, 422);
+    case 'parse_error':
+      return jsonResponse(req, { error: 'Extraction failed — no structured result.' }, 502);
+    case 'unusable':
+      return jsonResponse(req, { error: UNUSABLE }, 502);
   }
 
-  const extracted = await extractRecipeDraft(source);
-  if (!extracted.ok) {
-    return jsonResponse(req, { error: extracted.error }, extracted.status);
-  }
-
-  const payload = recipePutFromExtraction(extracted.recipe, {
+  const payload = recipePutFromExtraction(outcome.recipe, {
     id: randomUUID(),
     now: Date.now(),
     sourceUrl: url,
   });
   if (payload === null) {
-    return jsonResponse(req, { error: 'Extraction produced an unusable recipe.' }, 502);
+    return jsonResponse(req, { error: UNUSABLE }, 502);
   }
 
   // Firestore is the likeliest thing to fail here, and an escaping throw would

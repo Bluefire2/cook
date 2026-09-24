@@ -4,13 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { GoogleGenAI, Type, type Schema } from '@google/genai';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
-  extractRecipeSource,
-  generateRecipeFromSource,
-} from '../../api/import';
-import { normalizeRecipeDraft } from './recipeShape';
-import type { RecipeDraft } from './types';
+  importFromHtml,
+  importFromSource,
+  normalizeImportedRecipe,
+  recipeImportDepsFromEnv,
+  type ImportOutcome,
+  type ImportedRecipe,
+} from './recipeImport.ts';
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const fixturesRoot = join(repoRoot, 'evals/import');
 
 const TEXT_FIXTURES = ['pomodoro', 'messy-sections'] as const;
@@ -39,24 +41,26 @@ function readFixtureText(name: string, file: string): string {
   return readFileSync(join(fixturesRoot, name, file), 'utf8');
 }
 
-function loadSource(name: string): string {
+/** Runs a fixture through the same entry point production uses for it. */
+function importFixture(name: string): Promise<ImportOutcome> {
+  const deps = recipeImportDepsFromEnv();
   const htmlPath = join(fixturesRoot, name, 'page.html');
   if (existsSync(htmlPath)) {
-    return extractRecipeSource(readFileSync(htmlPath, 'utf8'));
+    return importFromHtml(readFileSync(htmlPath, 'utf8'), deps);
   }
-  return readFixtureText(name, 'source.txt');
+  return importFromSource(readFixtureText(name, 'source.txt'), deps);
 }
 
-function readGolden(name: string): RecipeDraft {
+function readGolden(name: string): ImportedRecipe {
   const parsed: unknown = JSON.parse(readFixtureText(name, 'golden.json'));
-  const golden = normalizeRecipeDraft(parsed);
-  if (golden === undefined) {
-    throw new Error(`evals/import/${name}/golden.json is not a usable RecipeDraft`);
+  const golden = normalizeImportedRecipe(parsed);
+  if (golden === null) {
+    throw new Error(`evals/import/${name}/golden.json is not a usable recipe`);
   }
   return golden;
 }
 
-function ingredientCount(draft: RecipeDraft): number {
+function ingredientCount(draft: ImportedRecipe): number {
   return draft.ingredientSections.reduce((n, section) => n + section.items.length, 0);
 }
 
@@ -85,8 +89,8 @@ function parseJudgeVerdict(raw: string): {
 
 async function judgeOnce(
   ai: GoogleGenAI,
-  extracted: RecipeDraft,
-  golden: RecipeDraft,
+  extracted: ImportedRecipe,
+  golden: ImportedRecipe,
 ): Promise<string> {
   const result = await ai.models.generateContent({
     model: process.env.CHAT_MODEL || 'gemini-3.7-flash',
@@ -113,8 +117,8 @@ async function judgeOnce(
 }
 
 async function judgeRecipe(
-  extracted: RecipeDraft,
-  golden: RecipeDraft,
+  extracted: ImportedRecipe,
+  golden: ImportedRecipe,
 ): Promise<{ pass: boolean; failures: { field: string; reason: string }[] }> {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   try {
@@ -125,15 +129,11 @@ async function judgeRecipe(
 }
 
 async function expectCloseToGolden(name: string): Promise<void> {
-  const source = loadSource(name);
   const golden = readGolden(name);
-  const result = await generateRecipeFromSource(source);
-  expect(result.status, `${name} extraction status`).toBe('ok');
-  if (result.status !== 'ok') return;
-
-  const extracted = normalizeRecipeDraft(result.recipe);
-  expect(extracted, `${name} did not normalize to a RecipeDraft`).toBeDefined();
-  if (extracted === undefined) return;
+  const result = await importFixture(name);
+  expect(result.kind, `${name} import outcome`).toBe('ok');
+  if (result.kind !== 'ok') return;
+  const extracted = result.recipe;
 
   expect(extracted.servings, `${name} servings`).toBe(golden.servings);
 
@@ -172,9 +172,8 @@ describe('import from text (live Gemini)', () => {
   });
 
   it('rejects text that is not a recipe', async () => {
-    const source = readFixtureText('not-a-recipe', 'source.txt');
-    const result = await generateRecipeFromSource(source);
-    expect(result.status).toBe('not_a_recipe');
+    const result = await importFixture('not-a-recipe');
+    expect(result.kind).toBe('not_a_recipe');
   });
 
   it.each(TEXT_FIXTURES)(

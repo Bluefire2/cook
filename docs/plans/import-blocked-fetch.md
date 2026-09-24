@@ -75,7 +75,8 @@ Injection is easy to miss:
    `/api/extension/import`.
 2. **Extension import requires the tab’s HTML.** Empty or whitespace `html` is
    `422` `"Could not read that page."`, never `fetchPageHtml`. `fetchPageHtml`
-   stays on `api/import.ts` for the website URL path only.
+   is for the website URL path only (now in `server/recipeImport.ts`; see
+   `docs/plans/recipe-import-module.md`).
 3. **Grab in the popup, on the Import click.** That is the `activeTab`
    user-gesture context. The worker only authenticates and POSTs. The long
    Gemini wait still belongs in the worker (parent Decision 7): popups die when
@@ -153,7 +154,7 @@ This file. Amends parent Decision 3 as above. Add a row to the Plans table in
 - Delete the `else { fetchPageHtml(url) }` branch and the `fetchPageHtml`
   import. The URL scheme check stays: `sourceUrl` is stored on the recipe
   either way.
-- `fetchPageHtml` stays on `api/import.ts`.
+- `fetchPageHtml` stays on the website URL path (now `server/recipeImport.ts`).
 
 `server/extensionImport.test.ts`: empty and whitespace `html` (and a missing
 `html` field) return 422 with a forged `X-Sous-Session`, and `fetch` is not
