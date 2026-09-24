@@ -523,6 +523,24 @@ export async function readDocData(
   return snap.data() as Record<string, unknown>;
 }
 
+/** Batched `readDocData`; results are positional with `ids`. */
+export async function readDocsData(
+  uid: string,
+  kind: StoreKind,
+  ids: readonly string[],
+): Promise<Array<Record<string, unknown> | undefined>> {
+  const out: Array<Record<string, unknown> | undefined> = [];
+  for (const chunk of chunkForBatch([...ids], 100)) {
+    const snaps = await getFirestore().getAll(
+      ...chunk.map((id) => colRef(uid, kind).doc(id)),
+    );
+    for (const snap of snaps) {
+      out.push(snap.exists ? (snap.data() as Record<string, unknown>) : undefined);
+    }
+  }
+  return out;
+}
+
 /**
  * Keep ids whose recipe docs are missing (same-batch create) or live.
  * Drop ids whose recipe docs are tombstones so a stale collection.put

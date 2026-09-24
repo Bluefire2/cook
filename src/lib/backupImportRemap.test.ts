@@ -7,7 +7,9 @@ import {
 } from './libraryMemory';
 import {
   backupGraphIds,
+  cloneUuid,
   decideBackupImportMode,
+  deterministicCloneIds,
   remapBackupImport,
   type BackupGraphIds,
   type BackupImportEntities,
@@ -136,6 +138,39 @@ describe('decideBackupImportMode', () => {
         graphIds({ photoIds: [ALICE_RECIPE] }),
       ),
     ).toBe('clone');
+  });
+});
+
+describe('cloneUuid', () => {
+  const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  it('is a stable version-8 UUID the server accepts', async () => {
+    const first = await cloneUuid(CAROL, 'recipe', ALICE_RECIPE);
+    expect(first).toMatch(UUID_RE);
+    expect(first[14]).toBe('8');
+    expect(await cloneUuid(CAROL, 'recipe', ALICE_RECIPE)).toBe(first);
+    expect(first).not.toBe(ALICE_RECIPE);
+  });
+
+  it('differs by importing account and by namespace', async () => {
+    const carol = await cloneUuid(CAROL, 'recipe', ALICE_RECIPE);
+    expect(await cloneUuid(ALICE, 'recipe', ALICE_RECIPE)).not.toBe(carol);
+    expect(await cloneUuid(CAROL, 'photo', ALICE_RECIPE)).not.toBe(carol);
+  });
+
+  it('clone mode with deterministic ids is idempotent across imports', async () => {
+    const input = entities();
+    const cloneIds = await deterministicCloneIds(backupGraphIds(input), CAROL);
+    const first = remapBackupImport(input, 'clone', cloneIds);
+    const second = remapBackupImport(
+      input,
+      'clone',
+      await deterministicCloneIds(backupGraphIds(input), CAROL),
+    );
+    expect(second).toEqual(first);
+    expect(first.recipes[0]?.id).toBe(await cloneUuid(CAROL, 'recipe', ALICE_RECIPE));
+    expect(first.collections[0]?.recipeIds).toEqual([first.recipes[0]?.id]);
   });
 });
 

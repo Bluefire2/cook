@@ -300,6 +300,40 @@ describe('importLibrary', () => {
     ]);
   });
 
+  it('re-importing a cloned legacy backup overwrites the clone instead of duplicating it', async () => {
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    vi.mocked(postPhoto).mockResolvedValue('ok');
+
+    await importLibrary(backupFile(), 'alice-sub');
+    const first = listRecipes()[0]!;
+    const pushedIds = () =>
+      lastPushedOps().map((op) =>
+        'id' in op.payload ? op.payload.id : op.payload.recipeId,
+      );
+    const firstPushed = pushedIds();
+    await importLibrary(backupFile(), 'alice-sub');
+
+    expect(listRecipes()).toHaveLength(1);
+    expect(listRecipes()[0]!.id).toBe(first.id);
+    expect(first.id).not.toBe(RECIPE.id);
+    expect(listCollections()).toHaveLength(1);
+    expect(listAllChat()).toHaveLength(1);
+    expect(listAllCook()).toHaveLength(1);
+    expect(pushedIds()).toEqual(firstPushed);
+  });
+
+  it('re-importing a foreign backup overwrites the clone instead of duplicating it', async () => {
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    vi.mocked(postPhoto).mockResolvedValue('ok');
+
+    await importLibrary(backupFile('alice-sub'), 'carol-sub');
+    await importLibrary(backupFile('alice-sub'), 'carol-sub');
+
+    expect(listRecipes()).toHaveLength(1);
+    expect(listRecipes()[0]!.id).not.toBe(RECIPE.id);
+    expect(listCollections()).toHaveLength(1);
+  });
+
   it('does not treat shared-only legacy overlap as owned evidence', async () => {
     vi.mocked(pushOps).mockResolvedValue('ok');
     vi.mocked(postPhoto).mockResolvedValue('ok');
