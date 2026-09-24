@@ -176,7 +176,7 @@ Callers:
 | `empty_source` | 400 `Provide a URL or recipe text.` | 422 `Could not read that page.` |
 | `parse_error` | 502 `Extraction failed — no structured result.` | 502 same |
 | `not_a_recipe` | 422 `Couldn't find a recipe in that content.` | 422 same |
-| `unusable` | 502 `Extraction failed — no structured result.` | 502 `Extraction produced an unusable recipe.` |
+| `unusable` | 502 `Extraction produced an unusable recipe.` | 502 same |
 
 ## Steps
 

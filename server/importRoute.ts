@@ -51,8 +51,9 @@ function outcomeResponse(outcome: ImportOutcome, sourceUrl: string | undefined):
     case 'not_a_recipe':
       return Response.json({ error: "Couldn't find a recipe in that content." }, { status: 422 });
     case 'parse_error':
-    case 'unusable':
       return Response.json({ error: 'Extraction failed — no structured result.' }, { status: 502 });
+    case 'unusable':
+      return Response.json({ error: 'Extraction produced an unusable recipe.' }, { status: 502 });
   }
 }
 
