@@ -125,6 +125,30 @@ pulls stay silent. `sync()` returns a Promise so Settings can await Refresh.
 Clear `inFlight` in `.then`/`.catch` on that Promise, not with `finally`
 inside the IIFE — that wedges sync after a signed-out run.
 
+## Sharing
+
+Named collections can be shared view-only with existing admitted members; the
+default collection remains private. Shared refresh is a **full positional
+reread** of live incoming grants and current collection contents, not an
+`updatedAt` delta. A successful refresh publishes owned and shared rows
+atomically. After owned pull completes, a non-auth shared failure publishes
+the completed owned-only snapshot and returns the existing error outcome; a
+shared 401/403 still clears the session and library.
+
+Profile upsert writes display `email` plus normalized `emailLower`. Add-by-email
+queries `emailLower` first and falls back only to exact normalized `email` for
+legacy profiles that already stored lowercase email. The success-vs-generic
+failure account-existence signal is a conscious invitation-only product
+choice; do not make failure responses more revealing.
+
+For a shared photo, metadata only indexes its parent recipe. Authorization
+still freshly reads the incoming share and live collection, then requires
+`canViewRecipe` and `recipeListsPhoto`; metadata alone never authorizes. Ask
+text works on shared recipes, but Ask photo attachments are intentionally
+unavailable. Backup export omits shared-parent chat and its attachments.
+There is no viewer leave flow. Viewer-owned shared-parent chat can remain
+orphaned server-side after revoke; do not invent cleanup as part of sharing.
+
 ## Cloud and deploy
 
 | | |
@@ -165,6 +189,11 @@ trigger.
 
 Docker is not installed locally; local `bash scripts/deploy.sh` still uses
 Cloud Build.
+
+The first production verification after deploying sharing must delete a real
+recipe that is listed in a collection and confirm the Firestore
+`array-contains` query on `recipeIds` succeeds (and therefore its required
+index exists).
 
 ## Do not touch
 
