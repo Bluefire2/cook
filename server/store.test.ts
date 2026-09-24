@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addedCollectionRecipeIds,
   chunkByCost,
   chunkForBatch,
   applyCollectionMembershipScrubs,
@@ -258,6 +259,43 @@ describe('recipeIdsWithoutTombstones', () => {
       liveId,
       goneId,
     ]);
+  });
+});
+
+describe('addedCollectionRecipeIds', () => {
+  const first = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const second = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const added = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+  it('checks only ids newly added to a live collection', () => {
+    const existing = {
+      id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      name: 'Dinners',
+      recipeIds: [first, second],
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    expect(addedCollectionRecipeIds(existing, [second, first])).toEqual([]);
+    expect(addedCollectionRecipeIds(existing, [first, second, added])).toEqual([
+      added,
+    ]);
+  });
+
+  it('checks every id for a new or tombstoned collection', () => {
+    expect(addedCollectionRecipeIds(undefined, [first, added])).toEqual([
+      first,
+      added,
+    ]);
+    expect(
+      addedCollectionRecipeIds(
+        {
+          id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+          updatedAt: 3,
+          deletedAt: 3,
+        },
+        [first, added],
+      ),
+    ).toEqual([first, added]);
   });
 });
 

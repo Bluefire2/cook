@@ -517,6 +517,20 @@ export function recipeIdsWithoutTombstones(
   });
 }
 
+/** Only newly listed ids need a tombstone read; existing membership was checked on its prior put. */
+export function addedCollectionRecipeIds(
+  existing: Record<string, unknown> | undefined,
+  nextRecipeIds: readonly string[],
+): string[] {
+  if (!isLiveDoc(existing) || !Array.isArray(existing?.recipeIds)) {
+    return [...nextRecipeIds];
+  }
+  const previous = new Set(
+    existing.recipeIds.filter((id): id is string => typeof id === 'string'),
+  );
+  return nextRecipeIds.filter((id) => !previous.has(id));
+}
+
 export async function readRecipeDocsById(
   uid: string,
   ids: readonly string[],
@@ -529,6 +543,7 @@ export async function readRecipeDocsById(
   for (const chunk of chunkForBatch(unique, 100)) {
     const snaps = await getFirestore().getAll(
       ...chunk.map((id) => colRef(uid, 'recipes').doc(id)),
+      { fieldMask: ['deletedAt'] },
     );
     chunk.forEach((id, i) => {
       const snap = snaps[i];

@@ -12,6 +12,7 @@ import {
   encodeSharedCursor,
 } from './sharedPull.ts';
 import {
+  addedCollectionRecipeIds,
   cascadeRecipeDelete,
   clearChatForRecipe,
   compactCollectionFields,
@@ -216,7 +217,10 @@ export async function applyPushOp(
       const recipeIds = Array.isArray(compact.recipeIds)
         ? compact.recipeIds.filter((recipeId): recipeId is string => typeof recipeId === 'string')
         : [];
-      const recipeById = await readRecipeDocsById(uid, recipeIds);
+      const addedRecipeIds = addedCollectionRecipeIds(existing, recipeIds);
+      // This preflight is intentionally outside putDoc's transaction. A concurrent
+      // recipe delete may briefly win this race, but its membership cascade converges.
+      const recipeById = await readRecipeDocsById(uid, addedRecipeIds);
       return putDoc(
         uid,
         'collections',
