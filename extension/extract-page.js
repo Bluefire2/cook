@@ -9,6 +9,10 @@
  */
 export function grabPageSource(maxChars) {
   const LD_JSON = 'script[type="application/ld+json"]';
+  // News-article recipes (AP News, etc.) often have no schema.org/Recipe block
+  // and live inside <main>/<article> after hundreds of KB of chrome. The cap
+  // would otherwise send only the nav.
+  const PRIMARY = 'article, main, [role="main"]';
 
   function prune(doc) {
     for (const node of doc.querySelectorAll('style, noscript, svg, iframe, canvas, template')) {
@@ -22,11 +26,12 @@ export function grabPageSource(maxChars) {
   }
 
   /**
-   * Over the cap, the linked-data blocks are moved ahead of the cut in their
-   * original relative order — `extractRecipeSource` returns the first Recipe
-   * node it finds, so reordering them could select a different recipe. A block
-   * the cut bisects simply fails the closing-tag match and the import falls
-   * back to the stripped-text path, which is intended.
+   * Over the cap, linked-data blocks and the primary content regions are moved
+   * ahead of the cut in their original relative order. `extractRecipeSource`
+   * returns the first Recipe node it finds, so reordering ld+json blocks could
+   * select a different recipe. A block the cut bisects simply fails the
+   * closing-tag match and the import falls back to the stripped-text path,
+   * which is intended.
    */
   function capped(doc, limit) {
     const html = doc.documentElement.outerHTML;
@@ -36,6 +41,9 @@ export function grabPageSource(maxChars) {
     let hoisted = '';
     for (const block of doc.querySelectorAll(LD_JSON)) {
       hoisted += block.outerHTML;
+    }
+    for (const node of doc.querySelectorAll(PRIMARY)) {
+      hoisted += node.outerHTML;
     }
     if (hoisted.length >= limit) {
       return hoisted.slice(0, limit);

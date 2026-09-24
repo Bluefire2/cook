@@ -1,9 +1,14 @@
 /**
  * Renders whatever the service worker has recorded for this tab. The popup
- * never fetches and never holds the import itself — see background.js.
+ * never POSTs: it grabs the tab HTML on the Import click (the `activeTab`
+ * user-gesture) and hands `{ url, html }` to the worker. See background.js.
  */
+import { grabPageSource } from './extract-page.js';
+
 /** A worker killed mid-run cannot clear its own state; don't spin forever. */
 const STALE_WORKING_MS = 2 * 60 * 1000;
+/** Comfortably inside the server's own 600 000 char / 1 500 000 body caps. */
+const MAX_HTML_CHARS = 400_000;
 
 const els = {
   pageTitle: document.getElementById('page-title'),
@@ -42,10 +47,58 @@ function hideControls() {
   els.openSous.hidden = true;
 }
 
-function startImport() {
+/**
+ * Renders as well as stores, and does not lean on the `onChanged` listener:
+ * `storage.session` drops the change event when the value is byte-identical,
+ * so a second failure with the same message would leave the spinner up.
+ */
+async function writeError(message) {
+  const state = { phase: 'error', message };
+  await chrome.storage.session.set({ [stateKey(tabId)]: state });
+  render(state);
+}
+
+async function grabFromTab(id) {
+  try {
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId: id },
+      func: grabPageSource,
+      args: [MAX_HTML_CHARS],
+    });
+    const result = injection && injection.result;
+    if (result && typeof result.url === 'string' && typeof result.html === 'string') {
+      return result;
+    }
+  } catch (err) {
+    console.warn('Sous: page injection failed', err);
+  }
+  return null;
+}
+
+async function startImport() {
   setStatus('Reading the recipe…', null, true);
   hideControls();
-  void chrome.runtime.sendMessage({ type: 'import', tabId });
+
+  const page = await grabFromTab(tabId);
+  const url = page && page.url;
+  if (!url || !/^https?:\/\//i.test(url)) {
+    await writeError('This page cannot be imported.');
+    return;
+  }
+  if (!page.html.trim()) {
+    await writeError('Could not read this page.');
+    return;
+  }
+
+  // A rejection means the worker never took the page — it failed to start, or
+  // the message was too big. Nothing has written `working`, so the stale-run
+  // timeout cannot rescue this; say so instead of spinning forever.
+  try {
+    await chrome.runtime.sendMessage({ type: 'import', tabId, url, html: page.html });
+  } catch (err) {
+    console.warn('Sous: the importer did not accept the page', err);
+    await writeError('Could not start the import.');
+  }
 }
 
 // Each render* clears the controls itself, because the probe in `init` calls
@@ -90,7 +143,7 @@ function render(state) {
   }
 
   if (state.phase === 'working') {
-    setStatus('Reading the recipe…', null, true);
+    setStatus(state.detail || 'Reading the recipe…', null, true);
     return;
   }
 

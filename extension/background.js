@@ -2,9 +2,11 @@
  * The import runs here, not in the popup: popups are destroyed the moment they
  * lose focus, and an extraction takes seconds. Progress and results live in
  * `chrome.storage.session` keyed by tab, so reopening the popup rejoins a run.
+ *
+ * The popup grabs the tab HTML on the Import click (`activeTab` user-gesture)
+ * and hands `{ url, html }` to this worker. This file never injects and never
+ * asks the server to fetch the URL.
  */
-import { grabPageSource } from './extract-page.js';
-
 const COOKIE_NAME = 'sous_session';
 
 /**
@@ -15,8 +17,6 @@ const COOKIE_NAME = 'sous_session';
  */
 const CANDIDATE_ORIGINS = ['http://localhost:5173', 'https://sous.kyrylo.lol'];
 
-/** Comfortably inside the server's own 600 000 char / 1 500 000 body caps. */
-const MAX_HTML_CHARS = 400_000;
 const REQUEST_TIMEOUT_MS = 90_000;
 /** MV3 idles a worker out after 30s; any extension API call resets the timer. */
 const KEEPALIVE_MS = 20_000;
@@ -45,34 +45,6 @@ async function resolveTargets() {
   return targets;
 }
 
-async function grabFromTab(tabId) {
-  try {
-    const [injection] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: grabPageSource,
-      args: [MAX_HTML_CHARS],
-    });
-    const result = injection && injection.result;
-    if (result && typeof result.url === 'string' && typeof result.html === 'string') {
-      return result;
-    }
-  } catch (err) {
-    // Restricted pages (chrome://, the Web Store, the PDF viewer) refuse
-    // injection. The server-side fetch can still cover a page whose URL we know.
-    console.warn('Sous: page injection failed', err);
-  }
-  return null;
-}
-
-async function tabUrl(tabId) {
-  try {
-    const tab = await chrome.tabs.get(tabId);
-    return tab && typeof tab.url === 'string' ? tab.url : null;
-  } catch {
-    return null;
-  }
-}
-
 async function post(target, body) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -91,31 +63,40 @@ async function post(target, body) {
   }
 }
 
-export async function runImport(tabId) {
+export async function runImport(tabId, url, html) {
   const targets = await resolveTargets();
   if (targets.length === 0) {
     await writeState(tabId, { phase: 'signedOut' });
     return;
   }
 
-  await writeState(tabId, { phase: 'working', startedAt: Date.now() });
-
-  const page = await grabFromTab(tabId);
-  const url = (page && page.url) || (await tabUrl(tabId));
-  if (!url || !/^https?:\/\//i.test(url)) {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
     await writeState(tabId, {
       phase: 'error',
       message: 'This page cannot be imported.',
     });
     return;
   }
+  if (typeof html !== 'string' || html.trim() === '') {
+    await writeState(tabId, {
+      phase: 'error',
+      message: 'Could not read this page.',
+    });
+    return;
+  }
 
-  const body = JSON.stringify({ url, html: (page && page.html) || '' });
+  const body = JSON.stringify({ url, html });
   const keepAlive = setInterval(() => {
     void chrome.runtime.getPlatformInfo();
   }, KEEPALIVE_MS);
 
   try {
+    await writeState(tabId, {
+      phase: 'working',
+      startedAt: Date.now(),
+      detail: 'Extracting the recipe…',
+    });
+
     for (const target of targets) {
       let response;
       try {
@@ -161,7 +142,7 @@ export async function runImport(tabId) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message && message.type === 'import' && typeof message.tabId === 'number') {
-    void runImport(message.tabId);
+    void runImport(message.tabId, message.url, message.html);
     sendResponse({ started: true });
     return false;
   }
