@@ -1,7 +1,7 @@
 # Shared collections — PR #23 review fixes
 
 Parent: `docs/plans/shared-recipes.md` (PR 2 view ACLs).
-Branch: `cursor/shared-collections-cdc9` ([PR #23](https://github.com/kyrylochernihivskiy/cook/pull/23)).
+Branch: `cursor/shared-collections-cdc9` (PR #23 on `bluefire2/cook`).
 
 ## Goal
 
@@ -20,6 +20,8 @@ REST stays behind `collectionStore`).
 - Pure unit tests cover transition/decision helpers; Firestore transaction
   ordering is reasoned from helpers + code review, not integration tests.
 - Backup format stays `app: 'cook'`, `cook-backup-` filenames, `version: 3`.
+  Version 3 gains an optional top-level `exportedBySub` provenance value; this
+  is backup metadata, not a `Recipe` / `ChatMessage` / `CookStateRow` field.
 - Node `erasableSyntaxOnly`: no enums, no constructor parameter properties in
   new server code.
 
@@ -31,7 +33,7 @@ REST stays behind `collectionStore`).
 | 2 | Grants dropped while delete rejected | `server/sync.ts` `collection.delete` always calls `cascadeCollectionGrants` after `tombstoneDoc`, even when `applied: false` (stale delete). |
 | 3 | Orphan live ACLs; cascade clobber | `collectionGrantsPost` checks collection liveness outside the transaction; `cascadeCollectionGrants` blindly `set`s incoming shares with `{ merge: false }`. |
 | 4 | Cap blocks owners with shares | `collectionStore.create` uses `listCollections().length`, which includes `collectionOrigins.kind === 'shared'`. |
-| 5 | Shared rows vanish after backup | `importLibrary` `upsertRecipe` / `upsertCollection` force `kind: 'own'`; `mergeSharedFromPull` skips ids already in maps — backup/restored UUIDs can collide with incoming shared ids (UUID collision is rare but real; same backup on two accounts is a separate, safe case). |
+| 5 | Shared rows vanish after backup | `importLibrary` preserves ids. If Carol imports Alice's backup and Alice later shares the originals, `mergeSharedFromPull` skips the incoming rows because Carol already owns rows with those ids. |
 
 ## Invariants (must hold after fixes)
 
@@ -50,14 +52,17 @@ REST stays behind `collectionStore`).
 5. **Owned cap:** Client and server cap counts include only **owned** live
    named collections (`!shared` origin on client; live docs in owner tree
    on server — already true server-side).
-6. **ID namespace:** On import, **shared** recipe/collection ids in memory
-   are never overwritten by backup rows; conflicting backup ids are remapped
-   to fresh UUIDs with references rewritten inside the backup payload only.
-   Own-on-own backup merge (“existing ids get overwritten”) is unchanged.
-7. **Same backup, two accounts:** Each Google `sub` has its own Firestore
-   tree; importing the same `cook-backup-*.json` on two members creates
-   duplicate ids in **different** `users/{sub}` paths — no viewer-level
-   collision. Finding 5 is **per signed-in library** (shared ∪ own in memory).
+6. **ID namespace:** A backup exported by another account is imported as a
+   clone: recipe, collection, photo, and chat-message ids are remapped to fresh
+   UUIDs and every internal reference is rewritten. A backup whose
+   `exportedBySub` equals the current session `sub` keeps the existing
+   overwrite-by-id restore behavior. Legacy backups with no provenance are
+   treated as foreign and cloned, favoring collision safety over legacy
+   overwrite semantics.
+7. **Same backup, two accounts:** If Alice exports and Carol imports before
+   Alice shares, Carol's clone already has fresh ids. Alice's later incoming
+   share therefore remains independently addressable. Share-then-import is
+   safe for the same reason.
 
 **BLOCKING open questions:** none.
 
@@ -128,10 +133,14 @@ the predicate and unit-testing it if full `applyPushOp` is heavy).
 
 **`cascadeCollectionGrants`:**
 
-- For each grant doc, read current incoming share in the same transaction
-  (batch reads first, then writes — respect Firestore read-before-write order).
-- Use step 1 helpers: skip forward/incoming writes when LWW says the cascade
-  `at` is stale relative to existing docs.
+- The outer query may enumerate viewer ids only; it is not authoritative for
+  LWW. For each viewer, one transaction must `tx.get(grantRef)` and
+  `tx.get(incomingShareRef)` before any writes.
+- Apply step 1 helpers to those in-transaction snapshots. Forward and reverse
+  docs either both tombstone or both skip in that transaction; never decide
+  from the outer grant snapshot and never write one side alone.
+- Per-viewer transactions remain acceptable. Use step 1 helpers to skip both
+  writes when either authoritative doc proves the cascade `at` is stale.
 - Do not change revoke/add REST shapes.
 
 **Tests:** `server/grants.test.ts` for helpers; optional thin test that
@@ -156,9 +165,9 @@ return without `emit` (same invariant as `markLoaded` short-circuit).
   `collections` array reference — e.g.
   `ownedCollections.map((c) => c.id).sort().join('\0')` or a small
   `useMemo`d id list from `useCollections()`.
-- Optional hardening: `useRef<Set<string>>` of ids already prefetched this
-  session; only call `listGrants` for new owned ids (still call from
-  `ShareCollectionSheet` on open).
+- Required: keep a `useRef<Set<string>>` of ids already prefetched this
+  mounted Library session and call `listGrants` only for newly seen owned ids
+  (the Share sheet still refreshes explicitly on open).
 
 **`collectionStore.listGrants`:** May keep `setGrantCount` call; with
 no-op emit, repeated fetches are harmless.
@@ -193,46 +202,46 @@ with incoming shares.
 
 ---
 
-### 6. [core] Finding 5 — backup import remaps ids that collide with shared rows
+### 6. [core] Finding 5 — account-aware backup clone ids
 
 **Files:** new `src/lib/backupImportRemap.ts` (+ test), `src/lib/backup.ts`,
-`src/lib/libraryMemory.test.ts` or `src/lib/backup.test.ts`.
+`src/screens/Settings.tsx`, backup tests.
+
+**Backup provenance:**
+
+- Add optional top-level `exportedBySub?: string` to `BackupFile` while
+  retaining `version: 3`, `app: 'cook'`, and filenames.
+- Pass the signed-in `user.sub` from `Settings` to `exportLibrary` and
+  `importLibrary`; export records it.
+- Import preserves ids only when `backup.exportedBySub === currentSub`.
+  Different or missing provenance uses clone mode.
 
 **Pure module `backupImportRemap.ts` (no `fetch`, no Firestore):**
 
-- Input: compacted backup entities (`recipes`, `collections`, `chatMessages`,
-  `cookState`, photo id list) + `occupiedSharedIds: ReadonlySet<string>`
-  (all recipe/collection ids where `recipeOrigins` / `collectionOrigins`
-  are `kind: 'shared'` in current snapshot).
-- Output: remapped entities + `Map<oldId, newId>` for every remapped id.
-- Rule: for each backup recipe/collection id in `occupiedSharedIds`, assign
-  `crypto.randomUUID()` (inject uuid fn in tests); rewrite:
-  - `collection.recipeIds`
-  - `chatMessages[].recipeId`
-  - `cookState[].recipeId`
-  - photo attribution map keys/values as needed in `importLibrary`
-- Do **not** remap ids that only collide with **owned** rows (backup still
-  overwrites owned per existing contract).
-- Do **not** add fields to `Recipe` / `ChatMessage` / `CookStateRow`.
+- Input: compacted backup recipes, collections, chat messages, cook state,
+  photos, and an injectable UUID generator.
+- Clone mode assigns fresh UUIDs to every recipe, collection, photo, and chat
+  message. Rewrite `collection.recipeIds`, recipe `photoId` /
+  `galleryPhotoIds`, `chatMessages[].recipeId` / `photoIds`,
+  `cookState[].recipeId`, backup photo ids, and photo-attribution recipe ids.
+- Preserve ids and current merge/overwrite behavior in same-account mode.
+- Do not add fields to `Recipe`, `ChatMessage`, or `CookStateRow`.
 
 **`importLibrary` (`backup.ts`):**
 
-- Before the optimistic `upsert*` loop, build `occupiedSharedIds` from
-  `captureSnapshot()` origins.
-- Run remap; use remapped arrays for memory + `pushOps`.
-- Photos: remapped recipe ids for `postPhoto(..., recipeId, ...)`.
-
-**Same backup across two accounts:** Document in test comment only —
-remap is keyed off **current viewer** shared origins; two accounts importing
-the same file do not share memory or `incomingShares`; no extra logic.
+- Decide same-account restore vs clone before optimistic `upsert*`.
+- Use one remapped entity graph consistently for memory writes, photo
+  uploads, and `pushOps`.
 
 **Tests:**
 
-- Shared id `S` in memory + backup recipe `S` → after import, own copy has
-  new id `S'`, `getRecipe(S)` still shared, `mergeSharedFromPull` can still
-  refresh shared row.
-- Backup id collides with owned only → still overwrites owned (unchanged).
-- Collection in backup references remapped recipe id.
+- Alice export (`exportedBySub: alice`) imported by Carol remaps every entity
+  and reference; a later shared pull with Alice's original recipe and
+  collection ids installs alongside Carol's owned clone.
+- Share-then-import also leaves canonical shared rows untouched.
+- Same-account restore preserves ids and overwrites owned rows as before.
+- Legacy backup with no provenance clones safely.
+- Photo ids and chat/cook/collection recipe references follow remapped ids.
 
 **Verify:** `npm test`.
 
@@ -247,11 +256,11 @@ the same file do not share memory or `incomingShares`; no extra logic.
 2. Owner with many **incoming** shared collections at client cap edge: create
    a new owned collection — should succeed when owned count &lt; 50 even if
    total switcher rows &gt; 50.
-3. **Backup collision:** Grantee with a shared recipe visible; import a backup
-   that contains the same recipe id (fixture file prepared by copying id from
-   shared row into a minimal `cook-backup-*.json`). After import + Settings
-   Refresh, shared collection/recipe still visible; owned imported copy exists
-   under a different id.
+3. **Backup collision, both orders:** (a) Carol imports Alice's backup, then
+   Alice shares the original collection; (b) Alice shares first, then Carol
+   imports. After Settings Refresh in both cases, the shared
+   collection/recipe and Carol's owned clone are independently visible and
+   have different ids. Cover photos resolve from the correct owner.
 4. **Share sheet** still loads grants on open; add/revoke updates badge count.
 
 **Regression:** Stale collection delete from a second device must not revoke
@@ -280,11 +289,12 @@ Both must pass. No changes to `vercel.json`, Vercel handlers, or
 
 | File | Findings |
 | --- | --- |
-| `src/lib/libraryMemory.ts` | 1, 4, 5 (occupied set helper if needed) |
+| `src/lib/libraryMemory.ts` | 1, 4 |
 | `src/lib/collectionStore.ts` | 1, 4 |
 | `src/screens/Library.tsx` | 1 |
 | `src/lib/backupImportRemap.ts` | 5 (new) |
 | `src/lib/backup.ts` | 5 |
+| `src/screens/Settings.tsx` | 5 (pass current account provenance) |
 | `server/sync.ts` | 2 |
 | `server/grants.ts` | 3 |
 | `server/grantsHttp.ts` | 3 |
