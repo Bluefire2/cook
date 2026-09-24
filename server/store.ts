@@ -1,6 +1,7 @@
 import { FieldPath, Firestore, type Transaction } from '@google-cloud/firestore';
 import { firestoreConfig } from './env.ts';
 import type { PushRejectReason } from './pushReasons.ts';
+import { canViewRecipe } from './shareAuth.ts';
 
 export type { PushRejectReason };
 
@@ -385,14 +386,15 @@ function tombstonePayload(
 }
 
 export async function sharedParentLive(
+  tx: Transaction,
   sessionSub: string,
   recipeId: string,
 ): Promise<boolean> {
-  const items = await getFirestore()
+  const itemsQuery = getFirestore()
     .collection('incomingShares')
     .doc(sessionSub)
-    .collection('items')
-    .get();
+    .collection('items');
+  const items = await tx.get(itemsQuery);
   for (const doc of items.docs) {
     const data = doc.data() as Record<string, unknown>;
     if (!isLiveDoc(data)) {
@@ -400,19 +402,28 @@ export async function sharedParentLive(
     }
     const ownerSub = data.ownerSub;
     const collectionId = data.collectionId;
-    if (typeof ownerSub !== 'string' || typeof collectionId !== 'string') {
+    if (
+      typeof ownerSub !== 'string' ||
+      ownerSub === '' ||
+      typeof collectionId !== 'string' ||
+      !isUuid(collectionId)
+    ) {
       continue;
     }
-    const collection = await readDocData(ownerSub, 'collections', collectionId);
-    if (collection === undefined || !isLiveDoc(collection)) {
-      continue;
-    }
-    const ids = Array.isArray(collection.recipeIds) ? collection.recipeIds : [];
+    const share = { grantId: doc.id, ownerSub, collectionId };
+    const collectionSnap = await tx.get(collectionDocRef(ownerSub, collectionId));
+    const collection = collectionSnap.exists
+      ? (collectionSnap.data() as Record<string, unknown>)
+      : undefined;
+    const ids = Array.isArray(collection?.recipeIds) ? collection.recipeIds : [];
     if (!ids.includes(recipeId)) {
       continue;
     }
-    const recipe = await readDocData(ownerSub, 'recipes', recipeId);
-    if (recipe !== undefined && isLiveDoc(recipe)) {
+    const recipeSnap = await tx.get(recipeDocRef(ownerSub, recipeId));
+    const recipe = recipeSnap.exists
+      ? (recipeSnap.data() as Record<string, unknown>)
+      : undefined;
+    if (canViewRecipe(recipeId, share, collection, recipe)) {
       return true;
     }
   }
@@ -635,7 +646,7 @@ export async function putDoc(
         if (kind === 'photos') {
           return { applied: false, reason: 'recipe-deleted' };
         }
-        const shared = await sharedParentLive(uid, parentRecipeId);
+        const shared = await sharedParentLive(tx, uid, parentRecipeId);
         if (!shared) {
           return { applied: false, reason: 'recipe-deleted' };
         }
