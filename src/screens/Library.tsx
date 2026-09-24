@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import ShareCollectionSheet from '../components/ShareCollectionSheet';
 import Sheet from '../components/Sheet';
@@ -76,7 +76,6 @@ export default function Library() {
   } | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLAnchorElement>(null);
-  const prefetchedGrantListsRef = useRef(new Set<string>());
 
   const scoped =
     allRecipes === undefined || collections === undefined
@@ -101,32 +100,6 @@ export default function Library() {
     currentId && !namedIsShared ? `?c=${encodeURIComponent(currentId)}` : '';
   const ownedCollections =
     collections?.filter((collection) => !isSharedCollection(collection.id)) ?? [];
-
-  const ownedCollectionIdSignature = useMemo(() => {
-    if (!collections) {
-      return '';
-    }
-    return collections
-      .filter((collection) => !isSharedCollection(collection.id))
-      .map((collection) => collection.id)
-      .sort()
-      .join('\0');
-  }, [collections]);
-
-  useEffect(() => {
-    if (!ownedCollectionIdSignature) {
-      return;
-    }
-    for (const id of ownedCollectionIdSignature.split('\0')) {
-      if (prefetchedGrantListsRef.current.has(id)) {
-        continue;
-      }
-      prefetchedGrantListsRef.current.add(id);
-      void collectionStore.listGrants(id).catch(() => {
-        // icon stays unmarked until Share is opened
-      });
-    }
-  }, [ownedCollectionIdSignature]);
 
   const remove = async (id: string) => {
     setPendingDeleteId(null);
@@ -295,9 +268,10 @@ export default function Library() {
               Recipes
             </Link>
             {collections?.map((collection) => {
+              const incomingShared = isSharedCollection(collection.id);
               const shared =
-                isSharedCollection(collection.id) ||
-                (getGrantCount(collection.id) ?? 0) > 0;
+                incomingShared ||
+                (!incomingShared && (getGrantCount(collection.id) ?? 0) > 0);
               return (
                 <Link
                   key={collection.id}

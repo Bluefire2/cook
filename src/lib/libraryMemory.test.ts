@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   clearLibrary,
   countOwnedNamedCollections,
+  getGrantCount,
   getRecipe,
   isSharedRecipe,
   mergeSharedFromPull,
@@ -78,6 +79,14 @@ function collection(id: string, name: string): Collection {
 }
 
 describe('setGrantCount', () => {
+  it('distinguishes an unknown count from known zero and positive counts', () => {
+    expect(getGrantCount('col-1')).toBeUndefined();
+    setGrantCount('col-1', 0);
+    expect(getGrantCount('col-1')).toBe(0);
+    setGrantCount('col-1', 2);
+    expect(getGrantCount('col-1')).toBe(2);
+  });
+
   it('does not notify subscribers when the count is unchanged', () => {
     let calls = 0;
     const unsub = subscribe(() => {
