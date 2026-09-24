@@ -6,8 +6,10 @@ import {
   replaceFromPull,
 } from './libraryMemory';
 import {
+  backupGraphIds,
+  decideBackupImportMode,
   remapBackupImport,
-  shouldCloneBackupIds,
+  type BackupGraphIds,
   type BackupImportEntities,
 } from './backupImportRemap';
 import type { ChatMessage, Collection, Recipe } from './types';
@@ -75,18 +77,72 @@ function entities(overrides: Partial<BackupImportEntities> = {}): BackupImportEn
   };
 }
 
-describe('shouldCloneBackupIds', () => {
-  it('preserves only when exportedBySub matches current sub', () => {
-    expect(shouldCloneBackupIds(ALICE, ALICE)).toBe(false);
-    expect(shouldCloneBackupIds(ALICE, CAROL)).toBe(true);
-    expect(shouldCloneBackupIds(undefined, ALICE)).toBe(true);
+function graphIds(
+  values: Partial<Record<keyof BackupGraphIds, string[]>> = {},
+): BackupGraphIds {
+  return {
+    recipeIds: new Set(values.recipeIds),
+    collectionIds: new Set(values.collectionIds),
+    chatMessageIds: new Set(values.chatMessageIds),
+    photoIds: new Set(values.photoIds),
+  };
+}
+
+describe('decideBackupImportMode', () => {
+  const backupIds = graphIds({
+    recipeIds: [ALICE_RECIPE],
+    collectionIds: [ALICE_COLLECTION],
+    chatMessageIds: [ALICE_CHAT],
+    photoIds: [ALICE_PHOTO],
+  });
+
+  it('preserves explicit same-account provenance regardless of overlap', () => {
+    expect(
+      decideBackupImportMode(ALICE, ALICE, backupIds, graphIds()),
+    ).toBe('preserve');
+  });
+
+  it('clones explicit foreign provenance despite owned overlap', () => {
+    expect(
+      decideBackupImportMode(ALICE, CAROL, backupIds, backupIds),
+    ).toBe('clone');
+  });
+
+  it.each([
+    ['recipeIds', ALICE_RECIPE],
+    ['collectionIds', ALICE_COLLECTION],
+    ['chatMessageIds', ALICE_CHAT],
+    ['photoIds', ALICE_PHOTO],
+  ] as const)('preserves missing provenance on owned %s overlap', (key, id) => {
+    expect(
+      decideBackupImportMode(
+        undefined,
+        ALICE,
+        backupIds,
+        graphIds({ [key]: [id] }),
+      ),
+    ).toBe('preserve');
+  });
+
+  it('clones missing provenance with no overlap or cross-namespace overlap', () => {
+    expect(
+      decideBackupImportMode(undefined, ALICE, backupIds, graphIds()),
+    ).toBe('clone');
+    expect(
+      decideBackupImportMode(
+        undefined,
+        ALICE,
+        backupIds,
+        graphIds({ photoIds: [ALICE_RECIPE] }),
+      ),
+    ).toBe('clone');
   });
 });
 
 describe('remapBackupImport', () => {
   it('same-account mode keeps ids and references', () => {
     const input = entities();
-    const out = remapBackupImport(input, false, seqUuid());
+    const out = remapBackupImport(input, 'preserve', seqUuid());
     expect(out.recipes[0]?.id).toBe(ALICE_RECIPE);
     expect(out.collections[0]?.id).toBe(ALICE_COLLECTION);
     expect(out.collections[0]?.recipeIds).toEqual([ALICE_RECIPE]);
@@ -99,7 +155,7 @@ describe('remapBackupImport', () => {
   it('clone mode remaps every entity and reference', () => {
     const input = entities();
     const nextUuid = seqUuid();
-    const out = remapBackupImport(input, true, nextUuid);
+    const out = remapBackupImport(input, 'clone', nextUuid);
     const newRecipe = out.recipes[0]!;
     const newCollection = out.collections[0]!;
     const newChat = out.chatMessages[0]!;
@@ -119,17 +175,37 @@ describe('remapBackupImport', () => {
     expect(newCook.recipeId).toBe(newRecipe.id);
   });
 
-  it('legacy missing provenance clones (via shouldCloneBackupIds + remap)', () => {
-    expect(shouldCloneBackupIds(undefined, CAROL)).toBe(true);
-    const out = remapBackupImport(entities(), true, seqUuid());
-    expect(out.recipes[0]?.id).not.toBe(ALICE_RECIPE);
-  });
-
-  it('keeps chat/cook recipe ids when the recipe row is absent from backup', () => {
+  it('builds complete recipe and photo ID universes from entities and references', () => {
     const orphanRecipe = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const orphanPhoto = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
     const input = entities({
       recipes: [],
-      collections: [],
+      collections: [{ ...entities().collections[0]!, recipeIds: [orphanRecipe] }],
+      chatMessages: [
+        {
+          ...entities().chatMessages[0]!,
+          recipeId: orphanRecipe,
+          photoIds: [orphanPhoto],
+        },
+      ],
+      cookState: [{ ...entities().cookState[0]!, recipeId: orphanRecipe }],
+      backupPhotoIds: [],
+    });
+
+    expect(backupGraphIds(input)).toEqual({
+      recipeIds: new Set([orphanRecipe]),
+      collectionIds: new Set([ALICE_COLLECTION]),
+      chatMessageIds: new Set([ALICE_CHAT]),
+      photoIds: new Set([orphanPhoto]),
+    });
+  });
+
+  it('remaps orphan collection/chat/cook recipe and photo references consistently', () => {
+    const orphanRecipe = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const orphanPhoto = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    const input = entities({
+      recipes: [],
+      collections: [{ ...entities().collections[0]!, recipeIds: [orphanRecipe] }],
       cookState: [
         {
           recipeId: orphanRecipe,
@@ -145,19 +221,26 @@ describe('remapBackupImport', () => {
           recipeId: orphanRecipe,
           role: 'assistant',
           content: 'orphan',
+          photoIds: [orphanPhoto],
           createdAt: 1,
         },
       ],
       backupPhotoIds: [],
     });
-    const out = remapBackupImport(input, true, seqUuid());
-    expect(out.chatMessages[0]?.recipeId).toBe(orphanRecipe);
-    expect(out.cookState[0]?.recipeId).toBe(orphanRecipe);
+    const out = remapBackupImport(input, 'clone', seqUuid());
+    const remappedRecipeId = out.collections[0]!.recipeIds[0]!;
+    const remappedPhotoId = out.chatMessages[0]!.photoIds![0]!;
+
+    expect(remappedRecipeId).not.toBe(orphanRecipe);
+    expect(out.chatMessages[0]?.recipeId).toBe(remappedRecipeId);
+    expect(out.cookState[0]?.recipeId).toBe(remappedRecipeId);
+    expect(remappedPhotoId).not.toBe(orphanPhoto);
+    expect(out.photoIdMap.get(orphanPhoto)).toBe(remappedPhotoId);
   });
 
   it('import-then-share: cloned ids do not block Alice shared originals', () => {
     const nextUuid = seqUuid();
-    const cloned = remapBackupImport(entities(), true, nextUuid);
+    const cloned = remapBackupImport(entities(), 'clone', nextUuid);
     const carolRecipeId = cloned.recipes[0]!.id;
 
     replaceFromPull({
@@ -225,7 +308,7 @@ describe('remapBackupImport', () => {
       collectionOrigins: new Map(),
     });
 
-    const cloned = remapBackupImport(entities(), true, seqUuid());
+    const cloned = remapBackupImport(entities(), 'clone', seqUuid());
     expect(cloned.recipes[0]?.id).not.toBe(ALICE_RECIPE);
     expect(getRecipe(ALICE_RECIPE)?.title).toBe('Alice shared');
   });

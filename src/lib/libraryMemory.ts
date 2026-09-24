@@ -1,4 +1,5 @@
 import { recipePhotoIds } from './recipePhotos';
+import type { BackupGraphIds } from './backupImportRemap';
 import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 
@@ -422,6 +423,57 @@ export function listPhotoIds(): string[] {
     ids.add(id);
   }
   return [...ids];
+}
+
+/**
+ * Returns namespaced IDs with evidence of belonging to this account.
+ * Incoming shared rows and references rooted only in those rows are excluded.
+ */
+export function ownedBackupGraphIds(): BackupGraphIds {
+  const recipeIds = new Set<string>();
+  const collectionIds = new Set<string>();
+  const chatMessageIds = new Set<string>();
+  const photoIds = new Set<string>();
+  const isOwnedRecipeId = (id: string) =>
+    snapshot.recipeOrigins.get(id)?.kind !== 'shared';
+
+  for (const recipe of snapshot.recipes.values()) {
+    if (!isOwnedRecipeId(recipe.id)) {
+      continue;
+    }
+    recipeIds.add(recipe.id);
+    for (const id of recipePhotoIds(recipe)) {
+      photoIds.add(id);
+    }
+  }
+  for (const collection of snapshot.collections.values()) {
+    if (snapshot.collectionOrigins.get(collection.id)?.kind === 'shared') {
+      continue;
+    }
+    collectionIds.add(collection.id);
+    for (const id of collection.recipeIds) {
+      if (isOwnedRecipeId(id)) {
+        recipeIds.add(id);
+      }
+    }
+  }
+  for (const message of snapshot.chat.values()) {
+    chatMessageIds.add(message.id);
+    if (!isOwnedRecipeId(message.recipeId)) {
+      continue;
+    }
+    recipeIds.add(message.recipeId);
+    for (const id of message.photoIds ?? []) {
+      photoIds.add(id);
+    }
+  }
+  for (const row of snapshot.cook.values()) {
+    if (isOwnedRecipeId(row.recipeId)) {
+      recipeIds.add(row.recipeId);
+    }
+  }
+
+  return { recipeIds, collectionIds, chatMessageIds, photoIds };
 }
 
 export function discardLegacyCookDb(): void {

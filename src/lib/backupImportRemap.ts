@@ -4,12 +4,48 @@ import { recipePhotoIds } from './recipePhotos';
 
 export type UuidGenerator = () => string;
 
-/** Clone when provenance is missing or from another account. */
-export function shouldCloneBackupIds(
+export type BackupImportMode = 'preserve' | 'clone';
+
+/** IDs are compared only within their entity/reference namespace. */
+export interface BackupGraphIds {
+  recipeIds: ReadonlySet<string>;
+  collectionIds: ReadonlySet<string>;
+  chatMessageIds: ReadonlySet<string>;
+  photoIds: ReadonlySet<string>;
+}
+
+function overlaps(
+  left: ReadonlySet<string>,
+  right: ReadonlySet<string>,
+): boolean {
+  for (const id of left) {
+    if (right.has(id)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Chooses one mode for the complete import graph. Legacy backups are
+ * idempotent only when one of their namespaced IDs already exists in the
+ * current account's owned graph.
+ */
+export function decideBackupImportMode(
   exportedBySub: string | undefined,
   currentSub: string,
-): boolean {
-  return exportedBySub === undefined || exportedBySub !== currentSub;
+  backupIds: BackupGraphIds,
+  existingOwnedIds: BackupGraphIds,
+): BackupImportMode {
+  if (exportedBySub !== undefined) {
+    return exportedBySub === currentSub ? 'preserve' : 'clone';
+  }
+  return overlaps(backupIds.recipeIds, existingOwnedIds.recipeIds)
+    || overlaps(backupIds.collectionIds, existingOwnedIds.collectionIds)
+    || overlaps(backupIds.chatMessageIds, existingOwnedIds.chatMessageIds)
+    || overlaps(backupIds.photoIds, existingOwnedIds.photoIds)
+    ? 'preserve'
+    : 'clone';
 }
 
 function remapId(map: Map<string, string>, id: string): string {
@@ -79,53 +115,72 @@ export interface RemappedBackupImport {
   photoIdMap: Map<string, string>;
 }
 
+export function backupGraphIds(input: BackupImportEntities): BackupGraphIds {
+  const recipeIds = new Set<string>();
+  const collectionIds = new Set<string>();
+  const chatMessageIds = new Set<string>();
+  const photoIds = new Set(input.backupPhotoIds);
+
+  for (const recipe of input.recipes) {
+    recipeIds.add(recipe.id);
+    for (const id of recipePhotoIds(recipe)) {
+      photoIds.add(id);
+    }
+  }
+  for (const collection of input.collections) {
+    collectionIds.add(collection.id);
+    for (const id of collection.recipeIds) {
+      recipeIds.add(id);
+    }
+  }
+  for (const message of input.chatMessages) {
+    chatMessageIds.add(message.id);
+    recipeIds.add(message.recipeId);
+    for (const id of message.photoIds ?? []) {
+      photoIds.add(id);
+    }
+  }
+  for (const row of input.cookState) {
+    recipeIds.add(row.recipeId);
+  }
+
+  return { recipeIds, collectionIds, chatMessageIds, photoIds };
+}
+
 export function remapBackupImport(
   input: BackupImportEntities,
-  clone: boolean,
+  mode: BackupImportMode,
   nextUuid: UuidGenerator,
 ): RemappedBackupImport {
-  if (!clone) {
+  const graphIds = backupGraphIds(input);
+  if (mode === 'preserve') {
     return {
       recipes: input.recipes,
       collections: input.collections,
       chatMessages: input.chatMessages,
       cookState: input.cookState,
-      photoIdMap: new Map(input.backupPhotoIds.map((id) => [id, id])),
+      photoIdMap: new Map([...graphIds.photoIds].map((id) => [id, id])),
     };
   }
 
   const recipeIdMap = new Map<string, string>();
-  for (const recipe of input.recipes) {
-    recipeIdMap.set(recipe.id, nextUuid());
+  for (const id of graphIds.recipeIds) {
+    recipeIdMap.set(id, nextUuid());
   }
 
   const collectionIdMap = new Map<string, string>();
-  for (const collection of input.collections) {
-    collectionIdMap.set(collection.id, nextUuid());
+  for (const id of graphIds.collectionIds) {
+    collectionIdMap.set(id, nextUuid());
   }
 
   const photoIdMap = new Map<string, string>();
-  const seenPhotos = new Set<string>();
-  for (const id of input.backupPhotoIds) {
-    seenPhotos.add(id);
-  }
-  for (const recipe of input.recipes) {
-    for (const id of recipePhotoIds(recipe)) {
-      seenPhotos.add(id);
-    }
-  }
-  for (const message of input.chatMessages) {
-    for (const id of message.photoIds ?? []) {
-      seenPhotos.add(id);
-    }
-  }
-  for (const id of seenPhotos) {
+  for (const id of graphIds.photoIds) {
     photoIdMap.set(id, nextUuid());
   }
 
   const chatIdMap = new Map<string, string>();
-  for (const message of input.chatMessages) {
-    chatIdMap.set(message.id, nextUuid());
+  for (const id of graphIds.chatMessageIds) {
+    chatIdMap.set(id, nextUuid());
   }
 
   return {

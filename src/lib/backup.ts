@@ -12,6 +12,7 @@ import {
   listCollections,
   listRecipes,
   markPhotoRemote,
+  ownedBackupGraphIds,
   restoreSnapshot,
   upsertChat,
   upsertCollection,
@@ -24,8 +25,9 @@ import { recipePhotoIds } from './recipePhotos';
 import { fetchPhotoBlob, postPhoto, pushOps } from './remote';
 import type { PushOp } from './pushOps';
 import {
+  backupGraphIds,
+  decideBackupImportMode,
   remapBackupImport,
-  shouldCloneBackupIds,
 } from './backupImportRemap';
 
 interface BackupPhoto {
@@ -144,7 +146,7 @@ function isUsableCollection(raw: unknown): raw is Collection {
   return true;
 }
 
-/** Merges a backup into the account library (existing ids get overwritten when same account). */
+/** Merges a backup, preserving the whole graph only when provenance or owned overlap says it is local. */
 export async function importLibrary(
   file: Blob,
   currentSub: string,
@@ -161,16 +163,22 @@ export async function importLibrary(
     .map(compactCollection);
   const chatMessages = backup.chatMessages ?? [];
   const cookState = backup.cookState ?? [];
-  const clone = shouldCloneBackupIds(backup.exportedBySub, currentSub);
+  const importEntities = {
+    recipes,
+    collections,
+    chatMessages,
+    cookState,
+    backupPhotoIds: (backup.photos ?? []).map((p) => p.id),
+  };
+  const mode = decideBackupImportMode(
+    backup.exportedBySub,
+    currentSub,
+    backupGraphIds(importEntities),
+    ownedBackupGraphIds(),
+  );
   const remapped = remapBackupImport(
-    {
-      recipes,
-      collections,
-      chatMessages,
-      cookState,
-      backupPhotoIds: (backup.photos ?? []).map((p) => p.id),
-    },
-    clone,
+    importEntities,
+    mode,
     () => crypto.randomUUID(),
   );
   const importRecipes = remapped.recipes;
