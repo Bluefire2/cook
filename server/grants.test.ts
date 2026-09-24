@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_LIVE_GRANTS,
   addGrantTransition,
+  canonicalCollectionTombstoneAt,
   cascadeGrantPairTransition,
+  collectionIsCanonicalTombstoneAt,
   collectionLiveForGrant,
   grantCascadeRevoke,
   incomingShareCascadeDoc,
@@ -592,6 +594,37 @@ describe('collectionLiveForGrant', () => {
     expect(collectionLiveForGrant(undefined)).toBe(false);
     expect(collectionLiveForGrant({ updatedAt: 1 })).toBe(true);
     expect(collectionLiveForGrant({ updatedAt: 1, deletedAt: 2 })).toBe(false);
+  });
+});
+
+describe('collection cascade tombstone decision', () => {
+  it('accepts only an exact canonical tombstone at cascadeAt', () => {
+    expect(canonicalCollectionTombstoneAt({ updatedAt: 100, deletedAt: 100 })).toBe(100);
+    expect(
+      collectionIsCanonicalTombstoneAt(
+        { updatedAt: 100, deletedAt: 100 },
+        100,
+      ),
+    ).toBe(true);
+    expect(
+      collectionIsCanonicalTombstoneAt(
+        { updatedAt: 100, deletedAt: 100 },
+        99,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    undefined,
+    {},
+    { updatedAt: 100 },
+    { updatedAt: 100, deletedAt: null },
+    { updatedAt: 100, deletedAt: 99 },
+    { updatedAt: Number.NaN, deletedAt: Number.NaN },
+    { updatedAt: Number.POSITIVE_INFINITY, deletedAt: Number.POSITIVE_INFINITY },
+  ])('rejects a missing, live, or malformed collection: %j', (collection) => {
+    expect(canonicalCollectionTombstoneAt(collection)).toBeUndefined();
+    expect(collectionIsCanonicalTombstoneAt(collection, 100)).toBe(false);
   });
 });
 

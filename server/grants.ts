@@ -223,6 +223,26 @@ export function collectionLiveForGrant(
   return isLiveDoc(txRead);
 }
 
+export function canonicalCollectionTombstoneAt(
+  collection: Record<string, unknown> | undefined,
+): number | undefined {
+  if (collection === undefined) {
+    return undefined;
+  }
+  const updatedAt = finiteNumber(collection.updatedAt);
+  const deletedAt = finiteNumber(collection.deletedAt);
+  return updatedAt !== undefined && updatedAt === deletedAt
+    ? updatedAt
+    : undefined;
+}
+
+export function collectionIsCanonicalTombstoneAt(
+  collection: Record<string, unknown> | undefined,
+  cascadeAt: number,
+): boolean {
+  return canonicalCollectionTombstoneAt(collection) === cascadeAt;
+}
+
 export function incomingShareCascadeDoc(
   existing: IncomingShareDoc | undefined,
   ownerSub: string,
@@ -590,6 +610,13 @@ export async function cascadeCollectionGrants(
     const grantRef = grantColRef(ownerSub, collectionId).doc(viewerSub);
     const shareRef = incomingShareRef(viewerSub, grantId);
     await db.runTransaction(async (tx) => {
+      const collectionSnap = await tx.get(collectionDocRef(ownerSub, collectionId));
+      const collection = collectionSnap.exists
+        ? (collectionSnap.data() as Record<string, unknown>)
+        : undefined;
+      if (!collectionIsCanonicalTombstoneAt(collection, at)) {
+        return;
+      }
       const grantSnap = await tx.get(grantRef);
       const shareSnap = await tx.get(shareRef);
       const existingGrant = parseGrantDoc(

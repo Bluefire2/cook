@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyPushOp, shouldCascadeCollectionDelete, syncPull, syncPush } from './sync.ts';
+import {
+  applyPushOp,
+  collectionDeleteCascadeAt,
+  syncPull,
+  syncPush,
+} from './sync.ts';
 import { compareMutation, decodePullCursor, encodePullCursor, validatePushOp } from './store.ts';
 
 beforeEach(() => {
@@ -63,16 +68,61 @@ describe('syncPull unauthorized', () => {
   });
 });
 
-describe('shouldCascadeCollectionDelete', () => {
-  it('cascades only when tombstone delete was applied', () => {
-    expect(shouldCascadeCollectionDelete({ applied: true, serverUpdatedAt: 50 })).toBe(true);
-    expect(
-      shouldCascadeCollectionDelete({
+describe('collectionDeleteCascadeAt', () => {
+  it.each([
+    {
+      name: 'applied delete uses the accepted request timestamp',
+      result: { applied: true, serverUpdatedAt: 999 } as const,
+      acceptedAt: 100,
+      expected: 100,
+    },
+    {
+      name: 'rejected delete retries at the same stored tombstone timestamp',
+      result: {
         applied: false,
         reason: 'stale',
-        current: { updatedAt: 100 },
-      }),
-    ).toBe(false);
-    expect(shouldCascadeCollectionDelete({ applied: false, reason: 'stale' })).toBe(false);
+        current: { updatedAt: 100, deletedAt: 100 },
+      } as const,
+      acceptedAt: 100,
+      expected: 100,
+    },
+    {
+      name: 'rejected stale delete retries at the newer stored tombstone timestamp',
+      result: {
+        applied: false,
+        reason: 'stale',
+        current: { updatedAt: 200, deletedAt: 200 },
+      } as const,
+      acceptedAt: 100,
+      expected: 200,
+    },
+    {
+      name: 'rejected stale delete skips a newer live collection',
+      result: {
+        applied: false,
+        reason: 'stale',
+        current: { updatedAt: 200 },
+      } as const,
+      acceptedAt: 100,
+      expected: undefined,
+    },
+    {
+      name: 'rejected delete skips a malformed tombstone',
+      result: {
+        applied: false,
+        reason: 'stale',
+        current: { updatedAt: 200, deletedAt: 199 },
+      } as const,
+      acceptedAt: 100,
+      expected: undefined,
+    },
+    {
+      name: 'rejected delete skips an absent current state',
+      result: { applied: false, reason: 'stale' } as const,
+      acceptedAt: 100,
+      expected: undefined,
+    },
+  ])('$name', ({ result, acceptedAt, expected }) => {
+    expect(collectionDeleteCascadeAt(result, acceptedAt)).toBe(expected);
   });
 });
