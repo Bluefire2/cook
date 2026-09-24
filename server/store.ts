@@ -1,6 +1,6 @@
 import { FieldPath, Firestore, type Transaction } from '@google-cloud/firestore';
-import type { PushRejectReason } from '../src/lib/pushReasons.ts';
 import { firestoreConfig } from './env.ts';
+import type { PushRejectReason } from './pushReasons.ts';
 
 export type { PushRejectReason };
 

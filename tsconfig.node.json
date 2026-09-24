@@ -23,7 +23,6 @@
     "vitest.config.ts",
     "vitest.eval.config.ts",
     "scripts",
-    "server",
-    "src/lib/pushReasons.ts"
+    "server"
   ]
 }
