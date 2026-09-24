@@ -36,6 +36,7 @@ import {
   adminRequestsGet,
 } from '../server/admin.ts';
 import { accessRequestPost } from '../server/access.ts';
+import { extensionImport, extensionImportOptions } from '../server/extensionImport.ts';
 import { inviteLandingGet } from '../server/invites.ts';
 import { withMembership } from '../server/membership.ts';
 import { photosGet, photosPost } from '../server/photos.ts';
@@ -66,6 +67,8 @@ const apiRoutes: ApiRoute[] = [
   { method: 'POST', path: '/api/auth/signout', handler: authSignout },
   { method: 'GET', path: '/api/sync/pull', handler: syncPull },
   { method: 'POST', path: '/api/sync/push', handler: syncPush },
+  { method: 'POST', path: '/api/extension/import', handler: extensionImport },
+  { method: 'OPTIONS', path: '/api/extension/import', handler: extensionImportOptions },
 ];
 
 const PUBLIC_HTML: Record<string, string> = {

@@ -230,6 +230,51 @@ export function extractRecipeSource(html: string): string {
     .slice(0, MAX_SOURCE_CHARS);
 }
 
+export type PageFetchResult =
+  | { ok: true; html: string }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Also used by `server/extensionImport.ts`, which needs the same fetch and the
+ * same user-facing wording. Exported rather than duplicated: the no-sibling-
+ * imports rule is about `api/` entrypoints importing each other under Vercel's
+ * isolated transpile, and nothing here imports a sibling.
+ */
+export async function fetchPageHtml(rawUrl: string): Promise<PageFetchResult> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { ok: false, status: 422, error: 'That does not look like a web address.' };
+  }
+  // Scheme check only (matches RecipeView's http/https allowlist); does not block private or link-local destinations.
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, status: 422, error: 'Only http and https URLs are supported.' };
+  }
+
+  let page: Response;
+  try {
+    page = await fetch(parsed.href, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+        Accept: 'text/html',
+      },
+      redirect: 'follow',
+    });
+  } catch {
+    return { ok: false, status: 422, error: 'Could not reach that URL.' };
+  }
+  if (!page.ok) {
+    return {
+      ok: false,
+      status: 422,
+      error: `The site refused the request (${page.status}). Try pasting the recipe text instead.`,
+    };
+  }
+  return { ok: true, html: await page.text() };
+}
+
 export type GenerateRecipeResult =
   | { status: 'ok'; recipe: Record<string, unknown> }
   | { status: 'not_a_recipe' }
@@ -274,6 +319,22 @@ export async function generateRecipeFromSource(
   return { status: 'ok', recipe: recipe as Record<string, unknown> };
 }
 
+export type ExtractionResult =
+  | { ok: true; recipe: Record<string, unknown> }
+  | { ok: false; status: number; error: string };
+
+/** The Gemini half of an extension import: source material in, recipe fields out. */
+export async function extractRecipeDraft(source: string): Promise<ExtractionResult> {
+  const extracted = await generateRecipeFromSource(source);
+  if (extracted.status === 'parse_error') {
+    return { ok: false, status: 502, error: 'Extraction failed — no structured result.' };
+  }
+  if (extracted.status === 'not_a_recipe') {
+    return { ok: false, status: 422, error: "Couldn't find a recipe in that content." };
+  }
+  return { ok: true, recipe: extracted.recipe };
+}
+
 export async function POST(req: Request, ctx?: { authorizedSub?: string }): Promise<Response> {
   const authorized =
     typeof ctx?.authorizedSub === 'string' && ctx.authorizedSub !== ''
@@ -287,46 +348,11 @@ export async function POST(req: Request, ctx?: { authorizedSub?: string }): Prom
 
   let source = body.text?.trim() ?? '';
   if (body.url) {
-    let parsed: URL;
-    try {
-      parsed = new URL(body.url);
-    } catch {
-      return Response.json(
-        { error: 'That does not look like a web address.' },
-        { status: 422 },
-      );
-    }
-    // Scheme check only (matches RecipeView's http/https allowlist); does not block private or link-local destinations.
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return Response.json(
-        { error: 'Only http and https URLs are supported.' },
-        { status: 422 },
-      );
-    }
-
-    let page: Response;
-    try {
-      page = await fetch(parsed.href, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-          Accept: 'text/html',
-        },
-        redirect: 'follow',
-      });
-    } catch {
-      return Response.json(
-        { error: 'Could not reach that URL.' },
-        { status: 422 },
-      );
-    }
+    const page = await fetchPageHtml(body.url);
     if (!page.ok) {
-      return Response.json(
-        { error: `The site refused the request (${page.status}). Try pasting the recipe text instead.` },
-        { status: 422 },
-      );
+      return Response.json({ error: page.error }, { status: page.status });
     }
-    source = extractRecipeSource(await page.text());
+    source = extractRecipeSource(page.html);
   }
 
   if (source === '') {

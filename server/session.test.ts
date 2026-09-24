@@ -4,9 +4,11 @@ import {
   inviteCookie,
   oauthCookie,
   readCookie,
+  readHeaderSession,
   readSession,
   safeReturnTo,
   sessionCookie,
+  sessionFromHeader,
   signAccessRequestTx,
   signInviteTx,
   signOauthTx,
@@ -127,6 +129,59 @@ describe('readSession', () => {
     process.env.SESSION_SECRET = '';
     const req = new Request('http://localhost/');
     expect(readSession(req)).toEqual({ status: 'absent' });
+  });
+});
+
+describe('readHeaderSession', () => {
+  function withHeader(value: string): Request {
+    return new Request('http://localhost/', {
+      headers: { 'x-sous-session': value },
+    });
+  }
+
+  it('accepts a valid token from the header', () => {
+    const token = signSession({ sub: 'sub-1', email: 'allowed@example.com' }, nowMs());
+    const result = readHeaderSession(withHeader(token));
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.session.sub).toBe('sub-1');
+    }
+    expect(sessionFromHeader(withHeader(token))?.sub).toBe('sub-1');
+  });
+
+  it('treats a missing, blank, or whitespace header as absent', () => {
+    expect(readHeaderSession(new Request('http://localhost/'))).toEqual({
+      status: 'absent',
+    });
+    expect(readHeaderSession(withHeader(''))).toEqual({ status: 'absent' });
+    expect(readHeaderSession(withHeader('   '))).toEqual({ status: 'absent' });
+  });
+
+  it('rejects a tampered header token', () => {
+    const token = signSession({ sub: 'sub-1', email: 'allowed@example.com' }, nowMs());
+    const [payload, signature] = token.split('.');
+    expect(readHeaderSession(withHeader(`${payload}x.${signature}`))).toEqual({
+      status: 'unusable',
+    });
+    expect(sessionFromHeader(withHeader(`${payload}x.${signature}`))).toBeNull();
+  });
+
+  it('is ok for any valid header token — membership is enforced by requireHeaderMember', () => {
+    const token = signSession({ sub: 'sub-1', email: 'removed@example.com' }, nowMs());
+    const result = readHeaderSession(withHeader(token));
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.session.email).toBe('removed@example.com');
+    }
+  });
+
+  it('ignores the cookie, and the cookie path ignores the header', () => {
+    const token = signSession({ sub: 'sub-1', email: 'allowed@example.com' }, nowMs());
+    const cookieOnly = new Request('http://localhost/', {
+      headers: { cookie: `sous_session=${token}` },
+    });
+    expect(readHeaderSession(cookieOnly)).toEqual({ status: 'absent' });
+    expect(readSession(withHeader(token))).toEqual({ status: 'absent' });
   });
 });
 

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Import to Sous</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="card">
+      <h1 class="wordmark">Sous</h1>
+      <p class="page-title" id="page-title" hidden></p>
+
+      <div class="status" id="status" role="status" aria-live="polite"></div>
+
+      <button class="primary" id="action" type="button" hidden></button>
+      <a class="primary link-button" id="open-recipe" href="#" target="_blank" rel="noreferrer" hidden>
+        Open recipe
+      </a>
+      <a
+        class="primary link-button"
+        id="open-sous"
+        href="https://sous.kyrylo.lol"
+        target="_blank"
+        rel="noreferrer"
+        hidden
+      >
+        Open Sous
+      </a>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

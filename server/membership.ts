@@ -1,7 +1,7 @@
 import { isAllowed } from './allowlist.ts';
 import { allowedEmails } from './env.ts';
 import { readMember, type MemberRecord } from './members.ts';
-import { readSession } from './session.ts';
+import { readHeaderSession, readSession, type ReadSessionResult } from './session.ts';
 
 const CACHE_TTL_MS = 60_000;
 const CACHE_MAX_SIZE = 500;
@@ -96,8 +96,7 @@ export type RequireMemberResult =
   | { kind: 'denied' }
   | { kind: 'unknown' };
 
-export async function requireMember(req: Request): Promise<RequireMemberResult> {
-  const sessionResult = readSession(req);
+async function memberFromSession(sessionResult: ReadSessionResult): Promise<RequireMemberResult> {
   if (sessionResult.status !== 'ok') {
     return { kind: 'denied' };
   }
@@ -129,6 +128,15 @@ export async function requireMember(req: Request): Promise<RequireMemberResult> 
   } catch {
     return { kind: 'unknown' };
   }
+}
+
+export async function requireMember(req: Request): Promise<RequireMemberResult> {
+  return memberFromSession(readSession(req));
+}
+
+/** Same decision as `requireMember`, from `X-Sous-Session` only. No cookie fallback. */
+export async function requireHeaderMember(req: Request): Promise<RequireMemberResult> {
+  return memberFromSession(readHeaderSession(req));
 }
 
 export type RequireOwnerResult =

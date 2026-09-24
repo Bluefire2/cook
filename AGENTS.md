@@ -9,6 +9,10 @@ package, backup marker, and directories are still named
 A personal, allowlisted recipe PWA: readable recipes, a Gemini cooking
 assistant per recipe, URL/paste import. Live at https://sous.kyrylo.lol.
 
+There is also `extension/`: an unpacked MV3 Chrome extension (plain JS, no
+build step) that imports the page you are reading. It is excluded from the
+image and from `tsc`; nothing else depends on it.
+
 It is a **Vite SPA + a hand-written Node server**, not Next.js, not Auth.js.
 New HTTP routes go in `server/`, not `api/`. The two files under `api/`
 (`chat.ts`, `import.ts`) exist because Vercel still hosts a copy of those
@@ -70,8 +74,8 @@ No refresh tokens, no extra Google APIs, no Auth.js.
 
 - Cookie `sous_session`: `base64url(JSON).HMAC`, payload `{v,sub,email,iat,exp}`.
   HttpOnly, SameSite=Lax, Path=/, Secure on https, 90 days.
-  `readSession` is cryptographic only; **`sessionFrom` no longer exists**.
-  Protected routes call **`requireMember`** (or **`requireOwner`** for `/api/admin/*`).
+  `readSession` is cryptographic only. Protected routes call **`requireMember`**
+  (or **`requireOwner`** for `/api/admin/*`).
 - **Two-tier admission:** `ALLOWED_EMAILS` is the fail-closed **owner/admin**
   set (blank = nobody), re-parsed from env on **every** protected request with
   **no cache**. Firestore **`members/{sub}`** with `status: 'active'` is the
@@ -92,6 +96,14 @@ No refresh tokens, no extra Google APIs, no Auth.js.
   in-process **`authorizedSub`** argument after `requireMember` passed. The
   inline **`sessionSub`** copy remains the **Vercel** gate and must stay in sync
   with `server/session.ts` + `server/allowlist.ts`.
+- **One exception to cookie-only auth:** `POST /api/extension/import` reads the
+  same token from an `X-Sous-Session` header and **never** from the cookie
+  (`readHeaderSession`, no fallback), then applies the same membership decision
+  as `requireMember` (`requireHeaderMember`). The Chrome extension reads the
+  cookie with `chrome.cookies.get` and forwards it, because a `SameSite=Lax`
+  cookie is not dependably attached to an extension-initiated request. Do not
+  extend header auth to any other route, and do not add
+  `Access-Control-Allow-Credentials` to this one.
 - OAuth callback **must not** use `Response.redirect()` (immutable Headers;
   `Set-Cookie` would be dropped). Build a `Response` with a `Location` header
   and always clear `sous_oauth`.
@@ -195,6 +207,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/recipe-gallery.md` | In progress on branch `cursor/recipe-gallery-267b` (main photo + end-of-recipe gallery). |
 | `docs/plans/shared-recipes.md` | PR 1 implementing (named collections + implicit default). PR 2 view ACLs not started. |
 | `docs/plans/bulk-import.md` | Implementing. Opt-in bulk URL import on `/import`. |
+| `docs/plans/chrome-extension-import.md` | Built on this branch: `extension/` + `POST /api/extension/import`. Not deployed. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
@@ -226,4 +239,7 @@ guard — run it against Cloud Run after a production deploy, not only locally.
 `/about` is a short public page that says what the app is for. `/privacy`
 and `/terms` describe Firestore + GCS and that there is no on-device recipe
 database. Theme preference and `cook.session` stay in localStorage. Do not
-describe IndexedDB, offline edits, or a local library.
+describe IndexedDB, offline edits, or a local library. The Chrome extension
+sends rendered page HTML, possibly from a page behind a login, to the server
+and on to Gemini; `/privacy` and `/terms` must describe that before the
+extension is offered beyond the owner.
