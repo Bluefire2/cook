@@ -7,6 +7,7 @@ import {
 } from './compactCollection';
 import { moveRecipe, wouldExceedRecipeIdCap } from './collectionMembership';
 import {
+  countOwnedNamedCollections,
   getCollection,
   getSnapshot,
   isSharedCollection,
@@ -86,7 +87,7 @@ export const collectionStore = {
           : `Keep the name under ${MAX_COLLECTION_NAME_LENGTH} characters.`,
       );
     }
-    if (listCollections().length >= MAX_NAMED_COLLECTIONS) {
+    if (countOwnedNamedCollections() >= MAX_NAMED_COLLECTIONS) {
       throw new Error(`You can have up to ${MAX_NAMED_COLLECTIONS} collections.`);
     }
     const now = Date.now();
