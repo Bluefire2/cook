@@ -1,10 +1,10 @@
 /**
  * Recipe import: page HTML or pasted text in, a saveable recipe draft out.
  *
- * The one pipeline behind `POST /api/import` (`server/importRoute.ts`),
- * `POST /api/extension/import` (`server/extensionImport.ts`) and the live
- * import evals (`server/recipeImport.eval.ts`). Nothing here knows about HTTP:
- * routes map `ImportOutcome` / `PageFetchOutcome` to statuses and copy. The
+ * The one pipeline behind `POST /api/import` (`server/importRoute.ts`) and
+ * `POST /api/extension/import` (`server/extensionImport.ts`). Nothing here
+ * knows about HTTP: routes map `ImportOutcome` / `PageFetchOutcome` to
+ * statuses and copy. The
  * Gemini client and model are passed in; `recipeImportDepsFromEnv` is the only
  * place that reads the environment.
  */
