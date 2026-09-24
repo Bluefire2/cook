@@ -391,10 +391,6 @@ export function setGrantCount(collectionId: string, count: number): void {
   emit({ ...snapshot, ...next });
 }
 
-export function getGrantCount(collectionId: string): number | undefined {
-  return snapshot.grantCounts.get(collectionId);
-}
-
 export function listChat(recipeId: string): ChatMessage[] {
   return [...snapshot.chat.values()]
     .filter((message) => message.recipeId === recipeId)

@@ -9,11 +9,7 @@ import {
   useCollections,
 } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
-import {
-  getGrantCount,
-  isSharedCollection,
-  isSharedRecipe,
-} from '../lib/libraryMemory';
+import { isSharedCollection, isSharedRecipe } from '../lib/libraryMemory';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
 import { visibleLibraryRecipes } from '../lib/visibleLibraryRecipes';
@@ -268,10 +264,7 @@ export default function Library() {
               Recipes
             </Link>
             {collections?.map((collection) => {
-              const incomingShared = isSharedCollection(collection.id);
-              const shared =
-                incomingShared ||
-                (!incomingShared && (getGrantCount(collection.id) ?? 0) > 0);
+              const shared = isSharedCollection(collection.id);
               return (
                 <Link
                   key={collection.id}
