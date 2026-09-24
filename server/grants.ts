@@ -2,7 +2,11 @@ import { FieldPath } from '@google-cloud/firestore';
 import { isAllowed } from './allowlist.ts';
 import { allowedEmails } from './env.ts';
 import { readMember } from './members.ts';
-import { canViewPhoto } from './shareAuth.ts';
+import {
+  canViewCollection,
+  canViewRecipe,
+  recipeListsPhoto,
+} from './shareAuth.ts';
 import {
   collectionDocRef,
   getStoreFirestore,
@@ -450,35 +454,42 @@ export async function sessionCanViewOwnerPhoto(
       'collections',
       share.collectionId,
     );
-    if (collection === undefined || !isLiveDoc(collection)) {
+    const authorizedShare = {
+      ownerSub: share.ownerSub,
+      collectionId: share.collectionId,
+      grantId: share.grantId,
+    };
+    if (!canViewCollection(authorizedShare, collection)) {
       continue;
     }
-    const ids = Array.isArray(collection.recipeIds) ? collection.recipeIds : [];
-    const recipes: Record<string, unknown>[] = [];
-    for (const recipeId of ids) {
-      if (typeof recipeId !== 'string') {
-        continue;
-      }
-      const recipe = await input.readDocData(
-        input.ownerSub,
-        'recipes',
-        recipeId,
-      );
-      if (recipe) {
-        recipes.push({ ...recipe, id: recipeId });
-      }
-    }
+    const photo = await input.readDocData(
+      input.ownerSub,
+      'photos',
+      input.photoId,
+    );
+    const recipeId = photo?.recipeId;
     if (
-      canViewPhoto(
-        input.photoId,
-        {
-          ownerSub: share.ownerSub,
-          collectionId: share.collectionId,
-          grantId: share.grantId,
-        },
+      photo === undefined ||
+      !isLiveDoc(photo) ||
+      photo.status !== 'live' ||
+      !isUuid(recipeId)
+    ) {
+      continue;
+    }
+    const recipe = await input.readDocData(
+      input.ownerSub,
+      'recipes',
+      recipeId,
+    );
+    if (
+      canViewRecipe(
+        recipeId,
+        authorizedShare,
         collection,
-        recipes,
-      )
+        recipe,
+      ) &&
+      recipe !== undefined &&
+      recipeListsPhoto(recipe, input.photoId)
     ) {
       return true;
     }

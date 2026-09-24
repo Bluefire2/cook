@@ -20,6 +20,8 @@ import type { StoreKind } from './store.ts';
 const viewerSub = 'viewer-1';
 const collectionId = '11111111-1111-4111-8111-111111111111';
 const secondCollectionId = '22222222-2222-4222-8222-222222222222';
+const recipeId = '33333333-3333-4333-8333-333333333333';
+const secondRecipeId = '44444444-4444-4444-8444-444444444444';
 
 function liveCollection(id: string, recipeIds: string[]) {
   return { id, name: 'Shared', recipeIds, createdAt: 1, updatedAt: 2 };
@@ -36,6 +38,17 @@ function liveRecipe(id: string, extra: Record<string, unknown> = {}) {
     createdAt: 1,
     updatedAt: 2,
     ...extra,
+  };
+}
+
+function livePhoto(parentRecipeId: string) {
+  return {
+    id: 'photo-target',
+    recipeId: parentRecipeId,
+    status: 'live',
+    contentType: 'image/jpeg',
+    size: 10,
+    updatedAt: 2,
   };
 }
 
@@ -401,7 +414,7 @@ describe('parseIncomingShareDoc', () => {
 });
 
 describe('sessionCanViewOwnerPhoto', () => {
-  it('allows listed live cover and gallery photos and stops at the first authorized share', async () => {
+  it('allows live cover and gallery photos and bounds reads for an authorized first candidate', async () => {
     const shares = [
       { grantId: 'grant-a', ownerSub: 'owner', collectionId },
       {
@@ -413,22 +426,30 @@ describe('sessionCanViewOwnerPhoto', () => {
     const docs = new Map<string, Record<string, unknown>>([
       [
         docKey('owner', 'collections', collectionId),
-        liveCollection(collectionId, ['recipe-a']),
+        liveCollection(collectionId, [recipeId]),
       ],
       [
-        docKey('owner', 'recipes', 'recipe-a'),
-        liveRecipe('recipe-a', {
+        docKey('owner', 'photos', 'photo-cover'),
+        livePhoto(recipeId),
+      ],
+      [
+        docKey('owner', 'photos', 'photo-gallery'),
+        { ...livePhoto(recipeId), id: 'photo-gallery' },
+      ],
+      [
+        docKey('owner', 'recipes', recipeId),
+        liveRecipe(recipeId, {
           photoId: 'photo-cover',
           galleryPhotoIds: ['photo-gallery'],
         }),
       ],
       [
         docKey('owner', 'collections', secondCollectionId),
-        liveCollection(secondCollectionId, ['recipe-b']),
+        liveCollection(secondCollectionId, [secondRecipeId]),
       ],
       [
-        docKey('owner', 'recipes', 'recipe-b'),
-        liveRecipe('recipe-b', { photoId: 'photo-cover' }),
+        docKey('owner', 'recipes', secondRecipeId),
+        liveRecipe(secondRecipeId, { photoId: 'photo-cover' }),
       ],
     ]);
     const coverCalls: string[] = [];
@@ -454,179 +475,150 @@ describe('sessionCanViewOwnerPhoto', () => {
     expect(coverCalls).not.toContain(
       `doc:owner:collections:${secondCollectionId}`,
     );
+    expect(coverCalls.filter((call) => call.startsWith('share:'))).toHaveLength(1);
+    expect(
+      coverCalls.filter((call) => call.includes(':collections:')),
+    ).toHaveLength(1);
+    expect(coverCalls.filter((call) => call.includes(':photos:'))).toHaveLength(1);
+    expect(coverCalls.filter((call) => call.includes(':recipes:'))).toHaveLength(1);
   });
 
-  it('denies a candidate revoked by fresh revalidation before owner reads', async () => {
+  it('denies a freshly revoked or changed share before owner reads', async () => {
     const share = { grantId: 'grant-a', ownerSub: 'owner', collectionId };
-    const calls: string[] = [];
-
-    await expect(
-      sessionCanViewOwnerPhoto(
-        photoAccessInput({
-          shares: [share],
-          current: new Map([['grant-a', undefined]]),
-          calls,
-        }),
-      ),
-    ).resolves.toBe(false);
-    expect(calls).toEqual([
-      `list:${viewerSub}`,
-      `share:${viewerSub}:grant-a`,
-    ]);
+    for (const current of [
+      undefined,
+      { ...share, collectionId: secondCollectionId },
+    ]) {
+      const calls: string[] = [];
+      await expect(
+        sessionCanViewOwnerPhoto(
+          photoAccessInput({
+            shares: [share],
+            current: new Map([['grant-a', current]]),
+            calls,
+          }),
+        ),
+      ).resolves.toBe(false);
+      expect(calls).toEqual([
+        `list:${viewerSub}`,
+        `share:${viewerSub}:grant-a`,
+      ]);
+    }
   });
 
-  it('denies photos through a tombstoned collection', async () => {
+  it('denies through a missing, tombstoned, or mismatched collection without reading photo metadata', async () => {
     const share = { grantId: 'grant-a', ownerSub: 'owner', collectionId };
-    const docs = new Map<string, Record<string, unknown>>([
-      [
-        docKey('owner', 'collections', collectionId),
-        {
-          ...liveCollection(collectionId, ['recipe-a']),
-          deletedAt: 3,
-        },
-      ],
-      [
-        docKey('owner', 'recipes', 'recipe-a'),
-        liveRecipe('recipe-a', { photoId: 'photo-target' }),
-      ],
-    ]);
-    const calls: string[] = [];
-
-    await expect(
-      sessionCanViewOwnerPhoto(
-        photoAccessInput({ shares: [share], docs, calls }),
-      ),
-    ).resolves.toBe(false);
-    expect(calls.some((call) => call.includes(':recipes:'))).toBe(false);
-  });
-
-  it('denies a recipe removed from the collection and a tombstoned recipe', async () => {
-    const share = { grantId: 'grant-a', ownerSub: 'owner', collectionId };
-    const removedDocs = new Map<string, Record<string, unknown>>([
-      [
-        docKey('owner', 'collections', collectionId),
-        liveCollection(collectionId, ['recipe-listed']),
-      ],
-      [
-        docKey('owner', 'recipes', 'recipe-listed'),
-        liveRecipe('recipe-listed', { photoId: 'photo-other' }),
-      ],
-      [
-        docKey('owner', 'recipes', 'recipe-removed'),
-        liveRecipe('recipe-removed', { photoId: 'photo-target' }),
-      ],
-    ]);
-    const removedCalls: string[] = [];
-
-    await expect(
-      sessionCanViewOwnerPhoto(
-        photoAccessInput({
-          shares: [share],
-          docs: removedDocs,
-          calls: removedCalls,
-        }),
-      ),
-    ).resolves.toBe(false);
-    expect(removedCalls).not.toContain('doc:owner:recipes:recipe-removed');
-
-    const tombstonedDocs = new Map<string, Record<string, unknown>>([
-      [
-        docKey('owner', 'collections', collectionId),
-        liveCollection(collectionId, ['recipe-a']),
-      ],
-      [
-        docKey('owner', 'recipes', 'recipe-a'),
-        {
-          ...liveRecipe('recipe-a', { photoId: 'photo-target' }),
-          deletedAt: 3,
-        },
-      ],
-    ]);
-    await expect(
-      sessionCanViewOwnerPhoto(
-        photoAccessInput({ shares: [share], docs: tombstonedDocs }),
-      ),
-    ).resolves.toBe(false);
-  });
-
-  it('does not authorize from another owner or an unrelated requested-owner photo doc', async () => {
-    const shares = [
-      {
-        grantId: 'grant-other',
-        ownerSub: 'owner-other',
-        collectionId: secondCollectionId,
-      },
-      { grantId: 'grant-owner', ownerSub: 'owner', collectionId },
+    const candidates = [
+      undefined,
+      { ...liveCollection(collectionId, [recipeId]), deletedAt: 3 },
+      liveCollection(secondCollectionId, [recipeId]),
     ];
-    const docs = new Map<string, Record<string, unknown>>([
-      [
-        docKey('owner-other', 'collections', secondCollectionId),
-        liveCollection(secondCollectionId, ['recipe-other']),
-      ],
-      [
-        docKey('owner-other', 'recipes', 'recipe-other'),
-        liveRecipe('recipe-other', { photoId: 'photo-target' }),
-      ],
-      [
-        docKey('owner', 'collections', collectionId),
-        liveCollection(collectionId, ['recipe-owner']),
-      ],
-      [
-        docKey('owner', 'recipes', 'recipe-owner'),
-        liveRecipe('recipe-owner', { photoId: 'photo-different' }),
-      ],
-      [
-        docKey('owner', 'photos', 'photo-target'),
-        { contentType: 'image/jpeg', size: 10, createdAt: 1, updatedAt: 1 },
-      ],
-    ]);
-    const calls: string[] = [];
-
-    await expect(
-      sessionCanViewOwnerPhoto(
-        photoAccessInput({ shares, docs, calls }),
-      ),
-    ).resolves.toBe(false);
-    expect(calls).not.toContain(
-      `doc:owner-other:collections:${secondCollectionId}`,
-    );
-    expect(calls).not.toContain('doc:owner:photos:photo-target');
+    for (const collection of candidates) {
+      const calls: string[] = [];
+      const docs = new Map<string, Record<string, unknown> | undefined>([
+        [docKey('owner', 'collections', collectionId), collection],
+      ]);
+      await expect(
+        sessionCanViewOwnerPhoto(
+          photoAccessInput({ shares: [share], docs, calls }),
+        ),
+      ).resolves.toBe(false);
+      expect(calls.some((call) => call.includes(':photos:'))).toBe(false);
+      expect(calls.some((call) => call.includes(':recipes:'))).toBe(false);
+    }
   });
 
-  it('denies chat and otherwise unreferenced photo ids', async () => {
+  it('denies missing, tombstoned, non-live, or invalid-parent photo metadata before a recipe read', async () => {
+    const share = { grantId: 'grant-a', ownerSub: 'owner', collectionId };
+    const candidates = [
+      undefined,
+      { ...livePhoto(recipeId), deletedAt: 3 },
+      { ...livePhoto(recipeId), status: 'uploading' },
+      livePhoto('not-a-valid-recipe-id'),
+    ];
+    for (const photo of candidates) {
+      const calls: string[] = [];
+      const docs = new Map<string, Record<string, unknown> | undefined>([
+        [
+          docKey('owner', 'collections', collectionId),
+          liveCollection(collectionId, [recipeId]),
+        ],
+        [docKey('owner', 'photos', 'photo-target'), photo],
+      ]);
+      await expect(
+        sessionCanViewOwnerPhoto(
+          photoAccessInput({ shares: [share], docs, calls }),
+        ),
+      ).resolves.toBe(false);
+      expect(calls.filter((call) => call.includes(':photos:'))).toHaveLength(1);
+      expect(calls.some((call) => call.includes(':recipes:'))).toBe(false);
+    }
+  });
+
+  it('denies a missing or tombstoned recipe and a recipe removed from the collection', async () => {
+    const share = { grantId: 'grant-a', ownerSub: 'owner', collectionId };
+    const candidates = [
+      {
+        collection: liveCollection(collectionId, [recipeId]),
+        recipe: undefined,
+      },
+      {
+        collection: liveCollection(collectionId, [recipeId]),
+        recipe: {
+          ...liveRecipe(recipeId, { photoId: 'photo-target' }),
+          deletedAt: 3,
+        },
+      },
+      {
+        collection: liveCollection(collectionId, [secondRecipeId]),
+        recipe: liveRecipe(recipeId, { photoId: 'photo-target' }),
+      },
+    ];
+    for (const candidate of candidates) {
+      const calls: string[] = [];
+      const docs = new Map<string, Record<string, unknown> | undefined>([
+        [docKey('owner', 'collections', collectionId), candidate.collection],
+        [docKey('owner', 'photos', 'photo-target'), livePhoto(recipeId)],
+        [docKey('owner', 'recipes', recipeId), candidate.recipe],
+      ]);
+      await expect(
+        sessionCanViewOwnerPhoto(
+          photoAccessInput({ shares: [share], docs, calls }),
+        ),
+      ).resolves.toBe(false);
+      expect(calls.filter((call) => call.includes(':recipes:'))).toHaveLength(1);
+    }
+  });
+
+  it('denies unrelated owner photos and chat attachments despite parent metadata', async () => {
     const share = { grantId: 'grant-a', ownerSub: 'owner', collectionId };
     const docs = new Map<string, Record<string, unknown>>([
       [
         docKey('owner', 'collections', collectionId),
-        liveCollection(collectionId, ['recipe-a']),
+        liveCollection(collectionId, [recipeId]),
       ],
       [
-        docKey('owner', 'recipes', 'recipe-a'),
-        liveRecipe('recipe-a', { photoId: 'photo-cover' }),
+        docKey('owner', 'recipes', recipeId),
+        liveRecipe(recipeId, {
+          photoId: 'photo-cover',
+          galleryPhotoIds: ['photo-gallery'],
+        }),
       ],
       [
-        docKey('owner', 'photos', 'chat-photo'),
-        { contentType: 'image/jpeg', size: 10, createdAt: 1, updatedAt: 1 },
+        docKey('owner', 'photos', 'photo-unrelated'),
+        { ...livePhoto(recipeId), id: 'photo-unrelated' },
+      ],
+      [
+        docKey('owner', 'photos', 'photo-chat'),
+        { ...livePhoto(recipeId), id: 'photo-chat' },
       ],
     ]);
-
-    await expect(
-      sessionCanViewOwnerPhoto(
-        photoAccessInput({
-          shares: [share],
-          docs,
-          photoId: 'chat-photo',
-        }),
-      ),
-    ).resolves.toBe(false);
-    await expect(
-      sessionCanViewOwnerPhoto(
-        photoAccessInput({
-          shares: [share],
-          docs,
-          photoId: 'photo-unreferenced',
-        }),
-      ),
-    ).resolves.toBe(false);
+    for (const photoId of ['photo-unrelated', 'photo-chat']) {
+      await expect(
+        sessionCanViewOwnerPhoto(
+          photoAccessInput({ shares: [share], docs, photoId }),
+        ),
+      ).resolves.toBe(false);
+    }
   });
 });

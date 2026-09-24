@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { canViewCollection, canViewPhoto, canViewRecipe } from './shareAuth.ts';
+import {
+  canViewCollection,
+  canViewRecipe,
+  recipeListsPhoto,
+} from './shareAuth.ts';
 
 const share = {
   ownerSub: 'owner-1',
@@ -76,15 +80,10 @@ describe('canViewRecipe', () => {
   });
 });
 
-describe('canViewPhoto', () => {
-  it('authorizes only via a listed live recipe photo field', () => {
-    expect(canViewPhoto('p-cover', share, liveCollection, [liveRecipe])).toBe(true);
-    expect(canViewPhoto('p-gal', share, liveCollection, [liveRecipe])).toBe(true);
-    expect(canViewPhoto('p-chat', share, liveCollection, [liveRecipe])).toBe(false);
-    expect(
-      canViewPhoto('p-cover', share, liveCollection, [
-        { id: 'r9', photoId: 'p-cover' },
-      ]),
-    ).toBe(false);
+describe('recipeListsPhoto', () => {
+  it('accepts only cover and gallery photo references', () => {
+    expect(recipeListsPhoto(liveRecipe, 'p-cover')).toBe(true);
+    expect(recipeListsPhoto(liveRecipe, 'p-gal')).toBe(true);
+    expect(recipeListsPhoto(liveRecipe, 'p-chat')).toBe(false);
   });
 });

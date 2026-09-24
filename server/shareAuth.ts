@@ -41,29 +41,3 @@ export function recipeListsPhoto(
   }
   return Array.isArray(recipe.galleryPhotoIds) && recipe.galleryPhotoIds.includes(photoId);
 }
-
-export function canViewPhoto(
-  photoId: string,
-  share: IncomingShare,
-  collection: Record<string, unknown> | undefined,
-  recipes: Record<string, unknown>[],
-): boolean {
-  if (!canViewCollection(share, collection) || collection === undefined) {
-    return false;
-  }
-  const listed = new Set(
-    Array.isArray(collection.recipeIds) ? collection.recipeIds : [],
-  );
-  for (const recipe of recipes) {
-    if (!isLiveDoc(recipe)) {
-      continue;
-    }
-    if (typeof recipe.id !== 'string' || !listed.has(recipe.id)) {
-      continue;
-    }
-    if (recipeListsPhoto(recipe, photoId)) {
-      return true;
-    }
-  }
-  return false;
-}
