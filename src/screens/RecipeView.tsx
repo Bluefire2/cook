@@ -36,6 +36,17 @@ function ingredientLabel(ing: Ingredient, scale: number): string {
   return ing.note ? `${base} (${ing.note})` : base;
 }
 
+function GalleryImage({ photoId }: { photoId: string }) {
+  const url = usePhotoUrl(photoId);
+  return (
+    <div className="overflow-hidden rounded-xl bg-surface-muted shadow-sm">
+      {url && (
+        <img src={url} alt="" className="aspect-square w-full object-cover" />
+      )}
+    </div>
+  );
+}
+
 export default function RecipeView() {
   const { id } = useParams<{ id: string }>();
   const recipe = useRecipe(id);
@@ -55,7 +66,7 @@ export default function RecipeView() {
 
   /**
    * A link from the Chrome extension is the first this device hears of a recipe
-   * that was saved on the server, so an id missing from the cache means "pull
+   * that was saved on the server, so an id missing from the library means "pull
    * and see", not "gone". Settled is tracked as the id it settled for: React
    * Router reuses this element across an id change, and the neutral state has
    * to be the initial one or not-found paints for a frame first.
@@ -68,7 +79,11 @@ export default function RecipeView() {
     void sync().finally(() => setSettledId(id));
   }, [recipe, id]);
 
-  if (recipe === undefined) return null;
+  if (recipe === undefined) {
+    return (
+      <div className="p-6 text-center text-ink-muted">Loading recipe…</div>
+    );
+  }
   if (recipe === null) {
     if (settledId !== id) {
       return (
@@ -233,6 +248,14 @@ export default function RecipeView() {
           <p className="mt-2 rounded-lg bg-surface px-3 py-3 text-ink-muted shadow-sm">
             {recipe.notes}
           </p>
+        </section>
+      )}
+
+      {recipe.galleryPhotoIds && recipe.galleryPhotoIds.length > 0 && (
+        <section className="mt-6 grid grid-cols-2 gap-2">
+          {recipe.galleryPhotoIds.map((id) => (
+            <GalleryImage key={id} photoId={id} />
+          ))}
         </section>
       )}
 

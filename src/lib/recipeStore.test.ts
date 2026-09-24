@@ -23,6 +23,7 @@ describe('compactRecipe', () => {
       cookMinutes: undefined,
       notes: undefined,
       photoId: undefined,
+      galleryPhotoIds: undefined,
     });
 
     expect(compacted).toEqual(required);
@@ -49,6 +50,7 @@ describe('compactRecipe', () => {
       cookMinutes: 20,
       notes: 'Salt late.',
       photoId: 'p1',
+      galleryPhotoIds: ['g1', 'g2'],
     });
 
     expect(compacted.description).toBe('Hot.');
@@ -57,5 +59,23 @@ describe('compactRecipe', () => {
     expect(compacted.cookMinutes).toBe(20);
     expect(compacted.notes).toBe('Salt late.');
     expect(compacted.photoId).toBe('p1');
+    expect(compacted.galleryPhotoIds).toEqual(['g1', 'g2']);
+  });
+
+  it('omits an empty gallery and strips the cover id from it', () => {
+    expect(
+      compactRecipe({
+        ...required,
+        photoId: 'p1',
+        galleryPhotoIds: [],
+      }).galleryPhotoIds,
+    ).toBeUndefined();
+    expect(
+      compactRecipe({
+        ...required,
+        photoId: 'p1',
+        galleryPhotoIds: ['p1', 'g1', 'g1'],
+      }).galleryPhotoIds,
+    ).toEqual(['g1']);
   });
 });

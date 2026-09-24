@@ -44,7 +44,7 @@ export async function encodeImageForChat(
 
 /**
  * The same downscale as a JPEG blob, for photos we keep rather than send. The
- * originals are several megabytes each and the IndexedDB quota is finite.
+ * originals are several megabytes each.
  */
 export async function encodeImageForStorage(
   blob: Blob,

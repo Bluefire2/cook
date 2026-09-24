@@ -1,21 +1,28 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
+import CreateRecipeForm from '../components/CreateRecipeForm';
+import { libraryHref, useCollections } from '../lib/collectionStore';
 import { blankDraft } from '../lib/recipeDraft';
 import { recipeStore, useRecipe } from '../lib/recipeStore';
-import { backLink } from '../lib/uiClasses';
+import { backLink, primaryBtn } from '../lib/uiClasses';
 import type { RecipeDraft } from '../lib/types';
+
+const EDIT_FORM_ID = 'recipe-edit-form';
 
 function Screen({
   heading,
   backTo,
   backLabel,
+  action,
   children,
 }: {
   heading: string;
   backTo: string;
   backLabel: string;
+  /** Optional control shown on the right, opposite the heading. */
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -24,7 +31,10 @@ function Screen({
         <Link to={backTo} className={backLink}>
           &larr; {backLabel}
         </Link>
-        <h1 className="mt-2 text-2xl font-bold">{heading}</h1>
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold">{heading}</h1>
+          {action}
+        </div>
       </header>
       {children}
     </div>
@@ -33,20 +43,25 @@ function Screen({
 
 function CreateRecipe() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const collectionId = params.get('c') ?? undefined;
+  // Subscribed, not a one-shot store read: on a cold load of `?c=<id>` the
+  // pull has not landed yet, and only a subscriber re-renders once it does.
+  const collections = useCollections();
+  const knownCollectionId =
+    collectionId && collections?.some((c) => c.id === collectionId)
+      ? collectionId
+      : undefined;
+  const backTo = libraryHref(knownCollectionId);
   const [initial] = useState(blankDraft);
 
-  const create = async (draft: RecipeDraft) => {
-    const recipe = await recipeStore.create(draft);
-    navigate(`/recipe/${recipe.id}`, { replace: true });
-  };
-
   return (
-    <Screen heading="New recipe" backTo="/" backLabel="Library">
-      <RecipeForm
+    <Screen heading="New recipe" backTo={backTo} backLabel="Library">
+      <CreateRecipeForm
         initial={initial}
-        submitLabel="Save"
-        onSubmit={create}
-        onCancel={() => navigate('/')}
+        collectionId={collectionId}
+        onCreated={(recipe) => navigate(`/recipe/${recipe.id}`, { replace: true })}
+        onCancel={() => navigate(backTo)}
       />
     </Screen>
   );
@@ -56,7 +71,11 @@ function EditRecipe({ id }: { id: string }) {
   const navigate = useNavigate();
   const recipe = useRecipe(id);
 
-  if (recipe === undefined) return null;
+  if (recipe === undefined) {
+    return (
+      <div className="p-6 text-center text-ink-muted">Loading recipe…</div>
+    );
+  }
   if (recipe === null) {
     return (
       <div className="p-6 text-center text-ink-muted">
@@ -87,12 +106,22 @@ function EditRecipe({ id }: { id: string }) {
       heading="Edit recipe"
       backTo={`/recipe/${recipe.id}`}
       backLabel="Recipe"
+      action={
+        <button
+          type="submit"
+          form={EDIT_FORM_ID}
+          className={`${primaryBtn} shrink-0 px-5 py-2`}
+        >
+          Save
+        </button>
+      }
     >
       <RecipeForm
         initial={recipe}
         submitLabel="Save"
         onSubmit={save}
         onCancel={() => navigate(`/recipe/${recipe.id}`)}
+        formId={EDIT_FORM_ID}
       />
     </Screen>
   );

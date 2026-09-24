@@ -1,8 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import Sheet from '../components/Sheet';
+import { FolderIcon, PlusIcon } from '../lib/icons';
+import {
+  collectionStore,
+  libraryHref,
+  useCollections,
+} from '../lib/collectionStore';
+import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
+import { visibleLibraryRecipes } from '../lib/visibleLibraryRecipes';
+import { useSession } from '../lib/session';
+import { useSyncStatus } from '../lib/syncEngine';
 import {
   dangerBtn,
   ghostBtn,
@@ -22,54 +32,154 @@ function CardThumb({ photoId }: { photoId: string }) {
   );
 }
 
-function Sheet({
-  onClose,
-  children,
-}: {
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div className="fixed inset-0 z-30 flex flex-col justify-end">
-      <button
-        type="button"
-        aria-label="Dismiss"
-        tabIndex={-1}
-        onClick={onClose}
-        className="flex-1 bg-black/40"
-      />
-      <div className="rounded-t-3xl bg-surface px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl md:mx-auto md:w-full md:max-w-xl">
-        {children}
-      </div>
-    </div>
-  );
+function chipClass(active: boolean): string {
+  return active
+    ? 'rounded-full bg-ink px-3 py-1.5 text-sm font-medium text-page'
+    : 'rounded-full bg-surface-muted px-3 py-1.5 text-sm text-ink-muted hover:bg-surface hover:text-ink';
 }
 
 export default function Library() {
   const allRecipes = useRecipes();
+  const collections = useCollections();
+  const { status: sessionStatus } = useSession();
+  const syncStatus = useSyncStatus();
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const requestedId = params.get('c');
+  const named =
+    requestedId && collections
+      ? collections.find((c) => c.id === requestedId)
+      : undefined;
+  const currentId = named?.id;
+
   const [query, setQuery] = useState('');
+  const [browseAll, setBrowseAll] = useState(false);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [moveRecipeId, setMoveRecipeId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteCollectionOpen, setDeleteCollectionOpen] = useState(false);
+  const [collectionName, setCollectionName] = useState('');
+  const [collectionError, setCollectionError] = useState<string | null>(null);
+  const [createdCollection, setCreatedCollection] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLAnchorElement>(null);
 
+  const scoped =
+    allRecipes === undefined || collections === undefined
+      ? undefined
+      : named
+        ? recipesInCollection(allRecipes, named, collections)
+        : unfiledRecipes(allRecipes, collections);
+
   const q = query.trim().toLowerCase();
-  const recipes =
-    q === ''
-      ? allRecipes
-      : allRecipes?.filter(
-          (r) =>
-            r.title.toLowerCase().includes(q) ||
-            r.tags.some((tag) => tag.toLowerCase().includes(q)),
-        );
+  const recipes = visibleLibraryRecipes({
+    all: allRecipes,
+    scoped,
+    query,
+    browseAll,
+  });
 
   const pendingDelete = allRecipes?.find((r) => r.id === pendingDeleteId);
+  const moveRecipe = allRecipes?.find((r) => r.id === moveRecipeId);
+  const showSwitcher = (collections?.length ?? 0) > 0;
+  const addQuery = currentId ? `?c=${encodeURIComponent(currentId)}` : '';
 
   const remove = async (id: string) => {
     setPendingDeleteId(null);
     await recipeStore.remove(id);
   };
+
+  const closeSheets = () => {
+    setAddOpen(false);
+    setPendingDeleteId(null);
+    setMoveRecipeId(null);
+    setCreateOpen(false);
+    setRenameOpen(false);
+    setDeleteCollectionOpen(false);
+    setCollectionName('');
+    setCollectionError(null);
+    setCreatedCollection(null);
+  };
+
+  const submitCreate = async () => {
+    const trimmed = collectionName.trim();
+    setCollectionError(null);
+    try {
+      // Reuse the collection a failed attempt already created, so retrying
+      // does not leave two folders with the same name behind.
+      let id: string;
+      if (createdCollection === null) {
+        id = (await collectionStore.create(collectionName)).id;
+        setCreatedCollection({ id, name: trimmed });
+      } else {
+        id = createdCollection.id;
+        if (createdCollection.name !== trimmed) {
+          await collectionStore.rename(id, collectionName);
+          setCreatedCollection({ id, name: trimmed });
+        }
+      }
+      if (moveRecipeId) {
+        await collectionStore.moveRecipe(moveRecipeId, id);
+      }
+      closeSheets();
+      navigate(libraryHref(id));
+    } catch (err) {
+      setCollectionError(err instanceof Error ? err.message : "Couldn't save the collection.");
+    }
+  };
+
+  const submitMove = async (dest: 'default' | string) => {
+    if (!moveRecipeId) {
+      return;
+    }
+    setCollectionError(null);
+    try {
+      await collectionStore.moveRecipe(moveRecipeId, dest);
+      closeSheets();
+      navigate(dest === 'default' ? '/' : libraryHref(dest));
+    } catch (err) {
+      setCollectionError(err instanceof Error ? err.message : "Couldn't move the recipe.");
+    }
+  };
+
+  const submitRename = async () => {
+    if (!currentId) {
+      return;
+    }
+    setCollectionError(null);
+    try {
+      await collectionStore.rename(currentId, collectionName);
+      closeSheets();
+    } catch (err) {
+      setCollectionError(err instanceof Error ? err.message : "Couldn't save the collection.");
+    }
+  };
+
+  const submitDeleteCollection = async () => {
+    if (!currentId) {
+      return;
+    }
+    setCollectionError(null);
+    try {
+      await collectionStore.remove(currentId);
+      closeSheets();
+      navigate('/');
+    } catch (err) {
+      setCollectionError(
+        err instanceof Error ? err.message : "Couldn't delete the collection.",
+      );
+    }
+  };
+
+  useEffect(() => {
+    setBrowseAll(false);
+  }, [currentId]);
 
   useEffect(() => {
     if (!menuId) return;
@@ -85,19 +195,45 @@ export default function Library() {
         menuTriggerRef.current?.focus();
         return;
       }
-      if (pendingDeleteId !== null) {
+      if (
+        pendingDeleteId !== null ||
+        addOpen ||
+        moveRecipeId !== null ||
+        createOpen ||
+        renameOpen ||
+        deleteCollectionOpen
+      ) {
         event.preventDefault();
-        setPendingDeleteId(null);
-        return;
-      }
-      if (addOpen) {
-        event.preventDefault();
-        setAddOpen(false);
+        closeSheets();
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [menuId, pendingDeleteId, addOpen]);
+  }, [
+    menuId,
+    pendingDeleteId,
+    addOpen,
+    moveRecipeId,
+    createOpen,
+    renameOpen,
+    deleteCollectionOpen,
+  ]);
+
+  const emptyCopy = () => {
+    if (q !== '') {
+      return 'No recipes match your search.';
+    }
+    if (sessionStatus === 'signedOut') {
+      return 'Sign in from Settings to load your recipes.';
+    }
+    if (syncStatus.status === 'error') {
+      return "Couldn't load your recipes. Try Refresh in Settings.";
+    }
+    if (named) {
+      return 'No recipes in this collection yet.';
+    }
+    return 'No recipes yet. Import your first one!';
+  };
 
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
@@ -108,20 +244,101 @@ export default function Library() {
         </Link>
       </header>
 
-      <input
-        type="search"
-        placeholder="Search recipes…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        className={`${inputClass} mb-4`}
-      />
+      {showSwitcher && (
+        <nav aria-label="Collections" className="mb-3 flex items-start gap-1.5">
+          <FolderIcon className="mt-2 block h-4 w-4 shrink-0 text-ink-muted" />
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Link
+              to="/"
+              onClick={() => setBrowseAll(false)}
+              className={chipClass(!browseAll && currentId === undefined)}
+            >
+              Recipes
+            </Link>
+            {collections?.map((collection) => (
+              <Link
+                key={collection.id}
+                to={libraryHref(collection.id)}
+                onClick={() => setBrowseAll(false)}
+                className={chipClass(!browseAll && collection.id === currentId)}
+              >
+                {collection.name}
+              </Link>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                setCollectionName('');
+                setCollectionError(null);
+                setCreateOpen(true);
+              }}
+              className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
+            >
+              New
+            </button>
+            {named && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCollectionName(named.name);
+                    setCollectionError(null);
+                    setRenameOpen(true);
+                  }}
+                  className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteCollectionOpen(true)}
+                  className="rounded-full px-3 py-1.5 text-sm text-danger hover:text-ink"
+                >
+                  Delete
+                </button>
+              </>
+            )}
+          </div>
+        </nav>
+      )}
 
-      {recipes === undefined ? null : recipes.length === 0 ? (
-        <p className="py-12 text-center text-ink-muted">
-          {q === ''
-            ? 'No recipes yet. Import your first one!'
-            : 'No recipes match your search.'}
-        </p>
+      {showSwitcher ? (
+        <div className="mb-4 flex items-center gap-2">
+          <input
+            type="search"
+            placeholder={
+              browseAll
+                ? 'Search all recipes…'
+                : named
+                  ? `Search in ${named.name}…`
+                  : 'Search recipes…'
+            }
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className={`${inputClass} min-w-0 flex-1`}
+          />
+          <button
+            type="button"
+            onClick={() => setBrowseAll((on) => !on)}
+            className={`${chipClass(browseAll)} shrink-0`}
+          >
+            All collections
+          </button>
+        </div>
+      ) : (
+        <input
+          type="search"
+          placeholder="Search recipes…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className={`${inputClass} mb-4`}
+        />
+      )}
+
+      {recipes === undefined ? (
+        <p className="py-12 text-center text-ink-muted">Loading recipes…</p>
+      ) : recipes.length === 0 ? (
+        <p className="py-12 text-center text-ink-muted">{emptyCopy()}</p>
       ) : (
         <ul className="flex flex-col gap-3">
           {recipes.map((recipe) => (
@@ -185,6 +402,16 @@ export default function Library() {
                     type="button"
                     onClick={() => {
                       setMenuId(null);
+                      setMoveRecipeId(recipe.id);
+                    }}
+                    className={`${menuItem} border-t border-line`}
+                  >
+                    Move to…
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuId(null);
                       setPendingDeleteId(recipe.id);
                     }}
                     className={`${menuItemDanger} border-t border-line`}
@@ -208,26 +435,28 @@ export default function Library() {
         />
       )}
 
-      <button
-        type="button"
-        aria-label="Add recipe"
-        onClick={() => setAddOpen(true)}
-        className="fixed right-5 bottom-8 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-3xl leading-none text-page shadow-lg hover:opacity-90 active:opacity-90"
-      >
-        +
-      </button>
+      {sessionStatus === 'signedIn' && (
+        <button
+          type="button"
+          aria-label="Add recipe"
+          onClick={() => setAddOpen(true)}
+          className="fixed right-5 bottom-8 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-page shadow-lg hover:opacity-90 active:opacity-90"
+        >
+          <PlusIcon className="block h-8 w-8" />
+        </button>
+      )}
 
       {addOpen && (
         <Sheet onClose={() => setAddOpen(false)}>
           <h2 className="text-lg font-semibold">Add a recipe</h2>
           <Link
-            to="/import"
+            to={`/import${addQuery}`}
             className={`${primaryBtn} mt-3 block py-3 text-center`}
           >
             Import from a link or text
           </Link>
           <Link
-            to="/recipe/new"
+            to={`/recipe/new${addQuery}`}
             className={`${secondaryBtn} mt-2 block py-3 text-center`}
           >
             Write one from scratch
@@ -260,6 +489,148 @@ export default function Library() {
           <button
             type="button"
             onClick={() => setPendingDeleteId(null)}
+            className={`${secondaryBtn} mt-2 w-full py-3`}
+          >
+            Cancel
+          </button>
+        </Sheet>
+      )}
+
+      {moveRecipe && !createOpen && (
+        <Sheet onClose={() => closeSheets()}>
+          <h2 className="text-lg font-semibold">Move “{moveRecipe.title}”</h2>
+          <button
+            type="button"
+            onClick={() => void submitMove('default')}
+            className={`${secondaryBtn} mt-3 w-full py-3`}
+          >
+            Recipes
+          </button>
+          {collections?.map((collection) => (
+            <button
+              key={collection.id}
+              type="button"
+              onClick={() => void submitMove(collection.id)}
+              className={`${secondaryBtn} mt-2 w-full py-3`}
+            >
+              {collection.name}
+            </button>
+          ))}
+          {collectionError && (
+            <p className="mt-2 text-sm text-danger">{collectionError}</p>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setCollectionName('');
+              setCollectionError(null);
+              setCreateOpen(true);
+            }}
+            className={`${primaryBtn} mt-2 w-full py-3`}
+          >
+            New collection
+          </button>
+          <button
+            type="button"
+            onClick={() => closeSheets()}
+            className="mt-2 w-full py-2.5 text-sm text-ink-muted hover:text-ink"
+          >
+            Cancel
+          </button>
+        </Sheet>
+      )}
+
+      {createOpen && (
+        <Sheet onClose={() => closeSheets()}>
+          <h2 className="text-lg font-semibold">New collection</h2>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitCreate();
+            }}
+          >
+            <input
+              autoFocus
+              value={collectionName}
+              onChange={(e) => setCollectionName(e.target.value)}
+              placeholder="Name"
+              className={`${inputClass} mt-3`}
+            />
+            {collectionError && (
+              <p className="mt-2 text-sm text-danger">{collectionError}</p>
+            )}
+            <button
+              type="submit"
+              disabled={collectionName.trim() === ''}
+              className={`${primaryBtn} mt-3 w-full py-3`}
+            >
+              Create
+            </button>
+            <button
+              type="button"
+              onClick={() => closeSheets()}
+              className={`${secondaryBtn} mt-2 w-full py-3`}
+            >
+              Cancel
+            </button>
+          </form>
+        </Sheet>
+      )}
+
+      {renameOpen && named && (
+        <Sheet onClose={() => closeSheets()}>
+          <h2 className="text-lg font-semibold">Rename collection</h2>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitRename();
+            }}
+          >
+            <input
+              autoFocus
+              value={collectionName}
+              onChange={(e) => setCollectionName(e.target.value)}
+              className={`${inputClass} mt-3`}
+            />
+            {collectionError && (
+              <p className="mt-2 text-sm text-danger">{collectionError}</p>
+            )}
+            <button
+              type="submit"
+              className={`${primaryBtn} mt-3 w-full py-3`}
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => closeSheets()}
+              className={`${secondaryBtn} mt-2 w-full py-3`}
+            >
+              Cancel
+            </button>
+          </form>
+        </Sheet>
+      )}
+
+      {deleteCollectionOpen && named && (
+        <Sheet onClose={() => closeSheets()}>
+          <h2 className="text-lg font-semibold">Delete “{named.name}”?</h2>
+          <p className="mt-1 text-sm text-ink-muted">
+            Recipes in it go back to Recipes. They are not deleted.
+          </p>
+          {collectionError && (
+            <p className="mt-2 text-sm text-danger">{collectionError}</p>
+          )}
+          <button
+            type="button"
+            onClick={() => void submitDeleteCollection()}
+            className={`${dangerBtn} mt-3 w-full py-3`}
+          >
+            Delete collection
+          </button>
+          <button
+            type="button"
+            onClick={() => closeSheets()}
             className={`${secondaryBtn} mt-2 w-full py-3`}
           >
             Cancel

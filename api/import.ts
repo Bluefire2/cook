@@ -1,9 +1,10 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { GoogleGenAI, Type, type Schema } from '@google/genai';
 
-// NOTE: Duplicated in api/chat.ts and server/session.ts. Vercel's function
-// runtime transpiles each api/ entrypoint in isolation and cannot import
-// sibling helper files, so the check must live inline. Keep all three in sync.
+// NOTE: Duplicated in api/chat.ts and server/session.ts + server/allowlist.ts.
+// This inline copy is the Vercel gate and must stay in sync with those files.
+// On Cloud Run it is bypassed by an explicit authorizedSub argument after
+// requireMember passed in scripts/server.ts; server/membership.ts is authoritative.
 
 const SESSION_COOKIE_NAME = 'sous_session';
 
@@ -274,12 +275,18 @@ export async function fetchPageHtml(rawUrl: string): Promise<PageFetchResult> {
   return { ok: true, html: await page.text() };
 }
 
-export type ExtractionResult =
-  | { ok: true; recipe: Record<string, unknown> }
-  | { ok: false; status: number; error: string };
+export type GenerateRecipeResult =
+  | { status: 'ok'; recipe: Record<string, unknown> }
+  | { status: 'not_a_recipe' }
+  | { status: 'parse_error' };
 
-/** The Gemini half of an import: source material in, recipe fields out. */
-export async function extractRecipeDraft(source: string): Promise<ExtractionResult> {
+/**
+ * Structured Gemini extraction used by POST /api/import (text and URL paths).
+ * Kept in this file because Vercel cannot import api/ siblings.
+ */
+export async function generateRecipeFromSource(
+  source: string,
+): Promise<GenerateRecipeResult> {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const result = await ai.models.generateContent({
     model: MODEL,
@@ -296,24 +303,44 @@ export async function extractRecipeDraft(source: string): Promise<ExtractionResu
     },
   });
 
-  let recipe: Record<string, unknown>;
+  let recipe: { title?: string };
   try {
     const parsed: unknown = JSON.parse(result.text ?? '');
     if (typeof parsed !== 'object' || parsed === null) {
       throw new Error('not an object');
     }
-    recipe = parsed as Record<string, unknown>;
+    recipe = parsed as { title?: string };
   } catch {
-    return { ok: false, status: 502, error: 'Extraction failed — no structured result.' };
+    return { status: 'parse_error' };
   }
   if (recipe.title === 'NOT_A_RECIPE') {
-    return { ok: false, status: 422, error: "Couldn't find a recipe in that content." };
+    return { status: 'not_a_recipe' };
   }
-  return { ok: true, recipe };
+  return { status: 'ok', recipe: recipe as Record<string, unknown> };
 }
 
-export async function POST(req: Request): Promise<Response> {
-  if (sessionSub(req) === null) {
+export type ExtractionResult =
+  | { ok: true; recipe: Record<string, unknown> }
+  | { ok: false; status: number; error: string };
+
+/** The Gemini half of an extension import: source material in, recipe fields out. */
+export async function extractRecipeDraft(source: string): Promise<ExtractionResult> {
+  const extracted = await generateRecipeFromSource(source);
+  if (extracted.status === 'parse_error') {
+    return { ok: false, status: 502, error: 'Extraction failed — no structured result.' };
+  }
+  if (extracted.status === 'not_a_recipe') {
+    return { ok: false, status: 422, error: "Couldn't find a recipe in that content." };
+  }
+  return { ok: true, recipe: extracted.recipe };
+}
+
+export async function POST(req: Request, ctx?: { authorizedSub?: string }): Promise<Response> {
+  const authorized =
+    typeof ctx?.authorizedSub === 'string' && ctx.authorizedSub !== ''
+      ? ctx.authorizedSub
+      : sessionSub(req);
+  if (authorized === null) {
     return new Response('Unauthorized', { status: 401 });
   }
 
@@ -335,9 +362,18 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  const extracted = await extractRecipeDraft(source);
-  if (!extracted.ok) {
-    return Response.json({ error: extracted.error }, { status: extracted.status });
+  const extracted = await generateRecipeFromSource(source);
+  if (extracted.status === 'parse_error') {
+    return Response.json(
+      { error: 'Extraction failed — no structured result.' },
+      { status: 502 },
+    );
+  }
+  if (extracted.status === 'not_a_recipe') {
+    return Response.json(
+      { error: "Couldn't find a recipe in that content." },
+      { status: 422 },
+    );
   }
 
   return Response.json({ recipe: { ...extracted.recipe, sourceUrl: body.url } });

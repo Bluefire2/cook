@@ -8,15 +8,37 @@ export default defineConfig({
     proxy: {
       // Local stand-in for Vercel functions; see scripts/dev-api-server.ts
       '/api': 'http://localhost:3001',
+      '/invite': 'http://localhost:3001',
     },
   },
   plugins: [
+    {
+      name: 'legal-html',
+      configureServer(server) {
+        server.middlewares.use((req, _res, next) => {
+          if (req.url === '/privacy' || req.url?.startsWith('/privacy?')) {
+            req.url = '/privacy.html';
+          } else if (req.url === '/terms' || req.url?.startsWith('/terms?')) {
+            req.url = '/terms.html';
+          } else if (req.url === '/about' || req.url?.startsWith('/about?')) {
+            req.url = '/about.html';
+          }
+          next();
+        });
+      },
+    },
     react(),
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
       workbox: {
-        navigateFallbackDenylist: [/^\/api\//, /^\/privacy$/, /^\/terms$/],
+        navigateFallbackDenylist: [
+          /^\/api\//,
+          /^\/privacy$/,
+          /^\/terms$/,
+          /^\/about$/,
+          /^\/invite\//,
+        ],
       },
       manifest: {
         name: 'Sous',

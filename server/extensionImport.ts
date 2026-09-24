@@ -13,7 +13,7 @@ import {
   fetchPageHtml,
 } from '../api/import.ts';
 import { recipePutFromExtraction } from './recipeFromExtraction.ts';
-import { sessionFromHeader } from './session.ts';
+import { requireHeaderMember } from './membership.ts';
 import { applyPushOp } from './sync.ts';
 
 /** Buffered then measured, matching `syncPush`'s `raw.length` convention. */
@@ -85,9 +85,12 @@ export function extensionImportOptions(req: Request): Promise<Response> {
 }
 
 export async function extensionImport(req: Request): Promise<Response> {
-  const session = sessionFromHeader(req);
-  if (session === null) {
+  const access = await requireHeaderMember(req);
+  if (access.kind === 'denied') {
     return jsonResponse(req, { error: 'Unauthorized' }, 401);
+  }
+  if (access.kind === 'unknown') {
+    return jsonResponse(req, { error: 'Membership unavailable' }, 503);
   }
 
   let raw: string;
@@ -162,7 +165,7 @@ export async function extensionImport(req: Request): Promise<Response> {
   // reach the dispatcher as a text/plain 500 the popup cannot parse.
   let applied: boolean;
   try {
-    const result = await applyPushOp(session.sub, { kind: 'recipe.put', payload });
+    const result = await applyPushOp(access.sub, { kind: 'recipe.put', payload });
     applied = result.applied;
   } catch (err) {
     console.error(err);
