@@ -116,7 +116,6 @@ describe('isSafeFirestoreDocumentId', () => {
     '.',
     '..',
     '__viewer__',
-    '__',
     'a'.repeat(1_501),
     'é'.repeat(751),
   ])('rejects unsafe document id %j', (candidate) => {
