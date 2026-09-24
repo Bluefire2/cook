@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import ShareCollectionSheet from '../components/ShareCollectionSheet';
 import Sheet from '../components/Sheet';
@@ -10,7 +10,6 @@ import {
 } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
 import {
-  getCollectionOrigin,
   getGrantCount,
   isSharedCollection,
   isSharedRecipe,
@@ -77,6 +76,7 @@ export default function Library() {
   } | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLAnchorElement>(null);
+  const prefetchedGrantListsRef = useRef(new Set<string>());
 
   const scoped =
     allRecipes === undefined || collections === undefined
@@ -102,18 +102,31 @@ export default function Library() {
   const ownedCollections =
     collections?.filter((collection) => !isSharedCollection(collection.id)) ?? [];
 
-  useEffect(() => {
+  const ownedCollectionIdSignature = useMemo(() => {
     if (!collections) {
+      return '';
+    }
+    return collections
+      .filter((collection) => !isSharedCollection(collection.id))
+      .map((collection) => collection.id)
+      .sort()
+      .join('\0');
+  }, [collections]);
+
+  useEffect(() => {
+    if (!ownedCollectionIdSignature) {
       return;
     }
-    for (const collection of collections) {
-      if (getCollectionOrigin(collection.id)?.kind === 'own') {
-        void collectionStore.listGrants(collection.id).catch(() => {
-          // icon stays unmarked until Share is opened
-        });
+    for (const id of ownedCollectionIdSignature.split('\0')) {
+      if (prefetchedGrantListsRef.current.has(id)) {
+        continue;
       }
+      prefetchedGrantListsRef.current.add(id);
+      void collectionStore.listGrants(id).catch(() => {
+        // icon stays unmarked until Share is opened
+      });
     }
-  }, [collections]);
+  }, [ownedCollectionIdSignature]);
 
   const remove = async (id: string) => {
     setPendingDeleteId(null);

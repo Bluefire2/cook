@@ -328,6 +328,9 @@ export function photoOwnerSub(photoId: string): string | undefined {
 }
 
 export function setGrantCount(collectionId: string, count: number): void {
+  if (snapshot.grantCounts.get(collectionId) === count) {
+    return;
+  }
   const next = cloneMaps(snapshot);
   next.grantCounts.set(collectionId, count);
   emit({ ...snapshot, ...next });

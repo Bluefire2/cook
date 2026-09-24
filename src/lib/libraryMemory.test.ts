@@ -6,6 +6,8 @@ import {
   isSharedRecipe,
   mergeSharedFromPull,
   replaceFromPull,
+  setGrantCount,
+  subscribe,
   upsertCollection,
   upsertRecipe,
 } from './libraryMemory';
@@ -74,6 +76,22 @@ function collection(id: string, name: string): Collection {
     updatedAt: 1,
   };
 }
+
+describe('setGrantCount', () => {
+  it('does not notify subscribers when the count is unchanged', () => {
+    let calls = 0;
+    const unsub = subscribe(() => {
+      calls += 1;
+    });
+    setGrantCount('col-1', 2);
+    expect(calls).toBe(1);
+    setGrantCount('col-1', 2);
+    expect(calls).toBe(1);
+    setGrantCount('col-1', 3);
+    expect(calls).toBe(2);
+    unsub();
+  });
+});
 
 describe('countOwnedNamedCollections', () => {
   it('counts only owned and missing-origin collections', () => {
