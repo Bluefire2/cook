@@ -97,13 +97,23 @@ export function clearLibrary(): void {
   emit(empty(true));
 }
 
-export function replaceFromPull(next: {
+type OwnedPullSnapshot = {
   recipes: Map<string, Recipe>;
   collections: Map<string, Collection>;
   chat: Map<string, ChatMessage>;
   cook: Map<string, CookStateRow>;
   remotePhotoIds: Set<string>;
-}): void {
+};
+
+type SharedPullSnapshot = {
+  recipes: Map<string, Recipe>;
+  collections: Map<string, Collection>;
+  remotePhotoIds: Set<string>;
+  recipeOrigins: Map<string, ItemOrigin>;
+  collectionOrigins: Map<string, ItemOrigin>;
+};
+
+export function replaceFromPull(next: OwnedPullSnapshot): void {
   const recipeOrigins = new Map<string, ItemOrigin>();
   for (const id of next.recipes.keys()) {
     recipeOrigins.set(id, { kind: 'own' });
@@ -126,13 +136,57 @@ export function replaceFromPull(next: {
   });
 }
 
-export function mergeSharedFromPull(next: {
-  recipes: Map<string, Recipe>;
-  collections: Map<string, Collection>;
-  remotePhotoIds: Set<string>;
-  recipeOrigins: Map<string, ItemOrigin>;
-  collectionOrigins: Map<string, ItemOrigin>;
-}): void {
+export function replaceFromPullWithShared(
+  owned: OwnedPullSnapshot,
+  shared: SharedPullSnapshot,
+): void {
+  const recipes = new Map(owned.recipes);
+  const recipeOrigins = new Map<string, ItemOrigin>();
+  for (const id of recipes.keys()) {
+    recipeOrigins.set(id, { kind: 'own' });
+  }
+  for (const [id, recipe] of shared.recipes) {
+    if (recipes.has(id)) {
+      continue;
+    }
+    recipes.set(id, recipe);
+    const origin = shared.recipeOrigins.get(id);
+    if (origin) {
+      recipeOrigins.set(id, origin);
+    }
+  }
+
+  const collections = new Map(owned.collections);
+  const collectionOrigins = new Map<string, ItemOrigin>();
+  for (const id of collections.keys()) {
+    collectionOrigins.set(id, { kind: 'own' });
+  }
+  for (const [id, collection] of shared.collections) {
+    if (collections.has(id)) {
+      continue;
+    }
+    collections.set(id, collection);
+    const origin = shared.collectionOrigins.get(id);
+    if (origin) {
+      collectionOrigins.set(id, origin);
+    }
+  }
+
+  emit({
+    recipes,
+    collections,
+    chat: owned.chat,
+    cook: owned.cook,
+    remotePhotoIds: new Set([...owned.remotePhotoIds, ...shared.remotePhotoIds]),
+    pendingBlobs: snapshot.pendingBlobs,
+    recipeOrigins,
+    collectionOrigins,
+    grantCounts: snapshot.grantCounts,
+    loaded: true,
+  });
+}
+
+export function mergeSharedFromPull(next: SharedPullSnapshot): void {
   const maps = cloneMaps(snapshot);
   for (const [id, recipe] of next.recipes) {
     if (maps.recipeOrigins.get(id)?.kind === 'own' || maps.recipes.has(id)) {

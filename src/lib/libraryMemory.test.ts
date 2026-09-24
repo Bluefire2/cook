@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  addPendingBlob,
   clearLibrary,
   countOwnedNamedCollections,
   getGrantCount,
   getRecipe,
+  getSnapshot,
   isSharedRecipe,
   mergeSharedFromPull,
   replaceFromPull,
+  replaceFromPullWithShared,
   setGrantCount,
   subscribe,
   upsertCollection,
@@ -65,6 +68,67 @@ describe('mergeSharedFromPull', () => {
   it('marks a locally created recipe as owned', () => {
     upsertRecipe(recipe('new-1', 'Fresh'));
     expect(isSharedRecipe('new-1')).toBe(false);
+  });
+});
+
+describe('replaceFromPullWithShared', () => {
+  it('publishes one complete owned-precedence snapshot and preserves local caches', () => {
+    addPendingBlob('pending-photo', new Blob(['pending']));
+    setGrantCount('owned-collection', 2);
+    let calls = 0;
+    const unsubscribe = subscribe(() => {
+      calls += 1;
+    });
+
+    replaceFromPullWithShared(
+      {
+        recipes: new Map([['collision', recipe('collision', 'Mine')]]),
+        collections: new Map([
+          ['owned-collection', collection('owned-collection', 'Mine')],
+        ]),
+        chat: new Map(),
+        cook: new Map(),
+        remotePhotoIds: new Set(['owned-photo']),
+      },
+      {
+        recipes: new Map([
+          ['collision', recipe('collision', 'Theirs')],
+          ['shared-recipe', recipe('shared-recipe', 'Shared')],
+        ]),
+        collections: new Map([
+          ['shared-collection', collection('shared-collection', 'Shared')],
+        ]),
+        remotePhotoIds: new Set(['shared-photo']),
+        recipeOrigins: new Map([
+          ['collision', { kind: 'shared', ownerSub: 'owner' }],
+          ['shared-recipe', { kind: 'shared', ownerSub: 'owner' }],
+        ]),
+        collectionOrigins: new Map([
+          ['shared-collection', { kind: 'shared', ownerSub: 'owner' }],
+        ]),
+      },
+    );
+    unsubscribe();
+
+    const snapshot = getSnapshot();
+    expect(calls).toBe(1);
+    expect(snapshot.loaded).toBe(true);
+    expect(snapshot.recipes.get('collision')?.title).toBe('Mine');
+    expect(snapshot.recipeOrigins.get('collision')).toEqual({ kind: 'own' });
+    expect(snapshot.recipeOrigins.get('shared-recipe')).toEqual({
+      kind: 'shared',
+      ownerSub: 'owner',
+    });
+    expect(snapshot.collectionOrigins.get('owned-collection')).toEqual({
+      kind: 'own',
+    });
+    expect(snapshot.collectionOrigins.get('shared-collection')).toEqual({
+      kind: 'shared',
+      ownerSub: 'owner',
+    });
+    expect([...snapshot.remotePhotoIds]).toEqual(['owned-photo', 'shared-photo']);
+    expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
+    expect(snapshot.grantCounts.get('owned-collection')).toBe(2);
   });
 });
 

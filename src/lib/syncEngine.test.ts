@@ -7,6 +7,7 @@ import {
   mergeSharedFromPull,
   replaceFromPull,
   setGrantCount,
+  subscribe,
 } from './libraryMemory';
 import {
   applyPullChanges,
@@ -238,6 +239,10 @@ describe('pullAll', () => {
     });
     addPendingBlob('pending-photo', new Blob(['pending']));
     setGrantCount('known-grants', 2);
+    const emissions: ReturnType<typeof getSnapshot>[] = [];
+    const unsubscribe = subscribe(() => {
+      emissions.push(getSnapshot());
+    });
 
     const result = await pullAll({
       pullPage: async () =>
@@ -254,8 +259,11 @@ describe('pullAll', () => {
         ),
       pullSharedPage: async () => 'error',
     });
+    unsubscribe();
 
     const snapshot = getSnapshot();
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0]).toBe(snapshot);
     expect(result).toEqual({ outcome: 'error', pushed: 0, applied: 0 });
     expect(snapshot.loaded).toBe(true);
     expect([...snapshot.recipes.keys()]).toEqual(['new-own']);
@@ -272,6 +280,30 @@ describe('pullAll', () => {
   });
 
   it('does not merge a successful first shared page when a later page fails', async () => {
+    replaceFromPull({
+      recipes: new Map([['prior-owned', recipe('prior-owned', 'Prior owned')]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      remotePhotoIds: new Set(['prior-owned-photo']),
+    });
+    mergeSharedFromPull({
+      recipes: new Map([['prior-shared', recipe('prior-shared', 'Prior shared')]]),
+      collections: new Map([
+        ['prior-shared-collection', collection('prior-shared-collection', 'Prior shared')],
+      ]),
+      remotePhotoIds: new Set(['prior-shared-photo']),
+      recipeOrigins: new Map([
+        ['prior-shared', { kind: 'shared', ownerSub: 'prior-owner' }],
+      ]),
+      collectionOrigins: new Map([
+        ['prior-shared-collection', { kind: 'shared', ownerSub: 'prior-owner' }],
+      ]),
+    });
+    const emissions: ReturnType<typeof getSnapshot>[] = [];
+    const unsubscribe = subscribe(() => {
+      emissions.push(getSnapshot());
+    });
     let sharedCalls = 0;
     const result = await pullAll({
       pullPage: async () =>
@@ -292,13 +324,19 @@ describe('pullAll', () => {
         return 'error';
       },
     });
+    unsubscribe();
 
     const snapshot = getSnapshot();
     expect(result.outcome).toBe('error');
     expect(sharedCalls).toBe(2);
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0]).toBe(snapshot);
     expect([...snapshot.recipes.keys()]).toEqual(['owned']);
     expect(snapshot.remotePhotoIds.has('partial-photo')).toBe(false);
     expect(snapshot.recipeOrigins.has('partial-shared')).toBe(false);
+    expect(snapshot.recipeOrigins.has('prior-shared')).toBe(false);
+    expect(snapshot.collectionOrigins.has('prior-shared-collection')).toBe(false);
+    expect(snapshot.remotePhotoIds.has('prior-shared-photo')).toBe(false);
   });
 
   it('keeps installed owned state and returns error when shared pulling throws', async () => {
@@ -324,15 +362,22 @@ describe('pullAll', () => {
     });
     addPendingBlob('pending', new Blob(['pending']));
     setGrantCount('collection', 1);
+    const emissions: ReturnType<typeof getSnapshot>[] = [];
+    const unsubscribe = subscribe(() => {
+      emissions.push(getSnapshot());
+    });
 
     const result = await pullAll({
       pullPage: async () =>
         ownedPage(ownedChanges({ recipes: [pullDoc(recipe('new', 'New'))] })),
       pullSharedPage: async () => 'signedOut',
     });
+    unsubscribe();
 
     const snapshot = getSnapshot();
     expect(result.outcome).toBe('signedOut');
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0]).toBe(snapshot);
     expect(snapshot.loaded).toBe(true);
     expect(snapshot.recipes.size).toBe(0);
     expect(snapshot.collections.size).toBe(0);
@@ -355,6 +400,10 @@ describe('pullAll', () => {
     });
     let ownedCalls = 0;
     let sharedCalled = false;
+    const emissions: ReturnType<typeof getSnapshot>[] = [];
+    const unsubscribe = subscribe(() => {
+      emissions.push(getSnapshot());
+    });
 
     const result = await pullAll({
       pullPage: async (cursor) => {
@@ -379,10 +428,12 @@ describe('pullAll', () => {
         return sharedPage();
       },
     });
+    unsubscribe();
 
     expect(result.outcome).toBe('error');
     expect(ownedCalls).toBe(2);
     expect(sharedCalled).toBe(false);
+    expect(emissions).toHaveLength(0);
     expect([...getSnapshot().recipes.keys()]).toEqual(['existing']);
   });
 
@@ -404,7 +455,14 @@ describe('pullAll', () => {
     expect(getSnapshot().recipes.size).toBe(0);
   });
 
-  it('merges complete shared state once while preserving owned id precedence and origins', async () => {
+  it('publishes completed owned and multi-page shared state exactly once', async () => {
+    addPendingBlob('pending-photo', new Blob(['pending']));
+    setGrantCount('collection-collision', 3);
+    const emissions: ReturnType<typeof getSnapshot>[] = [];
+    const unsubscribe = subscribe(() => {
+      emissions.push(getSnapshot());
+    });
+    let sharedCalls = 0;
     const result = await pullAll({
       pullPage: async () =>
         ownedPage(
@@ -416,32 +474,64 @@ describe('pullAll', () => {
             photos: [{ id: 'owned-photo' }],
           }),
         ),
-      pullSharedPage: async () =>
-        sharedPage({
+      pullSharedPage: async (cursor) => {
+        sharedCalls += 1;
+        if (sharedCalls === 1) {
+          expect(cursor).toBeNull();
+          return sharedPage(
+            {
+              recipes: [
+                { ...recipe('collision', 'Shared collision'), ownerSub: 'shared-owner' },
+                { ...recipe('shared-one', 'Shared one'), ownerSub: 'shared-owner' },
+              ],
+              collections: [
+                {
+                  ...collection('collection-collision', 'Shared collision'),
+                  ownerSub: 'shared-owner',
+                },
+                {
+                  ...collection('shared-collection', 'Shared collection', [
+                    'shared-one',
+                    'shared-two',
+                  ]),
+                  ownerSub: 'shared-owner',
+                },
+              ],
+              photos: [{ id: 'shared-photo-one' }],
+            },
+            { hasMore: true, cursorToken: 'shared-page-two' },
+          );
+        }
+        expect(cursor).toBe('shared-page-two');
+        return sharedPage({
           recipes: [
-            { ...recipe('collision', 'Shared collision'), ownerSub: 'shared-owner' },
-            { ...recipe('shared', 'Shared recipe'), ownerSub: 'shared-owner' },
+            { ...recipe('shared-two', 'Shared two'), ownerSub: 'shared-owner' },
           ],
-          collections: [
-            {
-              ...collection('collection-collision', 'Shared collision'),
-              ownerSub: 'shared-owner',
-            },
-            {
-              ...collection('shared-collection', 'Shared collection', ['shared']),
-              ownerSub: 'shared-owner',
-            },
-          ],
-          photos: [{ id: 'shared-photo' }],
-        }),
+          photos: [{ id: 'shared-photo-two' }],
+        });
+      },
     });
+    unsubscribe();
 
     const snapshot = getSnapshot();
     expect(result.outcome).toBe('ok');
+    expect(sharedCalls).toBe(2);
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0]).toBe(snapshot);
+    expect(emissions[0]?.collections.get('shared-collection')?.recipeIds).toEqual([
+      'shared-one',
+      'shared-two',
+    ]);
+    expect(emissions[0]?.recipes.has('shared-one')).toBe(true);
+    expect(emissions[0]?.recipes.has('shared-two')).toBe(true);
     expect(snapshot.recipes.get('collision')?.title).toBe('Owned collision');
     expect(snapshot.recipeOrigins.get('collision')).toEqual({ kind: 'own' });
-    expect(snapshot.recipes.get('shared')?.title).toBe('Shared recipe');
-    expect(snapshot.recipeOrigins.get('shared')).toEqual({
+    expect(snapshot.recipes.get('shared-one')?.title).toBe('Shared one');
+    expect(snapshot.recipeOrigins.get('shared-one')).toEqual({
+      kind: 'shared',
+      ownerSub: 'shared-owner',
+    });
+    expect(snapshot.recipeOrigins.get('shared-two')).toEqual({
       kind: 'shared',
       ownerSub: 'shared-owner',
     });
@@ -452,7 +542,14 @@ describe('pullAll', () => {
       kind: 'shared',
       ownerSub: 'shared-owner',
     });
-    expect([...snapshot.remotePhotoIds]).toEqual(['owned-photo', 'shared-photo']);
+    expect([...snapshot.remotePhotoIds]).toEqual([
+      'owned-photo',
+      'shared-photo-one',
+      'shared-photo-two',
+    ]);
+    expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
+    expect(snapshot.grantCounts.get('collection-collision')).toBe(3);
+    expect(snapshot.loaded).toBe(true);
   });
 });
 

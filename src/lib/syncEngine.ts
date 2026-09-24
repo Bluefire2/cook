@@ -13,8 +13,8 @@ import {
 import {
   clearLibrary,
   markLoaded,
-  mergeSharedFromPull,
   replaceFromPull,
+  replaceFromPullWithShared,
   type ItemOrigin,
 } from './libraryMemory';
 import type { ChatMessage, Collection, Recipe } from './types';
@@ -138,8 +138,6 @@ export async function pullAll(dependencies: PullDependencies): Promise<SyncResul
     return { outcome: 'error', pushed: 0, applied: 0 };
   }
 
-  replaceFromPull(acc);
-
   const sharedRecipes = new Map<string, Recipe>();
   const sharedCollections = new Map<string, Collection>();
   const sharedPhotos = new Set<string>();
@@ -157,6 +155,7 @@ export async function pullAll(dependencies: PullDependencies): Promise<SyncResul
         return { outcome: 'signedOut', pushed: 0, applied: 0 };
       }
       if (page === 'error') {
+        replaceFromPull(acc);
         return { outcome: 'error', pushed: 0, applied: 0 };
       }
       for (const raw of page.changes.collections) {
@@ -195,16 +194,20 @@ export async function pullAll(dependencies: PullDependencies): Promise<SyncResul
       }
     }
   } catch {
+    replaceFromPull(acc);
     return { outcome: 'error', pushed: 0, applied: 0 };
   }
 
-  mergeSharedFromPull({
-    recipes: sharedRecipes,
-    collections: sharedCollections,
-    remotePhotoIds: sharedPhotos,
-    recipeOrigins,
-    collectionOrigins,
-  });
+  replaceFromPullWithShared(
+    acc,
+    {
+      recipes: sharedRecipes,
+      collections: sharedCollections,
+      remotePhotoIds: sharedPhotos,
+      recipeOrigins,
+      collectionOrigins,
+    },
+  );
   return { outcome: 'ok', pushed: 0, applied: 0 };
 }
 
