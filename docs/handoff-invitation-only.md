@@ -147,8 +147,8 @@ Shared-photo metadata is only an index to the photo's parent recipe. Every
 authorization still requires a freshly read incoming share, a live
 collection, `canViewRecipe`, and `recipeListsPhoto`; metadata alone grants
 nothing. Ask text works for shared recipes, but Ask photo attachments are
-intentionally unavailable. Backup export omits viewer-owned chat and
-attachments whose parent recipe is shared.
+intentionally unavailable. Backup export omits shared-parent viewer chat and
+its attachments.
 
 There is no viewer leave-shared-collection flow. Revocation removes access,
 but viewer-owned chat for that shared recipe may remain orphaned server-side.
