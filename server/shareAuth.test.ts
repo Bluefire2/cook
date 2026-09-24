@@ -37,8 +37,35 @@ describe('canViewCollection', () => {
 });
 
 describe('canViewRecipe', () => {
-  it('rejects a recipe that is not listed or is tombstoned', () => {
-    expect(canViewRecipe('r9', share, liveCollection, { id: 'r9' })).toBe(false);
+  it('rejects a collection that does not match the share', () => {
+    expect(
+      canViewRecipe(
+        'r1',
+        share,
+        { ...liveCollection, id: 'different-collection' },
+        liveRecipe,
+      ),
+    ).toBe(false);
+  });
+
+  it('rejects a recipe absent from the current collection recipe ids', () => {
+    expect(canViewRecipe('r9', share, liveCollection, { id: 'r9' })).toBe(
+      false,
+    );
+  });
+
+  it('rejects a tombstoned collection', () => {
+    expect(
+      canViewRecipe(
+        'r1',
+        share,
+        { ...liveCollection, deletedAt: 3 },
+        liveRecipe,
+      ),
+    ).toBe(false);
+  });
+
+  it('rejects a tombstoned recipe', () => {
     expect(
       canViewRecipe('r1', share, liveCollection, { ...liveRecipe, deletedAt: 4 }),
     ).toBe(false);

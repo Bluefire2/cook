@@ -243,18 +243,6 @@ export function cascadeGrantPairTransition(input: {
   return { grant, share };
 }
 
-export function incomingShareFromGrant(
-  ownerSub: string,
-  collectionId: string,
-  grant: LiveGrant | GrantTombstone,
-  ownerEmail?: string,
-): IncomingShareDoc {
-  return incomingSharePayload(ownerSub, collectionId, grant.updatedAt, {
-    ...(ownerEmail ? { ownerEmail } : {}),
-    ...('deletedAt' in grant ? { deletedAt: grant.deletedAt } : {}),
-  });
-}
-
 export function incomingSharePayload(
   ownerSub: string,
   collectionId: string,

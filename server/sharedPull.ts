@@ -1,5 +1,5 @@
 import type { LiveIncomingShare } from './grants.ts';
-import { canViewCollection } from './shareAuth.ts';
+import { canViewCollection, canViewRecipe } from './shareAuth.ts';
 import {
   compactCollectionFields,
   compactRecipeFields,
@@ -138,7 +138,7 @@ export async function buildSharedPullPage(
         'recipes',
         recipeId,
       );
-      if (recipe === undefined || !isLiveDoc(recipe)) {
+      if (!canViewRecipe(recipeId, share, collection, recipe)) {
         continue;
       }
       const compact = compactRecipeFields({ ...recipe, id: recipeId });

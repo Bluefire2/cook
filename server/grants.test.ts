@@ -6,14 +6,12 @@ import {
   collectionLiveForGrant,
   grantCascadeRevoke,
   incomingShareCascadeDoc,
-  incomingShareFromGrant,
   normalizeShareEmail,
   parseGrantDoc,
   parseIncomingShareDoc,
   resolveShareTarget,
   revokeGrantTransition,
   sessionCanViewOwnerPhoto,
-  shareGrantId,
   type LiveIncomingShare,
   type SessionCanViewOwnerPhotoInput,
 } from './grants.ts';
@@ -399,24 +397,6 @@ describe('parseIncomingShareDoc', () => {
       updatedAt: 3,
       ownerEmail: 'o@e.c',
     });
-  });
-});
-
-describe('incomingShareFromGrant', () => {
-  it('mirrors a tombstone onto the reverse index', () => {
-    expect(
-      incomingShareFromGrant('owner', collectionId, {
-        viewerSub,
-        updatedAt: 5,
-        deletedAt: 5,
-      }),
-    ).toEqual({
-      ownerSub: 'owner',
-      collectionId,
-      updatedAt: 5,
-      deletedAt: 5,
-    });
-    expect(shareGrantId('owner', collectionId)).toBe(`owner_${collectionId}`);
   });
 });
 

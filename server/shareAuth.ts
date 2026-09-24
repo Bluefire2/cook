@@ -21,7 +21,7 @@ export function canViewRecipe(
   share: IncomingShare,
   collection: Record<string, unknown> | undefined,
   recipe: Record<string, unknown> | undefined,
-): boolean {
+): recipe is Record<string, unknown> {
   if (!canViewCollection(share, collection) || collection === undefined) {
     return false;
   }
