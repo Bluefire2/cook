@@ -27,6 +27,7 @@ import type { PushOp } from './pushOps';
 import {
   backupGraphIds,
   decideBackupImportMode,
+  deterministicCloneIds,
   remapBackupImport,
 } from './backupImportRemap';
 
@@ -172,16 +173,17 @@ export async function importLibrary(
     cookState,
     backupPhotoIds: (backup.photos ?? []).map((p) => p.id),
   };
+  const graphIds = backupGraphIds(importEntities);
   const mode = decideBackupImportMode(
     backup.exportedBySub,
     currentSub,
-    backupGraphIds(importEntities),
+    graphIds,
     ownedBackupGraphIds(),
   );
   const remapped = remapBackupImport(
     importEntities,
     mode,
-    () => crypto.randomUUID(),
+    await deterministicCloneIds(graphIds, currentSub),
   );
   const importRecipes = remapped.recipes;
   const importCollections = remapped.collections;
