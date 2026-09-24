@@ -86,7 +86,9 @@ function attributePhotos(
 
 export async function exportLibrary(currentSub: string): Promise<Blob> {
   const recipes = listRecipes().filter((recipe) => !isSharedRecipe(recipe.id));
-  const chatMessages = listAllChat();
+  const chatMessages = listAllChat().filter(
+    (message) => !isSharedRecipe(message.recipeId),
+  );
   const cookState = listAllCook().filter((row) => !isSharedRecipe(row.recipeId));
   const collections = listCollections().filter(
     (collection) => !isSharedCollection(collection.id),

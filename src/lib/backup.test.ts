@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { importLibrary } from './backup';
+import { exportLibrary, importLibrary } from './backup';
 import {
+  addPendingBlob,
   clearLibrary,
   getSnapshot,
   listAllChat,
@@ -18,6 +19,31 @@ vi.mock('./remote', () => ({
   postPhoto: vi.fn(),
   pushOps: vi.fn(),
 }));
+
+function installFileReader(): void {
+  vi.stubGlobal(
+    'FileReader',
+    class {
+      result: string | null = null;
+      error: unknown = null;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+
+      readAsDataURL(blob: Blob): void {
+        void blob
+          .arrayBuffer()
+          .then((buffer) => {
+            this.result = `data:${blob.type};base64,${Buffer.from(buffer).toString('base64')}`;
+            this.onload?.();
+          })
+          .catch((error: unknown) => {
+            this.error = error;
+            this.onerror?.();
+          });
+      }
+    },
+  );
+}
 
 const RECIPE = {
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -88,8 +114,116 @@ function lastPushedOps(): PushOp[] {
 
 afterEach(() => {
   clearLibrary();
+  vi.unstubAllGlobals();
   vi.mocked(pushOps).mockReset();
   vi.mocked(postPhoto).mockReset();
+});
+
+describe('exportLibrary', () => {
+  it('omits shared-parent chat, cook state, and chat-only photos', async () => {
+    installFileReader();
+    const ownedRecipePhotoId = 'owned-recipe-photo';
+    const sharedRecipePhotoId = 'shared-recipe-photo';
+    const ownedChatPhotoId = 'owned-chat-photo';
+    const sharedChatPhotoId = 'shared-chat-photo';
+    const orphanChatPhotoId = 'orphan-chat-photo';
+    const sharedRecipe = {
+      ...RECIPE,
+      id: 'shared-recipe',
+      title: 'Shared soup',
+      photoId: sharedRecipePhotoId,
+    };
+    const ownedRecipe = { ...RECIPE, photoId: ownedRecipePhotoId };
+    const ownedChat = { ...CHAT, photoIds: [ownedChatPhotoId] };
+    const sharedChat = {
+      ...CHAT,
+      id: 'shared-chat',
+      recipeId: sharedRecipe.id,
+      photoIds: [sharedChatPhotoId],
+    };
+    const orphanChat = {
+      ...CHAT,
+      id: 'orphan-chat',
+      recipeId: 'missing-recipe',
+      photoIds: [orphanChatPhotoId],
+    };
+    const sharedCook = { ...COOK, recipeId: sharedRecipe.id };
+    const orphanCook = { ...COOK, recipeId: 'missing-recipe' };
+
+    replaceFromPull({
+      recipes: new Map([[ownedRecipe.id, ownedRecipe]]),
+      collections: new Map([[COLLECTION.id, COLLECTION]]),
+      chat: new Map([
+        [ownedChat.id, ownedChat],
+        [sharedChat.id, sharedChat],
+        [orphanChat.id, orphanChat],
+      ]),
+      cook: new Map([
+        [COOK.recipeId, COOK],
+        [sharedCook.recipeId, sharedCook],
+        [orphanCook.recipeId, orphanCook],
+      ]),
+      remotePhotoIds: new Set(),
+    });
+    mergeSharedFromPull({
+      recipes: new Map([[sharedRecipe.id, sharedRecipe]]),
+      collections: new Map(),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map([
+        [sharedRecipe.id, { kind: 'shared', ownerSub: 'owner-sub' }],
+      ]),
+      collectionOrigins: new Map(),
+    });
+    for (const id of [
+      ownedRecipePhotoId,
+      sharedRecipePhotoId,
+      ownedChatPhotoId,
+      sharedChatPhotoId,
+      orphanChatPhotoId,
+    ]) {
+      addPendingBlob(id, new Blob([id], { type: 'image/jpeg' }));
+    }
+
+    const backup = JSON.parse(
+      await (await exportLibrary('viewer-sub')).text(),
+    ) as Record<string, unknown>;
+
+    expect(backup).toMatchObject({
+      app: 'cook',
+      version: 3,
+      exportedBySub: 'viewer-sub',
+    });
+    expect(backup.recipes).toEqual([ownedRecipe]);
+    expect(backup.chatMessages).toEqual([ownedChat, orphanChat]);
+    expect(backup.cookState).toEqual([COOK, orphanCook]);
+    expect(backup.collections).toEqual([COLLECTION]);
+    expect(backup.recipes).not.toContainEqual(sharedRecipe);
+    expect(backup.chatMessages).not.toContainEqual(sharedChat);
+    expect(backup.cookState).not.toContainEqual(sharedCook);
+
+    const photos = backup.photos as Array<Record<string, unknown>>;
+    expect(photos.map((photo) => photo.id)).toEqual([
+      ownedRecipePhotoId,
+      ownedChatPhotoId,
+      orphanChatPhotoId,
+    ]);
+    expect(photos.map((photo) => Object.keys(photo).sort())).toEqual([
+      ['base64', 'createdAt', 'id', 'type'],
+      ['base64', 'createdAt', 'id', 'type'],
+      ['base64', 'createdAt', 'id', 'type'],
+    ]);
+    expect(Object.keys(backup).sort()).toEqual([
+      'app',
+      'chatMessages',
+      'collections',
+      'cookState',
+      'exportedAt',
+      'exportedBySub',
+      'photos',
+      'recipes',
+      'version',
+    ]);
+  });
 });
 
 describe('importLibrary', () => {
