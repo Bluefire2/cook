@@ -61,6 +61,10 @@ function cook(recipeId: string, servings: number): CookStateRow {
   };
 }
 
+function pullDoc<T extends object>(value: T): Record<string, unknown> {
+  return { ...value } as Record<string, unknown>;
+}
+
 function ownedChanges(overrides: Partial<PullChanges> = {}): PullChanges {
   return {
     recipes: [],
@@ -239,10 +243,12 @@ describe('pullAll', () => {
       pullPage: async () =>
         ownedPage(
           ownedChanges({
-            recipes: [recipe('new-own', 'New owned')],
-            collections: [collection('new-owned-collection', 'New', ['new-own'])],
-            chatMessages: [chat('new-message', 'new-own', 'new')],
-            cookState: [cook('new-own', 4)],
+            recipes: [pullDoc(recipe('new-own', 'New owned'))],
+            collections: [
+              pullDoc(collection('new-owned-collection', 'New', ['new-own'])),
+            ],
+            chatMessages: [pullDoc(chat('new-message', 'new-own', 'new'))],
+            cookState: [pullDoc(cook('new-own', 4))],
             photos: [{ id: 'new-owned-photo' }],
           }),
         ),
@@ -269,7 +275,7 @@ describe('pullAll', () => {
     let sharedCalls = 0;
     const result = await pullAll({
       pullPage: async () =>
-        ownedPage(ownedChanges({ recipes: [recipe('owned', 'Owned')] })),
+        ownedPage(ownedChanges({ recipes: [pullDoc(recipe('owned', 'Owned'))] })),
       pullSharedPage: async (cursor) => {
         sharedCalls += 1;
         if (sharedCalls === 1) {
@@ -298,7 +304,7 @@ describe('pullAll', () => {
   it('keeps installed owned state and returns error when shared pulling throws', async () => {
     const result = await pullAll({
       pullPage: async () =>
-        ownedPage(ownedChanges({ recipes: [recipe('owned', 'Owned')] })),
+        ownedPage(ownedChanges({ recipes: [pullDoc(recipe('owned', 'Owned'))] })),
       pullSharedPage: async () => {
         throw new Error('network failed');
       },
@@ -321,7 +327,7 @@ describe('pullAll', () => {
 
     const result = await pullAll({
       pullPage: async () =>
-        ownedPage(ownedChanges({ recipes: [recipe('new', 'New')] })),
+        ownedPage(ownedChanges({ recipes: [pullDoc(recipe('new', 'New'))] })),
       pullSharedPage: async () => 'signedOut',
     });
 
@@ -356,7 +362,9 @@ describe('pullAll', () => {
         if (ownedCalls === 1) {
           expect(cursor).toBeNull();
           return ownedPage(
-            ownedChanges({ recipes: [recipe('partial-owned', 'Partial')] }),
+            ownedChanges({
+              recipes: [pullDoc(recipe('partial-owned', 'Partial'))],
+            }),
             {
               hasMore: true,
               cursor: { recipes: [2, 'partial-owned'] },
@@ -401,8 +409,10 @@ describe('pullAll', () => {
       pullPage: async () =>
         ownedPage(
           ownedChanges({
-            recipes: [recipe('collision', 'Owned collision')],
-            collections: [collection('collection-collision', 'Owned collection')],
+            recipes: [pullDoc(recipe('collision', 'Owned collision'))],
+            collections: [
+              pullDoc(collection('collection-collision', 'Owned collection')),
+            ],
             photos: [{ id: 'owned-photo' }],
           }),
         ),
