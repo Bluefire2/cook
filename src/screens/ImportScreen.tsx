@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import CreateRecipeForm from '../components/CreateRecipeForm';
 import SaveToCollectionSheet from '../components/SaveToCollectionSheet';
@@ -14,6 +14,7 @@ import { recipeStore } from '../lib/recipeStore';
 import { backLink, inputFocus, primaryBtn, secondaryBtn } from '../lib/uiClasses';
 
 const SESSION_EXPIRED = 'Please sign in again — your session expired.';
+const IMPORT_FORM_ID = 'import-recipe-form';
 
 type BulkResult =
   | { url: string; ok: true; id: string; title: string }
@@ -44,6 +45,10 @@ export default function ImportScreen() {
   const [retrying, setRetrying] = useState(false);
   const inFlight = useRef(false);
   const [summary, setSummary] = useState<BulkResult[] | null>(null);
+  const [saveLocked, setSaveLocked] = useState(false);
+  const onSubmitLockedChange = useCallback((locked: boolean) => {
+    setSaveLocked(locked);
+  }, []);
 
   const runBulk = async (urls: string[], destinationId: string | undefined) => {
     if (inFlight.current) return;
@@ -152,7 +157,19 @@ export default function ImportScreen() {
         <Link to={backTo} className={backLink}>
           &larr; Library
         </Link>
-        <h1 className="mt-2 text-2xl font-bold">Import recipe</h1>
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold">Import recipe</h1>
+          {summary === null && preview !== null && (
+            <button
+              type="submit"
+              form={IMPORT_FORM_ID}
+              disabled={saveLocked}
+              className={`${primaryBtn} shrink-0 px-5 py-2`}
+            >
+              Save
+            </button>
+          )}
+        </div>
       </header>
 
       {summary !== null ? (
@@ -308,8 +325,13 @@ export default function ImportScreen() {
           <CreateRecipeForm
             initial={preview}
             collectionId={collectionId}
+            formId={IMPORT_FORM_ID}
+            onSubmitLockedChange={onSubmitLockedChange}
             onCreated={(recipe) => navigate(`/recipe/${recipe.id}`, { replace: true })}
-            onCancel={() => setPreview(null)}
+            onCancel={() => {
+              setSaveLocked(false);
+              setPreview(null);
+            }}
           />
         </>
       )}

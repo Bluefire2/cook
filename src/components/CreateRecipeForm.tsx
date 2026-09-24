@@ -12,11 +12,22 @@ import RecipeForm from './RecipeForm';
 import SaveToCollectionSheet from './SaveToCollectionSheet';
 
 /** Owns a staged creation draft until saved or explicitly abandoned. */
-export default function CreateRecipeForm({ initial, collectionId, onCreated, onCancel }: {
+export default function CreateRecipeForm({
+  initial,
+  collectionId,
+  onCreated,
+  onCancel,
+  formId,
+  onSubmitLockedChange,
+}: {
   initial: RecipeDraft;
   collectionId?: string;
   onCreated: (recipe: Recipe) => void;
   onCancel: () => void;
+  /** Lets a Save button outside this form submit it (the import header). */
+  formId?: string;
+  /** True while another save must not start (loading, or a save already underway). */
+  onSubmitLockedChange?: (locked: boolean) => void;
 }) {
   const collections = useCollections();
   const destination = resolveCollectionDestination(collections, collectionId);
@@ -24,6 +35,7 @@ export default function CreateRecipeForm({ initial, collectionId, onCreated, onC
   const [busy, setBusy] = useState(false);
   const [choosing, setChoosing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [canSubmit, setCanSubmit] = useState(true);
   const inFlight = useRef(false);
   const stagedPhotoIds = useRef<string[]>([]);
 
@@ -41,6 +53,10 @@ export default function CreateRecipeForm({ initial, collectionId, onCreated, onC
   useEffect(() => {
     if (draft && destination.kind === 'choose' && !busy) setChoosing(true);
   }, [draft, destination.kind, busy]);
+  const submitLocked = destination.kind === 'loading' || draft !== null || !canSubmit;
+  useEffect(() => {
+    onSubmitLockedChange?.(submitLocked);
+  }, [submitLocked, onSubmitLockedChange]);
 
   const cancelDraft = () => {
     if (inFlight.current) return;
@@ -80,6 +96,8 @@ export default function CreateRecipeForm({ initial, collectionId, onCreated, onC
       <fieldset disabled={destination.kind === 'loading' || draft !== null} className="min-w-0">
         <RecipeForm
           initial={initial}
+          formId={formId}
+          onCanSubmitChange={setCanSubmit}
           submitLabel="Save to library"
           onCancel={onCancel}
           onSubmit={async (pending) => {
