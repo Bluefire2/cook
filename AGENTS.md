@@ -228,11 +228,12 @@ Unit tests cover **pure** logic only. There is no fake-indexeddb, no Firestore
 emulator in CI, no GCS mock, no DOM testing library — do not add them for one
 feature. `.github/workflows/ci.yml` stays `tsc -b` + `npm test` on push/PR.
 
-Live paste-to-recipe evals are `npm run test:import` (`src/**/*.eval.ts`,
-`vitest.eval.config.ts`). They call Gemini against fixtures in `evals/import/`
-and need `GEMINI_API_KEY` from `.env.local` (same as `dev:api`). Website
-fixtures use cached `page.html` (never fetch at eval time). Do not fold them
-into `npm test` or CI.
+Live paste-to-recipe evals are `npm run test:import` (`vitest.eval.config.ts`).
+They call Gemini against fixtures in `evals/import/` and need `GEMINI_API_KEY`
+from `.env.local` (same as `dev:api`). Website fixtures use cached `page.html`
+(never fetch at eval time). Do not fold them into `npm test` or CI. The harness is not in this tree: it returns as
+`evals/recipeImport.eval.ts` on `eval-import-sites`, so `npm run test:import`
+finds no files until that lands.
 
 UI and layout changes: exercise the flow in the browser (not a screenshot).
 Vite + `dev:api`, signed in at `localhost:5173`. Check other routes that share
