@@ -511,6 +511,202 @@ export async function readLiveIncomingShare(
   };
 }
 
+/** Firestore snapshot metadata, not a client timestamp. */
+export type SharedScopeShareSnapshot = {
+  id: string;
+  data: Record<string, unknown> | undefined;
+  updateTime: string;
+};
+
+export type SharedScopeCollectionSnapshot = {
+  exists: boolean;
+  data?: Record<string, unknown>;
+  updateTime?: string;
+};
+
+/**
+ * Authorization-scope row. `shareUpdateTime` and `collectionUpdateTime` are
+ * Firestore snapshot update times, so a revoke/re-grant keeps a new identity
+ * even when the stored fields match.
+ */
+export type SharedAuthorizationScopeEntry = {
+  grantId: string;
+  ownerSub: string;
+  collectionId: string;
+  shareUpdateTime: string;
+  collectionLive: boolean;
+  recipeIds?: string[];
+  collectionUpdateTime?: string;
+};
+
+export type SharedAuthorizationScopeIo = {
+  listShareSnapshots: (
+    viewerSub: string,
+  ) => Promise<SharedScopeShareSnapshot[]>;
+  readCollectionSnapshot: (
+    ownerSub: string,
+    collectionId: string,
+  ) => Promise<SharedScopeCollectionSnapshot>;
+};
+
+export function canonicalSnapshotUpdateTime(
+  updateTime: { seconds: number; nanoseconds: number } | undefined,
+): string {
+  if (updateTime === undefined) {
+    return '';
+  }
+  const { seconds, nanoseconds } = updateTime;
+  if (!Number.isFinite(seconds) || !Number.isFinite(nanoseconds)) {
+    return '';
+  }
+  return `${Math.trunc(seconds)}.${String(Math.trunc(nanoseconds)).padStart(9, '0')}`;
+}
+
+function liveShareIdentity(share: SharedScopeShareSnapshot): {
+  grantId: string;
+  ownerSub: string;
+  collectionId: string;
+  shareUpdateTime: string;
+} | null {
+  const parsed = parseIncomingShareDoc(share.data);
+  if (parsed === undefined || parsed.deletedAt !== undefined) {
+    return null;
+  }
+  return {
+    grantId: share.id,
+    ownerSub: parsed.ownerSub,
+    collectionId: parsed.collectionId,
+    shareUpdateTime: share.updateTime,
+  };
+}
+
+export function sharedScopeEntryFromSnapshots(
+  share: SharedScopeShareSnapshot,
+  collection: SharedScopeCollectionSnapshot,
+): SharedAuthorizationScopeEntry | null {
+  const identity = liveShareIdentity(share);
+  if (identity === null) {
+    return null;
+  }
+  const data = collection.exists ? collection.data : undefined;
+  const collectionLive = canViewCollection(
+    {
+      ownerSub: identity.ownerSub,
+      collectionId: identity.collectionId,
+      grantId: identity.grantId,
+    },
+    data,
+  );
+  const entry: SharedAuthorizationScopeEntry = {
+    grantId: identity.grantId,
+    ownerSub: identity.ownerSub,
+    collectionId: identity.collectionId,
+    shareUpdateTime: identity.shareUpdateTime,
+    collectionLive,
+  };
+  if (!collectionLive || data === undefined) {
+    return entry;
+  }
+  entry.recipeIds = Array.isArray(data.recipeIds)
+    ? data.recipeIds.filter((id): id is string => typeof id === 'string')
+    : [];
+  entry.collectionUpdateTime = collection.updateTime ?? '';
+  return entry;
+}
+
+/**
+ * Canonical scope description. Sorting and dropping non-live membership
+ * happens here so the digest does not depend on query order or tombstone
+ * recipe lists. Recipe and photo bodies are not part of this value.
+ */
+export function canonicalSharedAuthorizationScope(
+  entries: readonly SharedAuthorizationScopeEntry[],
+): SharedAuthorizationScopeEntry[] {
+  const canonical: SharedAuthorizationScopeEntry[] = [];
+  for (const entry of entries) {
+    const next: SharedAuthorizationScopeEntry = {
+      grantId: entry.grantId,
+      ownerSub: entry.ownerSub,
+      collectionId: entry.collectionId,
+      shareUpdateTime: entry.shareUpdateTime,
+      collectionLive: entry.collectionLive,
+    };
+    if (entry.collectionLive) {
+      const recipeIds = Array.isArray(entry.recipeIds)
+        ? entry.recipeIds.filter((id): id is string => typeof id === 'string')
+        : [];
+      recipeIds.sort();
+      next.recipeIds = recipeIds;
+      next.collectionUpdateTime = entry.collectionUpdateTime ?? '';
+    }
+    canonical.push(next);
+  }
+  canonical.sort((a, b) =>
+    a.grantId < b.grantId ? -1 : a.grantId > b.grantId ? 1 : 0,
+  );
+  return canonical;
+}
+
+/** One read-only pass: reverse shares, then each live share's collection. */
+export async function loadSharedAuthorizationScope(
+  viewerSub: string,
+  io: SharedAuthorizationScopeIo,
+): Promise<SharedAuthorizationScopeEntry[]> {
+  const shares = await io.listShareSnapshots(viewerSub);
+  const entries: SharedAuthorizationScopeEntry[] = [];
+  for (const share of shares) {
+    const identity = liveShareIdentity(share);
+    if (identity === null) {
+      continue;
+    }
+    const collection = await io.readCollectionSnapshot(
+      identity.ownerSub,
+      identity.collectionId,
+    );
+    const entry = sharedScopeEntryFromSnapshots(share, collection);
+    if (entry !== null) {
+      entries.push(entry);
+    }
+  }
+  return entries;
+}
+
+/**
+ * Reads the viewer's authorization scope in one Firestore read-only
+ * transaction. No writes. Callers compare the digest before and after a
+ * page; this function does not authorize individual rows.
+ */
+export async function readSharedAuthorizationScope(
+  viewerSub: string,
+): Promise<SharedAuthorizationScopeEntry[]> {
+  const db = getStoreFirestore();
+  return db.runTransaction((tx) =>
+    loadSharedAuthorizationScope(viewerSub, {
+      listShareSnapshots: async (sub) => {
+        const snap = await tx.get(
+          incomingSharesCol(sub).orderBy(FieldPath.documentId()),
+        );
+        return snap.docs.map((doc) => ({
+          id: doc.id,
+          data: doc.data() as Record<string, unknown>,
+          updateTime: canonicalSnapshotUpdateTime(doc.updateTime),
+        }));
+      },
+      readCollectionSnapshot: async (ownerSub, collectionId) => {
+        const snap = await tx.get(collectionDocRef(ownerSub, collectionId));
+        if (!snap.exists) {
+          return { exists: false };
+        }
+        return {
+          exists: true,
+          data: snap.data() as Record<string, unknown>,
+          updateTime: canonicalSnapshotUpdateTime(snap.updateTime),
+        };
+      },
+    }),
+  );
+}
+
 type ReadDocData = (
   uid: string,
   kind: StoreKind,

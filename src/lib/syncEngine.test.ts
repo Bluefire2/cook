@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { decideSyncToast, pullAll } from './syncEngine';
+import { decideSyncToast, MAX_SHARED_PULL_ATTEMPTS, pullAll } from './syncEngine';
 import {
   addPendingBlob,
   clearLibrary,
@@ -550,6 +550,196 @@ describe('pullAll', () => {
     expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
     expect(snapshot.grantCounts.get('collection-collision')).toBe(3);
     expect(snapshot.loaded).toBe(true);
+  });
+
+  it('publishes a stable reread once and drops the page staged before restart', async () => {
+    addPendingBlob('pending-photo', new Blob(['pending']));
+    setGrantCount('known-grants', 2);
+    const emissions: ReturnType<typeof getSnapshot>[] = [];
+    const unsubscribe = subscribe(() => {
+      emissions.push(getSnapshot());
+    });
+    let ownedCalls = 0;
+    const cursors: Array<string | null> = [];
+    const result = await pullAll({
+      pullPage: async () => {
+        ownedCalls += 1;
+        return ownedPage(
+          ownedChanges({ recipes: [pullDoc(recipe('owned', 'Owned'))] }),
+        );
+      },
+      pullSharedPage: async (cursor) => {
+        cursors.push(cursor);
+        if (cursors.length === 1) {
+          return sharedPage(
+            {
+              recipes: [
+                { ...recipe('revoked-recipe', 'Revoked'), ownerSub: 'owner' },
+              ],
+              collections: [
+                {
+                  ...collection('revoked-collection', 'Revoked'),
+                  ownerSub: 'owner',
+                },
+              ],
+              photos: [{ id: 'revoked-photo' }],
+            },
+            { hasMore: true, cursorToken: 'revoked-page' },
+          );
+        }
+        if (cursors.length === 2) {
+          return 'restart';
+        }
+        if (cursors.length === 3) {
+          return sharedPage(
+            {
+              recipes: [{ ...recipe('kept-one', 'Kept one'), ownerSub: 'owner' }],
+            },
+            { hasMore: true, cursorToken: 'stable-page' },
+          );
+        }
+        return sharedPage({
+          recipes: [{ ...recipe('kept-two', 'Kept two'), ownerSub: 'owner' }],
+          photos: [{ id: 'kept-photo' }],
+        });
+      },
+    });
+    unsubscribe();
+
+    const snapshot = getSnapshot();
+    expect(result).toEqual({ outcome: 'ok', pushed: 0, applied: 0 });
+    expect(ownedCalls).toBe(1);
+    expect(cursors).toEqual([null, 'revoked-page', null, 'stable-page']);
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0]).toBe(snapshot);
+    expect([...snapshot.recipes.keys()]).toEqual(['owned', 'kept-one', 'kept-two']);
+    expect(snapshot.recipes.has('revoked-recipe')).toBe(false);
+    expect(snapshot.collections.has('revoked-collection')).toBe(false);
+    expect(snapshot.recipeOrigins.has('revoked-recipe')).toBe(false);
+    expect(snapshot.remotePhotoIds.has('revoked-photo')).toBe(false);
+    expect(snapshot.remotePhotoIds.has('kept-photo')).toBe(true);
+    expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
+    expect(snapshot.grantCounts.get('known-grants')).toBe(2);
+  });
+
+  it('discards a staged recipe when membership changes and the pull restarts', async () => {
+    const cursors: Array<string | null> = [];
+    const result = await pullAll({
+      pullPage: async () =>
+        ownedPage(ownedChanges({ recipes: [pullDoc(recipe('owned', 'Owned'))] })),
+      pullSharedPage: async (cursor) => {
+        cursors.push(cursor);
+        if (cursors.length === 1) {
+          return sharedPage(
+            {
+              recipes: [
+                { ...recipe('removed-recipe', 'Removed'), ownerSub: 'owner' },
+              ],
+              photos: [{ id: 'removed-photo' }],
+            },
+            { hasMore: true, cursorToken: 'page-one' },
+          );
+        }
+        if (cursors.length === 2) {
+          return 'restart';
+        }
+        return sharedPage({
+          recipes: [{ ...recipe('remaining-recipe', 'Remaining'), ownerSub: 'owner' }],
+        });
+      },
+    });
+
+    const snapshot = getSnapshot();
+    expect(result.outcome).toBe('ok');
+    expect(cursors).toEqual([null, 'page-one', null]);
+    expect([...snapshot.recipes.keys()]).toEqual(['owned', 'remaining-recipe']);
+    expect(snapshot.recipes.has('removed-recipe')).toBe(false);
+    expect(snapshot.recipeOrigins.has('removed-recipe')).toBe(false);
+    expect(snapshot.remotePhotoIds.has('removed-photo')).toBe(false);
+  });
+
+  it('installs owned-only state when shared scope churn exhausts the retry cap', async () => {
+    replaceFromPull({
+      recipes: new Map([['prior-owned', recipe('prior-owned', 'Prior owned')]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      remotePhotoIds: new Set(['prior-owned-photo']),
+    });
+    mergeSharedFromPull({
+      recipes: new Map([['prior-shared', recipe('prior-shared', 'Prior shared')]]),
+      collections: new Map([
+        ['prior-shared-collection', collection('prior-shared-collection', 'Prior')],
+      ]),
+      remotePhotoIds: new Set(['prior-shared-photo']),
+      recipeOrigins: new Map([
+        ['prior-shared', { kind: 'shared', ownerSub: 'prior-owner' }],
+      ]),
+      collectionOrigins: new Map([
+        ['prior-shared-collection', { kind: 'shared', ownerSub: 'prior-owner' }],
+      ]),
+    });
+    addPendingBlob('pending-photo', new Blob(['pending']));
+    setGrantCount('known-grants', 4);
+    const emissions: ReturnType<typeof getSnapshot>[] = [];
+    const unsubscribe = subscribe(() => {
+      emissions.push(getSnapshot());
+    });
+    let ownedCalls = 0;
+    const cursors: Array<string | null> = [];
+    const result = await pullAll({
+      pullPage: async () => {
+        ownedCalls += 1;
+        return ownedPage(
+          ownedChanges({
+            recipes: [pullDoc(recipe('new-own', 'New owned'))],
+            photos: [{ id: 'new-owned-photo' }],
+          }),
+        );
+      },
+      pullSharedPage: async (cursor) => {
+        cursors.push(cursor);
+        if ((cursors.length - 1) % 2 === 0) {
+          return sharedPage(
+            {
+              recipes: [
+                { ...recipe('staged-shared', 'Staged'), ownerSub: 'owner' },
+              ],
+              photos: [{ id: 'staged-photo' }],
+            },
+            { hasMore: true, cursorToken: 'staged-cursor' },
+          );
+        }
+        return 'restart';
+      },
+    });
+    unsubscribe();
+
+    const snapshot = getSnapshot();
+    expect(result).toEqual({ outcome: 'error', pushed: 0, applied: 0 });
+    expect(decideSyncToast(result)).toEqual({
+      kind: 'error',
+      message: "Couldn't refresh",
+    });
+    expect(ownedCalls).toBe(1);
+    expect(cursors).toEqual(
+      Array.from({ length: MAX_SHARED_PULL_ATTEMPTS }, () => [
+        null,
+        'staged-cursor',
+      ]).flat(),
+    );
+    expect(emissions).toHaveLength(1);
+    expect([...snapshot.recipes.keys()]).toEqual(['new-own']);
+    expect(snapshot.recipes.has('staged-shared')).toBe(false);
+    expect(snapshot.recipes.has('prior-shared')).toBe(false);
+    expect(snapshot.collections.has('prior-shared-collection')).toBe(false);
+    expect(snapshot.remotePhotoIds.has('staged-photo')).toBe(false);
+    expect(snapshot.remotePhotoIds.has('prior-shared-photo')).toBe(false);
+    expect([...snapshot.remotePhotoIds]).toEqual(['new-owned-photo']);
+    expect(snapshot.recipeOrigins.has('staged-shared')).toBe(false);
+    expect(snapshot.recipeOrigins.has('prior-shared')).toBe(false);
+    expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
+    expect(snapshot.grantCounts.get('known-grants')).toBe(4);
   });
 });
 

@@ -28,11 +28,17 @@ export interface SyncResult {
   applied: number;
 }
 
+/**
+ * Shared authorization scope may change between pages. Retry the shared pull
+ * from the first page this many times. Owned pull is not repeated.
+ */
+export const MAX_SHARED_PULL_ATTEMPTS = 3;
+
 export type PullDependencies = {
   pullPage: (cursor: PullCursor | null) => Promise<PullPage | 'signedOut' | 'error'>;
   pullSharedPage: (
     cursorToken: string | null,
-  ) => Promise<SharedPullPage | 'signedOut' | 'error'>;
+  ) => Promise<SharedPullPage | 'signedOut' | 'error' | 'restart'>;
 };
 
 export type SyncFinishedListener = (result: SyncResult) => void;
@@ -138,13 +144,23 @@ export async function pullAll(dependencies: PullDependencies): Promise<SyncResul
     return { outcome: 'error', pushed: 0, applied: 0 };
   }
 
-  const sharedRecipes = new Map<string, Recipe>();
-  const sharedCollections = new Map<string, Collection>();
-  const sharedPhotos = new Set<string>();
-  const recipeOrigins = new Map<string, ItemOrigin>();
-  const collectionOrigins = new Map<string, ItemOrigin>();
+  let sharedRecipes = new Map<string, Recipe>();
+  let sharedCollections = new Map<string, Collection>();
+  let sharedPhotos = new Set<string>();
+  let recipeOrigins = new Map<string, ItemOrigin>();
+  let collectionOrigins = new Map<string, ItemOrigin>();
   let sharedCursor: string | null = null;
   let sharedPages = 0;
+  let sharedAttempt = 1;
+  const discardSharedAttempt = (): void => {
+    sharedRecipes = new Map();
+    sharedCollections = new Map();
+    sharedPhotos = new Set();
+    recipeOrigins = new Map();
+    collectionOrigins = new Map();
+    sharedCursor = null;
+    sharedPages = 0;
+  };
   try {
     while (true) {
       const page = await dependencies.pullSharedPage(
@@ -157,6 +173,15 @@ export async function pullAll(dependencies: PullDependencies): Promise<SyncResul
       if (page === 'error') {
         replaceFromPull(acc);
         return { outcome: 'error', pushed: 0, applied: 0 };
+      }
+      if (page === 'restart') {
+        if (sharedAttempt >= MAX_SHARED_PULL_ATTEMPTS) {
+          replaceFromPull(acc);
+          return { outcome: 'error', pushed: 0, applied: 0 };
+        }
+        sharedAttempt += 1;
+        discardSharedAttempt();
+        continue;
       }
       for (const raw of page.changes.collections) {
         const id = raw.id as string;

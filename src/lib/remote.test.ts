@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { firstPushRejection, pushOps } from './remote';
+import { firstPushRejection, pullSharedPage, pushOps } from './remote';
 import type { PushOp } from './pushOps';
 import { isDiscardedPushReason } from './pushReasons';
 
@@ -129,5 +129,90 @@ describe('pushOps', () => {
   it('returns signedOut on 401', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })));
     expect(await pushOps([op])).toBe('signedOut');
+  });
+});
+
+describe('pullSharedPage', () => {
+  it('requests the hardcoded shared page limit', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        jsonResponse({
+          changes: { collections: [], recipes: [], photos: [] },
+          cursorToken: 'signed-cursor',
+          hasMore: false,
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const page = await pullSharedPage(null);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/sync/shared?limit=200',
+      expect.objectContaining({ credentials: 'same-origin', cache: 'no-store' }),
+    );
+    expect(page).toEqual({
+      changes: { collections: [], recipes: [], photos: [] },
+      cursorToken: 'signed-cursor',
+      hasMore: false,
+    });
+  });
+
+  it('maps only the typed snapshot-changed response to restart', async () => {
+    localStorage.setItem('cook.session', 'present');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({ error: 'shared-snapshot-changed' }, 409),
+      ),
+    );
+    expect(await pullSharedPage('stale-cursor')).toBe('restart');
+    expect(localStorage.getItem('cook.session')).toBe('present');
+  });
+
+  it('does not treat HTTP 200 as a generation restart', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          error: 'shared-snapshot-changed',
+          changes: { collections: [], recipes: [], photos: [] },
+          cursorToken: 'token',
+          hasMore: false,
+        }),
+      ),
+    );
+    const page = await pullSharedPage('stale-cursor');
+    expect(page).not.toBe('restart');
+    expect(page).toMatchObject({ hasMore: false, cursorToken: 'token' });
+  });
+
+  it('keeps other non-2xx responses on the existing error path', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ error: 'shared-snapshot-changed' }, 500)),
+    );
+    expect(await pullSharedPage('cursor')).toBe('error');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ error: 'nope' }, 409)),
+    );
+    expect(await pullSharedPage('cursor')).toBe('error');
+  });
+
+  it('keeps 401 and 403 as signed out', async () => {
+    localStorage.setItem('cook.session', 'present');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ error: 'shared-snapshot-changed' }, 401)),
+    );
+    expect(await pullSharedPage('cursor')).toBe('signedOut');
+    expect(localStorage.getItem('cook.session')).toBeNull();
+
+    localStorage.setItem('cook.session', 'present');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ error: 'shared-snapshot-changed' }, 403)),
+    );
+    expect(await pullSharedPage('cursor')).toBe('signedOut');
+    expect(localStorage.getItem('cook.session')).toBeNull();
   });
 });

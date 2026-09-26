@@ -3,6 +3,7 @@ import {
   cascadeCollectionGrants,
   listLiveIncomingShares,
   readLiveIncomingShare,
+  readSharedAuthorizationScope,
 } from './grants.ts';
 import { drainGcsDeletes } from './photos.ts';
 import {
@@ -15,6 +16,8 @@ import {
   buildSharedPullPage,
   decodeSharedCursor,
   encodeSharedCursor,
+  SHARED_SNAPSHOT_CHANGED_ERROR,
+  SHARED_SNAPSHOT_CHANGED_STATUS,
 } from './sharedPull.ts';
 import {
   addedCollectionRecipeIds,
@@ -346,19 +349,48 @@ export async function syncSharedPull(req: Request): Promise<Response> {
         limit = Math.min(500, Math.max(1, Math.floor(parsed)));
       }
     }
-    const cursor = decodeSharedCursor(url.searchParams.get('cursor'));
+    const decoded = decodeSharedCursor(
+      url.searchParams.get('cursor'),
+      access.sub,
+    );
+    if (decoded.kind === 'reject') {
+      return jsonResponse(
+        { error: SHARED_SNAPSHOT_CHANGED_ERROR },
+        SHARED_SNAPSHOT_CHANGED_STATUS,
+      );
+    }
     const page = await buildSharedPullPage({
       viewerSub: access.sub,
-      cursor,
+      cursor:
+        decoded.kind === 'start'
+          ? { kind: 'start' }
+          : {
+              kind: 'continue',
+              generation: decoded.cursor.generation,
+              grantId: decoded.cursor.grantId,
+              recipeId: decoded.cursor.recipeId,
+            },
       limit,
       listLiveIncomingShares,
       readLiveIncomingShare,
       readDocData,
+      readAuthorizationScope: readSharedAuthorizationScope,
     });
+    if (page.kind === 'snapshot-changed') {
+      return jsonResponse(
+        { error: SHARED_SNAPSHOT_CHANGED_ERROR },
+        SHARED_SNAPSHOT_CHANGED_STATUS,
+      );
+    }
     return jsonResponse({
       changes: page.changes,
-      cursor: page.cursor,
-      cursorToken: encodeSharedCursor(page.cursor),
+      cursorToken: encodeSharedCursor({
+        v: 1,
+        viewerSub: access.sub,
+        generation: page.generation,
+        grantId: page.cursor.grantId,
+        recipeId: page.cursor.recipeId,
+      }),
       hasMore: page.hasMore,
     });
   } catch (err) {

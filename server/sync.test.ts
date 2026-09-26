@@ -1,9 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { SESSION_COOKIE_NAME, signSession } from './session.ts';
+import {
+  encodeSharedCursor,
+  SHARED_SNAPSHOT_CHANGED_ERROR,
+  SHARED_SNAPSHOT_CHANGED_STATUS,
+} from './sharedPull.ts';
 import {
   applyPushOp,
   collectionDeleteCascadeAt,
   syncPull,
   syncPush,
+  syncSharedPull,
 } from './sync.ts';
 import { compareMutation, decodePullCursor, encodePullCursor, validatePushOp } from './store.ts';
 
@@ -124,5 +131,69 @@ describe('collectionDeleteCascadeAt', () => {
     },
   ])('$name', ({ result, acceptedAt, expected }) => {
     expect(collectionDeleteCascadeAt(result, acceptedAt)).toBe(expected);
+  });
+});
+
+describe('syncSharedPull snapshot change', () => {
+  function memberRequest(url: string): Request {
+    const token = signSession(
+      { sub: 'owner-sub', email: 'allowed@example.com' },
+      Date.now(),
+    );
+    return new Request(url, {
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${token}` },
+    });
+  }
+
+  async function expectRestart(cursor: string): Promise<void> {
+    const res = await syncSharedPull(
+      memberRequest(
+        `http://localhost/api/sync/shared?cursor=${encodeURIComponent(cursor)}`,
+      ),
+    );
+    expect(res.status).toBe(SHARED_SNAPSHOT_CHANGED_STATUS);
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(403);
+    expect(await res.json()).toEqual({ error: SHARED_SNAPSHOT_CHANGED_ERROR });
+  }
+
+  it('returns 401 without a session', async () => {
+    const res = await syncSharedPull(new Request('http://localhost/api/sync/shared'));
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects an unsigned positional cursor and a cursor for another viewer', async () => {
+    const legacy = Buffer.from(
+      JSON.stringify({ grantId: 'grant-a', recipeId: 'recipe-9' }),
+      'utf8',
+    ).toString('base64url');
+    await expectRestart(legacy);
+    await expectRestart('%%%');
+    await expectRestart(
+      encodeSharedCursor({
+        v: 1,
+        viewerSub: 'someone-else',
+        generation: 'generation',
+        grantId: 'grant-a',
+        recipeId: 'recipe-9',
+      }),
+    );
+    const token = encodeSharedCursor({
+      v: 1,
+      viewerSub: 'owner-sub',
+      generation: 'generation',
+      grantId: 'grant-a',
+      recipeId: 'recipe-1',
+    });
+    const [payload, signature] = token.split('.');
+    const swapped = encodeSharedCursor({
+      v: 1,
+      viewerSub: 'owner-sub',
+      generation: 'generation',
+      grantId: 'grant-b',
+      recipeId: 'recipe-secret',
+    });
+    await expectRestart(`${payload}.${swapped.split('.')[1]}`);
+    await expectRestart(`${payload}.${signature.slice(0, -1)}x`);
   });
 });

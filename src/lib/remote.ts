@@ -362,9 +362,25 @@ export type SharedPullPage = {
   hasMore: boolean;
 };
 
+/** Keep aligned with server/sharedPull.ts. A 200 must not mean "scope changed". */
+const SHARED_SNAPSHOT_CHANGED_ERROR = 'shared-snapshot-changed';
+const SHARED_SNAPSHOT_CHANGED_STATUS = 409;
+
+async function isSharedSnapshotChanged(response: Response): Promise<boolean> {
+  if (response.status !== SHARED_SNAPSHOT_CHANGED_STATUS) {
+    return false;
+  }
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    return body.error === SHARED_SNAPSHOT_CHANGED_ERROR;
+  } catch {
+    return false;
+  }
+}
+
 export async function pullSharedPage(
   cursorToken: string | null,
-): Promise<SharedPullPage | 'signedOut' | 'error'> {
+): Promise<SharedPullPage | 'signedOut' | 'error' | 'restart'> {
   const params = new URLSearchParams({ limit: '200' });
   if (cursorToken) {
     params.set('cursor', cursorToken);
@@ -379,6 +395,9 @@ export async function pullSharedPage(
     return 'error';
   }
   if (!response.ok) {
+    if (await isSharedSnapshotChanged(response)) {
+      return 'restart';
+    }
     return readErrorStatus(response);
   }
   const body = (await response.json()) as {
