@@ -340,7 +340,9 @@ is untouched. Chat and import there return 401.
 
 ```
 api/chat.ts               streaming Gemini proxy + the update_recipe tool
-api/import.ts             URL fetch, JSON-LD extraction, Gemini extraction
+api/import.ts             Vercel-only stub; always 401
+server/recipeImport.ts    import pipeline: page fetch, JSON-LD/region extraction, Gemini, cleanup
+server/importRoute.ts     POST /api/import: URL or pasted text in, recipe draft out
 extension/                Chrome extension: import the page you are reading
 server/stt.ts             Ask dictation: raw audio in, `{ text }` out via Gemini
 server/auth.ts            Google OAuth and session cookie
@@ -366,10 +368,12 @@ HTTP lives in [`src/lib/adminApi.ts`](src/lib/adminApi.ts).
 Two details that are easy to trip over:
 
 - The recipe JSON schema Gemini fills in is duplicated verbatim between
-  [`api/chat.ts`](api/chat.ts) and [`api/import.ts`](api/import.ts), because
-  Vercel transpiles each `api/` entrypoint in isolation and cannot import a
-  sibling helper. The two copies must stay in sync, and neither has a
-  compile-time relationship to the `RecipeDraft` type.
+  [`api/chat.ts`](api/chat.ts) and
+  [`server/recipeImport.ts`](server/recipeImport.ts), because Vercel
+  transpiles each `api/` entrypoint in isolation and cannot import a sibling
+  helper. The two copies must stay in sync. Import's output type,
+  `ImportedRecipe`, has a compile-time check against `RecipeDraft` in
+  `server/recipeImport.test.ts`; chat's has none.
 - `/api/chat` streams **plain text**, then a Record Separator (`0x1E`), then
   any proposal JSON (or empty), then a final `0x1E` that marks a clean end.
   That is why there is no SSE framing: the client splits on `\x1E`, renders the
