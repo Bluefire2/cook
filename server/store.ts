@@ -1,8 +1,12 @@
 import { FieldPath, Firestore, type Transaction } from '@google-cloud/firestore';
 import { firestoreConfig } from './env.ts';
-import type { PushRejectReason } from './pushReasons.ts';
+import {
+  SHARED_PARENT_OWNER_SUB_FIELD,
+  type PushRejectReason,
+} from './pushReasons.ts';
 import { canViewRecipe } from './shareAuth.ts';
 
+export { SHARED_PARENT_OWNER_SUB_FIELD };
 export type { PushRejectReason };
 
 export type StoreKind = 'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections';
@@ -384,16 +388,6 @@ function tombstonePayload(
     serverUpdatedAt,
   };
 }
-
-/**
- * Internal field stored beside viewer chat and cook rows only. The value is
- * the shared recipe owner's Google `sub`, discovered from incoming shares.
- * Client payloads cannot set or clear it. Absent means the parent write was
- * authorized by a live owned recipe (or the row predates this marker). It is
- * not part of `ChatMessage`, `CookStateRow`, or a version-3 backup entity.
- * Owned pull exposes it as wire metadata; clients keep it in sidecar maps.
- */
-export const SHARED_PARENT_OWNER_SUB_FIELD = 'sharedParentOwnerSub';
 
 export type SharedParentCandidate = {
   share: Record<string, unknown> | undefined;

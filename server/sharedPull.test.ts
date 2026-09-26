@@ -13,6 +13,7 @@ import {
   buildSharedPullPage,
   decodeSharedCursor,
   encodeSharedCursor,
+  SHARED_CURSOR_HMAC_DOMAIN,
   sharedAuthorizationGeneration,
   type BuildSharedPullPageInput,
   type SharedCursorPayload,
@@ -194,11 +195,18 @@ describe('shared pull cursor', () => {
       JSON.stringify({ ...cursor, v: 2 }),
     );
     const versionSignature = createHmac('sha256', 'test-secret-for-session-hmac')
-      .update(versionPayload)
+      .update(`${SHARED_CURSOR_HMAC_DOMAIN}.${versionPayload}`)
       .digest('base64url');
     expect(
       decodeSharedCursor(`${versionPayload}.${versionSignature}`, viewerSub),
     ).toEqual({ kind: 'reject' });
+
+    const sessionStyle = createHmac('sha256', 'test-secret-for-session-hmac')
+      .update(payload)
+      .digest('base64url');
+    expect(decodeSharedCursor(`${payload}.${sessionStyle}`, viewerSub)).toEqual({
+      kind: 'reject',
+    });
   });
 
   it('does not put raw scope fields in the signed continuation', () => {
@@ -495,25 +503,73 @@ describe('buildSharedPullPage', () => {
         docKey('owner-a', 'recipes', 'recipe-a'),
         liveRecipe('recipe-a', {
           photoId: 'photo-cover',
-          galleryPhotoIds: ['photo-cover', 'photo-gallery'],
+          galleryPhotoIds: [
+            'photo-cover',
+            'photo-gallery',
+            'photo-pending',
+            'photo-other-recipe',
+          ],
         }),
       ],
       [
         docKey('owner-a', 'recipes', 'recipe-unrelated'),
         liveRecipe('recipe-unrelated', { photoId: 'photo-unrelated' }),
       ],
-      ...['photo-cover', 'photo-gallery', 'photo-unrelated'].map(
-        (id) =>
-          [
-            docKey('owner-a', 'photos', id),
-            {
-              contentType: 'image/jpeg',
-              size: id.length,
-              createdAt: 1,
-              updatedAt: 1,
-            },
-          ] as [string, Record<string, unknown>],
-      ),
+      [
+        docKey('owner-a', 'photos', 'photo-cover'),
+        {
+          status: 'live',
+          recipeId: 'recipe-a',
+          contentType: 'image/jpeg',
+          size: 11,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      [
+        docKey('owner-a', 'photos', 'photo-gallery'),
+        {
+          status: 'live',
+          recipeId: 'recipe-a',
+          contentType: 'image/jpeg',
+          size: 14,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      [
+        docKey('owner-a', 'photos', 'photo-pending'),
+        {
+          status: 'pending',
+          recipeId: 'recipe-a',
+          contentType: 'image/jpeg',
+          size: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      [
+        docKey('owner-a', 'photos', 'photo-other-recipe'),
+        {
+          status: 'live',
+          recipeId: 'recipe-unrelated',
+          contentType: 'image/jpeg',
+          size: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      [
+        docKey('owner-a', 'photos', 'photo-unrelated'),
+        {
+          status: 'live',
+          recipeId: 'recipe-unrelated',
+          contentType: 'image/jpeg',
+          size: 16,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
       [
         docKey('owner-other', 'photos', 'photo-cover'),
         { contentType: 'image/png', size: 999, createdAt: 1, updatedAt: 1 },

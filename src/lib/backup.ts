@@ -25,10 +25,8 @@ import { compactRecipe } from './compactRecipe';
 import { compactCollection, compactCollectionName } from './compactCollection';
 import { recipePhotoIds } from './recipePhotos';
 import { fetchPhotoBlob, postPhoto, pushOps, type RemoteResult } from './remote';
-
-/** Keep aligned with server/store.ts SHARED_PARENT_OWNER_SUB_FIELD. */
-const SHARED_PARENT_OWNER_SUB_FIELD = 'sharedParentOwnerSub';
 import type { PushOp } from './pushOps';
+import { SHARED_PARENT_OWNER_SUB_FIELD } from './pushReasons';
 import {
   backupGraphIds,
   decideBackupImportMode,

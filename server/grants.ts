@@ -696,8 +696,9 @@ export async function readSharedAuthorizationScope(
   viewerSub: string,
 ): Promise<SharedAuthorizationScopeEntry[]> {
   const db = getStoreFirestore();
-  return db.runTransaction((tx) =>
-    loadSharedAuthorizationScope(viewerSub, {
+  return db.runTransaction(
+    (tx) =>
+      loadSharedAuthorizationScope(viewerSub, {
       listShareSnapshots: async (sub) => {
         const snap = await tx.get(
           incomingSharesCol(sub).orderBy(FieldPath.documentId()),
@@ -720,6 +721,7 @@ export async function readSharedAuthorizationScope(
         };
       },
     }),
+    { readOnly: true },
   );
 }
 

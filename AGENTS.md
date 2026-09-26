@@ -130,10 +130,25 @@ inside the IIFE — that wedges sync after a signed-out run.
 Named collections can be shared view-only with existing admitted members; the
 default collection remains private. Shared refresh is a **full positional
 reread** of live incoming grants and current collection contents, not an
-`updatedAt` delta. A successful refresh publishes owned and shared rows
-atomically. After owned pull completes, a non-auth shared failure publishes
-the completed owned-only snapshot and returns the existing error outcome; a
-shared 401/403 still clears the session and library.
+`updatedAt` delta. The continuation cursor is HMAC-signed with a domain
+separate from the session cookie. If grants or collection membership change
+between pages, the server returns `409 shared-snapshot-changed` and the
+client discards that attempt and rereads from the start, up to three times,
+then publishes owned-only state and the existing refresh error. A successful
+refresh publishes owned and shared rows atomically. After owned pull
+completes, a non-auth shared failure publishes the completed owned-only
+snapshot and returns the existing error outcome; a shared 401/403 still
+clears the session and library.
+
+Collection delete tombstones live grants in the same transaction. Forward
+grants carry an internal `active` flag, and the cascade time is
+`grantCascadeAt`, not the client `updatedAt`. Grants written before `active`
+are not backfilled; re-share them. Undelete does not restore old viewers.
+
+Viewer chat and cook rows store `sharedParentOwnerSub` beside the document.
+The client keeps that in `chatParentOrigins` and `cookParentOrigins`, not on
+`ChatMessage` or `CookStateRow`. Backup export treats either the live recipe
+origin or that sidecar as shared.
 
 Profile upsert writes display `email` plus normalized `emailLower`. Add-by-email
 queries `emailLower` first and falls back only to exact normalized `email` for
@@ -145,9 +160,9 @@ For a shared photo, metadata only indexes its parent recipe. Authorization
 still freshly reads the incoming share and live collection, then requires
 `canViewRecipe` and `recipeListsPhoto`; metadata alone never authorizes. Ask
 text works on shared recipes, but Ask photo attachments are intentionally
-unavailable. Backup export omits shared-parent chat and its attachments.
-There is no viewer leave flow. Viewer-owned shared-parent chat can remain
-orphaned server-side after revoke; do not invent cleanup as part of sharing.
+unavailable. There is no viewer leave flow. Viewer-owned shared-parent chat
+can remain orphaned server-side after revoke; do not invent cleanup as part
+of sharing.
 
 ## Cloud and deploy
 

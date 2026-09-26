@@ -3,6 +3,7 @@ import { compactRecipe } from './compactRecipe';
 import { MAX_PUSH_OPS, type PushOp } from './pushOps';
 import {
   isDiscardedPushReason,
+  SHARED_PARENT_OWNER_SUB_FIELD,
   type DiscardedPushReason,
 } from './pushReasons';
 import { invalidateSession } from './session';
@@ -10,8 +11,7 @@ import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 import { clearLibrary } from './libraryMemory';
 
-/** Keep aligned with server/store.ts SHARED_PARENT_OWNER_SUB_FIELD. */
-export const SHARED_PARENT_OWNER_SUB_FIELD = 'sharedParentOwnerSub';
+export { SHARED_PARENT_OWNER_SUB_FIELD };
 
 export type PullCursor = Partial<
   Record<'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections', [number, string]>

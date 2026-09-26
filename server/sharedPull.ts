@@ -107,13 +107,21 @@ function decodeBase64urlStrict(part: string): Buffer | null {
   return buf;
 }
 
+/** Domain prefix so a session cookie cannot verify as a shared cursor. */
+export const SHARED_CURSOR_HMAC_DOMAIN = 'sous-shared-cursor';
+
+function sharedCursorMac(payloadPart: string, secret: string): Buffer {
+  return createHmac('sha256', secret)
+    .update(`${SHARED_CURSOR_HMAC_DOMAIN}.${payloadPart}`)
+    .digest();
+}
+
 function hmacSign(payloadPart: string, secret: string): string {
-  const sig = createHmac('sha256', secret).update(payloadPart).digest();
-  return base64urlEncode(sig);
+  return base64urlEncode(sharedCursorMac(payloadPart, secret));
 }
 
 function hmacVerify(payloadPart: string, sigPart: string, secret: string): boolean {
-  const expected = createHmac('sha256', secret).update(payloadPart).digest();
+  const expected = sharedCursorMac(payloadPart, secret);
   const actual = decodeBase64urlStrict(sigPart);
   if (!actual || expected.length !== actual.length) {
     return false;
@@ -304,7 +312,12 @@ async function readSharedPageBody(
       }
       for (const photoId of photoIds) {
         const photo = await input.readDocData(share.ownerSub, 'photos', photoId);
-        if (photo === undefined || !isLiveDoc(photo)) {
+        if (
+          photo === undefined ||
+          !isLiveDoc(photo) ||
+          photo.status !== 'live' ||
+          photo.recipeId !== recipeId
+        ) {
           continue;
         }
         photos.push({
