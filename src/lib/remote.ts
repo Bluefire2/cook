@@ -1,10 +1,17 @@
 import { compactCollection } from './compactCollection';
 import { compactRecipe } from './compactRecipe';
 import { MAX_PUSH_OPS, type PushOp } from './pushOps';
+import {
+  isDiscardedPushReason,
+  SHARED_PARENT_OWNER_SUB_FIELD,
+  type DiscardedPushReason,
+} from './pushReasons';
 import { invalidateSession } from './session';
 import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 import { clearLibrary } from './libraryMemory';
+
+export { SHARED_PARENT_OWNER_SUB_FIELD };
 
 export type PullCursor = Partial<
   Record<'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections', [number, string]>
@@ -24,9 +31,11 @@ export type PullPage = {
   hasMore: boolean;
 };
 
-export type RemoteResult = 'ok' | 'signedOut' | 'error' | 'invalid' | 'unknown' | 'cap';
-
-const DISCARDED_PUSH_REASONS = new Set(['invalid', 'unknown', 'cap']);
+export type RemoteResult =
+  | 'ok'
+  | 'signedOut'
+  | 'error'
+  | DiscardedPushReason;
 
 function jsonHeaders(): HeadersInit {
   return { 'Content-Type': 'application/json' };
@@ -94,9 +103,7 @@ export async function pullPage(cursor: PullCursor | null): Promise<PullPage | 's
  * report those so callers roll back instead of claiming a save that never
  * landed. `cap` is the live-collection limit, not a malformed payload.
  */
-export function firstPushRejection(
-  body: unknown,
-): 'invalid' | 'unknown' | 'cap' | null {
+export function firstPushRejection(body: unknown): DiscardedPushReason | null {
   if (!body || typeof body !== 'object') {
     return null;
   }
@@ -109,15 +116,11 @@ export function firstPushRejection(
       continue;
     }
     const { applied, reason } = entry as { applied?: unknown; reason?: unknown };
-    if (applied === false && typeof reason === 'string' && DISCARDED_PUSH_REASONS.has(reason)) {
-      return reason as 'invalid' | 'unknown' | 'cap';
+    if (applied === false && typeof reason === 'string' && isDiscardedPushReason(reason)) {
+      return reason;
     }
   }
   return null;
-}
-
-export function pushBatchRejected(body: unknown): boolean {
-  return firstPushRejection(body) !== null;
 }
 
 export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
@@ -214,10 +217,14 @@ export async function postPhoto(
   return readErrorStatus(response);
 }
 
-export async function fetchPhotoBlob(id: string): Promise<Blob | null | 'signedOut'> {
+export async function fetchPhotoBlob(
+  id: string,
+  ownerSub?: string,
+): Promise<Blob | null | 'signedOut'> {
   let response: Response;
   try {
-    response = await fetch(`/api/photos/${encodeURIComponent(id)}`, {
+    const params = ownerSub ? `?owner=${encodeURIComponent(ownerSub)}` : '';
+    response = await fetch(`/api/photos/${encodeURIComponent(id)}${params}`, {
       credentials: 'same-origin',
       cache: 'no-store',
     });
@@ -277,6 +284,14 @@ export function normalizeCookChange(
   };
 }
 
+function readSharedParentOwnerSub(raw: Record<string, unknown>): string | undefined {
+  const value = raw[SHARED_PARENT_OWNER_SUB_FIELD];
+  if (typeof value !== 'string' || value === '') {
+    return undefined;
+  }
+  return value;
+}
+
 export function applyPullChanges(
   acc: {
     recipes: Map<string, Recipe>;
@@ -284,6 +299,8 @@ export function applyPullChanges(
     chat: Map<string, ChatMessage>;
     cook: Map<string, CookStateRow>;
     remotePhotoIds: Set<string>;
+    chatParentOrigins: Map<string, string>;
+    cookParentOrigins: Map<string, string>;
   },
   changes: PullChanges,
 ): void {
@@ -310,8 +327,15 @@ export function applyPullChanges(
     const normalized = normalizeChatChange(raw);
     if (normalized === 'tombstone') {
       acc.chat.delete(id);
+      acc.chatParentOrigins.delete(id);
     } else {
       acc.chat.set(id, normalized);
+      const owner = readSharedParentOwnerSub(raw);
+      if (owner === undefined) {
+        acc.chatParentOrigins.delete(id);
+      } else {
+        acc.chatParentOrigins.set(id, owner);
+      }
     }
   }
   for (const raw of changes.cookState) {
@@ -319,8 +343,15 @@ export function applyPullChanges(
     const normalized = normalizeCookChange(raw);
     if (normalized === 'tombstone') {
       acc.cook.delete(recipeId);
+      acc.cookParentOrigins.delete(recipeId);
     } else {
       acc.cook.set(recipeId, normalized);
+      const owner = readSharedParentOwnerSub(raw);
+      if (owner === undefined) {
+        acc.cookParentOrigins.delete(recipeId);
+      } else {
+        acc.cookParentOrigins.set(recipeId, owner);
+      }
     }
   }
   for (const raw of changes.photos) {
@@ -344,4 +375,149 @@ export function normalizeCollectionChange(raw: Record<string, unknown>): Collect
     createdAt: raw.createdAt as number,
     updatedAt: raw.updatedAt as number,
   });
+}
+
+export type SharedPullChanges = {
+  collections: Record<string, unknown>[];
+  recipes: Record<string, unknown>[];
+  photos: Record<string, unknown>[];
+};
+
+export type SharedPullPage = {
+  changes: SharedPullChanges;
+  cursorToken: string;
+  hasMore: boolean;
+};
+
+/** Keep aligned with server/sharedPull.ts. A 200 must not mean "scope changed". */
+const SHARED_SNAPSHOT_CHANGED_ERROR = 'shared-snapshot-changed';
+const SHARED_SNAPSHOT_CHANGED_STATUS = 409;
+
+async function isSharedSnapshotChanged(response: Response): Promise<boolean> {
+  if (response.status !== SHARED_SNAPSHOT_CHANGED_STATUS) {
+    return false;
+  }
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    return body.error === SHARED_SNAPSHOT_CHANGED_ERROR;
+  } catch {
+    return false;
+  }
+}
+
+export async function pullSharedPage(
+  cursorToken: string | null,
+): Promise<SharedPullPage | 'signedOut' | 'error' | 'restart'> {
+  const params = new URLSearchParams({ limit: '200' });
+  if (cursorToken) {
+    params.set('cursor', cursorToken);
+  }
+  let response: Response;
+  try {
+    response = await fetch(`/api/sync/shared?${params.toString()}`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+  } catch {
+    return 'error';
+  }
+  if (!response.ok) {
+    if (await isSharedSnapshotChanged(response)) {
+      return 'restart';
+    }
+    return readErrorStatus(response);
+  }
+  const body = (await response.json()) as {
+    changes?: SharedPullChanges;
+    cursorToken?: string;
+    hasMore?: boolean;
+  };
+  if (!body.changes) {
+    return 'error';
+  }
+  return {
+    changes: body.changes,
+    cursorToken: typeof body.cursorToken === 'string' ? body.cursorToken : '',
+    hasMore: Boolean(body.hasMore),
+  };
+}
+
+export type CollectionGrant = { sub: string; email: string; createdAt: number };
+
+export type GrantHttpResult =
+  | { kind: 'ok'; grants?: CollectionGrant[]; grant?: CollectionGrant }
+  | { kind: 'signedOut' }
+  | { kind: 'error'; message: string; status?: number };
+
+async function grantRequest(
+  path: string,
+  init?: RequestInit,
+): Promise<GrantHttpResult> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      ...init,
+    });
+  } catch {
+    return { kind: 'error', message: "Couldn't update sharing." };
+  }
+  if (response.status === 401 || response.status === 403) {
+    invalidateSession();
+    clearLibrary();
+    return { kind: 'signedOut' };
+  }
+  if (response.status === 503) {
+    return { kind: 'error', message: 'Sharing is temporarily unavailable.', status: 503 };
+  }
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  if (!response.ok) {
+    const message =
+      body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
+        ? (body as { error: string }).error
+        : "Couldn't update sharing.";
+    return { kind: 'error', message, status: response.status };
+  }
+  return {
+    kind: 'ok',
+    grants: (body as { grants?: CollectionGrant[] }).grants,
+    grant: (body as { grant?: CollectionGrant }).grant,
+  };
+}
+
+export async function listCollectionGrants(
+  collectionId: string,
+): Promise<GrantHttpResult> {
+  return grantRequest(`/api/collections/${encodeURIComponent(collectionId)}/grants`);
+}
+
+export async function addCollectionGrant(
+  collectionId: string,
+  email: string,
+): Promise<GrantHttpResult> {
+  return grantRequest(`/api/collections/${encodeURIComponent(collectionId)}/grants`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function revokeCollectionGrant(
+  collectionId: string,
+  sub: string,
+): Promise<GrantHttpResult> {
+  return grantRequest(
+    `/api/collections/${encodeURIComponent(collectionId)}/grants/revoke`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ sub }),
+    },
+  );
 }

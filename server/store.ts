@@ -1,5 +1,13 @@
 import { FieldPath, Firestore, type Transaction } from '@google-cloud/firestore';
 import { firestoreConfig } from './env.ts';
+import {
+  SHARED_PARENT_OWNER_SUB_FIELD,
+  type PushRejectReason,
+} from './pushReasons.ts';
+import { canViewRecipe } from './shareAuth.ts';
+
+export { SHARED_PARENT_OWNER_SUB_FIELD };
+export type { PushRejectReason };
 
 export type StoreKind = 'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections';
 
@@ -225,12 +233,6 @@ export function compactRecipeFields(recipe: Record<string, unknown>): Record<str
 }
 
 export const MAX_NAMED_COLLECTIONS = 50;
-
-export function namedCollectionCreateCapReason(
-  live: number,
-): 'cap' | undefined {
-  return live >= MAX_NAMED_COLLECTIONS ? 'cap' : undefined;
-}
 export const MAX_COLLECTION_RECIPE_IDS = 500;
 export const MAX_COLLECTION_NAME_LENGTH = 80;
 
@@ -349,7 +351,7 @@ export type MutationResult =
   | { applied: true; serverUpdatedAt: number }
   | {
       applied: false;
-      reason?: string;
+      reason?: PushRejectReason;
       current?: Record<string, unknown>;
     };
 
@@ -387,6 +389,179 @@ function tombstonePayload(
   };
 }
 
+export type SharedParentCandidate = {
+  share: Record<string, unknown> | undefined;
+  grantId: string;
+  collection: Record<string, unknown> | undefined;
+  recipe: Record<string, unknown> | undefined;
+};
+
+/**
+ * Owner sub from one incoming-share candidate, or null when that candidate
+ * does not authorize `recipeId`. The owner is read from the share document.
+ */
+export function sharedParentOwnerFromCandidate(
+  recipeId: string,
+  candidate: SharedParentCandidate,
+): string | null {
+  const data = candidate.share;
+  if (!isLiveDoc(data)) {
+    return null;
+  }
+  const ownerSub = data?.ownerSub;
+  const collectionId = data?.collectionId;
+  if (
+    typeof ownerSub !== 'string' ||
+    ownerSub === '' ||
+    typeof collectionId !== 'string' ||
+    !isUuid(collectionId)
+  ) {
+    return null;
+  }
+  const share = { grantId: candidate.grantId, ownerSub, collectionId };
+  if (!canViewRecipe(recipeId, share, candidate.collection, candidate.recipe)) {
+    return null;
+  }
+  return ownerSub;
+}
+
+/**
+ * Marker stored on a chat or cook put. A live owned parent stores nothing,
+ * even if a share owner was also discovered. Otherwise the marker is that
+ * server-discovered owner, or null when there isn't one.
+ */
+export function sharedParentMarkerForWrite(
+  ownedParentLive: boolean,
+  discoveredOwnerSub: string | null,
+): string | null {
+  if (ownedParentLive) {
+    return null;
+  }
+  if (typeof discoveredOwnerSub !== 'string' || discoveredOwnerSub === '') {
+    return null;
+  }
+  return discoveredOwnerSub;
+}
+
+/**
+ * Chat/cook document body. Strips client provenance, uid, sub, and deletedAt.
+ * `sharedParentOwnerSub` is set only from `sharedParentOwnerSub` argument,
+ * which the caller derives on the server. `putDoc` writes this with merge
+ * false, so omitting the field clears a previously stored marker.
+ */
+export function chatOrCookPutBody(
+  payload: Record<string, unknown>,
+  id: string,
+  clientUpdatedAt: number,
+  serverUpdatedAt: number,
+  sharedParentOwnerSub: string | null,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    ...payload,
+    id,
+    updatedAt: clientUpdatedAt,
+    serverUpdatedAt,
+  };
+  delete body.deletedAt;
+  delete body.uid;
+  delete body.sub;
+  delete body[SHARED_PARENT_OWNER_SUB_FIELD];
+  if (sharedParentOwnerSub !== null && sharedParentOwnerSub !== '') {
+    body[SHARED_PARENT_OWNER_SUB_FIELD] = sharedParentOwnerSub;
+  }
+  return body;
+}
+
+/**
+ * Live chat/cook owned-pull shape. Domain fields pass through.
+ * `sharedParentOwnerSub` is wire metadata only when it is a non-empty string.
+ */
+export function chatCookPullFields(doc: Record<string, unknown>): Record<string, unknown> {
+  const copy = { ...doc };
+  delete copy.serverUpdatedAt;
+  delete copy.deletedAt;
+  const owner = copy[SHARED_PARENT_OWNER_SUB_FIELD];
+  delete copy[SHARED_PARENT_OWNER_SUB_FIELD];
+  if (typeof owner === 'string' && owner !== '') {
+    copy[SHARED_PARENT_OWNER_SUB_FIELD] = owner;
+  }
+  return copy;
+}
+
+/**
+ * Collection tombstone. `updatedAt` and `deletedAt` stay on the client clock.
+ * `grantCascadeAt` is the server order used to revoke grants; it is not a
+ * client LWW field and must not be copied into `updatedAt` or `deletedAt`.
+ */
+export function collectionDeletePayload(
+  id: string,
+  clientUpdatedAt: number,
+  serverUpdatedAt: number,
+  grantCascadeAt?: number,
+): Record<string, unknown> {
+  const payload = tombstonePayload(id, clientUpdatedAt, serverUpdatedAt);
+  if (grantCascadeAt !== undefined) {
+    payload.grantCascadeAt = grantCascadeAt;
+  }
+  return payload;
+}
+
+/**
+ * Shared-recipe owner when the session can view `recipeId` through a live
+ * incoming share. The owner is the `ownerSub` stored on that share. Returns
+ * null when no share authorizes the recipe. Callers must check an owned
+ * parent first; a live owned recipe takes precedence over this result.
+ */
+export async function sharedParentLive(
+  tx: Transaction,
+  sessionSub: string,
+  recipeId: string,
+): Promise<string | null> {
+  const itemsQuery = getFirestore()
+    .collection('incomingShares')
+    .doc(sessionSub)
+    .collection('items');
+  const items = await tx.get(itemsQuery);
+  for (const doc of items.docs) {
+    const data = doc.data() as Record<string, unknown>;
+    if (!isLiveDoc(data)) {
+      continue;
+    }
+    const ownerSub = data.ownerSub;
+    const collectionId = data.collectionId;
+    if (
+      typeof ownerSub !== 'string' ||
+      ownerSub === '' ||
+      typeof collectionId !== 'string' ||
+      !isUuid(collectionId)
+    ) {
+      continue;
+    }
+    const collectionSnap = await tx.get(collectionDocRef(ownerSub, collectionId));
+    const collection = collectionSnap.exists
+      ? (collectionSnap.data() as Record<string, unknown>)
+      : undefined;
+    const ids = Array.isArray(collection?.recipeIds) ? collection.recipeIds : [];
+    if (!ids.includes(recipeId)) {
+      continue;
+    }
+    const recipeSnap = await tx.get(recipeDocRef(ownerSub, recipeId));
+    const recipe = recipeSnap.exists
+      ? (recipeSnap.data() as Record<string, unknown>)
+      : undefined;
+    const owner = sharedParentOwnerFromCandidate(recipeId, {
+      share: data,
+      grantId: doc.id,
+      collection,
+      recipe,
+    });
+    if (owner !== null) {
+      return owner;
+    }
+  }
+  return null;
+}
+
 async function readRecipeLive(
   tx: Transaction,
   uid: string,
@@ -408,18 +583,28 @@ export async function upsertUser(
   const now = Date.now();
   await getFirestore().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
-    const base: Record<string, unknown> = {
-      email: profile.email,
-      lastSeenAt: now,
-    };
-    if (profile.name !== undefined) {
-      base.name = profile.name;
-    }
-    if (!snap.exists) {
-      base.createdAt = now;
-    }
+    const base = userProfileUpsertFields(profile, now, !snap.exists);
     tx.set(ref, base, { merge: true });
   });
+}
+
+export function userProfileUpsertFields(
+  profile: { email: string; name?: string },
+  now: number,
+  isNew: boolean,
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    email: profile.email,
+    emailLower: profile.email.trim().toLowerCase(),
+    lastSeenAt: now,
+  };
+  if (profile.name !== undefined) {
+    fields.name = profile.name;
+  }
+  if (isNew) {
+    fields.createdAt = now;
+  }
+  return fields;
 }
 
 export async function listChangedSince(
@@ -468,6 +653,81 @@ export async function readDocData(
     return undefined;
   }
   return snap.data() as Record<string, unknown>;
+}
+
+/** Batched `readDocData`. Results line up with `ids`, including duplicates. */
+export async function readDocsData(
+  uid: string,
+  kind: StoreKind,
+  ids: readonly string[],
+): Promise<Array<Record<string, unknown> | undefined>> {
+  const out: Array<Record<string, unknown> | undefined> = [];
+  for (const chunk of chunkForBatch([...ids], 100)) {
+    const snaps = await getFirestore().getAll(
+      ...chunk.map((id) => colRef(uid, kind).doc(id)),
+    );
+    for (const snap of snaps) {
+      out.push(snap?.exists ? (snap.data() as Record<string, unknown>) : undefined);
+    }
+  }
+  return out;
+}
+
+/**
+ * Keep ids whose recipe docs are missing (same-batch create) or live.
+ * Drop ids whose recipe docs are tombstones so a stale collection.put
+ * cannot briefly re-list a deleted recipe.
+ */
+export function recipeIdsWithoutTombstones(
+  recipeIds: readonly string[],
+  tombstonedRecipeIds: ReadonlySet<string>,
+): string[] {
+  return recipeIds.filter((id) => !tombstonedRecipeIds.has(id));
+}
+
+/**
+ * Only newly listed ids need a tombstone read; existing membership was checked
+ * on its prior put and relies on the recipe-delete cascade. If that cascade
+ * fails after tombstoning, retrying recipe.delete is what scrubs the stored id.
+ */
+export function addedCollectionRecipeIds(
+  existing: Record<string, unknown> | undefined,
+  nextRecipeIds: readonly string[],
+): string[] {
+  if (!isLiveDoc(existing) || !Array.isArray(existing?.recipeIds)) {
+    return [...nextRecipeIds];
+  }
+  const previous = new Set(
+    existing.recipeIds.filter((id): id is string => typeof id === 'string'),
+  );
+  return nextRecipeIds.filter((id) => !previous.has(id));
+}
+
+export async function readTombstonedRecipeIds(
+  uid: string,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  const unique = [...new Set(ids)];
+  const tombstoned = new Set<string>();
+  if (unique.length === 0) {
+    return tombstoned;
+  }
+  for (const chunk of chunkForBatch(unique, 100)) {
+    const snaps = await getFirestore().getAll(
+      ...chunk.map((id) => colRef(uid, 'recipes').doc(id)),
+      { fieldMask: ['deletedAt'] },
+    );
+    chunk.forEach((id, i) => {
+      const snap = snaps[i];
+      if (
+        snap?.exists &&
+        !isLiveDoc(snap.data() as Record<string, unknown>)
+      ) {
+        tombstoned.add(id);
+      }
+    });
+  }
+  return tombstoned;
 }
 
 /** Pages until `cap + 1` live docs or exhausted. Tombstones do not count. */
@@ -540,10 +800,19 @@ export async function putDoc(
       parentRecipeId = recipeId;
     }
 
+    let ownedParentLive = parentRecipeId === null;
+    let discoveredOwnerSub: string | null = null;
     if (parentRecipeId !== null) {
-      const live = await readRecipeLive(tx, uid, parentRecipeId);
-      if (!live) {
-        return { applied: false, reason: 'recipe-deleted' };
+      ownedParentLive = await readRecipeLive(tx, uid, parentRecipeId);
+      if (!ownedParentLive) {
+        // Photo bytes stay owned-parent-only. Never fall back to a share.
+        if (kind === 'photos') {
+          return { applied: false, reason: 'recipe-deleted' };
+        }
+        discoveredOwnerSub = await sharedParentLive(tx, uid, parentRecipeId);
+        if (sharedParentMarkerForWrite(false, discoveredOwnerSub) === null) {
+          return { applied: false, reason: 'recipe-deleted' };
+        }
       }
     }
 
@@ -559,6 +828,14 @@ export async function putDoc(
       if (cmp.undeleting) {
         // deletedAt cleared by omission
       }
+    } else if (kind === 'chatMessages' || kind === 'cookState') {
+      body = chatOrCookPutBody(
+        payload,
+        id,
+        clientUpdatedAt,
+        serverUpdatedAt,
+        sharedParentMarkerForWrite(ownedParentLive, discoveredOwnerSub),
+      );
     } else {
       body = {
         ...payload,
@@ -757,12 +1034,7 @@ export async function cascadeRecipeDelete(
     .where('recipeIds', 'array-contains', recipeId)
     .get();
   await applyCollectionMembershipScrubs(
-    collectionDocsFromQuerySnap(
-      collectionSnap.docs.map((doc) => ({
-        id: doc.id,
-        data: () => doc.data() as Record<string, unknown>,
-      })),
-    ),
+    collectionDocsFromQuerySnap(collectionSnap.docs),
     recipeId,
     at,
     (id, payload, writeAt) => putDoc(uid, 'collections', id, payload, writeAt),

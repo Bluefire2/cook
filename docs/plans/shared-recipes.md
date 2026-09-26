@@ -180,8 +180,10 @@ collections; it adds grants, a shared pull, and cross-tree photo GET.
 - **D16. Backups.** Keep `app: 'cook'` and `cook-backup-` filenames. Add
   `version: 3` with a `collections` array of compacted live named
   collections. v1/v2 import still works; imported recipes land in default
-  if the file has no collections. Do not export another user’s data (N/A
-  until PR 2).
+  if the file has no collections. After PR 2, export no shared recipe,
+  collection, cook state, shared-parent chat, or attachment belonging to that
+  chat. Shared-parent chat is viewer-owned but is omitted so its attachments
+  cannot become orphan backup rows.
 
 ### PR 2 only (view ACLs)
 
@@ -202,24 +204,32 @@ collections; it adds grants, a shared pull, and cross-tree photo GET.
   owner collection+recipe those grants point at; succeed if any grant’s
   live collection `recipeIds` contains that `recipeId`. **Never** read
   `ownerSub` from the push body (D5). Photo writes stay session-tree +
-  live owned parent only.
+  live owned parent only. There is no viewer leave flow. After revoke,
+  viewer-owned chat for the formerly shared recipe may remain orphaned
+  server-side; automatic cleanup is not part of the product.
 - **D18. Ask is allowed** on a shared recipe (client already POSTs the
   recipe body to `/api/chat`). Apply is not. **Save as a new recipe**
   (ChatPanel) **is** allowed: it `recipeStore.create`s a viewer-owned
   copy in **default**. Hide Apply and the Ask camera control when origin
-  is shared. If Ask should be off entirely, say so before PR 2; it does
-  not affect PR 1.
+  is shared. Ask text is available; Ask photo attachments are intentionally
+  unavailable on shared recipes.
 - **D19. Named collections only.** No grant whose `collectionId` is missing
   or tombstoned. Revoking the last grant does not delete the collection.
 - **D20. Add by email, store by `sub`.** `POST` body is `{ email }`. Server
-  normalizes (trim + lower), looks up `users` where `email == normalized`
-  (single-field query; pick the `lastSeenAt` max if more than one). Target
-  must be an **owner** (`ALLOWED_EMAILS`) or an **active** `members/{sub}`.
-  Fail closed: unknown email, unverified never-signed-in, pending,
-  declined, revoked → **404** with a generic “No Sous account with that
-  email” (do not distinguish). Adding self → 400. Duplicate live grant →
-  200 idempotent. A `members/{sub}` **read throw** (membership unknown) →
-  **503**, never 404 — same 401/503 split as `requireMember`. Do **not**
+  normalizes with trim + lowercase. Successful profile upsert writes the
+  display/original `email` and normalized `emailLower`. Sharing first queries
+  `users.emailLower == normalized`; only an empty result falls back to exact
+  `users.email == normalized` for legacy profiles that already stored a
+  lowercase email. Pick the `lastSeenAt` max if more than one row matches.
+  Legacy mixed-case profiles remain undiscoverable until a new sign-in or
+  backfill. Target must be an **owner** (`ALLOWED_EMAILS`) or an **active**
+  `members/{sub}`. Fail closed: unknown email, unverified never-signed-in,
+  pending, declined, revoked → **404** with a generic “No Sous account with
+  that email” (do not distinguish). Adding self → 400. Duplicate live grant
+  → 200 idempotent. A `members/{sub}` **read throw** (membership unknown) →
+  **503**, never 404 — same 401/503 split as `requireMember`. Successful add
+  versus generic failure is a conscious account-existence signal for this
+  invitation-only product; do not make failures more revealing. Do **not**
   mint app membership; invitation-flow / invite links stay the only admit
   paths.
 - **D21. Grants are server REST, not push ops.**
@@ -262,10 +272,16 @@ collections; it adds grants, a shared pull, and cross-tree photo GET.
   ```
 
   Returns `{ changes: { collections, recipes, photos }, cursor, hasMore }`
-  for rows the session may view. `syncEngine` runs it after the owned
-  pull, merging into memory with origin `shared`. Owned pull stays
-  “everything under me”. A 401 still means denied; a 503 still means
-  unknown. Empty grants → empty changes, 200.
+  for rows the session may view. Every shared refresh is a **full positional
+  reread** of live incoming grants and each collection's current contents,
+  not an `updatedAt` delta. `syncEngine` accumulates every owned and shared
+  page privately. On complete success it publishes one owned-precedence
+  snapshot atomically, so subscribers never observe owned-only or partially
+  paged shared state. If shared pull has a non-auth failure after owned pull
+  completes, publish the completed owned-only snapshot, removing all previous
+  shared rows, and return the existing error outcome. A shared 401/403 still
+  invalidates the session and clears the library; a 503 remains unknown.
+  Empty grants → empty changes, 200.
 
   **Cursor is a separate codec** from `decodePullCursor`. Google `sub` is
   not a UUID; reusing `isUuid` would drop the cursor and loop `hasMore`.
@@ -281,11 +297,14 @@ collections; it adds grants, a shared pull, and cross-tree photo GET.
   Server:
 
   - `owner` omitted or `owner === session.sub` → today’s own-tree path.
-  - else: `requireMember` + live incoming share whose **live** collection
-    lists a **live** recipe whose `photoId` or `galleryPhotoIds` contains
-    that photo id. Then read GCS `users/{ownerSub}/{photoId}`.
-  - **Do not** authorize via “a live photo doc under the owner with that
-    `recipeId`” — that would stream the owner’s Ask/chat attachments.
+  - else: `requireMember`; for each candidate, freshly read the matching
+    incoming share and live collection, then read requested photo metadata
+    only to index its parent `recipeId`, point-read that recipe, and require
+    both `canViewRecipe` and `recipeListsPhoto`. Only then read GCS
+    `users/{ownerSub}/{photoId}`.
+  - Photo metadata alone never authorizes. In particular, metadata whose
+    `recipeId` points at a shared recipe still cannot expose an Ask/chat
+    attachment unless the live recipe itself lists that photo.
   - Unauthorized / missing / tombstoned → **404** (never 401/403; those
     sign the client out). Store or grant **read throw** → **503**.
 
@@ -296,18 +315,21 @@ collections; it adds grants, a shared pull, and cross-tree photo GET.
   Shared pull emits photo **metadata** only for those recipe-referenced ids.
 - **D25. Origin beside Recipe.** `libraryMemory` holds
   `recipeOrigins: Map<recipeId, { kind: 'own' } | { kind: 'shared', ownerSub }>`
-  and `collectionOrigins` analogously. `replaceFromPull` sets `own`;
-  shared pull sets `shared` and must not overwrite an `own` row with the
-  same id. Stores refuse save/delete when origin is `shared`. Screens
-  hide Edit / Delete / Move / Share. **`RecipeEdit`:** if origin is
-  `shared` or the id is missing, render the same not-found UI as a
-  missing recipe (do not save). Direct `/recipe/:id/edit` is not trusted
-  to stay hidden.
+  and `collectionOrigins` analogously. The atomic owned+shared publisher sets
+  both origin kinds and does not overwrite an own row with a shared row of the
+  same id. The owned-only failure publisher sets only `own`. Stores refuse
+  save/delete when origin is `shared`. Screens hide Edit / Delete / Move /
+  Share. **`RecipeEdit`:** if origin is `shared` or the id is missing, render
+  the same not-found UI as a missing recipe (do not save). Direct
+  `/recipe/:id/edit` is not trusted to stay hidden.
 - **D26. Legal / handoff.** `/privacy` and `/terms` state that recipes and
   photos in a collection you share are visible to the Google accounts
   whose emails you add. Handoff loses “no shared library”. AGENTS.md
-  architecture paragraph grows the new kind + grant rule. Still no
-  IndexedDB / offline-library copy.
+  architecture paragraph grows the new kind + grant rule and records D20,
+  D23, D24, and the current sharing limits: no leave flow, possible
+  server-side orphan chat after revoke, no shared Ask attachments, and no
+  shared-parent chat/attachments in backups. Still no IndexedDB /
+  offline-library copy.
 - **D27. Viewer chrome (PR 2).** Same switcher as D14, no separate Shared
   rail. Chrome appears when the session has **≥1 live owned named
   collection or ≥1 live incoming shared collection** (a member with an
@@ -319,8 +341,10 @@ collections; it adds grants, a shared pull, and cross-tree photo GET.
 
 - Nested folders, public unlisted links, write ACLs, a single household
   `uid`, sharing one recipe without a named collection, sharing default
-  - GIS `id_token` fallback, Auth.js, extra Google scopes
-  - Conflict-merge UI (LWW on collection `recipeIds` is the product; last
+- Viewer leave flow and automatic cleanup of viewer-owned shared-parent chat
+  after revoke
+- GIS `id_token` fallback, Auth.js, extra Google scopes
+- Conflict-merge UI (LWW on collection `recipeIds` is the product; last
   array wins)
 - Firestore emulator, GCS mock, DOM testing library
 - Vercel origin / `api/chat.ts` recipe-ACL (chat is membership-gated and
@@ -328,7 +352,7 @@ collections; it adds grants, a shared pull, and cross-tree photo GET.
 - Changing `app: 'cook'` / `cook-backup-` names
 - Production deploy
 
-## Starting state (verified)
+## Pre-PR starting state (historical)
 
 - `StoreKind` = `recipes | chatMessages | cookState | photos`
   (`server/store.ts`). Pull loops those four (`server/sync.ts`).
@@ -345,7 +369,9 @@ collections; it adds grants, a shared pull, and cross-tree photo GET.
   Routes: `/recipe/:id`, `/recipe/:id/edit`, `/recipe/new`, `/import`
   (`src/App.tsx`).
 - Membership: `ALLOWED_EMAILS` owners + `members/{sub}` active. Profile
-  email on `users/{sub}` via `upsertUser`. No email index collection.
+  email on `users/{sub}` via `upsertUser`. PR 2 adds normalized `emailLower`
+  on sign-in and query fallback as specified by D20; no email index
+  collection is introduced.
 - Chat POST body includes the full recipe (`src/lib/chatApi.ts`).
 
 ## PR 1 — Collections (no sharing)
@@ -488,10 +514,11 @@ Not in PR 1. Do these before starting PR 2:
 - **B3 / B4 / B2.** `collectionsToScrub(docs, recipeId, at)` in
   `server/store.ts`, tested next to `compactCollectionFields` /
   `compareMutation`. Thin glue in `cascadeRecipeDelete` using
-  `where('recipeIds', 'array-contains', recipeId)`. Confirm the Native
-  auto-index in project `cooking-assistant-508423` before relying on it
-  (no `firestore.indexes.json` in this repo). No backfill: #13 has not
-  reached other users.
+  `where('recipeIds', 'array-contains', recipeId)`. The first production
+  verification after deploy must delete a real recipe listed in a collection
+  and confirm this query succeeds, proving the required Native index path in
+  project `cooking-assistant-508423` (no `firestore.indexes.json` in this
+  repo). No backfill: #13 has not reached other users.
 
 ## PR 2 — Collection view ACLs
 
@@ -514,7 +541,7 @@ still puts viewers on `collection.put`.
 | `src/lib/libraryMemory.ts` | `recipeOrigins` / `collectionOrigins`. |
 | `src/lib/collectionStore.ts` | `addGrant` / `listGrants` / `revokeGrant` wrap `remote.ts` (screens must not `fetch`). |
 | `src/lib/recipeStore.ts` | save/remove throw if origin shared. |
-| `src/lib/backup.ts` | Export only `kind: 'own'` recipes, collections, and `remotePhotoIds` / pending blobs referenced by owned recipes+chat. |
+| `src/lib/backup.ts` | Export only owned recipes/collections/cook state and chat whose parent is not shared; omit attachments attributable only to omitted shared-parent chat. |
 | `src/screens/Library.tsx` | Switcher includes shared (D14); hide mutating actions on shared. |
 | `src/screens/RecipeView.tsx` | Hide Edit when shared; Ask stays; no camera. |
 | `src/screens/RecipeEdit.tsx` | Shared origin → not-found UI (same as missing id). |
@@ -528,11 +555,14 @@ still puts viewers on `collection.put`.
 #### 7. [core] Grant documents + email lookup + pure authz
 
 `parseGrantDoc`, `addGrantTransition`, `revokeGrantTransition`,
-`incomingShareFromGrant`. `lookupSubByEmail` (users query + membership
-check). `canViewRecipe(ownerSub, recipeId, grants, collections)` pure
-given in-memory snapshots of those docs — keep Firestore IO in a thin
-wrapper. Tests: self add rejected; revoked member rejected; tombstoned
-collection rejected; photo authorized only via a listed recipe.
+`incomingShareFromGrant`. `lookupSubByEmail` queries normalized
+`users.emailLower` first, with exact normalized `users.email` only after an
+empty result for lowercase legacy profiles, then checks membership.
+`canViewRecipe(ownerSub, recipeId, grants, collections)` remains pure given
+in-memory snapshots of those docs — keep Firestore IO in a thin wrapper.
+Tests: self add rejected; revoked member rejected; tombstoned collection
+rejected; fallback ordering and mixed-case legacy behavior; photo authorized
+only via a listed recipe.
 
 #### 8. [core] Owner grant APIs
 
@@ -546,9 +576,12 @@ handlers’ decision functions; no emulator.
 each grant load owner collection (skip tombstone), emit collection +
 listed live recipes + photo **metadata** only for those recipes’
 `photoId` / `galleryPhotoIds`. Page with D23 `{ grantId, recipeId }`
-cursor. `hasMore` required.
+cursor. `hasMore` required. This cursor is positional pagination for a full
+reread, never a change timestamp.
 
-`photosGet`: honor `owner` as in D24. POST still session tree only.
+`photosGet`: honor `owner` as in D24. Metadata indexes the parent recipe, but
+authorization still requires the fresh share, live collection,
+`canViewRecipe`, and `recipeListsPhoto`. POST stays session tree only.
 
 `putDoc`: chat/cook parent may be a live owned recipe **or** a live
 granted collection listing that `recipeId`, looked up from
@@ -558,13 +591,14 @@ vs photo-still-denied.
 
 #### 10. [core] Client merge + write guards
 
-`syncEngine`: after owned `replaceFromPull`, merge shared changes
-without dropping owned maps; set origins. `pushOps` unchanged
-(viewer simply does not enqueue recipe ops). Stores throw a dedicated
-error if a shared save is attempted. `fetchPhotoBlob` / `photoStore`
-pass owner. Backup export **omits** shared recipes, shared collections,
-and photo ids that are only referenced by shared recipes (owned chat
-attachments of the viewer stay).
+`syncEngine`: stage every owned and shared page, then atomically publish the
+complete owned-precedence snapshot. A non-auth shared failure after a
+completed owned pull publishes that owned-only snapshot; shared auth failure
+keeps the signed-out clearing path. `pushOps` is unchanged (viewer simply does
+not enqueue recipe ops). Stores throw a dedicated error if a shared save is
+attempted. `fetchPhotoBlob` / `photoStore` pass owner. Backup export **omits**
+shared recipes, shared collections, shared cook state, shared-parent chat, and
+attachments attributable only to that omitted chat.
 
 #### 11. [ui] Share sheet + viewer chrome
 
@@ -579,10 +613,15 @@ pulls shared too. Sign-out clears shared maps.
 
 #### 12. [core] Docs
 
-Privacy, terms, handoff, AGENTS.md. Say: libraries are still per
-`sub`; sharing is an explicit named-collection grant by email to an
-existing member; photos of those recipes are visible to grantees;
-chat/cook on a shared recipe stay in the viewer’s account.
+Privacy, terms, handoff, AGENTS.md. Say: libraries are still per `sub`;
+sharing is an explicit named-collection grant by email to an existing member;
+photos of those recipes are visible only after D24's complete authorization;
+chat/cook on a shared recipe stay in the viewer’s account. Record the full
+positional reread and atomic publication/failure behavior, D20 lookup and
+account-existence tradeoff, shared-parent backup omission, no leave flow,
+possible orphan chat after revoke, intentionally unavailable Ask attachments,
+and the first-deploy recipe-delete/index verification. Do not turn these
+limits into product, deployment, or legal changes.
 
 #### 13. [ui] Browser verification (PR 2)
 

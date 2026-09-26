@@ -54,10 +54,12 @@ function ProposalCard({
   recipe,
   proposal,
   onNavigateAway,
+  allowApply,
 }: {
   recipe: Recipe;
   proposal: RecipeDraft;
   onNavigateAway: () => void;
+  allowApply: boolean;
 }) {
   const navigate = useNavigate();
   const [applied, setApplied] = useState<string | null>(null);
@@ -122,19 +124,21 @@ function ProposalCard({
         )}
       </div>
       <div className="mt-2.5 flex gap-2">
-        <button
-          type="button"
-          onClick={() => void apply()}
-          className={`${primaryBtn} flex-1 py-2 text-sm`}
-        >
-          Apply
-        </button>
+        {allowApply && (
+          <button
+            type="button"
+            onClick={() => void apply()}
+            className={`${primaryBtn} flex-1 py-2 text-sm`}
+          >
+            Apply
+          </button>
+        )}
         <button
           type="button"
           onClick={() => void saveAsVariant()}
           className={`${secondaryBtn} flex-1 py-2 text-sm`}
         >
-          Save as variant
+          Save as a new recipe
         </button>
       </div>
     </div>
@@ -175,10 +179,12 @@ function MessageBubble({
   message,
   recipe,
   onNavigateAway,
+  allowApply,
 }: {
   message: ChatMessage;
   recipe: Recipe;
   onNavigateAway: () => void;
+  allowApply: boolean;
 }) {
   const isUser = message.role === 'user';
   // Rows persisted before normalization may still exist; re-check at
@@ -207,6 +213,7 @@ function MessageBubble({
             recipe={recipe}
             proposal={proposal}
             onNavigateAway={onNavigateAway}
+            allowApply={allowApply}
           />
         )}
       </div>
@@ -218,10 +225,12 @@ export default function ChatPanel({
   recipe,
   cookingState,
   onClose,
+  readOnly = false,
 }: {
   recipe: Recipe;
   cookingState: CookingState;
   onClose: () => void;
+  readOnly?: boolean;
 }) {
   const messages = useChatMessages(recipe.id);
   const [draft, setDraft] = useState('');
@@ -573,6 +582,7 @@ export default function ChatPanel({
                 message={m}
                 recipe={recipe}
                 onNavigateAway={onClose}
+                allowApply={!readOnly}
               />
             ))}
             {streamingText !== null && (
@@ -626,6 +636,7 @@ export default function ChatPanel({
               e.target.value = '';
             }}
           />
+          {!readOnly && (
           <button
             type="button"
             aria-label="Attach photo"
@@ -634,6 +645,7 @@ export default function ChatPanel({
           >
             <CameraIcon className="block h-5 w-5" />
           </button>
+          )}
           {micAvailable && (
             <button
               type="button"

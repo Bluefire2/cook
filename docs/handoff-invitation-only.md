@@ -44,8 +44,10 @@ Sous is a personal recipe book with a Gemini cooking assistant, not a public
 SaaS. It exists for one person. Libraries are keyed by Google `sub`, not a
 shared household account. A second person **requests access** from the 403 page;
 the owner approves at **`/admin`**; **no redeploy** is involved, and that person
-gets **their own empty library**. No shared library is designed. A second
-identity was out of scope for the Phase 2 cutover.
+gets **their own empty library**. An admitted member can later be granted
+view-only access to a **named collection** by email; that is not a household
+`uid` and does not share the default library. A second identity was out of
+scope for the Phase 2 cutover.
 
 ## Why (billing and data)
 
@@ -120,9 +122,49 @@ Use **`/admin`** (Settings → Invitations for owners): they request access from
 the 403 page and you approve there, **or** you mint a single-use invite link
 and they sign in through it. **Do not** add an ordinary member to
 `ALLOWED_EMAILS` — every address in that variable is an **administrator** who
-can approve and remove members. Do not invent household sharing, a shared
-`uid`, or a "fix" that makes blank mean everyone. Unverified Google emails
-stay denied.
+can approve and remove members. Do not invent a household `uid` or a "fix"
+that makes blank mean everyone. Named-collection view grants are the only
+sharing path. Unverified Google emails stay denied.
+
+## Sharing limits and privacy boundaries
+
+Sharing is view-only for named collections and never changes the per-`sub`
+library model. A viewer refresh performs a **full positional reread** of live
+incoming grants and current collection contents, not an `updatedAt` delta.
+Successful refresh publishes owned and shared rows atomically. If the owned
+pull completes but the shared pull has a non-auth failure, Sous publishes that
+completed owned-only snapshot, removes stale shared rows, and reports the
+existing refresh error. A shared 401/403 still follows the signed-out path.
+
+Successful sign-in writes both display `email` and normalized `emailLower`.
+Add-by-email queries `emailLower` first, then uses exact normalized `email`
+only as a fallback for legacy profiles whose stored email is already
+lowercase. A successful add versus the generic not-found response provides an
+account-existence signal. That is a conscious invitation-only product choice;
+keep failures generic and do not make them more revealing.
+
+Shared-photo metadata is only an index to the photo's parent recipe. Every
+authorization still requires a freshly read incoming share, a live
+collection, `canViewRecipe`, and `recipeListsPhoto`; metadata alone grants
+nothing. Ask text works for shared recipes, but Ask photo attachments are
+intentionally unavailable. Backup export omits shared-parent viewer chat and
+its attachments.
+
+There is no viewer leave-shared-collection flow. Revocation removes access,
+but viewer-owned chat for that shared recipe may remain orphaned server-side.
+Do not add leave UI, orphan cleanup, or shared Ask attachments as incidental
+hardening.
+
+Removing a member at `/admin` (or an owner from `ALLOWED_EMAILS`) also makes
+that person's outgoing shares inert within the same 60-second revocation
+bound: viewers stop receiving their recipes and photos. The grants are kept,
+so re-admitting the person restores them. Re-importing a foreign or legacy
+backup overwrites the previous clone; clone ids are derived, not random.
+
+On the first production verification after sharing is deployed, delete a real
+recipe that is listed in a collection and confirm the Firestore
+`array-contains` query on `recipeIds` succeeds. This verifies the required
+production index path.
 
 ## Access requests
 

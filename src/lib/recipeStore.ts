@@ -10,6 +10,8 @@ import {
   subscribe,
   upsertRecipe,
   getCollection,
+  isSharedCollection,
+  isSharedRecipe,
   listCollections,
   upsertCollection,
 } from './libraryMemory';
@@ -77,6 +79,9 @@ export const recipeStore = {
   },
 
   async save(recipe: Recipe): Promise<void> {
+    if (isSharedRecipe(recipe.id)) {
+      throw new Error('This shared collection is view-only.');
+    }
     const previous = getRecipe(recipe.id);
     const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
     upsertRecipe(next);
@@ -143,7 +148,7 @@ export const recipeStore = {
       collectionId !== undefined ? getCollection(collectionId) : undefined;
     let nextCollection = previousCollection;
     if (collectionId !== undefined) {
-      if (!previousCollection) {
+      if (!previousCollection || isSharedCollection(collectionId)) {
         throw new Error('Collection not found.');
       }
       if (wouldExceedRecipeIdCap([...previousCollection.recipeIds, recipe.id])) {
@@ -180,6 +185,9 @@ export const recipeStore = {
   },
 
   async remove(id: string): Promise<void> {
+    if (isSharedRecipe(id)) {
+      throw new Error('This shared collection is view-only.');
+    }
     const previous = getRecipe(id);
     const at = Date.now();
     // Nothing else drops the id from collections, and a dead id still counts

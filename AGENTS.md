@@ -68,7 +68,11 @@ UI (screens, components)
 library data. Screens must not `fetch`. Do not add fields to `Recipe`,
 `ChatMessage`, or `CookStateRow` — `compactRecipe` strips unknown keys, and
 `src/lib/recipeStore.test.ts` asserts the exact key set. That test is a
-schema lock; do not "fix" it by expanding the allow-list.
+schema lock; do not "fix" it by expanding the allow-list. Collections are a
+separate store kind. View-only grants live under
+`collections/{id}/grants/{viewerSub}` plus a reverse
+`incomingShares/{viewerSub}` index; they are REST, not LWW push. Shared
+rows stay in the owner's tree and carry origin metadata beside `Recipe`.
 
 The recipe library is **not** stored in IndexedDB. On boot, `discardLegacyCookDb`
 deletes the old Dexie database named `cook` if it is still present. Backups
@@ -140,6 +144,54 @@ pulls stay silent. `sync()` returns a Promise so Settings can await Refresh.
 Clear `inFlight` in `.then`/`.catch` on that Promise, not with `finally`
 inside the IIFE — that wedges sync after a signed-out run.
 
+## Sharing
+
+Named collections can be shared view-only with existing admitted members; the
+default collection remains private. Shared refresh is a **full positional
+reread** of live incoming grants and current collection contents, not an
+`updatedAt` delta. The continuation cursor is HMAC-signed with a domain
+separate from the session cookie. If grants or collection membership change
+between pages, the server returns `409 shared-snapshot-changed` and the
+client discards that attempt and rereads from the start, up to three times,
+then publishes owned-only state and the existing refresh error. A successful
+refresh publishes owned and shared rows atomically. After owned pull
+completes, a non-auth shared failure publishes the completed owned-only
+snapshot and returns the existing error outcome; a shared 401/403 still
+clears the session and library.
+
+Collection delete tombstones live grants in the same transaction. Forward
+grants carry an internal `active` flag, and the cascade time is
+`grantCascadeAt`, not the client `updatedAt`. Grants written before `active`
+are not backfilled; re-share them. Undelete does not restore old viewers.
+
+Viewer chat and cook rows store `sharedParentOwnerSub` beside the document.
+The client keeps that in `chatParentOrigins` and `cookParentOrigins`, not on
+`ChatMessage` or `CookStateRow`. Backup export treats either the live recipe
+origin or that sidecar as shared.
+
+Grants are inert while their owner is not admitted (not in `ALLOWED_EMAILS`
+and no active `members/{sub}`). Shared pull skips them, and that omission is
+part of the authorization-scope digest, so a removal between pages restarts
+the shared refresh. Shared photo reads 404. Unknown owner membership is 503.
+Grant documents are kept, so re-admitting the owner restores their shares.
+A shared page reads its recipes in one batch and their photos in one batch.
+Backup clone ids are derived from the importing `sub`, the entity namespace,
+and the original id, so re-importing a file overwrites the earlier clone.
+
+Profile upsert writes display `email` plus normalized `emailLower`. Add-by-email
+queries `emailLower` first and falls back only to exact normalized `email` for
+legacy profiles that already stored lowercase email. The success-vs-generic
+failure account-existence signal is a conscious invitation-only product
+choice; do not make failure responses more revealing.
+
+For a shared photo, metadata only indexes its parent recipe. Authorization
+still freshly reads the incoming share and live collection, then requires
+`canViewRecipe` and `recipeListsPhoto`; metadata alone never authorizes. Ask
+text works on shared recipes, but Ask photo attachments are intentionally
+unavailable. There is no viewer leave flow. Viewer-owned shared-parent chat
+can remain orphaned server-side after revoke; do not invent cleanup as part
+of sharing.
+
 ## Cloud and deploy
 
 | | |
@@ -181,6 +233,11 @@ trigger.
 Docker is not installed locally; local `bash scripts/deploy.sh` still uses
 Cloud Build.
 
+The first production verification after deploying sharing must delete a real
+recipe that is listed in a collection and confirm the Firestore
+`array-contains` query on `recipeIds` succeeds (and therefore its required
+index exists).
+
 ## Do not touch
 
 - `app: 'cook'` backups, `cook-backup-` filenames
@@ -212,7 +269,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/ask-voice-stt.md` | Implementing. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
 | `docs/plans/recipe-gallery.md` | In progress on branch `cursor/recipe-gallery-267b` (main photo + end-of-recipe gallery). |
-| `docs/plans/shared-recipes.md` | PR 1 implementing (named collections + implicit default). PR 2 view ACLs not started. |
+| `docs/plans/shared-recipes.md` | PR 1 done. PR 2 view-only collection grants implementing. |
 | `docs/plans/bulk-import.md` | Implementing. Opt-in bulk URL import on `/import`. |
 | `docs/plans/chrome-extension-import.md` | Built: `extension/` + `POST /api/extension/import`. Not deployed. |
 | `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web and extension. `api/import.ts` is a 401 stub. Import evals move to `evals/` on `eval-import-sites`. Not deployed. |

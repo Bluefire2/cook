@@ -5,6 +5,7 @@ import {
   dropPhoto,
   getPendingBlob,
   getSnapshot,
+  photoOwnerSub,
   subscribe,
 } from './libraryMemory';
 import { fetchPhotoBlob, pushOps } from './remote';
@@ -15,7 +16,7 @@ async function ensureLocalOnce(id: string): Promise<void> {
   if (getPendingBlob(id)) {
     return;
   }
-  const blob = await fetchPhotoBlob(id);
+  const blob = await fetchPhotoBlob(id, photoOwnerSub(id));
   if (blob === 'signedOut' || blob === null) {
     return;
   }

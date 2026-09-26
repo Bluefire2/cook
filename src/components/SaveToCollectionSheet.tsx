@@ -1,5 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { collectionStore, useCollections } from '../lib/collectionStore';
+import { isSharedCollection } from '../lib/libraryMemory';
 import { SpinnerIcon } from '../lib/icons';
 import { inputClass, primaryBtn, secondaryBtn } from '../lib/uiClasses';
 import Sheet from './Sheet';
@@ -50,7 +51,9 @@ export default function SaveToCollectionSheet({
   title?: string;
   createLabel?: string;
 }) {
-  const collections = useCollections();
+  const collections = useCollections()?.filter(
+    (collection) => !isSharedCollection(collection.id),
+  );
   const inFlight = useRef(false);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
