@@ -13,6 +13,7 @@ import {
   listLiveIncomingShares,
   readLiveIncomingShare,
   sessionCanViewOwnerPhoto,
+  sharingOwnerAdmitted,
 } from './grants.ts';
 import {
   compareMutation,
@@ -611,6 +612,7 @@ export async function photosGet(req: Request): Promise<Response> {
       photoId,
       listLiveIncomingShares,
       readLiveIncomingShare,
+      ownerAdmitted: sharingOwnerAdmitted,
       readDocData,
     });
     if (!allowed) {

@@ -3,6 +3,7 @@ import {
   listLiveIncomingShares,
   readLiveIncomingShare,
   readSharedAuthorizationScope,
+  sharingOwnerAdmitted,
 } from './grants.ts';
 import { drainGcsDeletes } from './photos.ts';
 import {
@@ -32,6 +33,7 @@ import {
   MAX_NAMED_COLLECTIONS,
   putDoc,
   readDocData,
+  readDocsData,
   readTombstonedRecipeIds,
   recipeIdsWithoutTombstones,
   chatCookPullFields,
@@ -358,7 +360,9 @@ export async function syncSharedPull(req: Request): Promise<Response> {
       limit,
       listLiveIncomingShares,
       readLiveIncomingShare,
+      ownerAdmitted: sharingOwnerAdmitted,
       readDocData,
+      readDocsData,
       readAuthorizationScope: readSharedAuthorizationScope,
     });
     if (page.kind === 'snapshot-changed') {

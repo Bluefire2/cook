@@ -94,6 +94,8 @@ function pageInput(input: {
   cursor?: SharedPullCursor;
   limit?: number;
   calls?: string[];
+  batches?: string[];
+  ownerAdmitted?: (ownerSub: string) => Promise<boolean>;
   times?: { share?: Record<string, string>; collection?: Record<string, string> };
   readAuthorizationScope?: BuildSharedPullPageInput['readAuthorizationScope'];
 }): BuildSharedPullPageInput {
@@ -111,9 +113,17 @@ function pageInput(input: {
         ? input.current.get(grantId)
         : input.shares.find((share) => share.grantId === grantId);
     },
+    ownerAdmitted: async (ownerSub) => {
+      input.calls?.push(`owner:${ownerSub}`);
+      return input.ownerAdmitted ? input.ownerAdmitted(ownerSub) : true;
+    },
     readDocData: async (uid, kind, id) => {
       input.calls?.push(`doc:${uid}:${kind}:${id}`);
       return input.docs?.get(docKey(uid, kind, id));
+    },
+    readDocsData: async (uid, kind, ids) => {
+      input.batches?.push(`${uid}:${kind}:${ids.join(',')}`);
+      return ids.map((id) => input.docs?.get(docKey(uid, kind, id)));
     },
     readAuthorizationScope:
       input.readAuthorizationScope ??
@@ -589,6 +599,140 @@ describe('buildSharedPullPage', () => {
     expect(calls).not.toContain('doc:owner-other:photos:photo-cover');
   });
 
+  it('reads a page of recipes and their photos in one batch each', async () => {
+    const share = {
+      grantId: 'grant-a',
+      ownerSub: 'owner-a',
+      collectionId: collectionA,
+    };
+    const docs = new Map<string, Record<string, unknown>>([
+      [
+        docKey('owner-a', 'collections', collectionA),
+        liveCollection(collectionA, ['recipe-b', 'recipe-a', 'recipe-c']),
+      ],
+      [
+        docKey('owner-a', 'recipes', 'recipe-a'),
+        liveRecipe('recipe-a', { photoId: 'photo-shared' }),
+      ],
+      [
+        docKey('owner-a', 'recipes', 'recipe-b'),
+        liveRecipe('recipe-b', {
+          photoId: 'photo-b',
+          galleryPhotoIds: ['photo-shared'],
+        }),
+      ],
+      [
+        docKey('owner-a', 'recipes', 'recipe-c'),
+        { ...liveRecipe('recipe-c', { photoId: 'photo-c' }), deletedAt: 3 },
+      ],
+      [
+        docKey('owner-a', 'photos', 'photo-shared'),
+        {
+          status: 'live',
+          recipeId: 'recipe-a',
+          contentType: 'image/jpeg',
+          size: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      [
+        docKey('owner-a', 'photos', 'photo-b'),
+        {
+          status: 'live',
+          recipeId: 'recipe-b',
+          contentType: 'image/jpeg',
+          size: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      [
+        docKey('owner-a', 'photos', 'photo-c'),
+        {
+          status: 'live',
+          recipeId: 'recipe-c',
+          contentType: 'image/jpeg',
+          size: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    ]);
+    const batches: string[] = [];
+
+    const result = expectPage(
+      await buildSharedPullPage(pageInput({ shares: [share], docs, batches })),
+    );
+
+    expect(batches).toEqual([
+      'owner-a:recipes:recipe-a,recipe-b,recipe-c',
+      'owner-a:photos:photo-shared,photo-b',
+    ]);
+    expect(result.changes.recipes.map((recipe) => recipe.id)).toEqual([
+      'recipe-a',
+      'recipe-b',
+    ]);
+    expect(
+      result.changes.photos.map((photo) => `${photo.recipeId}:${photo.id}`),
+    ).toEqual(['recipe-a:photo-shared', 'recipe-b:photo-b']);
+  });
+
+  it('skips a share whose owner is no longer admitted before any owner-tree read', async () => {
+    const shares = [
+      { grantId: 'grant-a', ownerSub: 'owner-removed', collectionId: collectionA },
+      { grantId: 'grant-b', ownerSub: 'owner-live', collectionId: collectionB },
+    ];
+    const docs = new Map<string, Record<string, unknown>>([
+      [
+        docKey('owner-removed', 'collections', collectionA),
+        liveCollection(collectionA, ['recipe-removed']),
+      ],
+      [
+        docKey('owner-removed', 'recipes', 'recipe-removed'),
+        liveRecipe('recipe-removed'),
+      ],
+      [
+        docKey('owner-live', 'collections', collectionB),
+        liveCollection(collectionB, ['recipe-live']),
+      ],
+      [docKey('owner-live', 'recipes', 'recipe-live'), liveRecipe('recipe-live')],
+    ]);
+    const calls: string[] = [];
+
+    const result = expectPage(
+      await buildSharedPullPage(
+        pageInput({
+          shares,
+          docs,
+          calls,
+          ownerAdmitted: async (ownerSub) => ownerSub !== 'owner-removed',
+        }),
+      ),
+    );
+
+    expect(calls).toContain('owner:owner-removed');
+    expect(calls.some((call) => call.startsWith('doc:owner-removed:'))).toBe(false);
+    expect(result.changes.recipes).toEqual([
+      expect.objectContaining({ id: 'recipe-live', ownerSub: 'owner-live' }),
+    ]);
+    expect(result.hasMore).toBe(false);
+  });
+
+  it('propagates unknown owner membership instead of treating it as denied', async () => {
+    const share = { grantId: 'grant-a', ownerSub: 'owner-a', collectionId: collectionA };
+    await expect(
+      buildSharedPullPage(
+        pageInput({
+          shares: [share],
+          ownerAdmitted: async () => {
+            throw new Error('firestore blip');
+          },
+        }),
+      ),
+    ).rejects.toThrow('firestore blip');
+  });
+
   it('does not let a hostile cursor manufacture an owner-tree read', async () => {
     const allowedShare = {
       grantId: 'grant-a',
@@ -747,6 +891,43 @@ describe('shared authorization generation', () => {
         collection,
       ),
     ).toBeNull();
+  });
+
+  it('drops a non-admitted owner from the scope before reading their collection', async () => {
+    const calls: string[] = [];
+    const entries = await loadSharedAuthorizationScope(viewerSub, {
+      ownerAdmitted: async (ownerSub) => ownerSub !== 'owner-removed',
+      listShareSnapshots: async () => [
+        {
+          id: 'grant-removed',
+          updateTime: '1.000000000',
+          data: {
+            ownerSub: 'owner-removed',
+            collectionId: collectionA,
+            updatedAt: 1,
+          },
+        },
+        {
+          id: 'grant-live',
+          updateTime: '2.000000000',
+          data: {
+            ownerSub: 'owner-live',
+            collectionId: collectionB,
+            updatedAt: 2,
+          },
+        },
+      ],
+      readCollectionSnapshot: async (ownerSub, collectionId) => {
+        calls.push(`${ownerSub}:${collectionId}`);
+        return {
+          exists: true,
+          data: liveCollection(collectionId, []),
+          updateTime: '3.000000000',
+        };
+      },
+    });
+    expect(calls).toEqual([`owner-live:${collectionB}`]);
+    expect(entries.map((entry) => entry.grantId)).toEqual(['grant-live']);
   });
 
   it('reads live share collections from stored owner identity in list order', async () => {

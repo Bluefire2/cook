@@ -2,6 +2,7 @@ import { FieldPath } from '@google-cloud/firestore';
 import { isAllowed } from './allowlist.ts';
 import { allowedEmails } from './env.ts';
 import { readMember } from './members.ts';
+import { accessAllows } from './membership.ts';
 import {
   canViewCollection,
   canViewRecipe,
@@ -563,6 +564,7 @@ export type SharedAuthorizationScopeIo = {
     ownerSub: string,
     collectionId: string,
   ) => Promise<SharedScopeCollectionSnapshot>;
+  ownerAdmitted?: (ownerSub: string) => Promise<boolean>;
 };
 
 export function canonicalSnapshotUpdateTime(
@@ -670,10 +672,21 @@ export async function loadSharedAuthorizationScope(
 ): Promise<SharedAuthorizationScopeEntry[]> {
   const shares = await io.listShareSnapshots(viewerSub);
   const entries: SharedAuthorizationScopeEntry[] = [];
+  const admittedByOwner = new Map<string, boolean>();
   for (const share of shares) {
     const identity = liveShareIdentity(share);
     if (identity === null) {
       continue;
+    }
+    if (io.ownerAdmitted) {
+      let admitted = admittedByOwner.get(identity.ownerSub);
+      if (admitted === undefined) {
+        admitted = await io.ownerAdmitted(identity.ownerSub);
+        admittedByOwner.set(identity.ownerSub, admitted);
+      }
+      if (!admitted) {
+        continue;
+      }
     }
     const collection = await io.readCollectionSnapshot(
       identity.ownerSub,
@@ -699,6 +712,7 @@ export async function readSharedAuthorizationScope(
   return db.runTransaction(
     (tx) =>
       loadSharedAuthorizationScope(viewerSub, {
+      ownerAdmitted: sharingOwnerAdmitted,
       listShareSnapshots: async (sub) => {
         const snap = await tx.get(
           incomingSharesCol(sub).orderBy(FieldPath.documentId()),
@@ -731,6 +745,24 @@ type ReadDocData = (
   id: string,
 ) => Promise<Record<string, unknown> | undefined>;
 
+/**
+ * Whether a sharing owner is still admitted. Denied owners' grants are inert.
+ * Throws when membership is unknown so callers answer 503, never 401 or 404.
+ */
+export async function sharingOwnerAdmitted(ownerSub: string): Promise<boolean> {
+  const profile = await getStoreFirestore().collection('users').doc(ownerSub).get();
+  const rawEmail = profile.exists ? profile.data()?.email : undefined;
+  const decision = await accessAllows({
+    sub: ownerSub,
+    email: typeof rawEmail === 'string' ? rawEmail : '',
+    emailVerified: true,
+  });
+  if (decision === 'unknown') {
+    throw new Error('Sharing owner membership unavailable');
+  }
+  return decision !== 'denied';
+}
+
 export type SessionCanViewOwnerPhotoInput = {
   viewerSub: string;
   ownerSub: string;
@@ -740,6 +772,7 @@ export type SessionCanViewOwnerPhotoInput = {
     viewerSub: string,
     grantId: string,
   ) => Promise<LiveIncomingShare | undefined>;
+  ownerAdmitted: (ownerSub: string) => Promise<boolean>;
   readDocData: ReadDocData;
 };
 
@@ -747,6 +780,7 @@ export async function sessionCanViewOwnerPhoto(
   input: SessionCanViewOwnerPhotoInput,
 ): Promise<boolean> {
   const shares = await input.listLiveIncomingShares(input.viewerSub);
+  let ownerAdmitted: boolean | undefined;
   for (const share of shares) {
     if (share.ownerSub !== input.ownerSub) {
       continue;
@@ -762,6 +796,10 @@ export async function sessionCanViewOwnerPhoto(
       current.collectionId !== share.collectionId
     ) {
       continue;
+    }
+    ownerAdmitted ??= await input.ownerAdmitted(input.ownerSub);
+    if (!ownerAdmitted) {
+      return false;
     }
     const collection = await input.readDocData(
       input.ownerSub,

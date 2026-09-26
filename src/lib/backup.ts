@@ -30,6 +30,7 @@ import { SHARED_PARENT_OWNER_SUB_FIELD } from './pushReasons';
 import {
   backupGraphIds,
   decideBackupImportMode,
+  deterministicCloneIds,
   remapBackupImport,
 } from './backupImportRemap';
 
@@ -238,16 +239,21 @@ export async function importLibrary(
     cookState,
     backupPhotoIds: (backup.photos ?? []).map((p) => p.id),
   };
+  const graphIds = backupGraphIds(importEntities);
   const mode = decideBackupImportMode(
     backup.exportedBySub,
     currentSub,
-    backupGraphIds(importEntities),
+    graphIds,
     ownedBackupGraphIds(),
   );
   const remapped = remapBackupImport(
     importEntities,
     mode,
-    () => crypto.randomUUID(),
+    mode === 'clone'
+      ? await deterministicCloneIds(graphIds, currentSub)
+      : () => {
+          throw new Error('preserve mode does not assign clone ids');
+        },
   );
   // Mode uses the full graph, including dangling chat/cook. Those rows are
   // removed only from the write set, after preserve-versus-clone.

@@ -76,6 +76,7 @@ function photoAccessInput(input: {
   current?: Map<string, LiveIncomingShare | undefined>;
   docs?: Map<string, Record<string, unknown> | undefined>;
   calls?: string[];
+  ownerAdmitted?: (ownerSub: string) => Promise<boolean>;
 }): SessionCanViewOwnerPhotoInput {
   return {
     viewerSub,
@@ -90,6 +91,10 @@ function photoAccessInput(input: {
       return input.current?.has(grantId)
         ? input.current.get(grantId)
         : input.shares.find((share) => share.grantId === grantId);
+    },
+    ownerAdmitted: async (ownerSub) => {
+      input.calls?.push(`owner:${ownerSub}`);
+      return input.ownerAdmitted ? input.ownerAdmitted(ownerSub) : true;
     },
     readDocData: async (uid, kind, id) => {
       input.calls?.push(`doc:${uid}:${kind}:${id}`);
@@ -1023,6 +1028,52 @@ describe('sessionCanViewOwnerPhoto', () => {
       ).resolves.toBe(false);
       expect(calls.filter((call) => call.includes(':recipes:'))).toHaveLength(1);
     }
+  });
+
+  it('denies every photo of an owner who is no longer admitted, before owner reads', async () => {
+    const shares = [
+      { grantId: 'grant-a', ownerSub: 'owner', collectionId },
+      { grantId: 'grant-b', ownerSub: 'owner', collectionId: secondCollectionId },
+    ];
+    const docs = new Map<string, Record<string, unknown>>([
+      [
+        docKey('owner', 'collections', collectionId),
+        liveCollection(collectionId, [recipeId]),
+      ],
+      [docKey('owner', 'photos', 'photo-target'), livePhoto(recipeId)],
+      [
+        docKey('owner', 'recipes', recipeId),
+        liveRecipe(recipeId, { photoId: 'photo-target' }),
+      ],
+    ]);
+    const calls: string[] = [];
+
+    await expect(
+      sessionCanViewOwnerPhoto(
+        photoAccessInput({
+          shares,
+          docs,
+          calls,
+          ownerAdmitted: async () => false,
+        }),
+      ),
+    ).resolves.toBe(false);
+    expect(calls.filter((call) => call.startsWith('owner:'))).toEqual(['owner:owner']);
+    expect(calls.some((call) => call.startsWith('doc:'))).toBe(false);
+  });
+
+  it('propagates unknown owner membership so the route answers 503', async () => {
+    const share = { grantId: 'grant-a', ownerSub: 'owner', collectionId };
+    await expect(
+      sessionCanViewOwnerPhoto(
+        photoAccessInput({
+          shares: [share],
+          ownerAdmitted: async () => {
+            throw new Error('firestore blip');
+          },
+        }),
+      ),
+    ).rejects.toThrow('firestore blip');
   });
 
   it('denies unrelated owner photos and chat attachments despite parent metadata', async () => {

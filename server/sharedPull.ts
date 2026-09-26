@@ -47,6 +47,12 @@ type ReadDocData = (
   id: string,
 ) => Promise<Record<string, unknown> | undefined>;
 
+type ReadDocsData = (
+  uid: string,
+  kind: StoreKind,
+  ids: readonly string[],
+) => Promise<Array<Record<string, unknown> | undefined>>;
+
 export type BuildSharedPullPageInput = {
   viewerSub: string;
   cursor: SharedPullCursor;
@@ -56,7 +62,9 @@ export type BuildSharedPullPageInput = {
     viewerSub: string,
     grantId: string,
   ) => Promise<LiveIncomingShare | undefined>;
+  ownerAdmitted: (ownerSub: string) => Promise<boolean>;
   readDocData: ReadDocData;
+  readDocsData: ReadDocsData;
   readAuthorizationScope: (
     viewerSub: string,
   ) => Promise<SharedAuthorizationScopeEntry[]>;
@@ -233,6 +241,7 @@ async function readSharedPageBody(
   position: { grantId: string; recipeId: string },
 ): Promise<SharedPullPageBody> {
   const shares = await input.listLiveIncomingShares(input.viewerSub);
+  const admittedByOwner = new Map<string, boolean>();
   const start = shares.findIndex((share) => {
     if (position.grantId === '') {
       return true;
@@ -260,6 +269,14 @@ async function readSharedPageBody(
       share.ownerSub !== candidate.ownerSub ||
       share.collectionId !== candidate.collectionId
     ) {
+      continue;
+    }
+    let admitted = admittedByOwner.get(share.ownerSub);
+    if (admitted === undefined) {
+      admitted = await input.ownerAdmitted(share.ownerSub);
+      admittedByOwner.set(share.ownerSub, admitted);
+    }
+    if (!admitted) {
       continue;
     }
     const collection = await input.readDocData(
@@ -290,12 +307,16 @@ async function readSharedPageBody(
       continue;
     }
     const pageIds = pending.slice(0, input.limit);
+    const recipeDocs =
+      pageIds.length > 0
+        ? await input.readDocsData(share.ownerSub, 'recipes', pageIds)
+        : [];
     const recipes: Record<string, unknown>[] = [];
-    const photos: Record<string, unknown>[] = [];
-    for (const recipeId of pageIds) {
-      const recipe = await input.readDocData(share.ownerSub, 'recipes', recipeId);
+    const recipePhotoRefs: Array<{ recipeId: string; photoIds: string[] }> = [];
+    pageIds.forEach((recipeId, index) => {
+      const recipe = recipeDocs[index];
       if (!canViewRecipe(recipeId, share, collection, recipe)) {
-        continue;
+        return;
       }
       const compact = compactRecipeFields({ ...recipe, id: recipeId });
       recipes.push({ ...compact, ownerSub: share.ownerSub });
@@ -310,8 +331,22 @@ async function readSharedPageBody(
           }
         }
       }
+      recipePhotoRefs.push({ recipeId, photoIds });
+    });
+    const uniquePhotoIds = [
+      ...new Set(recipePhotoRefs.flatMap((ref) => ref.photoIds)),
+    ];
+    const photoDocs =
+      uniquePhotoIds.length > 0
+        ? await input.readDocsData(share.ownerSub, 'photos', uniquePhotoIds)
+        : [];
+    const photoById = new Map(
+      uniquePhotoIds.map((id, index) => [id, photoDocs[index]]),
+    );
+    const photos: Record<string, unknown>[] = [];
+    for (const { recipeId, photoIds } of recipePhotoRefs) {
       for (const photoId of photoIds) {
-        const photo = await input.readDocData(share.ownerSub, 'photos', photoId);
+        const photo = photoById.get(photoId);
         if (
           photo === undefined ||
           !isLiveDoc(photo) ||
