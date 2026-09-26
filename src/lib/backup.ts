@@ -22,7 +22,7 @@ import {
 import { compactRecipe } from './compactRecipe';
 import { compactCollection, compactCollectionName } from './compactCollection';
 import { recipePhotoIds } from './recipePhotos';
-import { fetchPhotoBlob, postPhoto, pushOps } from './remote';
+import { fetchPhotoBlob, postPhoto, pushOps, type RemoteResult } from './remote';
 import type { PushOp } from './pushOps';
 import {
   backupGraphIds,
@@ -148,6 +148,56 @@ function isUsableCollection(raw: unknown): raw is Collection {
   return true;
 }
 
+/**
+ * Drops chat and cook rows whose recipe is not a usable recipe entity in this
+ * backup, and photos attributable only to those rows. Recipe entities stay.
+ * Legacy orphan dependents are not restorable under the server parent
+ * invariant; this does not synthesize parent recipes.
+ */
+function sanitizeDanglingDependents(
+  recipes: Recipe[],
+  collections: Collection[],
+  chatMessages: ChatMessage[],
+  cookState: CookStateRow[],
+): {
+  recipes: Recipe[];
+  collections: Collection[];
+  chatMessages: ChatMessage[];
+  cookState: CookStateRow[];
+  omitPhotoIds: Set<string>;
+} {
+  const usableIds = new Set(recipes.map((recipe) => recipe.id));
+  const keptChat = chatMessages.filter((message) => usableIds.has(message.recipeId));
+  const keptCook = cookState.filter((row) => usableIds.has(row.recipeId));
+  const keptPhotoIds = new Set(attributePhotos(recipes, keptChat).keys());
+  const omitPhotoIds = new Set<string>();
+  for (const message of chatMessages) {
+    if (usableIds.has(message.recipeId)) {
+      continue;
+    }
+    for (const photoId of message.photoIds ?? []) {
+      if (!keptPhotoIds.has(photoId)) {
+        omitPhotoIds.add(photoId);
+      }
+    }
+  }
+  return {
+    recipes,
+    collections,
+    chatMessages: keptChat,
+    cookState: keptCook,
+    omitPhotoIds,
+  };
+}
+
+function importPushError(result: Exclude<RemoteResult, 'ok'>): Error {
+  return new Error(
+    result === 'signedOut'
+      ? 'Please sign in again — your session expired.'
+      : "Couldn't import the backup.",
+  );
+}
+
 /** Merges a backup, preserving the whole graph only when provenance or owned overlap says it is local. */
 export async function importLibrary(
   file: Blob,
@@ -183,17 +233,32 @@ export async function importLibrary(
     mode,
     () => crypto.randomUUID(),
   );
-  const importRecipes = remapped.recipes;
-  const importCollections = remapped.collections;
-  const importChat = remapped.chatMessages;
-  const importCook = remapped.cookState;
+  // Mode uses the full graph, including dangling chat/cook. Those rows are
+  // removed only from the write set, after preserve-versus-clone.
+  const kept = sanitizeDanglingDependents(
+    remapped.recipes,
+    remapped.collections,
+    remapped.chatMessages,
+    remapped.cookState,
+  );
+  const importRecipes = kept.recipes;
+  const importCollections = kept.collections;
+  const importChat = kept.chatMessages;
+  const importCook = kept.cookState;
   const photoAttribution = attributePhotos(importRecipes, importChat);
 
+  const keptPhotos = (backup.photos ?? []).flatMap((photo) => {
+    const id = remapped.photoIdMap.get(photo.id) ?? photo.id;
+    if (kept.omitPhotoIds.has(id)) {
+      return [];
+    }
+    return [{ ...photo, id }];
+  });
   const photos = await Promise.all(
-    (backup.photos ?? []).map(async (p) => ({
-      id: remapped.photoIdMap.get(p.id) ?? p.id,
-      blob: await (await fetch(`data:${p.type};base64,${p.base64}`)).blob(),
-      createdAt: p.createdAt,
+    keptPhotos.map(async (photo) => ({
+      id: photo.id,
+      blob: await (await fetch(`data:${photo.type};base64,${photo.base64}`)).blob(),
+      createdAt: photo.createdAt,
     })),
   );
 
@@ -215,6 +280,19 @@ export async function importLibrary(
       upsertCook(row);
     }
 
+    // Remote import is best-effort across requests. Recipe puts are
+    // acknowledged before photo bytes and dependent puts. A failure after
+    // the recipe phase can leave accepted server rows; the next refresh
+    // reveals them. restoreSnapshot undoes this local copy.
+    const recipeOps: PushOp[] = importRecipes.map((recipe) => ({
+      kind: 'recipe.put',
+      payload: recipe,
+    }));
+    const recipeResult = await pushOps(recipeOps);
+    if (recipeResult !== 'ok') {
+      throw importPushError(recipeResult);
+    }
+
     for (const [photoId, recipeId] of photoAttribution) {
       const photo = photos.find((p) => p.id === photoId);
       if (!photo) {
@@ -232,29 +310,22 @@ export async function importLibrary(
       markPhotoRemote(photoId);
     }
 
-    const ops: PushOp[] = [];
-    for (const recipe of importRecipes) {
-      ops.push({ kind: 'recipe.put', payload: recipe });
-    }
+    const dependentOps: PushOp[] = [];
     for (const collection of importCollections) {
-      ops.push({ kind: 'collection.put', payload: collection });
+      dependentOps.push({ kind: 'collection.put', payload: collection });
     }
     for (const message of importChat) {
-      ops.push({ kind: 'chat.put', payload: message });
+      dependentOps.push({ kind: 'chat.put', payload: message });
     }
     for (const row of importCook) {
-      ops.push({
+      dependentOps.push({
         kind: 'cookState.put',
         payload: { ...row, updatedAt: Date.now() },
       });
     }
-    const result = await pushOps(ops);
-    if (result !== 'ok') {
-      throw new Error(
-        result === 'signedOut'
-          ? 'Please sign in again — your session expired.'
-          : "Couldn't import the backup.",
-      );
+    const dependentResult = await pushOps(dependentOps);
+    if (dependentResult !== 'ok') {
+      throw importPushError(dependentResult);
     }
 
     return { imported: importRecipes.length, skipped };
