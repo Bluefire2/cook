@@ -34,6 +34,7 @@ import {
   readDocData,
   readTombstonedRecipeIds,
   recipeIdsWithoutTombstones,
+  chatCookPullFields,
   tombstonePhotoWithGcs,
   type PullCursor,
   type PushRejectReason,
@@ -60,6 +61,9 @@ function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<stri
   const deletedAt = doc.deletedAt;
   if (deletedAt !== undefined && deletedAt !== null) {
     return { id: doc.id, deletedAt };
+  }
+  if (kind === 'chatMessages' || kind === 'cookState') {
+    return chatCookPullFields(doc);
   }
   const copy = { ...doc };
   delete copy.serverUpdatedAt;

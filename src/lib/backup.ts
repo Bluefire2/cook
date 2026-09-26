@@ -4,6 +4,8 @@ import type { ChatMessage, Collection, Recipe } from './types';
 import {
   addPendingBlob,
   captureSnapshot,
+  chatParentIsShared,
+  cookParentIsShared,
   getPendingBlob,
   isSharedCollection,
   isSharedRecipe,
@@ -23,6 +25,9 @@ import { compactRecipe } from './compactRecipe';
 import { compactCollection, compactCollectionName } from './compactCollection';
 import { recipePhotoIds } from './recipePhotos';
 import { fetchPhotoBlob, postPhoto, pushOps, type RemoteResult } from './remote';
+
+/** Keep aligned with server/store.ts SHARED_PARENT_OWNER_SUB_FIELD. */
+const SHARED_PARENT_OWNER_SUB_FIELD = 'sharedParentOwnerSub';
 import type { PushOp } from './pushOps';
 import {
   backupGraphIds,
@@ -84,15 +89,28 @@ function attributePhotos(
   return map;
 }
 
+function withoutImportedProvenance<T extends object>(row: T): T {
+  if (!Object.prototype.hasOwnProperty.call(row, SHARED_PARENT_OWNER_SUB_FIELD)) {
+    return row;
+  }
+  const copy = { ...row } as T & Record<string, unknown>;
+  delete copy[SHARED_PARENT_OWNER_SUB_FIELD];
+  return copy;
+}
+
 export async function exportLibrary(currentSub: string): Promise<Blob> {
   const recipes = listRecipes().filter((recipe) => !isSharedRecipe(recipe.id));
-  const chatMessages = listAllChat().filter(
-    (message) => !isSharedRecipe(message.recipeId),
-  );
-  const cookState = listAllCook().filter((row) => !isSharedRecipe(row.recipeId));
+  const chatMessages = listAllChat()
+    .filter((message) => !chatParentIsShared(message.id, message.recipeId))
+    .map(withoutImportedProvenance);
+  const cookState = listAllCook()
+    .filter((row) => !cookParentIsShared(row.recipeId))
+    .map(withoutImportedProvenance);
   const collections = listCollections().filter(
     (collection) => !isSharedCollection(collection.id),
   );
+  // Photo attribution runs after the shared-parent filter, so an attachment
+  // that belongs only to an omitted chat row is not exported.
   const photoIds = [...attributePhotos(recipes, chatMessages).keys()];
 
   const photos: BackupPhoto[] = [];
@@ -213,8 +231,8 @@ export async function importLibrary(
   const collections = (backup.collections ?? [])
     .filter(isUsableCollection)
     .map(compactCollection);
-  const chatMessages = backup.chatMessages ?? [];
-  const cookState = backup.cookState ?? [];
+  const chatMessages = (backup.chatMessages ?? []).map(withoutImportedProvenance);
+  const cookState = (backup.cookState ?? []).map(withoutImportedProvenance);
   const importEntities = {
     recipes,
     collections,

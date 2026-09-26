@@ -120,6 +120,8 @@ export async function pullAll(dependencies: PullDependencies): Promise<SyncResul
     chat: new Map<string, ChatMessage>(),
     cook: new Map<string, CookStateRow>(),
     remotePhotoIds: new Set<string>(),
+    chatParentOrigins: new Map<string, string>(),
+    cookParentOrigins: new Map<string, string>(),
   };
   let cursor: PullCursor = {};
   let pages = 0;

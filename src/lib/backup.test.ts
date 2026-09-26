@@ -11,6 +11,8 @@ import {
   listRecipes,
   mergeSharedFromPull,
   replaceFromPull,
+  upsertChat,
+  upsertCook,
 } from './libraryMemory';
 import { postPhoto, pushOps } from './remote';
 import type { PushOp } from './pushOps';
@@ -284,6 +286,151 @@ describe('exportLibrary', () => {
       'recipes',
       'version',
     ]);
+  });
+
+  it('omits revoked shared-parent chat, cook, and chat-only photos after the recipe origin is gone', async () => {
+    installFileReader();
+    const ownedRecipe = { ...RECIPE, id: 'owned-recipe', photoId: 'owned-recipe-photo' };
+    const ownedChat = { ...CHAT, id: 'owned-chat', recipeId: ownedRecipe.id, photoIds: ['owned-chat-photo'] };
+    const revokedChat = {
+      ...CHAT,
+      id: 'revoked-chat',
+      recipeId: 'revoked-recipe',
+      photoIds: ['revoked-chat-photo'],
+    };
+    const orphanChat = {
+      ...CHAT,
+      id: 'orphan-chat',
+      recipeId: 'missing-recipe',
+      photoIds: ['orphan-chat-photo'],
+    };
+    const ownedCook = { ...COOK, recipeId: ownedRecipe.id };
+    const revokedCook = { ...COOK, recipeId: 'revoked-recipe' };
+    const orphanCook = { ...COOK, recipeId: 'missing-recipe' };
+    replaceFromPull({
+      recipes: new Map([[ownedRecipe.id, ownedRecipe]]),
+      collections: new Map([[COLLECTION.id, COLLECTION]]),
+      chat: new Map([
+        [ownedChat.id, ownedChat],
+        [revokedChat.id, revokedChat],
+        [orphanChat.id, orphanChat],
+      ]),
+      cook: new Map([
+        [ownedCook.recipeId, ownedCook],
+        [revokedCook.recipeId, revokedCook],
+        [orphanCook.recipeId, orphanCook],
+      ]),
+      remotePhotoIds: new Set(),
+      chatParentOrigins: new Map([[revokedChat.id, 'former-owner']]),
+      cookParentOrigins: new Map([[revokedCook.recipeId, 'former-owner']]),
+    });
+    for (const id of [
+      'owned-recipe-photo',
+      'owned-chat-photo',
+      'revoked-chat-photo',
+      'orphan-chat-photo',
+    ]) {
+      addPendingBlob(id, new Blob([id], { type: 'image/jpeg' }));
+    }
+
+    const backup = JSON.parse(
+      await (await exportLibrary('viewer-sub')).text(),
+    ) as Record<string, unknown>;
+
+    expect(backup).toMatchObject({
+      app: 'cook',
+      version: 3,
+      exportedBySub: 'viewer-sub',
+    });
+    expect(backup.recipes).toEqual([ownedRecipe]);
+    expect(backup.chatMessages).toEqual([ownedChat, orphanChat]);
+    expect(backup.cookState).toEqual([ownedCook, orphanCook]);
+    expect(backup.collections).toEqual([COLLECTION]);
+    expect(backup.chatMessages).not.toContainEqual(revokedChat);
+    expect(backup.cookState).not.toContainEqual(revokedCook);
+    const photos = backup.photos as Array<Record<string, unknown>>;
+    expect(photos.map((photo) => photo.id)).toEqual([
+      'owned-recipe-photo',
+      'owned-chat-photo',
+      'orphan-chat-photo',
+    ]);
+    expect(Object.keys(backup).sort()).toEqual([
+      'app',
+      'chatMessages',
+      'collections',
+      'cookState',
+      'exportedAt',
+      'exportedBySub',
+      'photos',
+      'recipes',
+      'version',
+    ]);
+    for (const message of backup.chatMessages as Array<Record<string, unknown>>) {
+      expect(message).not.toHaveProperty('sharedParentOwnerSub');
+    }
+    for (const row of backup.cookState as Array<Record<string, unknown>>) {
+      expect(row).not.toHaveProperty('sharedParentOwnerSub');
+    }
+  });
+
+  it('omits optimistic chat and cook created while a share is still live', async () => {
+    installFileReader();
+    const ownedRecipe = { ...RECIPE, id: 'owned-recipe', title: 'Mine' };
+    const sharedRecipe = { ...RECIPE, id: 'shared-recipe', title: 'Shared soup' };
+    const ownedChat = {
+      ...CHAT,
+      id: 'owned-chat',
+      recipeId: ownedRecipe.id,
+      photoIds: ['owned-chat-photo'],
+    };
+    const sharedChat = {
+      ...CHAT,
+      id: 'shared-chat',
+      recipeId: sharedRecipe.id,
+      photoIds: ['shared-chat-photo'],
+    };
+    const ownedCook = { ...COOK, recipeId: ownedRecipe.id };
+    const sharedCook = { ...COOK, recipeId: sharedRecipe.id };
+    replaceFromPull({
+      recipes: new Map([[ownedRecipe.id, ownedRecipe]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    mergeSharedFromPull({
+      recipes: new Map([[sharedRecipe.id, sharedRecipe]]),
+      collections: new Map(),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map([
+        [sharedRecipe.id, { kind: 'shared', ownerSub: 'owner-sub' }],
+      ]),
+      collectionOrigins: new Map(),
+    });
+    upsertChat(ownedChat);
+    upsertCook(ownedCook);
+    upsertChat(sharedChat);
+    upsertCook(sharedCook);
+    addPendingBlob('owned-chat-photo', new Blob(['owned'], { type: 'image/jpeg' }));
+    addPendingBlob('shared-chat-photo', new Blob(['shared'], { type: 'image/jpeg' }));
+
+    expect(getSnapshot().chatParentOrigins.get(sharedChat.id)).toBe('owner-sub');
+    expect(getSnapshot().cookParentOrigins.get(sharedCook.recipeId)).toBe('owner-sub');
+    expect(getSnapshot().chatParentOrigins.has(ownedChat.id)).toBe(false);
+    expect(getSnapshot().cookParentOrigins.has(ownedCook.recipeId)).toBe(false);
+
+    const backup = JSON.parse(
+      await (await exportLibrary('viewer-sub')).text(),
+    ) as Record<string, unknown>;
+    expect(backup).toMatchObject({ app: 'cook', version: 3, exportedBySub: 'viewer-sub' });
+    expect(backup.chatMessages).toEqual([ownedChat]);
+    expect(backup.cookState).toEqual([ownedCook]);
+    expect(backup.recipes).toEqual([ownedRecipe]);
+    const photos = backup.photos as Array<Record<string, unknown>>;
+    expect(photos.map((photo) => photo.id)).toEqual(['owned-chat-photo']);
+    expect(JSON.stringify(backup)).not.toContain('sharedParentOwnerSub');
+    expect(JSON.stringify(backup)).not.toContain('chatParentOrigins');
+    expect(JSON.stringify(backup)).not.toContain('cookParentOrigins');
   });
 });
 
@@ -803,5 +950,81 @@ describe('importLibrary', () => {
     expect(listAllChat()).toEqual([{ ...CHAT, content: 'owned chat', photoIds: undefined }]);
     expect(listAllCook()).toEqual([]);
     expect(getPendingBlob(orphanPhotoId)).toBeUndefined();
+  });
+
+  it('does not preserve a provenance-less backup that overlaps only revoked shared-parent sidecars', async () => {
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    vi.mocked(postPhoto).mockResolvedValue('ok');
+    const owned = {
+      ...RECIPE,
+      id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      title: 'Mine',
+    };
+    replaceFromPull({
+      recipes: new Map([[owned.id, owned]]),
+      collections: new Map(),
+      chat: new Map([[CHAT.id, { ...CHAT, content: 'on revoked' }]]),
+      cook: new Map([[COOK.recipeId, COOK]]),
+      remotePhotoIds: new Set([PHOTO]),
+      chatParentOrigins: new Map([[CHAT.id, 'former-owner']]),
+      cookParentOrigins: new Map([[COOK.recipeId, 'former-owner']]),
+    });
+
+    await importLibrary(backupFile(), 'carol-sub');
+
+    const imported = listRecipes().find((recipe) => recipe.title === 'Soup');
+    expect(imported?.id).not.toBe(RECIPE.id);
+    expect(getSnapshot().recipes.get(owned.id)?.title).toBe('Mine');
+    expect(getSnapshot().recipes.has(RECIPE.id)).toBe(false);
+    expect(getSnapshot().chat.get(CHAT.id)?.content).toBe('on revoked');
+    const recipePut = allPushedOps().find((op) => op.kind === 'recipe.put');
+    expect(recipePut?.kind === 'recipe.put' ? recipePut.payload.id : undefined).not.toBe(
+      RECIPE.id,
+    );
+  });
+
+  it('does not import shared parent provenance from backup JSON', async () => {
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    const file = new File(
+      [
+        JSON.stringify({
+          app: 'cook',
+          version: 3,
+          exportedAt: 3,
+          recipes: [RECIPE],
+          chatMessages: [{ ...CHAT, photoIds: undefined, sharedParentOwnerSub: 'attacker' }],
+          photos: [],
+          cookState: [{ ...COOK, sharedParentOwnerSub: 'attacker' }],
+          collections: [],
+        }),
+      ],
+      'cook-backup.json',
+      { type: 'application/json' },
+    );
+
+    await importLibrary(file, 'carol-sub');
+
+    expect(listAllChat()[0]).not.toHaveProperty('sharedParentOwnerSub');
+    expect(listAllCook()[0]).not.toHaveProperty('sharedParentOwnerSub');
+    expect(getSnapshot().chatParentOrigins.size).toBe(0);
+    expect(getSnapshot().cookParentOrigins.size).toBe(0);
+    for (const op of allPushedOps()) {
+      if (op.kind === 'chat.put' || op.kind === 'cookState.put') {
+        expect(op.payload).not.toHaveProperty('sharedParentOwnerSub');
+      }
+    }
+
+    const exported = JSON.parse(await (await exportLibrary('carol-sub')).text()) as {
+      app: string;
+      version: number;
+      chatMessages: Array<Record<string, unknown>>;
+      cookState: Array<Record<string, unknown>>;
+    };
+    expect(exported.app).toBe('cook');
+    expect(exported.version).toBe(3);
+    expect(exported.chatMessages.every((message) => !('sharedParentOwnerSub' in message))).toBe(
+      true,
+    );
+    expect(exported.cookState.every((row) => !('sharedParentOwnerSub' in row))).toBe(true);
   });
 });

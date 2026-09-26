@@ -6,10 +6,15 @@ import {
   applyCollectionMembershipScrubs,
   collectionDocsFromQuerySnap,
   collectionsToScrub,
+  chatCookPullFields,
+  chatOrCookPutBody,
   collectionDeletePayload,
   compactCollectionFields,
   compactRecipeFields,
   compareMutation,
+  SHARED_PARENT_OWNER_SUB_FIELD,
+  sharedParentMarkerForWrite,
+  sharedParentOwnerFromCandidate,
   recipeIdsWithoutTombstones,
   decodePullCursor,
   encodePullCursor,
@@ -530,5 +535,174 @@ describe('messageIdsToClearAtBoundary', () => {
 describe('isUuid', () => {
   it('accepts lowercase uuid', () => {
     expect(isUuid('11111111-1111-4111-8111-111111111111')).toBe(true);
+  });
+});
+
+const PARENT_COLLECTION = '11111111-1111-4111-8111-111111111111';
+const PARENT_RECIPE = '22222222-2222-4222-8222-222222222222';
+const CHAT_ID = '33333333-3333-4333-8333-333333333333';
+
+function liveShare(ownerSub: string): Record<string, unknown> {
+  return { ownerSub, collectionId: PARENT_COLLECTION, updatedAt: 1 };
+}
+
+function liveCollection(recipeIds: string[]): Record<string, unknown> {
+  return {
+    id: PARENT_COLLECTION,
+    name: 'Shared',
+    recipeIds,
+    updatedAt: 1,
+  };
+}
+
+function liveRecipe(): Record<string, unknown> {
+  return {
+    id: PARENT_RECIPE,
+    title: 'Soup',
+    ownerSub: 'recipe-document-owner',
+    updatedAt: 1,
+  };
+}
+
+describe('shared parent provenance', () => {
+  it('returns the owner stored on the incoming share', () => {
+    expect(SHARED_PARENT_OWNER_SUB_FIELD).toBe('sharedParentOwnerSub');
+    const allowed = {
+      share: liveShare('stored-owner'),
+      grantId: 'grant-1',
+      collection: liveCollection([PARENT_RECIPE]),
+      recipe: liveRecipe(),
+    };
+    const denied = {
+      share: liveShare('other-owner'),
+      grantId: 'grant-2',
+      collection: liveCollection([]),
+      recipe: { ...liveRecipe(), ownerSub: 'other-owner' },
+    };
+    expect(sharedParentOwnerFromCandidate(PARENT_RECIPE, denied)).toBeNull();
+    expect(sharedParentOwnerFromCandidate(PARENT_RECIPE, allowed)).toBe('stored-owner');
+    expect(
+      sharedParentOwnerFromCandidate(PARENT_RECIPE, {
+        ...allowed,
+        share: { ...liveShare('stored-owner'), deletedAt: 5 },
+      }),
+    ).toBeNull();
+    expect(
+      sharedParentOwnerFromCandidate(PARENT_RECIPE, {
+        ...allowed,
+        share: liveShare(''),
+      }),
+    ).toBeNull();
+    expect(
+      sharedParentOwnerFromCandidate(PARENT_RECIPE, {
+        ...allowed,
+        recipe: { ...liveRecipe(), deletedAt: 5 },
+      }),
+    ).toBeNull();
+  });
+
+  it('stores the server-discovered owner and omits the marker for an owned parent', () => {
+    expect(sharedParentMarkerForWrite(true, 'stored-owner')).toBeNull();
+    expect(sharedParentMarkerForWrite(true, null)).toBeNull();
+    expect(sharedParentMarkerForWrite(false, 'stored-owner')).toBe('stored-owner');
+    expect(sharedParentMarkerForWrite(false, null)).toBeNull();
+    expect(sharedParentMarkerForWrite(false, '')).toBeNull();
+  });
+
+  it('ignores a hostile chat or cook payload when choosing or clearing provenance', () => {
+    const hostile = {
+      id: CHAT_ID,
+      recipeId: PARENT_RECIPE,
+      role: 'user',
+      content: 'hi',
+      createdAt: 3,
+      sharedParentOwnerSub: 'attacker',
+      uid: 'uid',
+      sub: 'sub',
+      deletedAt: 1,
+    };
+    const cleared = chatOrCookPutBody(
+      { ...hostile, sharedParentOwnerSub: null },
+      CHAT_ID,
+      3,
+      9,
+      sharedParentMarkerForWrite(false, 'stored-owner'),
+    );
+    expect(cleared.sharedParentOwnerSub).toBe('stored-owner');
+    expect(cleared.uid).toBeUndefined();
+    expect(cleared.sub).toBeUndefined();
+    expect(cleared.deletedAt).toBeUndefined();
+    expect(cleared.content).toBe('hi');
+
+    const blank = chatOrCookPutBody(
+      { ...hostile, sharedParentOwnerSub: '' },
+      CHAT_ID,
+      3,
+      9,
+      sharedParentMarkerForWrite(false, 'stored-owner'),
+    );
+    expect(blank.sharedParentOwnerSub).toBe('stored-owner');
+
+    const owned = chatOrCookPutBody(
+      hostile,
+      CHAT_ID,
+      3,
+      9,
+      sharedParentMarkerForWrite(true, 'stored-owner'),
+    );
+    expect(owned).not.toHaveProperty('sharedParentOwnerSub');
+    expect(owned.serverUpdatedAt).toBe(9);
+    expect(owned.updatedAt).toBe(3);
+
+    const cook = chatOrCookPutBody(
+      {
+        recipeId: PARENT_RECIPE,
+        servings: 2,
+        currentStep: 0,
+        checkedKeys: [],
+        recipeUpdatedAt: 1,
+        updatedAt: 4,
+        sharedParentOwnerSub: 'attacker',
+      },
+      PARENT_RECIPE,
+      4,
+      10,
+      null,
+    );
+    expect(cook).not.toHaveProperty('sharedParentOwnerSub');
+    expect(cook.id).toBe(PARENT_RECIPE);
+  });
+
+  it('exposes the stored marker as chat and cook pull metadata only', () => {
+    const wire = chatCookPullFields({
+      id: CHAT_ID,
+      recipeId: PARENT_RECIPE,
+      role: 'user',
+      content: 'hi',
+      createdAt: 3,
+      serverUpdatedAt: 9,
+      deletedAt: null,
+      sharedParentOwnerSub: 'stored-owner',
+    });
+    expect(wire.sharedParentOwnerSub).toBe('stored-owner');
+    expect(wire).not.toHaveProperty('serverUpdatedAt');
+    expect(wire).not.toHaveProperty('deletedAt');
+    expect(wire.content).toBe('hi');
+
+    expect(
+      chatCookPullFields({
+        id: CHAT_ID,
+        content: 'owned',
+        sharedParentOwnerSub: '',
+        serverUpdatedAt: 1,
+      }),
+    ).not.toHaveProperty('sharedParentOwnerSub');
+    expect(
+      chatCookPullFields({
+        id: CHAT_ID,
+        content: 'owned',
+        sharedParentOwnerSub: 4,
+      }),
+    ).not.toHaveProperty('sharedParentOwnerSub');
   });
 });

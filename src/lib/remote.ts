@@ -10,6 +10,9 @@ import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 import { clearLibrary } from './libraryMemory';
 
+/** Keep aligned with server/store.ts SHARED_PARENT_OWNER_SUB_FIELD. */
+export const SHARED_PARENT_OWNER_SUB_FIELD = 'sharedParentOwnerSub';
+
 export type PullCursor = Partial<
   Record<'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections', [number, string]>
 >;
@@ -281,6 +284,14 @@ export function normalizeCookChange(
   };
 }
 
+function readSharedParentOwnerSub(raw: Record<string, unknown>): string | undefined {
+  const value = raw[SHARED_PARENT_OWNER_SUB_FIELD];
+  if (typeof value !== 'string' || value === '') {
+    return undefined;
+  }
+  return value;
+}
+
 export function applyPullChanges(
   acc: {
     recipes: Map<string, Recipe>;
@@ -288,6 +299,8 @@ export function applyPullChanges(
     chat: Map<string, ChatMessage>;
     cook: Map<string, CookStateRow>;
     remotePhotoIds: Set<string>;
+    chatParentOrigins: Map<string, string>;
+    cookParentOrigins: Map<string, string>;
   },
   changes: PullChanges,
 ): void {
@@ -314,8 +327,15 @@ export function applyPullChanges(
     const normalized = normalizeChatChange(raw);
     if (normalized === 'tombstone') {
       acc.chat.delete(id);
+      acc.chatParentOrigins.delete(id);
     } else {
       acc.chat.set(id, normalized);
+      const owner = readSharedParentOwnerSub(raw);
+      if (owner === undefined) {
+        acc.chatParentOrigins.delete(id);
+      } else {
+        acc.chatParentOrigins.set(id, owner);
+      }
     }
   }
   for (const raw of changes.cookState) {
@@ -323,8 +343,15 @@ export function applyPullChanges(
     const normalized = normalizeCookChange(raw);
     if (normalized === 'tombstone') {
       acc.cook.delete(recipeId);
+      acc.cookParentOrigins.delete(recipeId);
     } else {
       acc.cook.set(recipeId, normalized);
+      const owner = readSharedParentOwnerSub(raw);
+      if (owner === undefined) {
+        acc.cookParentOrigins.delete(recipeId);
+      } else {
+        acc.cookParentOrigins.set(recipeId, owner);
+      }
     }
   }
   for (const raw of changes.photos) {

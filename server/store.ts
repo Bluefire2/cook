@@ -386,6 +386,115 @@ function tombstonePayload(
 }
 
 /**
+ * Internal field stored beside viewer chat and cook rows only. The value is
+ * the shared recipe owner's Google `sub`, discovered from incoming shares.
+ * Client payloads cannot set or clear it. Absent means the parent write was
+ * authorized by a live owned recipe (or the row predates this marker). It is
+ * not part of `ChatMessage`, `CookStateRow`, or a version-3 backup entity.
+ * Owned pull exposes it as wire metadata; clients keep it in sidecar maps.
+ */
+export const SHARED_PARENT_OWNER_SUB_FIELD = 'sharedParentOwnerSub';
+
+export type SharedParentCandidate = {
+  share: Record<string, unknown> | undefined;
+  grantId: string;
+  collection: Record<string, unknown> | undefined;
+  recipe: Record<string, unknown> | undefined;
+};
+
+/**
+ * Owner sub from one incoming-share candidate, or null when that candidate
+ * does not authorize `recipeId`. The owner is read from the share document.
+ */
+export function sharedParentOwnerFromCandidate(
+  recipeId: string,
+  candidate: SharedParentCandidate,
+): string | null {
+  const data = candidate.share;
+  if (!isLiveDoc(data)) {
+    return null;
+  }
+  const ownerSub = data?.ownerSub;
+  const collectionId = data?.collectionId;
+  if (
+    typeof ownerSub !== 'string' ||
+    ownerSub === '' ||
+    typeof collectionId !== 'string' ||
+    !isUuid(collectionId)
+  ) {
+    return null;
+  }
+  const share = { grantId: candidate.grantId, ownerSub, collectionId };
+  if (!canViewRecipe(recipeId, share, candidate.collection, candidate.recipe)) {
+    return null;
+  }
+  return ownerSub;
+}
+
+/**
+ * Marker stored on a chat or cook put. A live owned parent stores nothing,
+ * even if a share owner was also discovered. Otherwise the marker is that
+ * server-discovered owner, or null when there isn't one.
+ */
+export function sharedParentMarkerForWrite(
+  ownedParentLive: boolean,
+  discoveredOwnerSub: string | null,
+): string | null {
+  if (ownedParentLive) {
+    return null;
+  }
+  if (typeof discoveredOwnerSub !== 'string' || discoveredOwnerSub === '') {
+    return null;
+  }
+  return discoveredOwnerSub;
+}
+
+/**
+ * Chat/cook document body. Strips client provenance, uid, sub, and deletedAt.
+ * `sharedParentOwnerSub` is set only from `sharedParentOwnerSub` argument,
+ * which the caller derives on the server. `putDoc` writes this with merge
+ * false, so omitting the field clears a previously stored marker.
+ */
+export function chatOrCookPutBody(
+  payload: Record<string, unknown>,
+  id: string,
+  clientUpdatedAt: number,
+  serverUpdatedAt: number,
+  sharedParentOwnerSub: string | null,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    ...payload,
+    id,
+    updatedAt: clientUpdatedAt,
+    serverUpdatedAt,
+  };
+  delete body.deletedAt;
+  delete body.uid;
+  delete body.sub;
+  delete body[SHARED_PARENT_OWNER_SUB_FIELD];
+  if (sharedParentOwnerSub !== null && sharedParentOwnerSub !== '') {
+    body[SHARED_PARENT_OWNER_SUB_FIELD] = sharedParentOwnerSub;
+  }
+  return body;
+}
+
+/**
+ * Live chat/cook owned-pull shape. Domain fields pass through.
+ * `sharedParentOwnerSub` is wire metadata only when it is a non-empty string.
+ */
+export function chatCookPullFields(doc: Record<string, unknown>): Record<string, unknown> {
+  const copy = { ...doc };
+  delete copy.serverUpdatedAt;
+  delete copy.deletedAt;
+  const owner = copy[SHARED_PARENT_OWNER_SUB_FIELD];
+  delete copy[SHARED_PARENT_OWNER_SUB_FIELD];
+  if (typeof owner === 'string' && owner !== '') {
+    copy[SHARED_PARENT_OWNER_SUB_FIELD] = owner;
+  }
+  return copy;
+}
+
+/**
  * Collection tombstone. `updatedAt` and `deletedAt` stay on the client clock.
  * `grantCascadeAt` is the server order used to revoke grants; it is not a
  * client LWW field and must not be copied into `updatedAt` or `deletedAt`.
@@ -403,11 +512,17 @@ export function collectionDeletePayload(
   return payload;
 }
 
+/**
+ * Shared-recipe owner when the session can view `recipeId` through a live
+ * incoming share. The owner is the `ownerSub` stored on that share. Returns
+ * null when no share authorizes the recipe. Callers must check an owned
+ * parent first; a live owned recipe takes precedence over this result.
+ */
 export async function sharedParentLive(
   tx: Transaction,
   sessionSub: string,
   recipeId: string,
-): Promise<boolean> {
+): Promise<string | null> {
   const itemsQuery = getFirestore()
     .collection('incomingShares')
     .doc(sessionSub)
@@ -428,7 +543,6 @@ export async function sharedParentLive(
     ) {
       continue;
     }
-    const share = { grantId: doc.id, ownerSub, collectionId };
     const collectionSnap = await tx.get(collectionDocRef(ownerSub, collectionId));
     const collection = collectionSnap.exists
       ? (collectionSnap.data() as Record<string, unknown>)
@@ -441,11 +555,17 @@ export async function sharedParentLive(
     const recipe = recipeSnap.exists
       ? (recipeSnap.data() as Record<string, unknown>)
       : undefined;
-    if (canViewRecipe(recipeId, share, collection, recipe)) {
-      return true;
+    const owner = sharedParentOwnerFromCandidate(recipeId, {
+      share: data,
+      grantId: doc.id,
+      collection,
+      recipe,
+    });
+    if (owner !== null) {
+      return owner;
     }
   }
-  return false;
+  return null;
 }
 
 async function readRecipeLive(
@@ -668,14 +788,17 @@ export async function putDoc(
       parentRecipeId = recipeId;
     }
 
+    let ownedParentLive = parentRecipeId === null;
+    let discoveredOwnerSub: string | null = null;
     if (parentRecipeId !== null) {
-      const live = await readRecipeLive(tx, uid, parentRecipeId);
-      if (!live) {
+      ownedParentLive = await readRecipeLive(tx, uid, parentRecipeId);
+      if (!ownedParentLive) {
+        // Photo bytes stay owned-parent-only. Never fall back to a share.
         if (kind === 'photos') {
           return { applied: false, reason: 'recipe-deleted' };
         }
-        const shared = await sharedParentLive(tx, uid, parentRecipeId);
-        if (!shared) {
+        discoveredOwnerSub = await sharedParentLive(tx, uid, parentRecipeId);
+        if (sharedParentMarkerForWrite(false, discoveredOwnerSub) === null) {
           return { applied: false, reason: 'recipe-deleted' };
         }
       }
@@ -693,6 +816,14 @@ export async function putDoc(
       if (cmp.undeleting) {
         // deletedAt cleared by omission
       }
+    } else if (kind === 'chatMessages' || kind === 'cookState') {
+      body = chatOrCookPutBody(
+        payload,
+        id,
+        clientUpdatedAt,
+        serverUpdatedAt,
+        sharedParentMarkerForWrite(ownedParentLive, discoveredOwnerSub),
+      );
     } else {
       body = {
         ...payload,

@@ -14,6 +14,14 @@ export type LibrarySnapshot = {
   pendingBlobs: ReadonlyMap<string, Blob>;
   recipeOrigins: ReadonlyMap<string, ItemOrigin>;
   collectionOrigins: ReadonlyMap<string, ItemOrigin>;
+  /**
+   * Server-derived shared parent owner for a viewer chat row, keyed by
+   * message id. Absent means there is no persisted evidence the parent was
+   * shared. Not part of ChatMessage or a version-3 backup.
+   */
+  chatParentOrigins: ReadonlyMap<string, string>;
+  /** Same marker for cook rows, keyed by recipe id. */
+  cookParentOrigins: ReadonlyMap<string, string>;
   grantCounts: ReadonlyMap<string, number>;
   loaded: boolean;
 };
@@ -30,6 +38,8 @@ function empty(loaded: boolean): LibrarySnapshot {
     pendingBlobs: new Map(),
     recipeOrigins: new Map(),
     collectionOrigins: new Map(),
+    chatParentOrigins: new Map(),
+    cookParentOrigins: new Map(),
     grantCounts: new Map(),
     loaded,
   };
@@ -53,6 +63,8 @@ function cloneMaps(from: LibrarySnapshot): {
   pendingBlobs: Map<string, Blob>;
   recipeOrigins: Map<string, ItemOrigin>;
   collectionOrigins: Map<string, ItemOrigin>;
+  chatParentOrigins: Map<string, string>;
+  cookParentOrigins: Map<string, string>;
   grantCounts: Map<string, number>;
 } {
   return {
@@ -64,6 +76,8 @@ function cloneMaps(from: LibrarySnapshot): {
     pendingBlobs: new Map(from.pendingBlobs),
     recipeOrigins: new Map(from.recipeOrigins),
     collectionOrigins: new Map(from.collectionOrigins),
+    chatParentOrigins: new Map(from.chatParentOrigins),
+    cookParentOrigins: new Map(from.cookParentOrigins),
     grantCounts: new Map(from.grantCounts),
   };
 }
@@ -104,7 +118,15 @@ type OwnedPullSnapshot = {
   chat: Map<string, ChatMessage>;
   cook: Map<string, CookStateRow>;
   remotePhotoIds: Set<string>;
+  chatParentOrigins?: ReadonlyMap<string, string>;
+  cookParentOrigins?: ReadonlyMap<string, string>;
 };
+
+function copyOwnerMap(
+  source: ReadonlyMap<string, string> | undefined,
+): Map<string, string> {
+  return new Map(source ?? []);
+}
 
 type SharedPullSnapshot = {
   recipes: Map<string, Recipe>;
@@ -132,6 +154,8 @@ export function replaceFromPull(next: OwnedPullSnapshot): void {
     pendingBlobs: snapshot.pendingBlobs,
     recipeOrigins,
     collectionOrigins,
+    chatParentOrigins: copyOwnerMap(next.chatParentOrigins),
+    cookParentOrigins: copyOwnerMap(next.cookParentOrigins),
     grantCounts: snapshot.grantCounts,
     loaded: true,
   });
@@ -182,6 +206,8 @@ export function replaceFromPullWithShared(
     pendingBlobs: snapshot.pendingBlobs,
     recipeOrigins,
     collectionOrigins,
+    chatParentOrigins: copyOwnerMap(owned.chatParentOrigins),
+    cookParentOrigins: copyOwnerMap(owned.cookParentOrigins),
     grantCounts: snapshot.grantCounts,
     loaded: true,
   });
@@ -228,9 +254,11 @@ export function removeRecipeLocal(id: string): void {
   next.recipes.delete(id);
   next.recipeOrigins.delete(id);
   next.cook.delete(id);
+  next.cookParentOrigins.delete(id);
   for (const [messageId, message] of next.chat) {
     if (message.recipeId === id) {
       next.chat.delete(messageId);
+      next.chatParentOrigins.delete(messageId);
       for (const photoId of message.photoIds ?? []) {
         next.pendingBlobs.delete(photoId);
         next.remotePhotoIds.delete(photoId);
@@ -244,9 +272,38 @@ export function removeRecipeLocal(id: string): void {
   emit({ ...snapshot, ...next });
 }
 
+/**
+ * Optimistic writes copy a live shared recipe origin into the sidecar so
+ * export is safe before the next pull. A live owned origin clears it. A
+ * missing origin leaves a persisted sidecar in place: revocation drops the
+ * recipe before pull returns the stored marker, and that absence must not
+ * wipe the marker.
+ */
+function assignInferredParentOrigin(
+  sidecar: Map<string, string>,
+  key: string,
+  recipeId: string,
+  recipeOrigins: Map<string, ItemOrigin>,
+): void {
+  const origin = recipeOrigins.get(recipeId);
+  if (origin?.kind === 'shared' && origin.ownerSub !== '') {
+    sidecar.set(key, origin.ownerSub);
+    return;
+  }
+  if (origin?.kind === 'own') {
+    sidecar.delete(key);
+  }
+}
+
 export function upsertChat(message: ChatMessage): void {
   const next = cloneMaps(snapshot);
   next.chat.set(message.id, message);
+  assignInferredParentOrigin(
+    next.chatParentOrigins,
+    message.id,
+    message.recipeId,
+    next.recipeOrigins,
+  );
   emit({ ...snapshot, ...next });
 }
 
@@ -255,6 +312,7 @@ export function clearChatLocal(recipeId: string): void {
   for (const [messageId, message] of next.chat) {
     if (message.recipeId === recipeId) {
       next.chat.delete(messageId);
+      next.chatParentOrigins.delete(messageId);
       for (const photoId of message.photoIds ?? []) {
         next.pendingBlobs.delete(photoId);
         next.remotePhotoIds.delete(photoId);
@@ -267,6 +325,12 @@ export function clearChatLocal(recipeId: string): void {
 export function upsertCook(row: CookStateRow): void {
   const next = cloneMaps(snapshot);
   next.cook.set(row.recipeId, row);
+  assignInferredParentOrigin(
+    next.cookParentOrigins,
+    row.recipeId,
+    row.recipeId,
+    next.recipeOrigins,
+  );
   emit({ ...snapshot, ...next });
 }
 
@@ -422,8 +486,33 @@ export function listPhotoIds(): string[] {
 }
 
 /**
+ * True when the visible recipe origin or a persisted parent sidecar says
+ * shared. Export and owned-overlap detection both use this so they cannot
+ * drift. A missing sidecar is not shared: legacy orphans stay exportable.
+ */
+function parentSourcesSayShared(
+  recipeId: string,
+  sidecarOwner: string | undefined,
+): boolean {
+  if (snapshot.recipeOrigins.get(recipeId)?.kind === 'shared') {
+    return true;
+  }
+  return sidecarOwner !== undefined && sidecarOwner !== '';
+}
+
+export function chatParentIsShared(messageId: string, recipeId: string): boolean {
+  return parentSourcesSayShared(recipeId, snapshot.chatParentOrigins.get(messageId));
+}
+
+export function cookParentIsShared(recipeId: string): boolean {
+  return parentSourcesSayShared(recipeId, snapshot.cookParentOrigins.get(recipeId));
+}
+
+/**
  * Returns namespaced IDs with evidence of belonging to this account.
- * Incoming shared rows and references rooted only in those rows are excluded.
+ * Incoming shared rows are excluded. Chat and cook rows whose parent is
+ * shared — by the visible recipe origin or the persisted sidecar — are
+ * excluded together with their parent recipe reference and attachment photos.
  */
 export function ownedBackupGraphIds(): BackupGraphIds {
   const recipeIds = new Set<string>();
@@ -454,19 +543,20 @@ export function ownedBackupGraphIds(): BackupGraphIds {
     }
   }
   for (const message of snapshot.chat.values()) {
-    chatMessageIds.add(message.id);
-    if (!isOwnedRecipeId(message.recipeId)) {
+    if (chatParentIsShared(message.id, message.recipeId)) {
       continue;
     }
+    chatMessageIds.add(message.id);
     recipeIds.add(message.recipeId);
     for (const id of message.photoIds ?? []) {
       photoIds.add(id);
     }
   }
   for (const row of snapshot.cook.values()) {
-    if (isOwnedRecipeId(row.recipeId)) {
-      recipeIds.add(row.recipeId);
+    if (cookParentIsShared(row.recipeId)) {
+      continue;
     }
+    recipeIds.add(row.recipeId);
   }
 
   return { recipeIds, collectionIds, chatMessageIds, photoIds };

@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { firstPushRejection, pullSharedPage, pushOps } from './remote';
+import {
+  applyPullChanges,
+  firstPushRejection,
+  normalizeChatChange,
+  normalizeCookChange,
+  pullSharedPage,
+  pushOps,
+  SHARED_PARENT_OWNER_SUB_FIELD,
+} from './remote';
 import type { PushOp } from './pushOps';
 import { isDiscardedPushReason } from './pushReasons';
 
@@ -214,5 +222,99 @@ describe('pullSharedPage', () => {
     );
     expect(await pullSharedPage('cursor')).toBe('signedOut');
     expect(localStorage.getItem('cook.session')).toBeNull();
+  });
+});
+
+describe('normalizeChatChange / normalizeCookChange', () => {
+  it('leaves the locked domain key sets unchanged and ignores parent provenance', () => {
+    expect(SHARED_PARENT_OWNER_SUB_FIELD).toBe('sharedParentOwnerSub');
+    const chat = normalizeChatChange({
+      id: 'c1',
+      recipeId: 'r1',
+      role: 'user',
+      content: 'hi',
+      createdAt: 3,
+      photoIds: ['p1'],
+      updatedAt: 3,
+      serverUpdatedAt: 9,
+      sharedParentOwnerSub: 'owner-sub',
+      uid: 'nope',
+    });
+    expect(chat).not.toBe('tombstone');
+    if (chat === 'tombstone') {
+      return;
+    }
+    expect(Object.keys(chat).sort()).toEqual([
+      'content',
+      'createdAt',
+      'id',
+      'photoIds',
+      'recipeId',
+      'role',
+    ]);
+    expect(chat).not.toHaveProperty('sharedParentOwnerSub');
+
+    const cook = normalizeCookChange({
+      id: 'r1',
+      recipeId: 'r1',
+      servings: 2,
+      currentStep: 1,
+      checkedKeys: ['0-0'],
+      recipeUpdatedAt: 2,
+      updatedAt: 4,
+      sharedParentOwnerSub: 'owner-sub',
+    });
+    expect(cook).not.toBe('tombstone');
+    if (cook === 'tombstone') {
+      return;
+    }
+    expect(Object.keys(cook).sort()).toEqual([
+      'checkedKeys',
+      'currentStep',
+      'recipeId',
+      'recipeUpdatedAt',
+      'servings',
+    ]);
+    expect(cook).not.toHaveProperty('sharedParentOwnerSub');
+  });
+
+  it('places provenance only in sidecars', () => {
+    const acc = {
+      recipes: new Map(),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      remotePhotoIds: new Set<string>(),
+      chatParentOrigins: new Map<string, string>(),
+      cookParentOrigins: new Map<string, string>(),
+    };
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [
+        {
+          id: 'c1',
+          recipeId: 'r1',
+          role: 'user',
+          content: 'hi',
+          createdAt: 3,
+          sharedParentOwnerSub: 'owner-sub',
+        },
+      ],
+      cookState: [
+        {
+          recipeId: 'r1',
+          servings: 1,
+          currentStep: 0,
+          checkedKeys: [],
+          recipeUpdatedAt: 1,
+          sharedParentOwnerSub: 'owner-sub',
+        },
+      ],
+      photos: [],
+    });
+    expect(acc.chat.get('c1')).not.toHaveProperty('sharedParentOwnerSub');
+    expect(acc.cook.get('r1')).not.toHaveProperty('sharedParentOwnerSub');
+    expect(acc.chatParentOrigins.get('c1')).toBe('owner-sub');
+    expect(acc.cookParentOrigins.get('r1')).toBe('owner-sub');
   });
 });
