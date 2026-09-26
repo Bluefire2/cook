@@ -21,7 +21,7 @@ session verification is duplicated inline there. Keep that copy in sync with
 stub that always returns 401; Cloud Run serves `/api/import` from
 `server/importRoute.ts`.
 
-Recipe import (web URL/paste, extension) is one pipeline in
+Recipe import (web URL/paste, extension, evals) is one pipeline in
 `server/recipeImport.ts`: `importFromHtml` / `importFromSource` take the
 Gemini client and model as arguments and return an `ImportOutcome`; routes map
 outcomes to HTTP. `normalizeImportedRecipe` is the only cleanup of model
@@ -215,7 +215,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/shared-recipes.md` | PR 1 implementing (named collections + implicit default). PR 2 view ACLs not started. |
 | `docs/plans/bulk-import.md` | Implementing. Opt-in bulk URL import on `/import`. |
 | `docs/plans/chrome-extension-import.md` | Built: `extension/` + `POST /api/extension/import`. Not deployed. |
-| `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web and extension. `api/import.ts` is a 401 stub. Import evals move to `evals/` on `eval-import-sites`. Not deployed. |
+| `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web, extension, evals (`evals/recipeImport.eval.ts`). `api/import.ts` is a 401 stub. Not deployed. |
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
@@ -228,12 +228,11 @@ Unit tests cover **pure** logic only. There is no fake-indexeddb, no Firestore
 emulator in CI, no GCS mock, no DOM testing library — do not add them for one
 feature. `.github/workflows/ci.yml` stays `tsc -b` + `npm test` on push/PR.
 
-Live paste-to-recipe evals are `npm run test:import` (`vitest.eval.config.ts`).
-They call Gemini against fixtures in `evals/import/` and need `GEMINI_API_KEY`
-from `.env.local` (same as `dev:api`). Website fixtures use cached `page.html`
-(never fetch at eval time). Do not fold them into `npm test` or CI. The harness is not in this tree: it returns as
-`evals/recipeImport.eval.ts` on `eval-import-sites`, so `npm run test:import`
-finds no files until that lands.
+Live paste-to-recipe evals are `npm run test:import` (`evals/**/*.eval.ts`,
+`vitest.eval.config.ts`). They call Gemini against fixtures in `evals/import/`
+and need `GEMINI_API_KEY` from `.env.local` (same as `dev:api`). Website
+fixtures use cached `page.html` (never fetch at eval time). Do not fold them
+into `npm test` or CI.
 
 UI and layout changes: exercise the flow in the browser (not a screenshot).
 Vite + `dev:api`, signed in at `localhost:5173`. Check other routes that share
