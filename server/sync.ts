@@ -1,6 +1,5 @@
 import {
-  canonicalCollectionTombstoneAt,
-  cascadeCollectionGrants,
+  deleteCollectionWithGrants,
   listLiveIncomingShares,
   readLiveIncomingShare,
   readSharedAuthorizationScope,
@@ -35,25 +34,12 @@ import {
   readDocData,
   readTombstonedRecipeIds,
   recipeIdsWithoutTombstones,
-  tombstoneDoc,
   tombstonePhotoWithGcs,
-  type MutationResult,
   type PullCursor,
   type PushRejectReason,
   type StoreKind,
   validatePushOp,
 } from './store.ts';
-
-/** Pick the accepted or stored canonical tombstone timestamp for a grant cascade. */
-export function collectionDeleteCascadeAt(
-  result: MutationResult,
-  acceptedAt: number,
-): number | undefined {
-  if (result.applied) {
-    return acceptedAt;
-  }
-  return canonicalCollectionTombstoneAt(result.current);
-}
 
 const STORE_KINDS: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos', 'collections'];
 
@@ -248,12 +234,7 @@ export async function applyPushOp(
     }
     case 'collection.delete': {
       const body = payload as { id: string; updatedAt: number };
-      const result = await tombstoneDoc(uid, 'collections', body.id, body.updatedAt);
-      const cascadeAt = collectionDeleteCascadeAt(result, body.updatedAt);
-      if (cascadeAt !== undefined) {
-        await cascadeCollectionGrants(uid, body.id, cascadeAt);
-      }
-      return result;
+      return deleteCollectionWithGrants(uid, body.id, body.updatedAt);
     }
     default:
       return { applied: false, reason: 'unknown' };

@@ -385,6 +385,24 @@ function tombstonePayload(
   };
 }
 
+/**
+ * Collection tombstone. `updatedAt` and `deletedAt` stay on the client clock.
+ * `grantCascadeAt` is the server order used to revoke grants; it is not a
+ * client LWW field and must not be copied into `updatedAt` or `deletedAt`.
+ */
+export function collectionDeletePayload(
+  id: string,
+  clientUpdatedAt: number,
+  serverUpdatedAt: number,
+  grantCascadeAt?: number,
+): Record<string, unknown> {
+  const payload = tombstonePayload(id, clientUpdatedAt, serverUpdatedAt);
+  if (grantCascadeAt !== undefined) {
+    payload.grantCascadeAt = grantCascadeAt;
+  }
+  return payload;
+}
+
 export async function sharedParentLive(
   tx: Transaction,
   sessionSub: string,

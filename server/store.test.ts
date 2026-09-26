@@ -6,6 +6,7 @@ import {
   applyCollectionMembershipScrubs,
   collectionDocsFromQuerySnap,
   collectionsToScrub,
+  collectionDeletePayload,
   compactCollectionFields,
   compactRecipeFields,
   compareMutation,
@@ -228,6 +229,41 @@ describe('validatePushOp', () => {
         payload: { id: '11111111-1111-4111-8111-111111111111', updatedAt: 3 },
       }).ok,
     ).toBe(true);
+  });
+});
+
+describe('collectionDeletePayload', () => {
+  it('keeps the client clock and stores grantCascadeAt separately', () => {
+    expect(collectionDeletePayload('c1', 100, 80, 251)).toEqual({
+      id: 'c1',
+      updatedAt: 100,
+      deletedAt: 100,
+      serverUpdatedAt: 80,
+      grantCascadeAt: 251,
+    });
+    expect(collectionDeletePayload('c1', 100, 80)).not.toHaveProperty('grantCascadeAt');
+  });
+});
+
+describe('compactCollectionFields', () => {
+  it('omits internal grantCascadeAt from the client collection', () => {
+    expect(
+      compactCollectionFields({
+        id: 'c1',
+        name: 'Dinners',
+        recipeIds: [],
+        createdAt: 1,
+        updatedAt: 2,
+        grantCascadeAt: 251,
+        serverUpdatedAt: 80,
+      }),
+    ).toEqual({
+      id: 'c1',
+      name: 'Dinners',
+      recipeIds: [],
+      createdAt: 1,
+      updatedAt: 2,
+    });
   });
 });
 
