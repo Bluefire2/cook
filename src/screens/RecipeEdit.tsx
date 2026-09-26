@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
@@ -70,6 +70,10 @@ function CreateRecipe() {
 function EditRecipe({ id }: { id: string }) {
   const navigate = useNavigate();
   const recipe = useRecipe(id);
+  const [canSubmit, setCanSubmit] = useState(true);
+  const onCanSubmitChange = useCallback((next: boolean) => {
+    setCanSubmit((prev) => (prev === next ? prev : next));
+  }, []);
 
   if (recipe === undefined) {
     return (
@@ -110,6 +114,7 @@ function EditRecipe({ id }: { id: string }) {
         <button
           type="submit"
           form={EDIT_FORM_ID}
+          disabled={!canSubmit}
           className={`${primaryBtn} shrink-0 px-5 py-2`}
         >
           Save
@@ -122,6 +127,7 @@ function EditRecipe({ id }: { id: string }) {
         onSubmit={save}
         onCancel={() => navigate(`/recipe/${recipe.id}`)}
         formId={EDIT_FORM_ID}
+        onCanSubmitChange={onCanSubmitChange}
       />
     </Screen>
   );
