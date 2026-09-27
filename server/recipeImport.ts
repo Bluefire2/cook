@@ -536,7 +536,6 @@ function imageImportPrompt(extraText: string): string {
     'The photos are the pages of one recipe, often handwritten. Extract the recipe and save it.',
     'Read the pages in the order given: the first photo is page 1.',
     'Transcribe what is written. Skip anything that is crossed out.',
-    'Recipe cards use shorthand: # after a number means pounds (lb); T, Tbs, Tbsp, or Tbls means tablespoon; t, tsp, or teasp means teaspoon; c means cup. Write each unit as one short word such as lb, tbsp, tsp, cup, or oz.',
     "If you are unsure how a word reads, write your best reading followed by (?). If you are unsure of an amount, keep your best reading as the quantity and add (?) to that ingredient's note.",
     'If you cannot tell whether an amount is a tablespoon or a teaspoon (for example a T that could be a t), use your best reading and say so in notes.',
     'Never invent quantities, ingredients, or steps that are not written. If an amount is missing or unreadable, leave the quantity out.',
