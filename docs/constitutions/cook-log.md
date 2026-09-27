@@ -5,7 +5,10 @@ status: draft
 scope:
   - src/lib/types.ts (CookLog)
   - src/lib/cookLogShape.ts
+  - src/lib/cookLogShape.test.ts (CookLog key-set lock)
+  - test/cookLogFixtures.ts (valid/invalid entries shared by client and server validator tests)
   - src/lib/cookLogStore.ts
+  - src/lib/recipeStore.ts (remove restores the recipe's cook logs on a failed delete)
   - server/store.ts (cookLogs kind, cookLog ops, putDoc parent check, cascadeRecipeDelete)
   - server/sync.ts (cookLogs kind and ops)
   - src/lib/remote.ts (cookLogs pull)
@@ -16,6 +19,8 @@ scope:
   - src/screens/CookLogEdit.tsx
   - src/screens/CookJournal.tsx
   - src/components/CookLogCard.tsx
+  - src/components/PhotoPickerField.tsx (as used by CookLogEdit; shared with the recipe gallery)
+  - src/App.tsx (cook log routes)
   - src/screens/RecipeView.tsx (Log this cook, Your cooks)
   - src/screens/Library.tsx (delete dialog copy, Cooks link)
   - public/privacy.html (cook log copy)
