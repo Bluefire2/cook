@@ -8,7 +8,8 @@ scope:
   - src/lib/cookLogShape.test.ts (CookLog key-set lock)
   - test/cookLogFixtures.ts (valid/invalid entries shared by client and server validator tests)
   - src/lib/cookLogStore.ts
-  - src/lib/recipeStore.ts (remove restores the recipe's cook logs on a failed delete)
+  - src/lib/recipeStore.ts (remove's snapshot rollback covers the recipe's cook logs)
+  - src/lib/backupImportRemap.ts (cookLog namespace)
   - server/store.ts (cookLogs kind, cookLog ops, putDoc parent check, cascadeRecipeDelete)
   - server/sync.ts (cookLogs kind and ops)
   - src/lib/remote.ts (cookLogs pull)
@@ -83,8 +84,11 @@ create LWW conflicts with edits on other devices, and LWW is the product
 
 ### 3. Every entry belongs to exactly one recipe and is deleted with it.
 
-**Rule.** `recipeId` is required and must point to a live recipe on every put
-(the `putDoc` parent check returns `recipe-deleted` otherwise). `recipeId`
+**Rule.** `recipeId` is required and must point to a live recipe **owned by
+this account** on every put (the `putDoc` parent check returns
+`recipe-deleted` otherwise). Unlike chat and cook state, cook logs never fall
+back to a recipe shared with you: `putDoc` treats them like photos, and the UI
+hides "Log this cook" and "Your cooks" on shared recipes. `recipeId`
 cannot change: `putDoc` rejects a put whose `recipeId` differs from the live
 stored entry's. `cascadeRecipeDelete` tombstones the recipe's entries and all of its
 photos at `max(delete time, stored updatedAt)`, so an entry edited on a device
@@ -97,6 +101,9 @@ recipe, and cascade finds photos by `recipeId`), so an entry that outlived its
 recipe would keep photos nobody can delete. The privacy page promises that
 deleting a recipe deletes everything attached to it. The cost is that deleting
 a recipe loses its history. We accept that cost, and the delete dialog says so.
+Shared recipes are excluded because cook photos can only be uploaded under a
+recipe you own (`server/photos.ts`), and an entry under someone else's recipe
+would survive a revoked share with nothing to cascade from.
 Moving an entry would leave its photos attributed to the old recipe, and
 deleting that recipe would then kill photos that a live entry still shows. The
 cascade's normal last-write-wins comparison would skip any child whose
@@ -263,4 +270,12 @@ should treat it as a failing check.
 
 ## Amendment log
 
-None yet.
+- **Principle 3 (tightened), with the merge of view-only shared collections.**
+  What changed: the parent recipe must be owned by this account. Chat and cook
+  state may now attach to a recipe shared with you; cook logs may not. Why:
+  cook logs own photos, and photo uploads stay owned-parent-only, so allowing a
+  shared parent would create entries whose photos cannot be stored and which a
+  revoked share would orphan. Risk guarded: the original P3 risk (entries and
+  photos outliving their recipe). How handled: `putDoc` rejects a cook log
+  whose recipe is not owned, `cookLogStore` refuses shared recipes, and the UI
+  hides the cook log controls on them. No principle was relaxed.

@@ -5,6 +5,7 @@ import {
   getPendingBlob,
   getRecipe,
   getSnapshot,
+  isSharedRecipe,
   listCookLogs,
   markPhotoRemote,
   removeCookLogLocal,
@@ -26,6 +27,7 @@ export type CookLogInput = Omit<CookLog, 'id' | 'createdAt' | 'updatedAt'>;
 
 const SIGNED_OUT = 'Please sign in again — your session expired.';
 const RECIPE_GONE = 'This recipe is no longer in your library.';
+const SHARED_RECIPE = 'Cook logs are only for your own recipes.';
 
 function pushError(result: RemoteResult | 'unavailable', fallback: string): Error {
   return new Error(result === 'signedOut' ? SIGNED_OUT : fallback);
@@ -71,6 +73,9 @@ async function deleteRemovedPhotos(previous: CookLog | undefined, next: CookLog)
 async function putCookLog(next: CookLog, previous: CookLog | undefined): Promise<void> {
   if (!getRecipe(next.recipeId)) {
     throw new Error(RECIPE_GONE);
+  }
+  if (isSharedRecipe(next.recipeId)) {
+    throw new Error(SHARED_RECIPE);
   }
   if (!isUsableCookLog(next)) {
     throw new Error("Couldn't save the cook log.");

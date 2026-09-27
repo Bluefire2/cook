@@ -5,6 +5,7 @@ import {
   dropPhoto,
   getPendingBlob,
   getSnapshot,
+  photoOwnerSub,
   subscribe,
 } from './libraryMemory';
 import { fetchPhotoBlob, pushOps } from './remote';
@@ -15,7 +16,7 @@ async function ensureLocalOnce(id: string): Promise<void> {
   if (getPendingBlob(id)) {
     return;
   }
-  const blob = await fetchPhotoBlob(id);
+  const blob = await fetchPhotoBlob(id, photoOwnerSub(id));
   if (blob === 'signedOut' || blob === null) {
     return;
   }
@@ -50,6 +51,11 @@ export const photoStore = {
    */
   discardLocal(id: string): void {
     dropPhoto(id);
+  },
+
+  /** True once the server holds this photo's bytes. */
+  isRemote(id: string): boolean {
+    return getSnapshot().remotePhotoIds.has(id);
   },
 
   async remove(id: string): Promise<void> {

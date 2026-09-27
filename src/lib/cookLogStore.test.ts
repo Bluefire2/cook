@@ -12,6 +12,7 @@ import {
   upsertRecipe,
 } from './libraryMemory';
 import { postPhoto, pushOps } from './remote';
+import { installSharedRows } from './testLibrary';
 import type { PushOp } from './pushOps';
 import type { CookLog } from './types';
 
@@ -128,6 +129,23 @@ describe('cookLogStore.create', () => {
       cookLogStore.create({ recipeId: RECIPE_ID, cookedOn: '2026-09-21' }),
     ).rejects.toThrow('This recipe is no longer in your library.');
     expect(pushOps).not.toHaveBeenCalled();
+  });
+
+  it('refuses an entry for a recipe shared with this account', async () => {
+    installSharedRows({
+      recipes: new Map([[RECIPE_ID, recipe]]),
+      collections: new Map(),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map([[RECIPE_ID, { kind: 'shared', ownerSub: 'owner-sub' }]]),
+      collectionOrigins: new Map(),
+    });
+    recordCalls('ok');
+
+    await expect(
+      cookLogStore.create({ recipeId: RECIPE_ID, cookedOn: '2026-09-21' }),
+    ).rejects.toThrow('Cook logs are only for your own recipes.');
+    expect(pushOps).not.toHaveBeenCalled();
+    expect(listCookLogs()).toEqual([]);
   });
 });
 

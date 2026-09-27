@@ -4,7 +4,7 @@ import ChatPanel from '../components/ChatPanel';
 import CookLogCard from '../components/CookLogCard';
 import { useCookLogs } from '../lib/cookLogStore';
 import { usePhotoUrl } from '../lib/photoStore';
-import { useRecipe } from '../lib/recipeStore';
+import { recipeStore, useRecipe } from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
 import { sync } from '../lib/syncEngine';
 import { backLink, ghostBtn, secondaryBtn } from '../lib/uiClasses';
@@ -103,6 +103,7 @@ export default function RecipeView() {
     );
   }
 
+  const shared = recipeStore.isShared(recipe.id);
   const scale = servings / recipe.servings;
   const source = sourceLink(recipe.sourceUrl);
 
@@ -113,9 +114,11 @@ export default function RecipeView() {
           <Link to="/" className={backLink}>
             &larr; Library
           </Link>
-          <Link to={`/recipe/${recipe.id}/edit`} className={ghostBtn}>
-            Edit
-          </Link>
+          {!shared && (
+            <Link to={`/recipe/${recipe.id}/edit`} className={ghostBtn}>
+              Edit
+            </Link>
+          )}
         </div>
         {photoUrl && (
           <img
@@ -241,12 +244,14 @@ export default function RecipeView() {
         {currentStep >= recipe.steps.length && (
           <div className="mt-4 text-center">
             <p className="font-medium text-amber-600">Done — enjoy!</p>
-            <Link
-              to={`/recipe/${recipe.id}/cooks/new`}
-              className={`${secondaryBtn} mt-3 inline-block px-5 py-2`}
-            >
-              Log this cook
-            </Link>
+            {!shared && (
+              <Link
+                to={`/recipe/${recipe.id}/cooks/new`}
+                className={`${secondaryBtn} mt-3 inline-block px-5 py-2`}
+              >
+                Log this cook
+              </Link>
+            )}
           </div>
         )}
       </section>
@@ -268,28 +273,30 @@ export default function RecipeView() {
         </section>
       )}
 
-      <section className="mt-6">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">
-            Your cooks
-            {cookLogs.length > 0 && (
-              <span className="ml-2 font-normal text-ink-subtle">{cookLogs.length}</span>
-            )}
-          </h2>
-          <Link to={`/recipe/${recipe.id}/cooks/new`} className={ghostBtn}>
-            Log a cook
-          </Link>
-        </div>
-        {cookLogs.length > 0 && (
-          <ul className="mt-2 flex flex-col gap-3">
-            {cookLogs.map((log) => (
-              <li key={log.id}>
-                <CookLogCard log={log} recipe={recipe} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {!shared && (
+        <section className="mt-6">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">
+              Your cooks
+              {cookLogs.length > 0 && (
+                <span className="ml-2 font-normal text-ink-subtle">{cookLogs.length}</span>
+              )}
+            </h2>
+            <Link to={`/recipe/${recipe.id}/cooks/new`} className={ghostBtn}>
+              Log a cook
+            </Link>
+          </div>
+          {cookLogs.length > 0 && (
+            <ul className="mt-2 flex flex-col gap-3">
+              {cookLogs.map((log) => (
+                <li key={log.id}>
+                  <CookLogCard log={log} recipe={recipe} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       {source && (
         <p className="mt-6 text-sm text-ink-muted">
@@ -317,6 +324,7 @@ export default function RecipeView() {
       {chatOpen && (
         <ChatPanel
           recipe={recipe}
+          readOnly={shared}
           cookingState={{
             servings,
             currentStep: currentStep + 1,

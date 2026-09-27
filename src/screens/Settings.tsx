@@ -23,7 +23,10 @@ export default function Settings() {
   };
 
   const doExport = async () => {
-    const blob = await exportLibrary();
+    if (!user) {
+      return;
+    }
+    const blob = await exportLibrary(user.sub);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -33,8 +36,11 @@ export default function Settings() {
   };
 
   const doImport = async (file: File) => {
+    if (!user) {
+      return;
+    }
     try {
-      const { imported, skipped } = await importLibrary(file);
+      const { imported, skipped } = await importLibrary(file, user.sub);
       setStatus(
         `Imported ${imported} recipe${imported === 1 ? '' : 's'} ✓` +
           (skipped > 0

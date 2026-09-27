@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { resolveCollectionDestination } from '../lib/collectionDestination';
 import { useCollections } from '../lib/collectionStore';
-import { getSnapshot } from '../lib/libraryMemory';
 import { photoStore } from '../lib/photoStore';
 import { recipePhotoIds } from '../lib/recipePhotos';
 import { recipeStore } from '../lib/recipeStore';
@@ -51,7 +50,7 @@ export default function CreateRecipeForm({
     for (const id of stagedPhotoIds.current) {
       // A failed save may already have uploaded some photos. Only discard
       // bytes that are still local; never remove an existing photo's metadata.
-      if (!getSnapshot().remotePhotoIds.has(id)) photoStore.discardLocal(id);
+      if (!photoStore.isRemote(id)) photoStore.discardLocal(id);
     }
     stagedPhotoIds.current = [];
   };
