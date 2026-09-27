@@ -1,5 +1,6 @@
+import { sortCookLogs } from './cookLogShape';
 import { recipePhotoIds } from './recipePhotos';
-import type { ChatMessage, Collection, Recipe } from './types';
+import type { ChatMessage, Collection, CookLog, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 
 export type LibrarySnapshot = {
@@ -7,6 +8,7 @@ export type LibrarySnapshot = {
   collections: ReadonlyMap<string, Collection>;
   chat: ReadonlyMap<string, ChatMessage>;
   cook: ReadonlyMap<string, CookStateRow>;
+  cookLogs: ReadonlyMap<string, CookLog>;
   remotePhotoIds: ReadonlySet<string>;
   pendingBlobs: ReadonlyMap<string, Blob>;
   loaded: boolean;
@@ -20,6 +22,7 @@ function empty(loaded: boolean): LibrarySnapshot {
     collections: new Map(),
     chat: new Map(),
     cook: new Map(),
+    cookLogs: new Map(),
     remotePhotoIds: new Set(),
     pendingBlobs: new Map(),
     loaded,
@@ -40,6 +43,7 @@ function cloneMaps(from: LibrarySnapshot): {
   collections: Map<string, Collection>;
   chat: Map<string, ChatMessage>;
   cook: Map<string, CookStateRow>;
+  cookLogs: Map<string, CookLog>;
   remotePhotoIds: Set<string>;
   pendingBlobs: Map<string, Blob>;
 } {
@@ -48,6 +52,7 @@ function cloneMaps(from: LibrarySnapshot): {
     collections: new Map(from.collections),
     chat: new Map(from.chat),
     cook: new Map(from.cook),
+    cookLogs: new Map(from.cookLogs),
     remotePhotoIds: new Set(from.remotePhotoIds),
     pendingBlobs: new Map(from.pendingBlobs),
   };
@@ -88,6 +93,7 @@ export function replaceFromPull(next: {
   collections: Map<string, Collection>;
   chat: Map<string, ChatMessage>;
   cook: Map<string, CookStateRow>;
+  cookLogs: Map<string, CookLog>;
   remotePhotoIds: Set<string>;
 }): void {
   emit({
@@ -95,6 +101,7 @@ export function replaceFromPull(next: {
     collections: next.collections,
     chat: next.chat,
     cook: next.cook,
+    cookLogs: next.cookLogs,
     remotePhotoIds: next.remotePhotoIds,
     pendingBlobs: snapshot.pendingBlobs,
     loaded: true,
@@ -116,6 +123,15 @@ export function removeRecipeLocal(id: string): void {
     if (message.recipeId === id) {
       next.chat.delete(messageId);
       for (const photoId of message.photoIds ?? []) {
+        next.pendingBlobs.delete(photoId);
+        next.remotePhotoIds.delete(photoId);
+      }
+    }
+  }
+  for (const [logId, log] of next.cookLogs) {
+    if (log.recipeId === id) {
+      next.cookLogs.delete(logId);
+      for (const photoId of log.photoIds ?? []) {
         next.pendingBlobs.delete(photoId);
         next.remotePhotoIds.delete(photoId);
       }
@@ -151,6 +167,18 @@ export function clearChatLocal(recipeId: string): void {
 export function upsertCook(row: CookStateRow): void {
   const next = cloneMaps(snapshot);
   next.cook.set(row.recipeId, row);
+  emit({ ...snapshot, ...next });
+}
+
+export function upsertCookLog(log: CookLog): void {
+  const next = cloneMaps(snapshot);
+  next.cookLogs.set(log.id, log);
+  emit({ ...snapshot, ...next });
+}
+
+export function removeCookLogLocal(id: string): void {
+  const next = cloneMaps(snapshot);
+  next.cookLogs.delete(id);
   emit({ ...snapshot, ...next });
 }
 
@@ -229,6 +257,18 @@ export function listChat(recipeId: string): ChatMessage[] {
 
 export function getCook(recipeId: string): CookStateRow | undefined {
   return snapshot.cook.get(recipeId);
+}
+
+export function getCookLog(id: string): CookLog | undefined {
+  return snapshot.cookLogs.get(id);
+}
+
+/** Newest cook first; every entry when `recipeId` is omitted. */
+export function listCookLogs(recipeId?: string): CookLog[] {
+  const logs = [...snapshot.cookLogs.values()];
+  return sortCookLogs(
+    recipeId === undefined ? logs : logs.filter((log) => log.recipeId === recipeId),
+  );
 }
 
 export function getPendingBlob(id: string): Blob | undefined {

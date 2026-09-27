@@ -4,6 +4,7 @@ import {
   getPendingBlob,
   getRecipe,
   getSnapshot,
+  listCookLogs,
   listRecipes,
   markPhotoRemote,
   removeRecipeLocal,
@@ -12,6 +13,7 @@ import {
   getCollection,
   listCollections,
   upsertCollection,
+  upsertCookLog,
 } from './libraryMemory';
 import { postPhoto, pushOps } from './remote';
 import { compactRecipe } from './compactRecipe';
@@ -181,6 +183,7 @@ export const recipeStore = {
 
   async remove(id: string): Promise<void> {
     const previous = getRecipe(id);
+    const previousCookLogs = listCookLogs(id);
     const at = Date.now();
     // Nothing else drops the id from collections, and a dead id still counts
     // against the per-collection cap, so scrub membership alongside the recipe.
@@ -207,6 +210,9 @@ export const recipeStore = {
       }
       for (const collection of staleIn) {
         upsertCollection(collection);
+      }
+      for (const log of previousCookLogs) {
+        upsertCookLog(log);
       }
       throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't delete the recipe.");
     }

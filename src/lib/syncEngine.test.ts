@@ -20,6 +20,7 @@ describe('applyPullChanges', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set<string>(),
     };
     applyPullChanges(acc, {
@@ -78,6 +79,7 @@ describe('applyPullChanges', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set<string>(),
     };
     applyPullChanges(acc, {
@@ -104,6 +106,106 @@ describe('applyPullChanges', () => {
       collections: [{ id: 'c1', deletedAt: 9 }],
     });
     expect(acc.collections.size).toBe(0);
+  });
+
+  const COOK_LOG_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const COOK_RECIPE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+  function emptyAcc() {
+    return {
+      recipes: new Map(),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set<string>(),
+    };
+  }
+
+  it('upserts live cook logs compacted and drops tombstones', () => {
+    const acc = emptyAcc();
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+      cookLogs: [
+        {
+          id: COOK_LOG_ID,
+          recipeId: COOK_RECIPE_ID,
+          cookedOn: '2026-09-20',
+          rating: 4,
+          notes: '  Less salt.  ',
+          stray: 'dropped',
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    });
+    expect(acc.cookLogs.get(COOK_LOG_ID)).toEqual({
+      id: COOK_LOG_ID,
+      recipeId: COOK_RECIPE_ID,
+      cookedOn: '2026-09-20',
+      createdAt: 1,
+      updatedAt: 2,
+      rating: 4,
+      notes: 'Less salt.',
+    });
+
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+      cookLogs: [{ id: COOK_LOG_ID, deletedAt: 9 }],
+    });
+    expect(acc.cookLogs.size).toBe(0);
+  });
+
+  it('drops an unusable live cook log from the map', () => {
+    const acc = emptyAcc();
+    acc.cookLogs.set(COOK_LOG_ID, {
+      id: COOK_LOG_ID,
+      recipeId: COOK_RECIPE_ID,
+      cookedOn: '2026-09-20',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+      cookLogs: [
+        {
+          id: COOK_LOG_ID,
+          recipeId: COOK_RECIPE_ID,
+          cookedOn: '2026-02-30',
+          createdAt: 1,
+          updatedAt: 3,
+        },
+      ],
+    });
+    expect(acc.cookLogs.size).toBe(0);
+  });
+
+  it('leaves cook logs alone when an old server omits the key', () => {
+    const acc = emptyAcc();
+    const log = {
+      id: COOK_LOG_ID,
+      recipeId: COOK_RECIPE_ID,
+      cookedOn: '2026-09-20',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    acc.cookLogs.set(COOK_LOG_ID, log);
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+    });
+    expect(acc.cookLogs.get(COOK_LOG_ID)).toEqual(log);
   });
 });
 

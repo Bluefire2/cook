@@ -1,6 +1,7 @@
 import { isUsableRecipe } from './recipeShape';
+import { compactCookLog, isUsableCookLog } from './cookLogShape';
 import type { CookStateRow } from './useCookState';
-import type { ChatMessage, Collection, Recipe } from './types';
+import type { ChatMessage, Collection, CookLog, Recipe } from './types';
 import {
   addPendingBlob,
   captureSnapshot,
@@ -8,6 +9,7 @@ import {
   listAllChat,
   listAllCook,
   listCollections,
+  listCookLogs,
   listPhotoIds,
   listRecipes,
   markPhotoRemote,
@@ -15,6 +17,7 @@ import {
   upsertChat,
   upsertCollection,
   upsertCook,
+  upsertCookLog,
   upsertRecipe,
 } from './libraryMemory';
 import { compactRecipe } from './compactRecipe';
@@ -32,13 +35,14 @@ interface BackupPhoto {
 
 interface BackupFile {
   app: 'cook';
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   exportedAt: number;
   recipes: unknown[];
   chatMessages: ChatMessage[];
   photos: BackupPhoto[];
   cookState?: CookStateRow[];
   collections?: unknown[];
+  cookLogs?: unknown[];
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -56,6 +60,7 @@ function blobToBase64(blob: Blob): Promise<string> {
 function attributePhotos(
   recipes: Recipe[],
   chatMessages: ChatMessage[],
+  cookLogs: CookLog[],
 ): Map<string, string> {
   const map = new Map<string, string>();
   for (const recipe of recipes) {
@@ -72,6 +77,13 @@ function attributePhotos(
       }
     }
   }
+  for (const log of cookLogs) {
+    for (const photoId of log.photoIds ?? []) {
+      if (!map.has(photoId)) {
+        map.set(photoId, log.recipeId);
+      }
+    }
+  }
   return map;
 }
 
@@ -80,6 +92,7 @@ export async function exportLibrary(): Promise<Blob> {
   const chatMessages = listAllChat();
   const cookState = listAllCook();
   const collections = listCollections();
+  const cookLogs = listCookLogs();
   const photoIds = listPhotoIds();
 
   const photos: BackupPhoto[] = [];
@@ -102,12 +115,13 @@ export async function exportLibrary(): Promise<Blob> {
 
   const backup: BackupFile = {
     app: 'cook',
-    version: 3,
+    version: 4,
     exportedAt: Date.now(),
     recipes,
     chatMessages,
     cookState,
     collections,
+    cookLogs,
     photos,
   };
 
@@ -146,7 +160,10 @@ export async function importLibrary(
   const recipes = backup.recipes.filter(isUsableRecipe).map(compactRecipe);
   const skipped = backup.recipes.length - recipes.length;
   const chatMessages = backup.chatMessages ?? [];
-  const photoAttribution = attributePhotos(recipes, chatMessages);
+  const cookLogs = (Array.isArray(backup.cookLogs) ? backup.cookLogs : [])
+    .filter(isUsableCookLog)
+    .map(compactCookLog);
+  const photoAttribution = attributePhotos(recipes, chatMessages, cookLogs);
 
   const photos = await Promise.all(
     (backup.photos ?? []).map(async (p) => ({
@@ -177,6 +194,9 @@ export async function importLibrary(
       for (const row of backup.cookState) {
         upsertCook(row);
       }
+    }
+    for (const log of cookLogs) {
+      upsertCookLog(log);
     }
 
     for (const [photoId, recipeId] of photoAttribution) {
@@ -213,6 +233,9 @@ export async function importLibrary(
           payload: { ...row, updatedAt: Date.now() },
         });
       }
+    }
+    for (const log of cookLogs) {
+      ops.push({ kind: 'cookLog.put', payload: log });
     }
     const result = await pushOps(ops);
     if (result !== 'ok') {
