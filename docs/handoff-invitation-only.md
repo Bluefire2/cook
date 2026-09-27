@@ -161,10 +161,12 @@ bound: viewers stop receiving their recipes and photos. The grants are kept,
 so re-admitting the person restores them. Re-importing a foreign or legacy
 backup overwrites the previous clone; clone ids are derived, not random.
 
-On the first production verification after sharing is deployed, delete a real
-recipe that is listed in a collection and confirm the Firestore
-`array-contains` query on `recipeIds` succeeds. This verifies the required
-production index path.
+After sharing is first deployed, run `scripts/backfill-email-lower.ts` once
+(dry run, then `--apply`) so existing mixed-case profiles can be shared with.
+Then delete a real recipe that is listed in a collection and confirm the
+`array-contains` query on `recipeIds` succeeds. Native Firestore creates that
+single-field array index automatically; the check catches an index exemption
+or misconfiguration and exercises the real delete path.
 
 ## Access requests
 

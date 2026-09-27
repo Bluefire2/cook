@@ -287,7 +287,8 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/ask-voice-stt.md` | Implementing. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
 | `docs/plans/recipe-gallery.md` | In progress on branch `cursor/recipe-gallery-267b` (main photo + end-of-recipe gallery). |
-| `docs/plans/shared-recipes.md` | PR 1 done. PR 2 view-only collection grants implementing. |
+| `docs/plans/shared-recipes.md` | PR 1 done. PR 2 view-only collection grants built (#23). Not deployed. |
+| `docs/plans/shared-collections-review-fixes.md`, `shared-access-hardening.md`, `shared-sharing-final-hardening.md`, `pr23-review-fixes-round-2.md` | Done. Review rounds for PR 2; history only, `shared-recipes.md` and the Sharing section here are current. |
 | `docs/plans/bulk-import.md` | Implementing. Opt-in bulk URL import on `/import`. |
 | `docs/plans/chrome-extension-import.md` | Built: `extension/` + `POST /api/extension/import`. Not deployed. |
 | `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web, extension, evals (`evals/recipeImport.eval.ts`). `api/import.ts` is a 401 stub. Not deployed. |
