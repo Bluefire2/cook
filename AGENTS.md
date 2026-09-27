@@ -355,8 +355,18 @@ test in `src/i18n/messages.test.ts` checks plural forms and placeholders.
 Sentences are single catalog strings with named `{params}`, never joined
 fragments; relative times go through `src/lib/relativeTime.ts`.
 
-<!-- Step 2a of docs/plans/i18n.md adds the second part of the UI text rule
-here: the review manifest and the pre-PR in-context translation review. -->
+Any UI change that adds or changes user-facing text must add it to
+every catalog in `src/i18n/` (see `docs/constitutions/i18n.md`), in
+the same change. New screens or states are added to
+`docs/i18n-review/screens.json` in the same change. Once a task's
+implementation is complete and you think its PR may be ready to
+merge, and before opening the PR, run the in-context translation
+review in `docs/i18n-review/README.md` for every screen that shows
+text the task added or changed, in every non-English language. Fix
+the blockers, re-review those screens, and attach the report to the
+PR. Do not run the review after each individual change; it is a
+pre-PR check, not part of the iteration loop. Cursor agents can use
+the `.cursor/skills/i18n-visual-review` skill.
 
 ## Product copy
 

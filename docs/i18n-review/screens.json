@@ -1,0 +1,140 @@
+[
+  {
+    "id": "library-empty",
+    "route": "/",
+    "setup": "Signed in on the Recipes list with no recipes in the account, so the empty-library sentence is showing. Do not type a search to fake this. If the account already has recipes, do not delete them; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "library-populated",
+    "route": "/",
+    "setup": "Signed in on the Recipes list (/) or an own named collection (/?c=<id>) that already shows at least one recipe card. Prefer / when it has cards. Do not create a recipe. If nothing is listed, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "settings",
+    "route": "/settings",
+    "setup": "Settings while signed in, with the language picker visible under Appearance. Do not export, import a backup, refresh in order to force a toast, or sign out.",
+    "needsData": false
+  },
+  {
+    "id": "admin",
+    "route": "/admin",
+    "setup": "The admin page as an owner sees it: pending, approved, declined, and invites. Do not approve, decline, mint, copy in a way that creates an invite, or revoke. If this session is not an owner, capture the error line the page already shows; do not change membership.",
+    "needsData": false
+  },
+  {
+    "id": "import-idle",
+    "route": "/import",
+    "setup": "Import with an empty textarea, the bulk-import checkbox off, and no preview. Open /import with no ?c= query. Do not extract.",
+    "needsData": false
+  },
+  {
+    "id": "import-bulk",
+    "route": "/import",
+    "setup": "Import with the bulk-import checkbox on, so the bulk placeholder and hint are visible. Do not paste links and do not extract. Bulk extract saves recipes and has no preview.",
+    "needsData": false
+  },
+  {
+    "id": "import-preview",
+    "route": "/import",
+    "setup": "From /import with bulk off and no ?c= query, extract one recipe (a single https URL, or pasted recipe text) and stop when the \"Fix it here before saving\" banner and the form are showing. There is no guessed-language line and no translate checkbox on this screen yet. Do not press Save. Extraction calls Gemini and writes nothing.",
+    "needsData": false
+  },
+  {
+    "id": "recipe-view",
+    "route": "/recipe/:id",
+    "setup": "An owned recipe as it loads: title, ingredients, and steps. Do not change servings, check ingredients, or advance steps. Recipe content is not judged. If there is no owned recipe, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-cook",
+    "route": "/recipe/:id",
+    "setup": "Cook mode is the same /recipe/:id screen when stored cook progress is already visible (a checked ingredient, a current step other than the first, or the done line). There is no separate cook-mode toggle. Use whatever progress the recipe already has. Do not toggle checkmarks, steps, or servings; cook state syncs. If no owned recipe already has that progress, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-your-cooks",
+    "route": "/recipe/:id",
+    "setup": "On an owned recipe, scroll to the \"Your cooks\" section (heading plus Log a cook; cards if this recipe already has logs). This is the RecipeView cook-log state. The section is absent on a shared recipe. Do not log a cook. If there is no owned recipe, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-edit",
+    "route": "/recipe/:id/edit",
+    "setup": "The edit form for an owned recipe (heading Edit recipe). Do not change fields and do not save. A shared recipe has no Edit link; this route shows Recipe not found. If there is no owned recipe, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-new",
+    "route": "/recipe/new",
+    "setup": "The blank new-recipe form (heading New recipe), opened with no ?c= query. Do not fill it in and do not save. Saving with no collection chosen opens Save to collection; that sheet is a separate manifest entry.",
+    "needsData": false
+  },
+  {
+    "id": "recipe-chat",
+    "route": "/recipe/:id",
+    "setup": "On an owned recipe, tap Ask and leave the chat panel open. Do not send a message, dictate, attach a photo, or save a variant. If a thread is already on screen, include it and do not add to it. If there is no owned recipe, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "share-collection-sheet",
+    "route": "/?c=:collectionId",
+    "setup": "Open one of your own named collections (not a shared-with-you folder) and tap Share. Opening the sheet only reads the grant list. Prefer a collection whose sheet says \"Nobody else can see this yet.\" Do not type an email, and do not add or remove a person. If every own collection already lists grantees, redact those emails before judging, or mark skipped: shows another member's data. If you have no own named collection, mark skipped: needs data. Do not create one.",
+    "needsData": true
+  },
+  {
+    "id": "save-to-collection-sheet",
+    "route": "/import",
+    "setup": "After the import preview is showing (import-preview: /import, bulk off, no ?c=), press Save. The Save to collection sheet opens and nothing is written until a destination is chosen. Capture the sheet, then Cancel. Do not pick Recipes, pick a collection, or create one. Do not reach this sheet from bulk import.",
+    "needsData": false
+  },
+  {
+    "id": "sync-toast",
+    "route": "/settings",
+    "setup": "SyncToast is a short-lived pill on any page, not its own route. It appears only when a refresh fails or when a refresh applies remote changes. A Refresh in Settings that changes nothing stays silent and does not write library data. Do not sign out, go offline on purpose, or create data to force it. If the pill is not already visible, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "library-shared-banner",
+    "route": "/?c=:collectionId",
+    "setup": "Select a collection shared with you so the Library banner \"Shared with you…\" is visible. The review never creates a share. If the account has no incoming share, mark skipped: needs data. The banner and folder label can show the owner's email; redact that before the image goes to the judging model, or mark skipped: shows another member's data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-shared",
+    "route": "/recipe/:id",
+    "setup": "Open a recipe from an incoming share (no Edit link). Do not change servings, checks, or steps. If there is no shared recipe, mark skipped: needs data. Recipe content is another member's data: redact it before judging, or mark skipped: shows another member's data. The review never creates a share.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-chat-shared",
+    "route": "/recipe/:id",
+    "setup": "On a shared recipe, open Ask. The read-only panel shows \"Save as a new recipe\" on an existing proposal card (there is no Apply, and no photo button). Do not send a message and do not press Save as a new recipe. If the account has no shared recipe, or the shared chat has no proposal yet, mark skipped: needs data. Do not write a chat message to create one. Redact the other member's recipe content before judging, or mark skipped: shows another member's data.",
+    "needsData": true
+  },
+  {
+    "id": "cooks-empty",
+    "route": "/cooks",
+    "setup": "The cook journal when the account has no cook logs, so the empty sentence is showing. If logs already exist, do not delete them; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "cooks-populated",
+    "route": "/cooks",
+    "setup": "The cook journal listing at least one existing cook. Do not create or delete a log. If there are none, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "cook-log-new",
+    "route": "/recipe/:id/cooks/new",
+    "setup": "The Log a cook form for an owned recipe. Opening it does not write. Do not save, upload a photo, or leave a rating that you then save. If there is no owned recipe, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "cook-log-edit-delete",
+    "route": "/recipe/:id/cooks/:logId/edit",
+    "setup": "Open an existing cook log's edit form and open the delete dialog (\"Delete this cook?\"). Do not confirm delete and do not save. Dismiss the dialog when the capture is done. If there is no cook log, mark skipped: needs data.",
+    "needsData": true
+  }
+]

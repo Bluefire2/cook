@@ -11,3 +11,5 @@ dev-dist
 !.env.example
 # Ignore generated credentials from google-github-actions/auth
 gha-creds-*.json
+# In-context translation review reports
+.i18n-review/
