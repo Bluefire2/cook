@@ -37,6 +37,16 @@ import type { PushOp } from './pushOps';
 
 export { compactRecipe };
 
+/**
+ * A 401/403 from the server. The message is the usual sign-in prompt; the type
+ * lets a rollback tell sign-out apart without reading the text.
+ */
+class SessionExpiredError extends Error {
+  constructor() {
+    super(t('error.sessionExpired'));
+  }
+}
+
 async function uploadPhotoIfNeeded(
   photoId: string | undefined,
   recipeId: string,
@@ -51,7 +61,7 @@ async function uploadPhotoIfNeeded(
   }
   const result = await postPhoto(photoId, recipeId, updatedAt, blob);
   if (result !== 'ok') {
-    throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.photoSave'));
+    throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.photoSave'));
   }
   markPhotoRemote(photoId);
 }
@@ -179,6 +189,58 @@ async function saveShared(recipe: Recipe): Promise<void> {
   } catch (err) {
     upsertRecipe(previous, origin);
     throw err;
+  }
+}
+
+/**
+ * Undoes a create whose recipe row landed but whose photos did not. The
+ * server's delete cascade tombstones any photo already stored under the
+ * recipe, so no bytes outlive it. Best effort, never retried: if the delete
+ * push fails, the photo-less row stays on the server and the next refresh
+ * shows it.
+ */
+async function discardCreatedRecipe(id: string, cause: unknown): Promise<void> {
+  if (cause instanceof SessionExpiredError) {
+    // The 401 already cleared the library, and a delete would 401 as well.
+    removeRecipeLocal(id);
+    return;
+  }
+  const at = Date.now();
+  // Same membership scrub as `remove`: a dead id still counts against the cap.
+  const scrubbed = listCollections()
+    .filter((c) => c.recipeIds.includes(id))
+    .map((c) =>
+      compactCollection({
+        ...c,
+        recipeIds: c.recipeIds.filter((recipeId) => recipeId !== id),
+        updatedAt: at,
+      }),
+    );
+  // A pull that read the live row before the delete landed must not paint it
+  // back; hold the library as `remove` does.
+  const writeEpoch = beginLocalWrite();
+  removeRecipeLocal(id);
+  for (const collection of scrubbed) {
+    upsertCollection(collection);
+  }
+  const ops: PushOp[] = [{ kind: 'recipe.delete', payload: { id, updatedAt: at } }];
+  for (const collection of scrubbed) {
+    ops.push({ kind: 'collection.put', payload: collection });
+  }
+  let result: Awaited<ReturnType<typeof pushOps>> = 'error';
+  try {
+    result = await pushOps(ops);
+  } catch {
+    // Best effort; the caller surfaces the photo error.
+  } finally {
+    endLocalWrite();
+  }
+  if (result === 'ok' && localWriteOverlapsPull(writeEpoch)) {
+    try {
+      await pullAfterLocalWrite(writeEpoch);
+    } catch {
+      // The next pull reconciles.
+    }
   }
 }
 
@@ -313,21 +375,28 @@ export const recipeStore = {
     if (nextCollection) {
       upsertCollection(nextCollection);
     }
+    // The server stores a photo only under a live recipe, so the recipe row
+    // goes first and the photos follow.
     try {
-      await uploadRecipePhotos(recipe);
       const ops: PushOp[] = [{ kind: 'recipe.put', payload: recipe }];
       if (nextCollection) {
         ops.push({ kind: 'collection.put', payload: nextCollection });
       }
       const result = await pushOps(ops);
       if (result !== 'ok') {
-        throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
+        throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
       }
     } catch (err) {
       removeRecipeLocal(recipe.id);
       if (previousCollection) {
         upsertCollection(previousCollection);
       }
+      throw err;
+    }
+    try {
+      await uploadRecipePhotos(recipe);
+    } catch (err) {
+      await discardCreatedRecipe(recipe.id, err);
       throw err;
     }
     return recipe;
