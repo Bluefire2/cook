@@ -1,6 +1,7 @@
 import { t } from '../i18n';
 import { serverErrorText } from './errorText';
 import { invalidateSession } from './session';
+import { settings } from './settings';
 import { baseAudioMime, stripTranscript } from './voiceRecorder';
 
 export async function transcribeAudio(params: {
@@ -10,9 +11,11 @@ export async function transcribeAudio(params: {
 }): Promise<string> {
   const headers: Record<string, string> = {
     'Content-Type': baseAudioMime(params.blob.type) || 'application/octet-stream',
+    'x-sous-language': settings.getLocale(),
   };
   if (params.title !== undefined && params.title.trim() !== '') {
-    headers['x-recipe-title'] = params.title;
+    headers['x-recipe-title'] = encodeURIComponent(params.title);
+    headers['x-recipe-title-encoding'] = 'uri';
   }
 
   const response = await fetch('/api/stt', {
