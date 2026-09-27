@@ -6,9 +6,10 @@
  * - B (Cloud Vision → Gemini): DOCUMENT_TEXT_DETECTION per page, then Gemini
  *   on the joined OCR text (`importFromSource`).
  *
- * For each fixture and run it prints latency, tokens, estimated cost, the
- * judge's verdict against `golden.json`, and `calls` (Gemini invocations,
- * including a retry, not successes).
+ * For each fixture and run it prints a progress bar (finished calls, calls
+ * left, and an estimate of the time left), then latency, tokens, estimated
+ * cost, the judge's verdict against `golden.json`, and `calls` (Gemini
+ * invocations, including a retry, not successes).
  *
  *   node --env-file=.env.local evals/ocrCompare.ts [fixture…] [--runs=N]
  *     [--split=dev|holdout|all] [--thinking=minimal|low|medium|high]
@@ -405,6 +406,33 @@ function usd(value: number): number {
   return Number(value.toFixed(5));
 }
 
+const BAR_WIDTH = 24;
+
+function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (minutes < 60) {
+    return minutes === 0 ? `${rest}s` : `${minutes}m${String(rest).padStart(2, '0')}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h${String(minutes % 60).padStart(2, '0')}m`;
+}
+
+/** Finished calls against the planned total, plus a time estimate once one call has finished. */
+function progressPrefix(done: number, total: number, startedAt: number): string {
+  const filled = total === 0 ? 0 : Math.round((BAR_WIDTH * done) / total);
+  const clamped = Math.min(BAR_WIDTH, Math.max(0, filled));
+  const bar = `${'#'.repeat(clamped)}${'-'.repeat(BAR_WIDTH - clamped)}`;
+  const left = Math.max(0, total - done);
+  let eta = '';
+  if (done > 0 && left > 0) {
+    const elapsed = performance.now() - startedAt;
+    eta = `, eta ${formatDuration((elapsed / done) * left)}`;
+  }
+  return `[${bar}] ${done}/${total}, ${left} left${eta}`;
+}
+
 function tableRow(r: RunResult): Record<string, string | number> {
   return {
     fixture: r.fixture,
@@ -499,22 +527,37 @@ async function main(): Promise<number> {
 
   const base = recipeImportDepsFromEnv();
   const results: RunResult[] = [];
+  let total = fixtures.length * runs * (b.auth !== null ? 2 : 1);
+  let done = 0;
+  const startedAt = performance.now();
   const record = (r: RunResult): void => {
     results.push(r);
+    done += 1;
     console.log(
-      `${r.split}/${r.fixture} run ${r.run} ${r.approach}: ${r.kind}, ${Math.round(r.visionMs + r.geminiMs)} ms, calls ${r.calls}, finish ${r.tokens.finish}, judge ${r.judge}`,
+      `${progressPrefix(done, total, startedAt)}  ${r.split}/${r.fixture} run ${r.run} ${r.approach}: ${r.kind}, ${Math.round(r.visionMs + r.geminiMs)} ms, calls ${r.calls}, finish ${r.tokens.finish}, judge ${r.judge}`,
     );
   };
   console.log(
-    `Running ${fixtures.length} fixture(s) x ${runs} run(s), split ${split}, thinking ${thinking ?? 'model default'} (A only): A${b.auth !== null ? ' and B' : ''}. Each line prints as a run finishes.`,
+    `Running ${fixtures.length} fixture(s) x ${runs} run(s), split ${split}, thinking ${thinking ?? 'model default'} (A only): A${b.auth !== null ? ' and B' : ''}. ${total} call(s).`,
   );
   for (const fixture of fixtures) {
     for (let run = 1; run <= runs; run++) {
+      const where = `${fixture.split}/${fixture.name} run ${run}`;
+      console.log(`${progressPrefix(done, total, startedAt)}  ${where} A …`);
       record(await runA(fixture, run, base, thinking));
       if (b.auth !== null) {
+        console.log(`${progressPrefix(done, total, startedAt)}  ${where} B …`);
         const result = await runB(fixture, run, base, b.auth);
-        if (result.kind === 'denied') skipB(result.reason);
-        else record(result);
+        if (result.kind === 'denied') {
+          skipB(result.reason);
+          const fixtureIndex = fixtures.indexOf(fixture);
+          const remainingB = runs - run + (fixtures.length - fixtureIndex - 1) * runs;
+          total -= remainingB;
+          done += 1;
+          console.log(`${progressPrefix(done, total, startedAt)}  B skipped`);
+        } else {
+          record(result);
+        }
       }
     }
   }
