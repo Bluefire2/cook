@@ -15,6 +15,9 @@ import {
   SHARED_PARENT_OWNER_SUB_FIELD,
   sharedParentMarkerForWrite,
   sharedParentOwnerFromCandidate,
+  findSharedParentOwner,
+  storedSharedParentOwner,
+  type SharedParentLookupIo,
   recipeIdsWithoutTombstones,
   decodePullCursor,
   encodePullCursor,
@@ -584,6 +587,131 @@ function liveRecipe(): Record<string, unknown> {
     updatedAt: 1,
   };
 }
+
+describe('findSharedParentOwner', () => {
+  type Share = { grantId: string; data: Record<string, unknown> };
+  const collectionIdFor = (n: number) =>
+    `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
+
+  /** Share n belongs to owner-n and lists PARENT_RECIPE only when `listsParent`. */
+  function world(
+    shares: Array<{ owner: string; listsParent: boolean; revoked?: boolean }>,
+  ) {
+    const reads = { listAll: 0, listOwner: 0, collections: 0, recipes: 0 };
+    const rows: Share[] = shares.map((share, n) => ({
+      grantId: `${share.owner}_${collectionIdFor(n)}`,
+      data: {
+        ownerSub: share.owner,
+        collectionId: collectionIdFor(n),
+        updatedAt: 1,
+        ...(share.revoked ? { deletedAt: 2 } : {}),
+      },
+    }));
+    const io: SharedParentLookupIo = {
+      listShares: async (ownerSub) => {
+        if (ownerSub === null) {
+          reads.listAll += 1;
+          return rows;
+        }
+        reads.listOwner += 1;
+        return rows.filter((row) => row.data.ownerSub === ownerSub);
+      },
+      readCollection: async (ownerSub, collectionId) => {
+        reads.collections += 1;
+        const n = shares.findIndex(
+          (share, i) => share.owner === ownerSub && collectionIdFor(i) === collectionId,
+        );
+        return n === -1
+          ? undefined
+          : {
+              id: collectionId,
+              recipeIds: shares[n].listsParent ? [PARENT_RECIPE] : [],
+              updatedAt: 1,
+            };
+      },
+      readRecipe: async () => {
+        reads.recipes += 1;
+        return liveRecipe();
+      },
+    };
+    return { io, reads };
+  }
+
+  it('reads only the share list when the viewer has no shares', async () => {
+    const { io, reads } = world([]);
+    await expect(findSharedParentOwner(PARENT_RECIPE, null, io)).resolves.toBeNull();
+    expect(reads).toEqual({ listAll: 1, listOwner: 0, collections: 0, recipes: 0 });
+  });
+
+  it('stops at the first authorizing share', async () => {
+    const { io, reads } = world([
+      { owner: 'owner-a', listsParent: true },
+      { owner: 'owner-b', listsParent: false },
+      { owner: 'owner-c', listsParent: false },
+    ]);
+    await expect(findSharedParentOwner(PARENT_RECIPE, null, io)).resolves.toBe('owner-a');
+    expect(reads).toEqual({ listAll: 1, listOwner: 0, collections: 1, recipes: 1 });
+  });
+
+  it('without a hint, a last-position match reads every collection', async () => {
+    const shares = Array.from({ length: 12 }, (_, i) => ({
+      owner: `owner-${i}`,
+      listsParent: i === 11,
+    }));
+    const { io, reads } = world(shares);
+    await expect(findSharedParentOwner(PARENT_RECIPE, null, io)).resolves.toBe('owner-11');
+    expect(reads).toEqual({ listAll: 1, listOwner: 0, collections: 12, recipes: 1 });
+  });
+
+  it('with a stored hint, reads only the hinted owner\u2019s shares among many', async () => {
+    const shares = Array.from({ length: 12 }, (_, i) => ({
+      owner: `owner-${i}`,
+      listsParent: i === 11,
+    }));
+    const { io, reads } = world(shares);
+    await expect(findSharedParentOwner(PARENT_RECIPE, 'owner-11', io)).resolves.toBe(
+      'owner-11',
+    );
+    expect(reads).toEqual({ listAll: 0, listOwner: 1, collections: 1, recipes: 1 });
+  });
+
+  it('falls back to a full scan when the hint no longer authorizes, without rechecking it', async () => {
+    const { io, reads } = world([
+      { owner: 'owner-old', listsParent: false },
+      { owner: 'owner-new', listsParent: true },
+    ]);
+    await expect(findSharedParentOwner(PARENT_RECIPE, 'owner-old', io)).resolves.toBe(
+      'owner-new',
+    );
+    expect(reads).toEqual({ listAll: 1, listOwner: 1, collections: 2, recipes: 1 });
+  });
+
+  it('denies after revoke even when the hint names that owner', async () => {
+    const { io, reads } = world([{ owner: 'owner-a', listsParent: true, revoked: true }]);
+    await expect(findSharedParentOwner(PARENT_RECIPE, 'owner-a', io)).resolves.toBeNull();
+    expect(reads.collections).toBe(0);
+    expect(reads.recipes).toBe(0);
+  });
+
+  it('cannot be steered to an owner the viewer has no share from', async () => {
+    const { io } = world([{ owner: 'owner-a', listsParent: false }]);
+    await expect(
+      findSharedParentOwner(PARENT_RECIPE, 'someone-else', io),
+    ).resolves.toBeNull();
+  });
+});
+
+describe('storedSharedParentOwner', () => {
+  it('reads only a non-empty server marker', () => {
+    expect(storedSharedParentOwner({ [SHARED_PARENT_OWNER_SUB_FIELD]: 'owner' })).toBe(
+      'owner',
+    );
+    expect(storedSharedParentOwner({ [SHARED_PARENT_OWNER_SUB_FIELD]: '' })).toBeNull();
+    expect(storedSharedParentOwner({ [SHARED_PARENT_OWNER_SUB_FIELD]: 7 })).toBeNull();
+    expect(storedSharedParentOwner(undefined)).toBeNull();
+    expect(storedSharedParentOwner(null)).toBeNull();
+  });
+});
 
 describe('shared parent provenance', () => {
   it('returns the owner stored on the incoming share', () => {

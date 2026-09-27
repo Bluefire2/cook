@@ -1,4 +1,9 @@
-import { FieldPath, Firestore, type Transaction } from '@google-cloud/firestore';
+import {
+  FieldPath,
+  Firestore,
+  type DocumentReference,
+  type Transaction,
+} from '@google-cloud/firestore';
 import { firestoreConfig } from './env.ts';
 import {
   SHARED_PARENT_OWNER_SUB_FIELD,
@@ -512,54 +517,120 @@ export function collectionDeletePayload(
  * null when no share authorizes the recipe. Callers must check an owned
  * parent first; a live owned recipe takes precedence over this result.
  */
+export type SharedParentLookupIo = {
+  /** The viewer's incoming shares; only `ownerSub`'s when it is non-null. */
+  listShares: (
+    ownerSub: string | null,
+  ) => Promise<Array<{ grantId: string; data: Record<string, unknown> }>>;
+  readCollection: (
+    ownerSub: string,
+    collectionId: string,
+  ) => Promise<Record<string, unknown> | undefined>;
+  readRecipe: (
+    ownerSub: string,
+    recipeId: string,
+  ) => Promise<Record<string, unknown> | undefined>;
+};
+
+/**
+ * Finds the owner whose live share authorizes `recipeId` as a chat/cook
+ * parent. `hintOwnerSub` must be a server-written `sharedParentOwnerSub`; it
+ * only narrows which shares are checked first, and every candidate still
+ * passes the full share → collection → listed recipe → live recipe chain.
+ */
+export async function findSharedParentOwner(
+  recipeId: string,
+  hintOwnerSub: string | null,
+  io: SharedParentLookupIo,
+): Promise<string | null> {
+  const checked = new Set<string>();
+  const scan = async (
+    shares: Array<{ grantId: string; data: Record<string, unknown> }>,
+  ): Promise<string | null> => {
+    for (const { grantId, data } of shares) {
+      if (checked.has(grantId)) {
+        continue;
+      }
+      checked.add(grantId);
+      if (!isLiveDoc(data)) {
+        continue;
+      }
+      const ownerSub = data.ownerSub;
+      const collectionId = data.collectionId;
+      if (
+        typeof ownerSub !== 'string' ||
+        ownerSub === '' ||
+        typeof collectionId !== 'string' ||
+        !isUuid(collectionId)
+      ) {
+        continue;
+      }
+      const collection = await io.readCollection(ownerSub, collectionId);
+      const ids = Array.isArray(collection?.recipeIds) ? collection.recipeIds : [];
+      if (!ids.includes(recipeId)) {
+        continue;
+      }
+      const recipe = await io.readRecipe(ownerSub, recipeId);
+      const owner = sharedParentOwnerFromCandidate(recipeId, {
+        share: data,
+        grantId,
+        collection,
+        recipe,
+      });
+      if (owner !== null) {
+        return owner;
+      }
+    }
+    return null;
+  };
+  if (hintOwnerSub !== null && hintOwnerSub !== '') {
+    const hinted = await scan(
+      (await io.listShares(hintOwnerSub)).filter(
+        ({ data }) => data.ownerSub === hintOwnerSub,
+      ),
+    );
+    if (hinted !== null) {
+      return hinted;
+    }
+  }
+  return scan(await io.listShares(null));
+}
+
+export function storedSharedParentOwner(
+  row: Record<string, unknown> | undefined | null,
+): string | null {
+  const marker = row?.[SHARED_PARENT_OWNER_SUB_FIELD];
+  return typeof marker === 'string' && marker !== '' ? marker : null;
+}
+
 export async function sharedParentLive(
   tx: Transaction,
   sessionSub: string,
   recipeId: string,
+  hintOwnerSub: string | null,
 ): Promise<string | null> {
-  const itemsQuery = getFirestore()
+  const items = getFirestore()
     .collection('incomingShares')
     .doc(sessionSub)
     .collection('items');
-  const items = await tx.get(itemsQuery);
-  for (const doc of items.docs) {
-    const data = doc.data() as Record<string, unknown>;
-    if (!isLiveDoc(data)) {
-      continue;
-    }
-    const ownerSub = data.ownerSub;
-    const collectionId = data.collectionId;
-    if (
-      typeof ownerSub !== 'string' ||
-      ownerSub === '' ||
-      typeof collectionId !== 'string' ||
-      !isUuid(collectionId)
-    ) {
-      continue;
-    }
-    const collectionSnap = await tx.get(collectionDocRef(ownerSub, collectionId));
-    const collection = collectionSnap.exists
-      ? (collectionSnap.data() as Record<string, unknown>)
-      : undefined;
-    const ids = Array.isArray(collection?.recipeIds) ? collection.recipeIds : [];
-    if (!ids.includes(recipeId)) {
-      continue;
-    }
-    const recipeSnap = await tx.get(recipeDocRef(ownerSub, recipeId));
-    const recipe = recipeSnap.exists
-      ? (recipeSnap.data() as Record<string, unknown>)
-      : undefined;
-    const owner = sharedParentOwnerFromCandidate(recipeId, {
-      share: data,
-      grantId: doc.id,
-      collection,
-      recipe,
-    });
-    if (owner !== null) {
-      return owner;
-    }
-  }
-  return null;
+  const readData = async (ref: DocumentReference) => {
+    const snap = await tx.get(ref);
+    return snap.exists ? (snap.data() as Record<string, unknown>) : undefined;
+  };
+  return findSharedParentOwner(recipeId, hintOwnerSub, {
+    listShares: async (ownerSub) => {
+      const snap = await tx.get(
+        ownerSub === null ? items : items.where('ownerSub', '==', ownerSub),
+      );
+      return snap.docs.map((doc) => ({
+        grantId: doc.id,
+        data: doc.data() as Record<string, unknown>,
+      }));
+    },
+    readCollection: (ownerSub, collectionId) =>
+      readData(collectionDocRef(ownerSub, collectionId)),
+    readRecipe: (ownerSub, id) => readData(recipeDocRef(ownerSub, id)),
+  });
 }
 
 async function readRecipeLive(
@@ -819,7 +890,19 @@ export async function putDoc(
         if (kind === 'photos') {
           return { applied: false, reason: 'recipe-deleted' };
         }
-        discoveredOwnerSub = await sharedParentLive(tx, uid, parentRecipeId);
+        let hintOwnerSub = storedSharedParentOwner(storedRaw);
+        if (hintOwnerSub === null && kind === 'chatMessages') {
+          const cookSnap = await tx.get(colRef(uid, 'cookState').doc(parentRecipeId));
+          hintOwnerSub = storedSharedParentOwner(
+            cookSnap.exists ? (cookSnap.data() as Record<string, unknown>) : undefined,
+          );
+        }
+        discoveredOwnerSub = await sharedParentLive(
+          tx,
+          uid,
+          parentRecipeId,
+          hintOwnerSub,
+        );
         if (sharedParentMarkerForWrite(false, discoveredOwnerSub) === null) {
           return { applied: false, reason: 'recipe-deleted' };
         }

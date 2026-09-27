@@ -169,6 +169,13 @@ The client keeps that in `chatParentOrigins` and `cookParentOrigins`, not on
 `ChatMessage` or `CookStateRow`. Backup export treats either the live recipe
 origin or that sidecar as shared.
 
+A chat/cook write on a shared parent uses that stored marker (the row's own,
+or for a new chat message the viewer's cook row for the recipe) only as a
+lookup hint: it narrows the in-transaction incoming-share query to one owner,
+and the full share → collection → listed recipe → live recipe chain is still
+checked. A stale or missing hint falls back to the full scan. Never take the
+hint from the request body.
+
 Grants are inert while their owner is not admitted (not in `ALLOWED_EMAILS`
 and no active `members/{sub}`). Shared pull skips them, and that omission is
 part of the authorization-scope digest, so a removal between pages restarts
@@ -236,10 +243,15 @@ trigger.
 Docker is not installed locally; local `bash scripts/deploy.sh` still uses
 Cloud Build.
 
-The first production verification after deploying sharing must delete a real
-recipe that is listed in a collection and confirm the Firestore
-`array-contains` query on `recipeIds` succeeds (and therefore its required
-index exists).
+After the first production deploy of sharing:
+
+- Run `node --env-file=.env.local scripts/backfill-email-lower.ts` with ADC
+  for `cooking-assistant-508423`, review the dry run, then rerun with
+  `--apply`. It is idempotent.
+- Delete a real recipe that is listed in a collection and confirm the
+  `array-contains` query on `recipeIds` succeeds. Native Firestore creates
+  that single-field array index automatically; the check is for an index
+  exemption or misconfiguration, and it exercises the real delete path.
 
 ## Do not touch
 
