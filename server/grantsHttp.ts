@@ -41,15 +41,42 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function errorJson(code: string, error: string, status: number, max?: number): Response {
+  const body: { error: string; code: string; max?: number } = { error, code };
+  if (max !== undefined) {
+    body.max = max;
+  }
+  return jsonResponse(body, status);
+}
+
+function badRequest(): Response {
+  return errorJson('bad-request', 'Bad request', 400);
+}
+
 function notFound(): Response {
-  return jsonResponse({ error: 'Not found' }, 404);
+  return errorJson('not-found', 'Not found', 404);
+}
+
+export function shareGrantErrorResponse(kind: 'self' | 'no-account' | 'full'): Response {
+  if (kind === 'self') {
+    return errorJson('share-self', 'Cannot share with yourself', 400);
+  }
+  if (kind === 'no-account') {
+    return errorJson('share-no-account', NO_ACCOUNT_MESSAGE, 404);
+  }
+  return errorJson(
+    'share-full',
+    `This collection already has ${MAX_LIVE_GRANTS} people`,
+    409,
+    MAX_LIVE_GRANTS,
+  );
 }
 
 export function revokeGrantHttpResponse(
   outcome: RevokeGrantOutcome,
 ): Response {
   if (outcome.kind === 'badRequest') {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
   if (outcome.kind === 'missing') {
     return notFound();
@@ -120,7 +147,7 @@ function accessResponse(
 export async function collectionGrantsGet(req: Request): Promise<Response> {
   const collectionId = collectionIdFromPath(new URL(req.url).pathname);
   if (collectionId === null) {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
   const access = await requireOwnedLiveCollection(req, collectionId);
   const early = accessResponse(access);
@@ -155,7 +182,7 @@ export async function collectionGrantsGet(req: Request): Promise<Response> {
 export async function collectionGrantsPost(req: Request): Promise<Response> {
   const collectionId = collectionIdFromPath(new URL(req.url).pathname);
   if (collectionId === null) {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
   const access = await requireOwnedLiveCollection(req, collectionId);
   const early = accessResponse(access);
@@ -168,13 +195,13 @@ export async function collectionGrantsPost(req: Request): Promise<Response> {
 
   const raw = await readBoundedText(req, BODY_LIMIT);
   if (raw === null) {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
   let body: unknown;
   try {
     body = raw === '' ? {} : JSON.parse(raw);
   } catch {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
   const email = normalizeShareEmail(
     body && typeof body === 'object' && 'email' in body
@@ -182,7 +209,7 @@ export async function collectionGrantsPost(req: Request): Promise<Response> {
       : undefined,
   );
   if (email === undefined) {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
 
   const target = await lookupAdmittedSubByEmail(email, {
@@ -190,13 +217,13 @@ export async function collectionGrantsPost(req: Request): Promise<Response> {
     email: access.email,
   });
   if (target.kind === 'self') {
-    return jsonResponse({ error: 'Cannot share with yourself' }, 400);
+    return shareGrantErrorResponse('self');
   }
   if (target.kind === 'unknown') {
     return membershipUnavailable();
   }
   if (target.kind === 'notFound') {
-    return jsonResponse({ error: NO_ACCOUNT_MESSAGE }, 404);
+    return shareGrantErrorResponse('no-account');
   }
 
   try {
@@ -211,10 +238,7 @@ export async function collectionGrantsPost(req: Request): Promise<Response> {
       return notFound();
     }
     if (outcome.kind === 'cap') {
-      return jsonResponse(
-        { error: `This collection already has ${MAX_LIVE_GRANTS} people` },
-        409,
-      );
+      return shareGrantErrorResponse('full');
     }
     return jsonResponse({
       grant: {
@@ -248,7 +272,7 @@ export async function handleRevokeGrantRequest(
 ): Promise<Response> {
   const collectionId = collectionIdFromPath(new URL(req.url).pathname);
   if (collectionId === null) {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
 
   const access = await dependencies.requireOwnedLiveCollection(req, collectionId);
@@ -262,20 +286,20 @@ export async function handleRevokeGrantRequest(
 
   const raw = await readBoundedText(req, BODY_LIMIT);
   if (raw === null) {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
   let body: unknown;
   try {
     body = raw === '' ? {} : JSON.parse(raw);
   } catch {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
   const sub =
     body && typeof body === 'object'
       ? (body as { sub?: unknown }).sub
       : undefined;
   if (!isSafeFirestoreDocumentId(sub)) {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
 
   try {

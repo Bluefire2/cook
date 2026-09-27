@@ -1,4 +1,5 @@
 import { t } from '../i18n';
+import { serverErrorText } from './errorText';
 import { compactCollection } from './compactCollection';
 import { compactCookLog, isUsableCookLog } from './cookLogShape';
 import { compactRecipe } from './compactRecipe';
@@ -525,11 +526,11 @@ async function grantRequest(
     body = null;
   }
   if (!response.ok) {
-    const message =
-      body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
-        ? (body as { error: string }).error
-        : t('error.sharingUpdate');
-    return { kind: 'error', message, status: response.status };
+    return {
+      kind: 'error',
+      message: serverErrorText(body, 'error.sharingUpdate'),
+      status: response.status,
+    };
   }
   return {
     kind: 'ok',

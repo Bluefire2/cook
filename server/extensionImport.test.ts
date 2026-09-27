@@ -75,7 +75,10 @@ describe('extensionImport html is required', () => {
     const { deps, calls } = fakeImportDeps(undefined);
     const response = await extensionImport(authedRequest(body), deps);
     expect(response.status).toBe(422);
-    expect(await response.json()).toEqual({ error: 'Could not read that page.' });
+    expect(await response.json()).toEqual({
+      error: 'Could not read that page.',
+      code: 'import-unreadable',
+    });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(recipeImport.importFromHtml).not.toHaveBeenCalled();
     expect(calls).toHaveLength(0);
@@ -110,28 +113,31 @@ describe('extensionImport maps import outcomes', () => {
 
   it('answers a page with no text as unreadable, without calling the model', async () => {
     const result = await post('<html><body><script>x()</script></body></html>', '{}');
-    expect(result).toMatchObject({ status: 422, body: { error: 'Could not read that page.' } });
+    expect(result).toMatchObject({
+      status: 422,
+      body: { error: 'Could not read that page.', code: 'import-unreadable' },
+    });
     expect(result.calls).toHaveLength(0);
   });
 
   it('answers NOT_A_RECIPE with 422', async () => {
     expect(await post(page, JSON.stringify({ title: 'NOT_A_RECIPE' }))).toMatchObject({
       status: 422,
-      body: { error: "Couldn't find a recipe in that content." },
+      body: { error: "Couldn't find a recipe in that content.", code: 'import-no-recipe' },
     });
   });
 
   it('answers unparseable model output with 502', async () => {
     expect(await post(page, 'not json')).toMatchObject({
       status: 502,
-      body: { error: 'Extraction failed — no structured result.' },
+      body: { error: 'Extraction failed — no structured result.', code: 'import-extract-failed' },
     });
   });
 
   it('answers a recipe with no title as unusable', async () => {
     expect(await post(page, JSON.stringify({ title: ' ', servings: 2 }))).toMatchObject({
       status: 502,
-      body: { error: 'Extraction produced an unusable recipe.' },
+      body: { error: 'Extraction produced an unusable recipe.', code: 'import-unusable' },
     });
   });
 
@@ -139,7 +145,7 @@ describe('extensionImport maps import outcomes', () => {
     const huge = JSON.stringify({ title: 'Soup', servings: 2, notes: 'x'.repeat(200_000) });
     expect(await post(page, huge)).toMatchObject({
       status: 502,
-      body: { error: 'Extraction produced an unusable recipe.' },
+      body: { error: 'Extraction produced an unusable recipe.', code: 'import-unusable' },
     });
   });
 });

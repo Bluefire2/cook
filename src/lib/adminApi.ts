@@ -1,4 +1,5 @@
 import { t } from '../i18n';
+import { serverErrorText } from './errorText';
 import { invalidateSession } from './session';
 
 export interface AccessRequestEntry {
@@ -47,15 +48,12 @@ async function throwAdminError(response: Response): Promise<never> {
   if (response.status === 503) {
     throw new Error(t('error.adminUnavailable'));
   }
-  const data = (await response.json().catch(() => null)) as { error?: unknown } | null;
-  if (response.status === 409 && data !== null && data.error === 'invite-cap') {
-    throw new Error(t('error.inviteCap', { max: 20 }));
-  }
-  const err =
-    data !== null && typeof data === 'object' && 'error' in data
-      ? String(data.error)
-      : null;
-  throw new Error(err ?? t('error.requestFailed', { status: response.status }));
+  const data = (await response.json().catch(() => null)) as {
+    error?: unknown;
+    code?: unknown;
+    max?: unknown;
+  } | null;
+  throw new Error(serverErrorText(data, 'error.requestFailed', { status: response.status }));
 }
 
 async function parseAdminResponse(response: Response): Promise<AccessRequestLists> {

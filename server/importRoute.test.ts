@@ -65,7 +65,7 @@ describe('POST /api/import', () => {
       const result = await post(body);
       expect(result).toMatchObject({
         status: 400,
-        body: { error: 'Provide a URL or recipe text.' },
+        body: { error: 'Provide a URL or recipe text.', code: 'import-empty' },
       });
       expect(result.calls).toHaveLength(0);
     }
@@ -74,24 +74,27 @@ describe('POST /api/import', () => {
   it('rejects a page with no readable text like an empty request', async () => {
     serve(new Response('<html><body><script>x()</script></body></html>'));
     const result = await post({ url: 'https://example.com/soup' });
-    expect(result).toMatchObject({ status: 400, body: { error: 'Provide a URL or recipe text.' } });
+    expect(result).toMatchObject({
+      status: 400,
+      body: { error: 'Provide a URL or recipe text.', code: 'import-empty' },
+    });
     expect(result.calls).toHaveLength(0);
   });
 
   it('maps fetch failures to 422 with the existing copy', async () => {
     expect(await post({ url: 'soup' })).toMatchObject({
       status: 422,
-      body: { error: 'That does not look like a web address.' },
+      body: { error: 'That does not look like a web address.', code: 'import-bad-url' },
     });
     expect(await post({ url: 'ftp://example.com/soup' })).toMatchObject({
       status: 422,
-      body: { error: 'Only http and https URLs are supported.' },
+      body: { error: 'Only http and https URLs are supported.', code: 'import-bad-scheme' },
     });
 
     vi.stubGlobal('fetch', () => Promise.reject(new TypeError('fetch failed')));
     expect(await post({ url: 'https://example.com/soup' })).toMatchObject({
       status: 422,
-      body: { error: 'Could not reach that URL.' },
+      body: { error: 'Could not reach that URL.', code: 'import-unreachable' },
     });
 
     serve(new Response('challenge', { status: 403 }));
@@ -99,6 +102,8 @@ describe('POST /api/import', () => {
       status: 422,
       body: {
         error: 'The site refused the request (403). Try pasting the recipe text instead.',
+        code: 'import-refused',
+        status: 403,
       },
     });
   });
@@ -106,15 +111,15 @@ describe('POST /api/import', () => {
   it('maps model outcomes to the existing statuses', async () => {
     expect(await post({ text: 'a poem' }, JSON.stringify({ title: 'NOT_A_RECIPE' }))).toMatchObject({
       status: 422,
-      body: { error: "Couldn't find a recipe in that content." },
+      body: { error: "Couldn't find a recipe in that content.", code: 'import-no-recipe' },
     });
     expect(await post({ text: 'soup' }, 'not json')).toMatchObject({
       status: 502,
-      body: { error: 'Extraction failed — no structured result.' },
+      body: { error: 'Extraction failed — no structured result.', code: 'import-extract-failed' },
     });
     expect(await post({ text: 'soup' }, JSON.stringify({ servings: 2 }))).toMatchObject({
       status: 502,
-      body: { error: 'Extraction produced an unusable recipe.' },
+      body: { error: 'Extraction produced an unusable recipe.', code: 'import-unusable' },
     });
   });
 });

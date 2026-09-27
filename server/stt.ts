@@ -38,8 +38,8 @@ export function clipRecipeTitle(raw: string): string {
   return scalars.slice(0, TITLE_MAX_CHARS).join('').trim();
 }
 
-function jsonError(error: string, status: number): Response {
-  return new Response(JSON.stringify({ error }), {
+function jsonError(code: string, error: string, status: number): Response {
+  return new Response(JSON.stringify({ error, code }), {
     status,
     headers: {
       'Content-Type': 'application/json',
@@ -135,29 +135,29 @@ export async function sttPost(req: Request): Promise<Response> {
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (apiKey === undefined || apiKey.trim() === '') {
-    return jsonError('Assistant is unavailable.', 503);
+    return jsonError('stt-unavailable', 'Assistant is unavailable.', 503);
   }
 
   const contentTypeRaw = req.headers.get('content-type');
   if (contentTypeRaw === null) {
-    return jsonError('Bad request', 400);
+    return jsonError('stt-bad-request', 'Bad request', 400);
   }
   const mimeType = normalizeSttContentType(contentTypeRaw);
   if (mimeType === null) {
-    return jsonError('Bad request', 400);
+    return jsonError('stt-bad-request', 'Bad request', 400);
   }
 
   const contentLength = parseContentLength(req);
   if (contentLength !== null && isSttByteCountTooLarge(contentLength)) {
-    return jsonError('Recording too long — try a shorter question.', 413);
+    return jsonError('stt-too-long', 'Recording too long — try a shorter question.', 413);
   }
 
   const body = await readCappedBytes(req.body, MAX_STT_BYTES);
   if (body.kind === 'too-large') {
-    return jsonError('Recording too long — try a shorter question.', 413);
+    return jsonError('stt-too-long', 'Recording too long — try a shorter question.', 413);
   }
   if (body.kind !== 'ok') {
-    return jsonError('Bad request', 400);
+    return jsonError('stt-bad-request', 'Bad request', 400);
   }
 
   const titleHeader = req.headers.get('x-recipe-title');
@@ -192,7 +192,7 @@ export async function sttPost(req: Request): Promise<Response> {
     });
     const raw = result.text;
     if (typeof raw !== 'string') {
-      return jsonError('Dictation failed — try again.', 502);
+      return jsonError('stt-failed', 'Dictation failed — try again.', 502);
     }
     console.log(`stt bytes=${body.bytes.byteLength} mime=${mimeType}`);
     return new Response(JSON.stringify({ text: stripTranscript(raw) }), {
@@ -203,6 +203,6 @@ export async function sttPost(req: Request): Promise<Response> {
       },
     });
   } catch {
-    return jsonError('Dictation failed — try again.', 502);
+    return jsonError('stt-failed', 'Dictation failed — try again.', 502);
   }
 }

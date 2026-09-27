@@ -1,4 +1,5 @@
 import { t } from '../i18n';
+import { serverErrorText } from './errorText';
 import { invalidateSession } from './session';
 import { baseAudioMime, stripTranscript } from './voiceRecorder';
 
@@ -31,20 +32,8 @@ export async function transcribeAudio(params: {
     | { text?: unknown; error?: unknown }
     | null;
 
-  if (response.status === 503) {
-    const message =
-      typeof data?.error === 'string' && data.error !== ''
-        ? data.error
-        : t('error.dictationFailed');
-    throw new Error(message);
-  }
-
   if (!response.ok) {
-    const message =
-      typeof data?.error === 'string' && data.error !== ''
-        ? data.error
-        : t('error.dictationFailed');
-    throw new Error(message);
+    throw new Error(serverErrorText(data, 'error.dictationFailed'));
   }
 
   const text = typeof data?.text === 'string' ? data.text : '';

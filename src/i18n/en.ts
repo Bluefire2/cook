@@ -357,6 +357,27 @@ export const en = {
   'error.adminForbidden': "This account can't manage invitations.",
   'error.adminUnavailable': 'Invitations are temporarily unavailable.',
   'error.inviteCap': 'You already have {max} unused invite links. Revoke one to mint another.',
+  'error.importBadUrl': 'That does not look like a web address.',
+  'error.importBadScheme': 'Only http and https URLs are supported.',
+  'error.importUnreachable': 'Could not reach that URL.',
+  'error.importRefused':
+    'The site refused the request ({status}). Try pasting the recipe text instead.',
+  'error.importEmpty': 'Provide a URL or recipe text.',
+  'error.importNoRecipe': "Couldn't find a recipe in that content.",
+  'error.importExtractFailed': 'Extraction failed — no structured result.',
+  'error.importUnusable': 'Extraction produced an unusable recipe.',
+  'error.badRequest': 'That request was not valid.',
+  'error.sttUnavailable': 'Assistant is unavailable.',
+  'error.sttTooLong': 'Recording too long — try a shorter question.',
+  'error.notFound': 'That was not found.',
+  'error.shareSelf': "You can't share with yourself.",
+  'error.shareNoAccount': 'No Sous account with that email.',
+  'error.shareFull': 'This collection already has {max} people.',
+  'error.adminSelf': "You can't change your own access.",
+  'error.adminUnknownRequest': 'That access request was not found.',
+  'error.adminUnknownInvite': 'That invite link was not found.',
+  'error.unsupportedMedia': 'That request must be JSON.',
+  'error.payloadTooLarge': 'That request was too large.',
 } as const satisfies Record<string, string | PluralForms>;
 
 type EnMessages = typeof en;

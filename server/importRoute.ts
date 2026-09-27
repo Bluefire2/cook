@@ -24,20 +24,28 @@ interface ImportRequestBody {
 
 const NOTHING_TO_IMPORT = 'Provide a URL or recipe text.';
 
+function fail(code: string, error: string, status: number, siteStatus?: number): Response {
+  const body: { error: string; code: string; status?: number } = { error, code };
+  if (siteStatus !== undefined) {
+    body.status = siteStatus;
+  }
+  return Response.json(body, { status });
+}
+
 function fetchFailure(page: Exclude<PageFetchOutcome, { kind: 'ok' }>): Response {
   switch (page.kind) {
     case 'invalid_url':
-      return Response.json({ error: 'That does not look like a web address.' }, { status: 422 });
+      return fail('import-bad-url', 'That does not look like a web address.', 422);
     case 'unsupported_scheme':
-      return Response.json({ error: 'Only http and https URLs are supported.' }, { status: 422 });
+      return fail('import-bad-scheme', 'Only http and https URLs are supported.', 422);
     case 'unreachable':
-      return Response.json({ error: 'Could not reach that URL.' }, { status: 422 });
+      return fail('import-unreachable', 'Could not reach that URL.', 422);
     case 'refused':
-      return Response.json(
-        {
-          error: `The site refused the request (${page.status}). Try pasting the recipe text instead.`,
-        },
-        { status: 422 },
+      return fail(
+        'import-refused',
+        `The site refused the request (${page.status}). Try pasting the recipe text instead.`,
+        422,
+        page.status,
       );
   }
 }
@@ -47,13 +55,13 @@ function outcomeResponse(outcome: ImportOutcome, sourceUrl: string | undefined):
     case 'ok':
       return Response.json({ recipe: { ...outcome.recipe, sourceUrl } });
     case 'empty_source':
-      return Response.json({ error: NOTHING_TO_IMPORT }, { status: 400 });
+      return fail('import-empty', NOTHING_TO_IMPORT, 400);
     case 'not_a_recipe':
-      return Response.json({ error: "Couldn't find a recipe in that content." }, { status: 422 });
+      return fail('import-no-recipe', "Couldn't find a recipe in that content.", 422);
     case 'parse_error':
-      return Response.json({ error: 'Extraction failed — no structured result.' }, { status: 502 });
+      return fail('import-extract-failed', 'Extraction failed — no structured result.', 502);
     case 'unusable':
-      return Response.json({ error: 'Extraction produced an unusable recipe.' }, { status: 502 });
+      return fail('import-unusable', 'Extraction produced an unusable recipe.', 502);
   }
 }
 
@@ -77,7 +85,7 @@ export async function importPost(
 
   const text = body.text?.trim() ?? '';
   if (text === '') {
-    return Response.json({ error: NOTHING_TO_IMPORT }, { status: 400 });
+    return fail('import-empty', NOTHING_TO_IMPORT, 400);
   }
   return outcomeResponse(await importFromSource(text, deps ?? recipeImportDepsFromEnv()), undefined);
 }

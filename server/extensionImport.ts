@@ -46,6 +46,10 @@ function corsHeaders(req: Request): Record<string, string> {
   };
 }
 
+function fail(req: Request, code: string, error: string, status: number): Response {
+  return jsonResponse(req, { error, code }, status);
+}
+
 function jsonResponse(req: Request, body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -84,20 +88,20 @@ export async function extensionImport(
 ): Promise<Response> {
   const access = await requireHeaderMember(req);
   if (access.kind === 'denied') {
-    return jsonResponse(req, { error: 'Unauthorized' }, 401);
+    return fail(req, 'unauthorized', 'Unauthorized', 401);
   }
   if (access.kind === 'unknown') {
-    return jsonResponse(req, { error: 'Membership unavailable' }, 503);
+    return fail(req, 'membership-unavailable', 'Membership unavailable', 503);
   }
 
   let raw: string;
   try {
     raw = await req.text();
   } catch {
-    return jsonResponse(req, { error: 'Bad request' }, 400);
+    return fail(req, 'bad-request', 'Bad request', 400);
   }
   if (raw.length > MAX_BODY_CHARS) {
-    return jsonResponse(req, { error: TOO_LARGE }, 413);
+    return fail(req, 'import-too-large', TOO_LARGE, 413);
   }
 
   let body: ExtensionImportBody;
@@ -108,7 +112,7 @@ export async function extensionImport(
     }
     body = parsed as ExtensionImportBody;
   } catch {
-    return jsonResponse(req, { error: 'Bad request' }, 400);
+    return fail(req, 'bad-request', 'Bad request', 400);
   }
 
   const url = typeof body.url === 'string' ? body.url.trim() : '';
@@ -118,18 +122,18 @@ export async function extensionImport(
   try {
     parsedUrl = new URL(url);
   } catch {
-    return jsonResponse(req, { error: 'That does not look like a web address.' }, 422);
+    return fail(req, 'import-bad-url', 'That does not look like a web address.', 422);
   }
   if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
-    return jsonResponse(req, { error: 'Only http and https URLs are supported.' }, 422);
+    return fail(req, 'import-bad-scheme', 'Only http and https URLs are supported.', 422);
   }
 
   const html = typeof body.html === 'string' ? body.html : '';
   if (html.length > MAX_HTML_CHARS) {
-    return jsonResponse(req, { error: TOO_LARGE }, 413);
+    return fail(req, 'import-too-large', TOO_LARGE, 413);
   }
   if (html.trim() === '') {
-    return jsonResponse(req, { error: 'Could not read that page.' }, 422);
+    return fail(req, 'import-unreadable', 'Could not read that page.', 422);
   }
 
   const outcome = await importFromHtml(html, deps ?? recipeImportDepsFromEnv());
@@ -137,13 +141,13 @@ export async function extensionImport(
     case 'ok':
       break;
     case 'empty_source':
-      return jsonResponse(req, { error: 'Could not read that page.' }, 422);
+      return fail(req, 'import-unreadable', 'Could not read that page.', 422);
     case 'not_a_recipe':
-      return jsonResponse(req, { error: "Couldn't find a recipe in that content." }, 422);
+      return fail(req, 'import-no-recipe', "Couldn't find a recipe in that content.", 422);
     case 'parse_error':
-      return jsonResponse(req, { error: 'Extraction failed — no structured result.' }, 502);
+      return fail(req, 'import-extract-failed', 'Extraction failed — no structured result.', 502);
     case 'unusable':
-      return jsonResponse(req, { error: UNUSABLE }, 502);
+      return fail(req, 'import-unusable', UNUSABLE, 502);
   }
 
   const payload = recipePutFromExtraction(outcome.recipe, {
@@ -152,7 +156,7 @@ export async function extensionImport(
     sourceUrl: url,
   });
   if (payload === null) {
-    return jsonResponse(req, { error: UNUSABLE }, 502);
+    return fail(req, 'import-unusable', UNUSABLE, 502);
   }
 
   // Firestore is the likeliest thing to fail here, and an escaping throw would
@@ -166,7 +170,7 @@ export async function extensionImport(
     applied = false;
   }
   if (!applied) {
-    return jsonResponse(req, { error: 'Could not save the recipe.' }, 500);
+    return fail(req, 'import-save-failed', 'Could not save the recipe.', 500);
   }
 
   return jsonResponse(req, { id: payload.id, title: payload.title });

@@ -1,4 +1,5 @@
 import { t } from '../i18n';
+import { serverErrorText } from './errorText';
 import { invalidateSession } from './session';
 import type { RecipeDraft } from './types';
 
@@ -22,10 +23,12 @@ export async function importRecipe(params: {
     throw new Error(t('error.sessionExpired'));
   }
   const data = (await response.json().catch(() => null)) as
-    | { recipe?: ExtractedRecipe; error?: string }
+    | { recipe?: ExtractedRecipe; error?: string; code?: string; status?: number }
     | null;
   if (!response.ok || !data?.recipe) {
-    throw new Error(data?.error ?? t('error.importFailedStatus', { status: response.status }));
+    throw new Error(
+      serverErrorText(data, 'error.importFailedStatus', { status: response.status }),
+    );
   }
 
   return {
