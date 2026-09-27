@@ -12,7 +12,9 @@ import {
   type ImportedRecipe,
 } from '../server/recipeImport.ts';
 
-const fixturesRoot = join(dirname(fileURLToPath(import.meta.url)), 'import');
+const evalsRoot = dirname(fileURLToPath(import.meta.url));
+const fixturesRoot = join(evalsRoot, 'import');
+const sitesRoot = join(evalsRoot, 'import-sites');
 
 const TEXT_FIXTURES = ['pomodoro', 'messy-sections'] as const;
 const PAGE_FIXTURES = ['gumbo', 'beef-noodle-soup', 'beef-stew'] as const;
@@ -199,4 +201,23 @@ describe('import from cached page (live Gemini)', () => {
       await expectCloseToGolden(name);
     },
   );
+});
+
+describe('import language from a cached foreign page (live Gemini)', () => {
+  beforeAll(() => {
+    if (!process.env.GEMINI_API_KEY?.trim()) {
+      throw new Error(
+        'GEMINI_API_KEY is required for npm run test:import. Put it in .env.local (same as dev:api).',
+      );
+    }
+  });
+
+  it('records Italian for giallozafferano carbonara', async () => {
+    const htmlPath = join(sitesRoot, 'giallozafferano-carbonara', 'page.html');
+    expect(existsSync(htmlPath)).toBe(true);
+    const result = await importFromHtml(readFileSync(htmlPath, 'utf8'), recipeImportDepsFromEnv());
+    expect(result.kind).toBe('ok');
+    if (result.kind !== 'ok') return;
+    expect(result.recipe.lang).toBe('it');
+  });
 });

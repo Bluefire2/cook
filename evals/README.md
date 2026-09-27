@@ -30,7 +30,10 @@ runtime image.
 ## `evals/import-sites/`
 
 22 pages from a spread of site types, fetched 2026-09-23 with a desktop Chrome
-User-Agent. No goldens yet; not wired into the harness.
+User-Agent. No goldens. `giallozafferano-carbonara` is wired into
+`evals/recipeImport.eval.ts` for `lang === 'it'`. That page and
+`marmiton-boeuf-bourguignon` are wired into `evals/translate.eval.ts`. The
+other pages are not wired into the harness.
 
 | Fixture | Site | Recipe | Author | Notes |
 | --- | --- | --- | --- | --- |
