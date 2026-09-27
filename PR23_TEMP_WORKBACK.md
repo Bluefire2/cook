@@ -2,9 +2,10 @@
 
 > **TEMPORARY HANDOFF FILE — DO NOT KEEP.**
 >
-> Once the work below is complete and verified, delete this file from the
-> working tree **without committing the deletion**. Do not treat this file as
-> durable product documentation or add it to the `AGENTS.md` plans table.
+> Once the work below is complete and verified, delete this file and
+> **commit that deletion** as part of the final cleanup before merging. Do not
+> treat this file as durable product documentation or add it to the
+> `AGENTS.md` plans table.
 
 Current reviewed head: `700678f` (`cursor/shared-collections-cdc9`).
 
