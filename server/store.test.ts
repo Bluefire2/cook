@@ -19,8 +19,10 @@ import {
   storedSharedParentOwner,
   type SharedParentLookupIo,
   recipeIdsWithoutTombstones,
+  createListLiveDocsAccumulator,
   decodePullCursor,
   encodePullCursor,
+  foldListLiveDocsCandidate,
   isUuid,
   messageIdsToClearAtBoundary,
   emailLowerBackfill,
@@ -853,5 +855,62 @@ describe('shared parent provenance', () => {
         sharedParentOwnerSub: 4,
       }),
     ).not.toHaveProperty('sharedParentOwnerSub');
+  });
+});
+
+describe('foldListLiveDocsCandidate', () => {
+  const limits = { maxDocs: 2, maxBytes: 100 };
+
+  function live(doc: Record<string, unknown>, jsonBytes: number) {
+    return { live: true as const, doc, jsonBytes };
+  }
+
+  it('skips non-live candidates', () => {
+    let acc = createListLiveDocsAccumulator();
+    acc = foldListLiveDocsCandidate(
+      acc,
+      { live: false, doc: { id: 't' }, jsonBytes: 0 },
+      limits,
+    );
+    expect(acc).toEqual(createListLiveDocsAccumulator());
+  });
+
+  it('keeps live docs until maxDocs and sets truncated on the next live doc', () => {
+    let acc = createListLiveDocsAccumulator();
+    acc = foldListLiveDocsCandidate(acc, live({ id: 'a' }, 10), limits);
+    acc = foldListLiveDocsCandidate(acc, live({ id: 'b' }, 10), limits);
+    expect(acc.docs).toHaveLength(2);
+    expect(acc.truncated).toBe(false);
+    expect(acc.done).toBe(false);
+    acc = foldListLiveDocsCandidate(acc, live({ id: 'c' }, 10), limits);
+    expect(acc.docs).toHaveLength(2);
+    expect(acc.truncated).toBe(true);
+    expect(acc.done).toBe(true);
+  });
+
+  it('sets truncated when the next doc would exceed maxBytes', () => {
+    let acc = createListLiveDocsAccumulator();
+    acc = foldListLiveDocsCandidate(acc, live({ id: 'a' }, 60), limits);
+    acc = foldListLiveDocsCandidate(acc, live({ id: 'b' }, 50), limits);
+    expect(acc.docs).toHaveLength(1);
+    expect(acc.truncated).toBe(true);
+    expect(acc.done).toBe(true);
+  });
+
+  it('omits an oversized first doc and sets truncated without throwing', () => {
+    let acc = createListLiveDocsAccumulator();
+    acc = foldListLiveDocsCandidate(acc, live({ id: 'big' }, 200), limits);
+    expect(acc.docs).toHaveLength(0);
+    expect(acc.truncated).toBe(true);
+    expect(acc.done).toBe(true);
+  });
+
+  it('does not mutate after done', () => {
+    let acc = createListLiveDocsAccumulator();
+    acc = foldListLiveDocsCandidate(acc, live({ id: 'a' }, 10), limits);
+    acc = foldListLiveDocsCandidate(acc, live({ id: 'b' }, 10), limits);
+    acc = foldListLiveDocsCandidate(acc, live({ id: 'c' }, 10), limits);
+    acc = foldListLiveDocsCandidate(acc, live({ id: 'd' }, 10), limits);
+    expect(acc.docs.map((d) => d.id)).toEqual(['a', 'b']);
   });
 });

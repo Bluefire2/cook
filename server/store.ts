@@ -811,6 +811,109 @@ export async function readTombstonedRecipeIds(
   return tombstoned;
 }
 
+export const LIST_LIVE_DOCS_PAGE_SIZE = 200;
+
+export type ListLiveDocsLimits = {
+  maxDocs: number;
+  maxBytes: number;
+};
+
+export type ListLiveDocsAccumulator = {
+  docs: Record<string, unknown>[];
+  totalBytes: number;
+  truncated: boolean;
+  done: boolean;
+};
+
+export function createListLiveDocsAccumulator(): ListLiveDocsAccumulator {
+  return { docs: [], totalBytes: 0, truncated: false, done: false };
+}
+
+export type ListLiveDocsCandidate = {
+  live: boolean;
+  doc: Record<string, unknown>;
+  jsonBytes: number;
+};
+
+/** Pure fold for live-doc paging caps; tombstones pass `live: false`. */
+export function foldListLiveDocsCandidate(
+  acc: ListLiveDocsAccumulator,
+  candidate: ListLiveDocsCandidate,
+  limits: ListLiveDocsLimits,
+): ListLiveDocsAccumulator {
+  if (acc.done || !candidate.live) {
+    return acc;
+  }
+  if (acc.docs.length >= limits.maxDocs) {
+    return { ...acc, truncated: true, done: true };
+  }
+  if (acc.totalBytes + candidate.jsonBytes > limits.maxBytes) {
+    return { ...acc, truncated: true, done: true };
+  }
+  return {
+    docs: [...acc.docs, candidate.doc],
+    totalBytes: acc.totalBytes + candidate.jsonBytes,
+    truncated: false,
+    done: false,
+  };
+}
+
+function liveDocJsonBytes(doc: Record<string, unknown>): number {
+  return Buffer.byteLength(JSON.stringify(doc), 'utf8');
+}
+
+function listLiveDocsPayload(
+  kind: 'recipes' | 'collections',
+  id: string,
+  raw: Record<string, unknown>,
+): Record<string, unknown> {
+  if (kind === 'recipes') {
+    return compactRecipeFields({ ...raw, id });
+  }
+  return { ...raw, id };
+}
+
+export async function listLiveDocs(
+  uid: string,
+  kind: 'recipes' | 'collections',
+  limits: ListLiveDocsLimits,
+): Promise<{ docs: Record<string, unknown>[]; truncated: boolean }> {
+  let acc = createListLiveDocsAccumulator();
+  let lastId: string | undefined;
+  while (!acc.done) {
+    let query = colRef(uid, kind)
+      .orderBy(FieldPath.documentId())
+      .limit(LIST_LIVE_DOCS_PAGE_SIZE);
+    if (lastId !== undefined) {
+      query = query.startAfter(lastId);
+    }
+    const fetched = await query.get();
+    if (fetched.empty) {
+      break;
+    }
+    for (const snap of fetched.docs) {
+      lastId = snap.id;
+      const raw = snap.data() as Record<string, unknown>;
+      if (!isLiveDoc(raw)) {
+        continue;
+      }
+      const doc = listLiveDocsPayload(kind, snap.id, raw);
+      acc = foldListLiveDocsCandidate(
+        acc,
+        { live: true, doc, jsonBytes: liveDocJsonBytes(doc) },
+        limits,
+      );
+      if (acc.done) {
+        break;
+      }
+    }
+    if (acc.done || fetched.size < LIST_LIVE_DOCS_PAGE_SIZE) {
+      break;
+    }
+  }
+  return { docs: acc.docs, truncated: acc.truncated };
+}
+
 /** Pages until `cap + 1` live docs or exhausted. Tombstones do not count. */
 export async function countLiveNamedCollections(
   uid: string,
