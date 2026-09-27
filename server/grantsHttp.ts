@@ -11,8 +11,12 @@ import {
   lookupAdmittedSubByEmail,
   normalizeShareEmail,
   orchestrateGrantRevoke,
+  orchestrateGrantRoleChange,
   parseGrantDoc,
+  parseIncomingShareDoc,
   shareGrantId,
+  type GrantRoleOutcome,
+  type LiveGrant,
   type RevokeGrantOutcome,
 } from './grants.ts';
 import {
@@ -22,6 +26,7 @@ import {
   requireMember,
   storeUnavailable,
 } from './membership.ts';
+import { requestedShareRole, type ShareRole } from './shareAuth.ts';
 import {
   getStoreFirestore,
   isLiveDoc,
@@ -45,6 +50,17 @@ function notFound(): Response {
   return jsonResponse({ error: 'Not found' }, 404);
 }
 
+type GrantJson = { sub: string; email: string; role: ShareRole; createdAt: number };
+
+function grantJson(grant: LiveGrant): GrantJson {
+  return {
+    sub: grant.viewerSub,
+    email: grant.email,
+    role: grant.role,
+    createdAt: grant.createdAt,
+  };
+}
+
 export function revokeGrantHttpResponse(
   outcome: RevokeGrantOutcome,
 ): Response {
@@ -66,7 +82,7 @@ export function grantPostHttpStatusForCollectionRead(
 
 export function collectionIdFromPath(pathname: string): string | null {
   const match = pathname.match(
-    /^\/api\/collections\/([^/]+)\/grants(?:\/revoke)?$/,
+    /^\/api\/collections\/([^/]+)\/grants(?:\/revoke|\/role)?$/,
   );
   if (!match) {
     return null;
@@ -132,17 +148,13 @@ export async function collectionGrantsGet(req: Request): Promise<Response> {
   }
   try {
     const snap = await grantColRef(access.sub, collectionId).get();
-    const grants: Array<{ sub: string; email: string; createdAt: number }> = [];
+    const grants: GrantJson[] = [];
     for (const doc of snap.docs) {
       const parsed = parseGrantDoc(doc.data(), doc.id);
       if (!isLiveGrant(parsed)) {
         continue;
       }
-      grants.push({
-        sub: parsed.viewerSub,
-        email: parsed.email,
-        createdAt: parsed.createdAt,
-      });
+      grants.push(grantJson(parsed));
     }
     grants.sort((a, b) => a.createdAt - b.createdAt);
     return jsonResponse({ grants });
@@ -176,12 +188,11 @@ export async function collectionGrantsPost(req: Request): Promise<Response> {
   } catch {
     return jsonResponse({ error: 'Bad request' }, 400);
   }
-  const email = normalizeShareEmail(
-    body && typeof body === 'object' && 'email' in body
-      ? (body as { email?: unknown }).email
-      : undefined,
-  );
-  if (email === undefined) {
+  const record =
+    body && typeof body === 'object' ? (body as { email?: unknown; role?: unknown }) : {};
+  const email = normalizeShareEmail(record.email);
+  const role = requestedShareRole(record.role);
+  if (email === undefined || role === null) {
     return jsonResponse({ error: 'Bad request' }, 400);
   }
 
@@ -206,6 +217,7 @@ export async function collectionGrantsPost(req: Request): Promise<Response> {
       collectionId,
       viewerSub: target.sub,
       email: target.email.trim().toLowerCase(),
+      role,
     });
     if (outcome.kind === 'collectionMissing') {
       return notFound();
@@ -216,13 +228,7 @@ export async function collectionGrantsPost(req: Request): Promise<Response> {
         409,
       );
     }
-    return jsonResponse({
-      grant: {
-        sub: outcome.doc.viewerSub,
-        email: outcome.doc.email,
-        createdAt: outcome.doc.createdAt,
-      },
-    });
+    return jsonResponse({ grant: grantJson(outcome.doc) });
   } catch (err) {
     console.error('collectionGrantsPost store error:', err);
     return storeUnavailable();
@@ -335,3 +341,125 @@ export async function collectionGrantsRevokePost(req: Request): Promise<Response
   });
 }
 
+export function grantRoleHttpResponse(outcome: GrantRoleOutcome): Response {
+  if (outcome.kind === 'badRequest') {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+  if (outcome.kind === 'missing') {
+    return notFound();
+  }
+  return jsonResponse({ grant: grantJson(outcome.doc) });
+}
+
+export type GrantRoleRequestDependencies = {
+  requireOwnedLiveCollection: RevokeGrantRequestDependencies['requireOwnedLiveCollection'];
+  changeRole: (
+    ownerSub: string,
+    collectionId: string,
+    viewerSub: string,
+    role: ShareRole,
+  ) => Promise<GrantRoleOutcome>;
+};
+
+/**
+ * `POST /api/collections/:id/grants/role` with `{ sub, role }`. Same order as
+ * revoke: the collection owner is established before the body is read, so a
+ * non-owner gets 404 whatever they send.
+ */
+export async function handleGrantRoleRequest(
+  req: Request,
+  dependencies: GrantRoleRequestDependencies,
+): Promise<Response> {
+  const collectionId = collectionIdFromPath(new URL(req.url).pathname);
+  if (collectionId === null) {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+
+  const access = await dependencies.requireOwnedLiveCollection(req, collectionId);
+  const early = accessResponse(access);
+  if (early) {
+    return early;
+  }
+  if (access.kind !== 'ok') {
+    return notFound();
+  }
+
+  const raw = await readBoundedText(req, BODY_LIMIT);
+  if (raw === null) {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+  let body: unknown;
+  try {
+    body = raw === '' ? {} : JSON.parse(raw);
+  } catch {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+  const record =
+    body && typeof body === 'object' ? (body as { sub?: unknown; role?: unknown }) : {};
+  // Unlike grant creation, a role change must name the role.
+  const role = record.role === undefined ? null : requestedShareRole(record.role);
+  if (!isSafeFirestoreDocumentId(record.sub) || role === null) {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+
+  try {
+    const outcome = await dependencies.changeRole(
+      access.sub,
+      collectionId,
+      record.sub,
+      role,
+    );
+    return grantRoleHttpResponse(outcome);
+  } catch (err) {
+    console.error('collectionGrantsRolePost store error:', err);
+    return storeUnavailable();
+  }
+}
+
+async function changeGrantRoleInFirestore(
+  ownerSub: string,
+  collectionId: string,
+  viewerSub: string,
+  role: ShareRole,
+): Promise<GrantRoleOutcome> {
+  return orchestrateGrantRoleChange(
+    { ownerSub, collectionId, viewerSub, role },
+    Date.now(),
+    {
+      runTransaction: async (work) => {
+        const db = getStoreFirestore();
+        return db.runTransaction(async (tx) => {
+          const grantRef = grantColRef(ownerSub, collectionId).doc(viewerSub);
+          const shareRef = incomingShareRef(
+            viewerSub,
+            shareGrantId(ownerSub, collectionId),
+          );
+          return work({
+            readForwardGrant: async (expectedViewerSub) => {
+              const snap = await tx.get(grantRef);
+              return parseGrantDoc(
+                snap.exists ? snap.data() : undefined,
+                expectedViewerSub,
+              );
+            },
+            readReverseShare: async () => {
+              const snap = await tx.get(shareRef);
+              return parseIncomingShareDoc(snap.exists ? snap.data() : undefined);
+            },
+            writePair: async (grant, share) => {
+              tx.set(grantRef, grant, { merge: false });
+              tx.set(shareRef, share, { merge: false });
+            },
+          });
+        });
+      },
+    },
+  );
+}
+
+export async function collectionGrantsRolePost(req: Request): Promise<Response> {
+  return handleGrantRoleRequest(req, {
+    requireOwnedLiveCollection,
+    changeRole: changeGrantRoleInFirestore,
+  });
+}

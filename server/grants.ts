@@ -6,7 +6,9 @@ import { accessAllows } from './membership.ts';
 import {
   canViewCollection,
   canViewRecipe,
+  parseShareRole,
   recipeListsPhoto,
+  type ShareRole,
 } from './shareAuth.ts';
 import {
   collectionDeletePayload,
@@ -27,6 +29,8 @@ export type LiveGrant = {
   viewerSub: string;
   email: string;
   collectionId: string;
+  /** Missing on grants written before roles; `parseGrantDoc` reads that as viewer. */
+  role: ShareRole;
   createdAt: number;
   updatedAt: number;
   active: true;
@@ -43,6 +47,8 @@ export type IncomingShareDoc = {
   ownerSub: string;
   collectionId: string;
   ownerEmail?: string;
+  /** Copied from the forward grant so the viewer pull needs no second read. */
+  role?: ShareRole;
   updatedAt: number;
   deletedAt?: number;
 };
@@ -53,6 +59,8 @@ export type LiveIncomingShare = {
   collectionId: string;
   /** The sharer's email when the grant was made; display only, never authorization. */
   ownerEmail?: string;
+  /** Missing reads as viewer (`parseShareRole`). */
+  role?: ShareRole;
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -123,6 +131,7 @@ export function parseGrantDoc(
     viewerSub: raw.viewerSub,
     email: raw.email,
     collectionId: raw.collectionId,
+    role: parseShareRole(raw.role),
     createdAt,
     updatedAt,
     active: true,
@@ -140,6 +149,7 @@ export function addGrantTransition(input: {
   viewerSub: string;
   email: string;
   collectionId: string;
+  role: ShareRole;
   now: number;
   liveCount: number;
 }):
@@ -158,6 +168,7 @@ export function addGrantTransition(input: {
       viewerSub: input.viewerSub,
       email: input.email,
       collectionId: input.collectionId,
+      role: input.role,
       createdAt: input.now,
       updatedAt: input.now,
       active: true,
@@ -225,6 +236,80 @@ export async function orchestrateGrantRevoke(
     if (next.kind === 'write') {
       await tx.writePair(viewerSub, next.doc);
     }
+    return next;
+  });
+}
+
+/**
+ * Only a live grant changes role. A missing or revoked grant is `missing`
+ * (404); re-adding the person is how a revoked grant comes back. The same
+ * role is a no-op so a double tap does not move the pull scope digest.
+ */
+export function changeGrantRoleTransition(input: {
+  existing: LiveGrant | GrantTombstone | null;
+  role: ShareRole;
+  now: number;
+}):
+  | { kind: 'missing' }
+  | { kind: 'unchanged'; doc: LiveGrant }
+  | { kind: 'write'; doc: LiveGrant } {
+  if (!isLiveGrant(input.existing)) {
+    return { kind: 'missing' };
+  }
+  if (input.existing.role === input.role) {
+    return { kind: 'unchanged', doc: input.existing };
+  }
+  return {
+    kind: 'write',
+    doc: {
+      ...input.existing,
+      role: input.role,
+      updatedAt: Math.max(input.now, input.existing.updatedAt),
+    },
+  };
+}
+
+export type GrantRoleTransition = ReturnType<typeof changeGrantRoleTransition>;
+export type GrantRoleOutcome = { kind: 'badRequest' } | GrantRoleTransition;
+
+export type GrantRoleTransaction = {
+  readForwardGrant: (
+    viewerSub: string,
+  ) => Promise<LiveGrant | GrantTombstone | null>;
+  readReverseShare: (viewerSub: string) => Promise<IncomingShareDoc | undefined>;
+  writePair: (grant: LiveGrant, share: IncomingShareDoc) => Promise<void>;
+};
+
+export type GrantRoleDependencies = {
+  runTransaction: (
+    work: (tx: GrantRoleTransaction) => Promise<GrantRoleTransition>,
+  ) => Promise<GrantRoleTransition>;
+};
+
+/** Forward grant and reverse share change together, like add and revoke. */
+export async function orchestrateGrantRoleChange(
+  input: { ownerSub: string; collectionId: string; viewerSub: unknown; role: ShareRole },
+  now: number,
+  dependencies: GrantRoleDependencies,
+): Promise<GrantRoleOutcome> {
+  const viewerSub = input.viewerSub;
+  if (!isSafeFirestoreDocumentId(viewerSub)) {
+    return { kind: 'badRequest' };
+  }
+  return dependencies.runTransaction(async (tx) => {
+    const existing = await tx.readForwardGrant(viewerSub);
+    const next = changeGrantRoleTransition({ existing, role: input.role, now });
+    if (next.kind !== 'write') {
+      return next;
+    }
+    const share = await tx.readReverseShare(viewerSub);
+    await tx.writePair(
+      next.doc,
+      incomingSharePayload(input.ownerSub, input.collectionId, next.doc.updatedAt, {
+        ownerEmail: share?.ownerEmail,
+        role: next.doc.role,
+      }),
+    );
     return next;
   });
 }
@@ -313,6 +398,9 @@ export function parseIncomingShareDoc(raw: unknown): IncomingShareDoc | undefine
   if (typeof raw.ownerEmail === 'string' && raw.ownerEmail !== '') {
     share.ownerEmail = raw.ownerEmail;
   }
+  if (raw.role === 'viewer' || raw.role === 'editor') {
+    share.role = raw.role;
+  }
   const deletedAt = finiteNumber(raw.deletedAt);
   if (deletedAt !== undefined) {
     share.deletedAt = deletedAt;
@@ -348,11 +436,14 @@ export function incomingSharePayload(
   ownerSub: string,
   collectionId: string,
   updatedAt: number,
-  extra?: { ownerEmail?: string; deletedAt?: number },
+  extra?: { ownerEmail?: string; role?: ShareRole; deletedAt?: number },
 ): IncomingShareDoc {
   const share: IncomingShareDoc = { ownerSub, collectionId, updatedAt };
   if (extra?.ownerEmail) {
     share.ownerEmail = extra.ownerEmail;
+  }
+  if (extra?.role !== undefined && extra.deletedAt === undefined) {
+    share.role = extra.role;
   }
   if (extra?.deletedAt !== undefined) {
     share.deletedAt = extra.deletedAt;
@@ -489,8 +580,7 @@ export async function listLiveIncomingShares(
   const snap = await incomingSharesCol(viewerSub)
     .orderBy(FieldPath.documentId())
     .get();
-  const out: Array<{ grantId: string; ownerSub: string; collectionId: string }> =
-    [];
+  const out: LiveIncomingShare[] = [];
   for (const doc of snap.docs) {
     const data = doc.data() as Record<string, unknown>;
     if (!isLiveDoc(data)) {
@@ -506,6 +596,7 @@ export async function listLiveIncomingShares(
       grantId: doc.id,
       ownerSub: data.ownerSub,
       collectionId: data.collectionId,
+      role: parseShareRole(data.role),
     });
   }
   return out;
@@ -528,6 +619,7 @@ export async function readLiveIncomingShare(
     ownerSub: share.ownerSub,
     collectionId: share.collectionId,
     ...(share.ownerEmail ? { ownerEmail: share.ownerEmail } : {}),
+    role: parseShareRole(share.role),
   };
 }
 
@@ -1088,6 +1180,7 @@ export async function orchestrateGrantAdd(
     collectionId: string;
     viewerSub: string;
     email: string;
+    role: ShareRole;
   },
   deps: GrantAddDependencies,
 ): Promise<GrantAddOutcome> {
@@ -1111,6 +1204,7 @@ export async function orchestrateGrantAdd(
       viewerSub: input.viewerSub,
       email: input.email,
       collectionId: input.collectionId,
+      role: input.role,
       now,
       liveCount,
     });
@@ -1124,6 +1218,7 @@ export async function orchestrateGrantAdd(
       next.doc,
       incomingSharePayload(input.ownerSub, input.collectionId, next.doc.updatedAt, {
         ownerEmail: input.ownerEmail,
+        role: next.doc.role,
       }),
     );
     return { kind: 'write', doc: next.doc };
@@ -1136,6 +1231,7 @@ export async function commitCollectionGrant(input: {
   collectionId: string;
   viewerSub: string;
   email: string;
+  role: ShareRole;
 }): Promise<GrantAddOutcome> {
   const db = getStoreFirestore();
   const grantCollection = grantColRef(input.ownerSub, input.collectionId);
