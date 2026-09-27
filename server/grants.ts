@@ -9,10 +9,14 @@ import {
   recipeListsPhoto,
 } from './shareAuth.ts';
 import {
+  collectionDeletePayload,
   collectionDocRef,
+  compareMutation,
   getStoreFirestore,
   isLiveDoc,
   isUuid,
+  readStoredMutationState,
+  type MutationResult,
   type StoreKind,
 } from './store.ts';
 
@@ -25,12 +29,14 @@ export type LiveGrant = {
   collectionId: string;
   createdAt: number;
   updatedAt: number;
+  active: true;
 };
 
 export type GrantTombstone = {
   viewerSub: string;
   updatedAt: number;
   deletedAt: number;
+  active: false;
 };
 
 export type IncomingShareDoc = {
@@ -99,7 +105,7 @@ export function parseGrantDoc(
   }
   const deletedAt = finiteNumber(raw.deletedAt);
   if (deletedAt !== undefined) {
-    return { viewerSub: raw.viewerSub, updatedAt, deletedAt };
+    return { viewerSub: raw.viewerSub, updatedAt, deletedAt, active: false };
   }
   if (typeof raw.email !== 'string' || raw.email === '') {
     return null;
@@ -117,6 +123,7 @@ export function parseGrantDoc(
     collectionId: raw.collectionId,
     createdAt,
     updatedAt,
+    active: true,
   };
 }
 
@@ -151,6 +158,7 @@ export function addGrantTransition(input: {
       collectionId: input.collectionId,
       createdAt: input.now,
       updatedAt: input.now,
+      active: true,
     },
   };
 }
@@ -175,6 +183,7 @@ export function revokeGrantTransition(input: {
       viewerSub: input.viewerSub,
       updatedAt: input.now,
       deletedAt: input.now,
+      active: false,
     },
   };
 }
@@ -244,30 +253,39 @@ export function collectionIsCanonicalTombstoneAt(
   return canonicalCollectionTombstoneAt(collection) === cascadeAt;
 }
 
+/** Server order for a delete cascade. Never the client delete clock. */
+export function serverGrantCascadeOrder(
+  now: number,
+  pairUpdatedAts: readonly number[],
+): number {
+  let latest = Number.isFinite(now) ? now : 0;
+  for (const at of pairUpdatedAts) {
+    if (Number.isFinite(at) && at > latest) {
+      latest = at;
+    }
+  }
+  return latest + 1;
+}
+
 export function incomingShareCascadeDoc(
-  existing: IncomingShareDoc | undefined,
+  _existing: IncomingShareDoc | undefined,
   ownerSub: string,
   collectionId: string,
   cascadeAt: number,
-): IncomingShareDoc | null {
-  if (existing !== undefined && existing.updatedAt > cascadeAt) {
-    return null;
-  }
+): IncomingShareDoc {
   return incomingSharePayload(ownerSub, collectionId, cascadeAt, { deletedAt: cascadeAt });
 }
 
 export function grantCascadeRevoke(
-  existing: LiveGrant | GrantTombstone | null,
+  _existing: LiveGrant | GrantTombstone | null,
   viewerSub: string,
   cascadeAt: number,
-): GrantTombstone | null {
-  if (existing !== null && existing.updatedAt > cascadeAt) {
-    return null;
-  }
+): GrantTombstone {
   return {
     viewerSub,
     updatedAt: cascadeAt,
     deletedAt: cascadeAt,
+    active: false,
   };
 }
 
@@ -300,7 +318,7 @@ export function parseIncomingShareDoc(raw: unknown): IncomingShareDoc | undefine
   return share;
 }
 
-/** Both sides tombstone or both skip; never write one side alone. */
+/** Both sides tombstone together. A newer pair timestamp does not skip the pair. */
 export function cascadeGrantPairTransition(input: {
   existingGrant: LiveGrant | GrantTombstone | null;
   existingShare: IncomingShareDoc | undefined;
@@ -308,22 +326,20 @@ export function cascadeGrantPairTransition(input: {
   ownerSub: string;
   collectionId: string;
   cascadeAt: number;
-}): { grant: GrantTombstone; share: IncomingShareDoc } | null {
-  const grant = grantCascadeRevoke(
-    input.existingGrant,
-    input.viewerSub,
-    input.cascadeAt,
-  );
-  const share = incomingShareCascadeDoc(
-    input.existingShare,
-    input.ownerSub,
-    input.collectionId,
-    input.cascadeAt,
-  );
-  if (grant === null || share === null) {
-    return null;
-  }
-  return { grant, share };
+}): { grant: GrantTombstone; share: IncomingShareDoc } {
+  return {
+    grant: grantCascadeRevoke(
+      input.existingGrant,
+      input.viewerSub,
+      input.cascadeAt,
+    ),
+    share: incomingShareCascadeDoc(
+      input.existingShare,
+      input.ownerSub,
+      input.collectionId,
+      input.cascadeAt,
+    ),
+  };
 }
 
 export function incomingSharePayload(
@@ -512,6 +528,217 @@ export async function readLiveIncomingShare(
   };
 }
 
+/** Firestore snapshot metadata, not a client timestamp. */
+export type SharedScopeShareSnapshot = {
+  id: string;
+  data: Record<string, unknown> | undefined;
+  updateTime: string;
+};
+
+export type SharedScopeCollectionSnapshot = {
+  exists: boolean;
+  data?: Record<string, unknown>;
+  updateTime?: string;
+};
+
+/**
+ * Authorization-scope row. `shareUpdateTime` and `collectionUpdateTime` are
+ * Firestore snapshot update times, so a revoke/re-grant keeps a new identity
+ * even when the stored fields match.
+ */
+export type SharedAuthorizationScopeEntry = {
+  grantId: string;
+  ownerSub: string;
+  collectionId: string;
+  shareUpdateTime: string;
+  collectionLive: boolean;
+  recipeIds?: string[];
+  collectionUpdateTime?: string;
+};
+
+export type SharedAuthorizationScopeIo = {
+  listShareSnapshots: (
+    viewerSub: string,
+  ) => Promise<SharedScopeShareSnapshot[]>;
+  readCollectionSnapshot: (
+    ownerSub: string,
+    collectionId: string,
+  ) => Promise<SharedScopeCollectionSnapshot>;
+  ownerAdmitted?: (ownerSub: string) => Promise<boolean>;
+};
+
+export function canonicalSnapshotUpdateTime(
+  updateTime: { seconds: number; nanoseconds: number } | undefined,
+): string {
+  if (updateTime === undefined) {
+    return '';
+  }
+  const { seconds, nanoseconds } = updateTime;
+  if (!Number.isFinite(seconds) || !Number.isFinite(nanoseconds)) {
+    return '';
+  }
+  return `${Math.trunc(seconds)}.${String(Math.trunc(nanoseconds)).padStart(9, '0')}`;
+}
+
+function liveShareIdentity(share: SharedScopeShareSnapshot): {
+  grantId: string;
+  ownerSub: string;
+  collectionId: string;
+  shareUpdateTime: string;
+} | null {
+  const parsed = parseIncomingShareDoc(share.data);
+  if (parsed === undefined || parsed.deletedAt !== undefined) {
+    return null;
+  }
+  return {
+    grantId: share.id,
+    ownerSub: parsed.ownerSub,
+    collectionId: parsed.collectionId,
+    shareUpdateTime: share.updateTime,
+  };
+}
+
+export function sharedScopeEntryFromSnapshots(
+  share: SharedScopeShareSnapshot,
+  collection: SharedScopeCollectionSnapshot,
+): SharedAuthorizationScopeEntry | null {
+  const identity = liveShareIdentity(share);
+  if (identity === null) {
+    return null;
+  }
+  const data = collection.exists ? collection.data : undefined;
+  const collectionLive = canViewCollection(
+    {
+      ownerSub: identity.ownerSub,
+      collectionId: identity.collectionId,
+      grantId: identity.grantId,
+    },
+    data,
+  );
+  const entry: SharedAuthorizationScopeEntry = {
+    grantId: identity.grantId,
+    ownerSub: identity.ownerSub,
+    collectionId: identity.collectionId,
+    shareUpdateTime: identity.shareUpdateTime,
+    collectionLive,
+  };
+  if (!collectionLive || data === undefined) {
+    return entry;
+  }
+  entry.recipeIds = Array.isArray(data.recipeIds)
+    ? data.recipeIds.filter((id): id is string => typeof id === 'string')
+    : [];
+  entry.collectionUpdateTime = collection.updateTime ?? '';
+  return entry;
+}
+
+/**
+ * Canonical scope description. Sorting and dropping non-live membership
+ * happens here so the digest does not depend on query order or tombstone
+ * recipe lists. Recipe and photo bodies are not part of this value.
+ */
+export function canonicalSharedAuthorizationScope(
+  entries: readonly SharedAuthorizationScopeEntry[],
+): SharedAuthorizationScopeEntry[] {
+  const canonical: SharedAuthorizationScopeEntry[] = [];
+  for (const entry of entries) {
+    const next: SharedAuthorizationScopeEntry = {
+      grantId: entry.grantId,
+      ownerSub: entry.ownerSub,
+      collectionId: entry.collectionId,
+      shareUpdateTime: entry.shareUpdateTime,
+      collectionLive: entry.collectionLive,
+    };
+    if (entry.collectionLive) {
+      const recipeIds = Array.isArray(entry.recipeIds)
+        ? entry.recipeIds.filter((id): id is string => typeof id === 'string')
+        : [];
+      recipeIds.sort();
+      next.recipeIds = recipeIds;
+      next.collectionUpdateTime = entry.collectionUpdateTime ?? '';
+    }
+    canonical.push(next);
+  }
+  canonical.sort((a, b) =>
+    a.grantId < b.grantId ? -1 : a.grantId > b.grantId ? 1 : 0,
+  );
+  return canonical;
+}
+
+/** One read-only pass: reverse shares, then each live share's collection. */
+export async function loadSharedAuthorizationScope(
+  viewerSub: string,
+  io: SharedAuthorizationScopeIo,
+): Promise<SharedAuthorizationScopeEntry[]> {
+  const shares = await io.listShareSnapshots(viewerSub);
+  const entries: SharedAuthorizationScopeEntry[] = [];
+  const admittedByOwner = new Map<string, boolean>();
+  for (const share of shares) {
+    const identity = liveShareIdentity(share);
+    if (identity === null) {
+      continue;
+    }
+    if (io.ownerAdmitted) {
+      let admitted = admittedByOwner.get(identity.ownerSub);
+      if (admitted === undefined) {
+        admitted = await io.ownerAdmitted(identity.ownerSub);
+        admittedByOwner.set(identity.ownerSub, admitted);
+      }
+      if (!admitted) {
+        continue;
+      }
+    }
+    const collection = await io.readCollectionSnapshot(
+      identity.ownerSub,
+      identity.collectionId,
+    );
+    const entry = sharedScopeEntryFromSnapshots(share, collection);
+    if (entry !== null) {
+      entries.push(entry);
+    }
+  }
+  return entries;
+}
+
+/**
+ * Reads the viewer's authorization scope in one Firestore read-only
+ * transaction. No writes. Callers compare the digest before and after a
+ * page; this function does not authorize individual rows.
+ */
+export async function readSharedAuthorizationScope(
+  viewerSub: string,
+): Promise<SharedAuthorizationScopeEntry[]> {
+  const db = getStoreFirestore();
+  return db.runTransaction(
+    (tx) =>
+      loadSharedAuthorizationScope(viewerSub, {
+      ownerAdmitted: sharingOwnerAdmitted,
+      listShareSnapshots: async (sub) => {
+        const snap = await tx.get(
+          incomingSharesCol(sub).orderBy(FieldPath.documentId()),
+        );
+        return snap.docs.map((doc) => ({
+          id: doc.id,
+          data: doc.data() as Record<string, unknown>,
+          updateTime: canonicalSnapshotUpdateTime(doc.updateTime),
+        }));
+      },
+      readCollectionSnapshot: async (ownerSub, collectionId) => {
+        const snap = await tx.get(collectionDocRef(ownerSub, collectionId));
+        if (!snap.exists) {
+          return { exists: false };
+        }
+        return {
+          exists: true,
+          data: snap.data() as Record<string, unknown>,
+          updateTime: canonicalSnapshotUpdateTime(snap.updateTime),
+        };
+      },
+    }),
+    { readOnly: true },
+  );
+}
+
 type ReadDocData = (
   uid: string,
   kind: StoreKind,
@@ -520,14 +747,14 @@ type ReadDocData = (
 
 /**
  * Whether a sharing owner is still admitted. Denied owners' grants are inert.
- * Throws when membership is unknown so callers answer 503, never 401/404.
+ * Throws when membership is unknown so callers answer 503, never 401 or 404.
  */
 export async function sharingOwnerAdmitted(ownerSub: string): Promise<boolean> {
   const profile = await getStoreFirestore().collection('users').doc(ownerSub).get();
-  const email = profile.exists ? profile.data()?.email : undefined;
+  const rawEmail = profile.exists ? profile.data()?.email : undefined;
   const decision = await accessAllows({
     sub: ownerSub,
-    email: typeof email === 'string' ? email : '',
+    email: typeof rawEmail === 'string' ? rawEmail : '',
     emailVerified: true,
   });
   if (decision === 'unknown') {
@@ -622,48 +849,324 @@ export async function sessionCanViewOwnerPhoto(
   return false;
 }
 
-export async function cascadeCollectionGrants(
+export const LIVE_GRANT_QUERY_LIMIT = MAX_LIVE_GRANTS + 1;
+
+export type CollectionGrantDeletePlan =
+  | { kind: 'reject' }
+  | { kind: 'tombstone-only' }
+  | { kind: 'apply' }
+  | { kind: 'heal'; grantCascadeAt: number; writeCollection: boolean };
+
+/**
+ * Client LWW decides whether the collection tombstone is written.
+ * ACL revocation uses a stored `grantCascadeAt` or a fresh server order,
+ * never `clientUpdatedAt`.
+ */
+export function planCollectionGrantDelete(
+  collection: Record<string, unknown> | undefined,
+  clientUpdatedAt: number,
+): CollectionGrantDeletePlan {
+  const stored = readStoredMutationState(collection);
+  const cmp = compareMutation(stored, clientUpdatedAt, 'tombstone');
+  const canonicalAt = canonicalCollectionTombstoneAt(collection);
+  if (canonicalAt !== undefined && collection !== undefined) {
+    const grantCascadeAt = finiteNumber(collection.grantCascadeAt);
+    if (grantCascadeAt !== undefined) {
+      return { kind: 'heal', grantCascadeAt, writeCollection: cmp.allow };
+    }
+    return cmp.allow ? { kind: 'tombstone-only' } : { kind: 'reject' };
+  }
+  if (!cmp.allow) {
+    return { kind: 'reject' };
+  }
+  if (collection !== undefined && stored !== null && isLiveDoc(collection)) {
+    return { kind: 'apply' };
+  }
+  return { kind: 'tombstone-only' };
+}
+
+export type LiveForwardGrantSnap = {
+  viewerSub: string;
+  data: Record<string, unknown> | undefined;
+};
+
+export type CollectionGrantDeleteTransaction = {
+  readCollection: () => Promise<Record<string, unknown> | undefined>;
+  queryLiveForwardGrants: () => Promise<LiveForwardGrantSnap[]>;
+  readReverseShare: (viewerSub: string) => Promise<Record<string, unknown> | undefined>;
+  writeCollection: (doc: Record<string, unknown>) => void;
+  writePair: (viewerSub: string, grant: GrantTombstone, share: IncomingShareDoc) => void;
+};
+
+export type CollectionGrantDeleteDependencies = {
+  now: () => number;
+  runTransaction: (
+    work: (tx: CollectionGrantDeleteTransaction) => Promise<MutationResult>,
+  ) => Promise<MutationResult>;
+};
+
+function rawUpdatedAt(raw: unknown): number | undefined {
+  if (!isPlainObject(raw)) {
+    return undefined;
+  }
+  return finiteNumber(raw.updatedAt);
+}
+
+export async function orchestrateCollectionGrantDelete(
+  input: {
+    ownerSub: string;
+    collectionId: string;
+    clientUpdatedAt: number;
+  },
+  deps: CollectionGrantDeleteDependencies,
+): Promise<MutationResult> {
+  return deps.runTransaction(async (tx) => {
+    const now = deps.now();
+    const current = await tx.readCollection();
+    const plan = planCollectionGrantDelete(current, input.clientUpdatedAt);
+    if (plan.kind === 'reject') {
+      return { applied: false, current };
+    }
+    if (plan.kind === 'tombstone-only') {
+      tx.writeCollection(
+        collectionDeletePayload(input.collectionId, input.clientUpdatedAt, now),
+      );
+      return { applied: true, serverUpdatedAt: now };
+    }
+
+    const liveDocs = (await tx.queryLiveForwardGrants()).slice(0, LIVE_GRANT_QUERY_LIMIT);
+    const pairs: Array<{
+      viewerSub: string;
+      grant: LiveGrant | GrantTombstone | null;
+      share: IncomingShareDoc | undefined;
+      updatedAts: number[];
+    }> = [];
+    for (const doc of liveDocs) {
+      if (!isSafeFirestoreDocumentId(doc.viewerSub)) {
+        continue;
+      }
+      const shareRaw = await tx.readReverseShare(doc.viewerSub);
+      const grant = parseGrantDoc(doc.data, doc.viewerSub);
+      const share = parseIncomingShareDoc(shareRaw);
+      const updatedAts: number[] = [];
+      const grantAt = grant?.updatedAt ?? rawUpdatedAt(doc.data);
+      const shareAt = share?.updatedAt ?? rawUpdatedAt(shareRaw);
+      if (grantAt !== undefined) {
+        updatedAts.push(grantAt);
+      }
+      if (shareAt !== undefined) {
+        updatedAts.push(shareAt);
+      }
+      pairs.push({ viewerSub: doc.viewerSub, grant, share, updatedAts });
+    }
+
+    const grantCascadeAt =
+      plan.kind === 'heal'
+        ? plan.grantCascadeAt
+        : serverGrantCascadeOrder(
+            now,
+            pairs.flatMap((pair) => pair.updatedAts),
+          );
+
+    const writeCollection = plan.kind === 'apply' || plan.writeCollection;
+    if (writeCollection) {
+      tx.writeCollection(
+        collectionDeletePayload(
+          input.collectionId,
+          input.clientUpdatedAt,
+          now,
+          grantCascadeAt,
+        ),
+      );
+    }
+
+    for (const pair of pairs) {
+      const next = cascadeGrantPairTransition({
+        existingGrant: pair.grant,
+        existingShare: pair.share,
+        viewerSub: pair.viewerSub,
+        ownerSub: input.ownerSub,
+        collectionId: input.collectionId,
+        cascadeAt: grantCascadeAt,
+      });
+      tx.writePair(pair.viewerSub, next.grant, next.share);
+    }
+
+    if (!writeCollection) {
+      return { applied: false, current };
+    }
+    return { applied: true, serverUpdatedAt: now };
+  });
+}
+
+export async function deleteCollectionWithGrants(
   ownerSub: string,
   collectionId: string,
-  at: number,
-): Promise<void> {
-  const snap = await grantColRef(ownerSub, collectionId).get();
+  clientUpdatedAt: number,
+): Promise<MutationResult> {
   const db = getStoreFirestore();
-  const grantId = shareGrantId(ownerSub, collectionId);
-  for (const doc of snap.docs) {
-    const viewerSub = doc.id;
-    const grantRef = grantColRef(ownerSub, collectionId).doc(viewerSub);
-    const shareRef = incomingShareRef(viewerSub, grantId);
-    await db.runTransaction(async (tx) => {
-      const collectionSnap = await tx.get(collectionDocRef(ownerSub, collectionId));
-      const collection = collectionSnap.exists
-        ? (collectionSnap.data() as Record<string, unknown>)
-        : undefined;
-      if (!collectionIsCanonicalTombstoneAt(collection, at)) {
-        return;
+  const collectionRef = collectionDocRef(ownerSub, collectionId);
+  const grants = grantColRef(ownerSub, collectionId);
+  return orchestrateCollectionGrantDelete(
+    { ownerSub, collectionId, clientUpdatedAt },
+    {
+      now: () => Date.now(),
+      runTransaction: (work) =>
+        db.runTransaction(async (tx) =>
+          work({
+            readCollection: async () => {
+              const snap = await tx.get(collectionRef);
+              return snap.exists
+                ? (snap.data() as Record<string, unknown>)
+                : undefined;
+            },
+            queryLiveForwardGrants: async () => {
+              const snap = await tx.get(
+                grants.where('active', '==', true).limit(LIVE_GRANT_QUERY_LIMIT),
+              );
+              return snap.docs.map((doc) => ({
+                viewerSub: doc.id,
+                data: doc.data() as Record<string, unknown>,
+              }));
+            },
+            readReverseShare: async (viewerSub) => {
+              const snap = await tx.get(
+                incomingShareRef(viewerSub, shareGrantId(ownerSub, collectionId)),
+              );
+              return snap.exists
+                ? (snap.data() as Record<string, unknown>)
+                : undefined;
+            },
+            writeCollection: (doc) => {
+              tx.set(collectionRef, doc, { merge: false });
+            },
+            writePair: (viewerSub, grant, share) => {
+              tx.set(grants.doc(viewerSub), grant, { merge: false });
+              tx.set(
+                incomingShareRef(viewerSub, shareGrantId(ownerSub, collectionId)),
+                share,
+                { merge: false },
+              );
+            },
+          }),
+        ),
+    },
+  );
+}
+
+export type ForwardGrantSnap = {
+  id: string;
+  data: Record<string, unknown> | undefined;
+};
+
+export type GrantAddTransaction = {
+  readCollection: () => Promise<Record<string, unknown> | undefined>;
+  readForwardGrants: () => Promise<ForwardGrantSnap[]>;
+  writePair: (grant: LiveGrant, share: IncomingShareDoc) => void;
+};
+
+export type GrantAddOutcome =
+  | { kind: 'collectionMissing' }
+  | { kind: 'cap' }
+  | { kind: 'idempotent'; doc: LiveGrant }
+  | { kind: 'write'; doc: LiveGrant };
+
+export type GrantAddDependencies = {
+  now: () => number;
+  runTransaction: (
+    work: (tx: GrantAddTransaction) => Promise<GrantAddOutcome>,
+  ) => Promise<GrantAddOutcome>;
+};
+
+export async function orchestrateGrantAdd(
+  input: {
+    ownerSub: string;
+    ownerEmail: string;
+    collectionId: string;
+    viewerSub: string;
+    email: string;
+  },
+  deps: GrantAddDependencies,
+): Promise<GrantAddOutcome> {
+  return deps.runTransaction(async (tx) => {
+    const now = deps.now();
+    const collection = await tx.readCollection();
+    if (!collectionLiveForGrant(collection)) {
+      return { kind: 'collectionMissing' };
+    }
+    const grants = await tx.readForwardGrants();
+    const grantSnap = grants.find((doc) => doc.id === input.viewerSub);
+    const existing = parseGrantDoc(grantSnap?.data, input.viewerSub);
+    let liveCount = 0;
+    for (const doc of grants) {
+      if (isLiveGrant(parseGrantDoc(doc.data, doc.id))) {
+        liveCount += 1;
       }
-      const grantSnap = await tx.get(grantRef);
-      const shareSnap = await tx.get(shareRef);
-      const existingGrant = parseGrantDoc(
-        grantSnap.exists ? grantSnap.data() : undefined,
-        viewerSub,
-      );
-      const existingShare = shareSnap.exists
-        ? parseIncomingShareDoc(shareSnap.data())
-        : undefined;
-      const next = cascadeGrantPairTransition({
-        existingGrant,
-        existingShare,
-        viewerSub,
-        ownerSub,
-        collectionId,
-        cascadeAt: at,
-      });
-      if (next === null) {
-        return;
-      }
-      tx.set(grantRef, next.grant, { merge: false });
-      tx.set(shareRef, next.share, { merge: false });
+    }
+    const next = addGrantTransition({
+      existing,
+      viewerSub: input.viewerSub,
+      email: input.email,
+      collectionId: input.collectionId,
+      now,
+      liveCount,
     });
-  }
+    if (next.kind === 'cap') {
+      return { kind: 'cap' };
+    }
+    if (next.kind === 'idempotent') {
+      return { kind: 'idempotent', doc: next.doc };
+    }
+    tx.writePair(
+      next.doc,
+      incomingSharePayload(input.ownerSub, input.collectionId, next.doc.updatedAt, {
+        ownerEmail: input.ownerEmail,
+      }),
+    );
+    return { kind: 'write', doc: next.doc };
+  });
+}
+
+export async function commitCollectionGrant(input: {
+  ownerSub: string;
+  ownerEmail: string;
+  collectionId: string;
+  viewerSub: string;
+  email: string;
+}): Promise<GrantAddOutcome> {
+  const db = getStoreFirestore();
+  const grantCollection = grantColRef(input.ownerSub, input.collectionId);
+  const collectionRef = collectionDocRef(input.ownerSub, input.collectionId);
+  return orchestrateGrantAdd(input, {
+    now: () => Date.now(),
+    runTransaction: (work) =>
+      db.runTransaction(async (tx) =>
+        work({
+          readCollection: async () => {
+            const snap = await tx.get(collectionRef);
+            return snap.exists
+              ? (snap.data() as Record<string, unknown>)
+              : undefined;
+          },
+          readForwardGrants: async () => {
+            const snap = await tx.get(grantCollection);
+            return snap.docs.map((doc) => ({
+              id: doc.id,
+              data: doc.data() as Record<string, unknown>,
+            }));
+          },
+          writePair: (grant, share) => {
+            tx.set(grantCollection.doc(grant.viewerSub), grant, { merge: false });
+            tx.set(
+              incomingShareRef(
+                grant.viewerSub,
+                shareGrantId(input.ownerSub, input.collectionId),
+              ),
+              share,
+              { merge: false },
+            );
+          },
+        }),
+      ),
+  });
 }

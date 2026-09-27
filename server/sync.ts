@@ -1,8 +1,8 @@
 import {
-  canonicalCollectionTombstoneAt,
-  cascadeCollectionGrants,
+  deleteCollectionWithGrants,
   listLiveIncomingShares,
   readLiveIncomingShare,
+  readSharedAuthorizationScope,
   sharingOwnerAdmitted,
 } from './grants.ts';
 import { drainGcsDeletes } from './photos.ts';
@@ -16,6 +16,8 @@ import {
   buildSharedPullPage,
   decodeSharedCursor,
   encodeSharedCursor,
+  SHARED_SNAPSHOT_CHANGED_ERROR,
+  SHARED_SNAPSHOT_CHANGED_STATUS,
 } from './sharedPull.ts';
 import {
   addedCollectionRecipeIds,
@@ -34,25 +36,13 @@ import {
   readDocsData,
   readTombstonedRecipeIds,
   recipeIdsWithoutTombstones,
-  tombstoneDoc,
+  chatCookPullFields,
   tombstonePhotoWithGcs,
-  type MutationResult,
   type PullCursor,
   type PushRejectReason,
   type StoreKind,
   validatePushOp,
 } from './store.ts';
-
-/** Pick the accepted or stored canonical tombstone timestamp for a grant cascade. */
-export function collectionDeleteCascadeAt(
-  result: MutationResult,
-  acceptedAt: number,
-): number | undefined {
-  if (result.applied) {
-    return acceptedAt;
-  }
-  return canonicalCollectionTombstoneAt(result.current);
-}
 
 const STORE_KINDS: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos', 'collections'];
 
@@ -73,6 +63,9 @@ function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<stri
   const deletedAt = doc.deletedAt;
   if (deletedAt !== undefined && deletedAt !== null) {
     return { id: doc.id, deletedAt };
+  }
+  if (kind === 'chatMessages' || kind === 'cookState') {
+    return chatCookPullFields(doc);
   }
   const copy = { ...doc };
   delete copy.serverUpdatedAt;
@@ -247,12 +240,7 @@ export async function applyPushOp(
     }
     case 'collection.delete': {
       const body = payload as { id: string; updatedAt: number };
-      const result = await tombstoneDoc(uid, 'collections', body.id, body.updatedAt);
-      const cascadeAt = collectionDeleteCascadeAt(result, body.updatedAt);
-      if (cascadeAt !== undefined) {
-        await cascadeCollectionGrants(uid, body.id, cascadeAt);
-      }
-      return result;
+      return deleteCollectionWithGrants(uid, body.id, body.updatedAt);
     }
     default:
       return { applied: false, reason: 'unknown' };
@@ -348,21 +336,50 @@ export async function syncSharedPull(req: Request): Promise<Response> {
         limit = Math.min(500, Math.max(1, Math.floor(parsed)));
       }
     }
-    const cursor = decodeSharedCursor(url.searchParams.get('cursor'));
+    const decoded = decodeSharedCursor(
+      url.searchParams.get('cursor'),
+      access.sub,
+    );
+    if (decoded.kind === 'reject') {
+      return jsonResponse(
+        { error: SHARED_SNAPSHOT_CHANGED_ERROR },
+        SHARED_SNAPSHOT_CHANGED_STATUS,
+      );
+    }
     const page = await buildSharedPullPage({
       viewerSub: access.sub,
-      cursor,
+      cursor:
+        decoded.kind === 'start'
+          ? { kind: 'start' }
+          : {
+              kind: 'continue',
+              generation: decoded.cursor.generation,
+              grantId: decoded.cursor.grantId,
+              recipeId: decoded.cursor.recipeId,
+            },
       limit,
       listLiveIncomingShares,
       readLiveIncomingShare,
       ownerAdmitted: sharingOwnerAdmitted,
       readDocData,
       readDocsData,
+      readAuthorizationScope: readSharedAuthorizationScope,
     });
+    if (page.kind === 'snapshot-changed') {
+      return jsonResponse(
+        { error: SHARED_SNAPSHOT_CHANGED_ERROR },
+        SHARED_SNAPSHOT_CHANGED_STATUS,
+      );
+    }
     return jsonResponse({
       changes: page.changes,
-      cursor: page.cursor,
-      cursorToken: encodeSharedCursor(page.cursor),
+      cursorToken: encodeSharedCursor({
+        v: 1,
+        viewerSub: access.sub,
+        generation: page.generation,
+        grantId: page.cursor.grantId,
+        recipeId: page.cursor.recipeId,
+      }),
       hasMore: page.hasMore,
     });
   } catch (err) {

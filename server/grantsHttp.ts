@@ -1,9 +1,8 @@
 import {
   MAX_LIVE_GRANTS,
   NO_ACCOUNT_MESSAGE,
-  addGrantTransition,
-  cascadeCollectionGrants,
   collectionLiveForGrant,
+  commitCollectionGrant,
   grantColRef,
   incomingSharePayload,
   incomingShareRef,
@@ -24,7 +23,6 @@ import {
   storeUnavailable,
 } from './membership.ts';
 import {
-  collectionDocRef,
   getStoreFirestore,
   isLiveDoc,
   isUuid,
@@ -202,55 +200,12 @@ export async function collectionGrantsPost(req: Request): Promise<Response> {
   }
 
   try {
-    const grantRef = grantColRef(access.sub, collectionId).doc(target.sub);
-    const shareRef = incomingShareRef(
-      target.sub,
-      shareGrantId(access.sub, collectionId),
-    );
-    const db = getStoreFirestore();
-    const outcome = await db.runTransaction(async (tx) => {
-      const allGrants = await tx.get(grantColRef(access.sub, collectionId));
-      const collectionSnap = await tx.get(collectionDocRef(access.sub, collectionId));
-      const collectionData = collectionSnap.exists
-        ? (collectionSnap.data() as Record<string, unknown>)
-        : undefined;
-      if (grantPostHttpStatusForCollectionRead(collectionData) === 404) {
-        return { kind: 'collectionMissing' as const };
-      }
-      const grantSnap = allGrants.docs.find((doc) => doc.id === target.sub);
-      const existing = parseGrantDoc(
-        grantSnap?.exists ? grantSnap.data() : undefined,
-        target.sub,
-      );
-      let liveCount = 0;
-      for (const doc of allGrants.docs) {
-        if (isLiveGrant(parseGrantDoc(doc.data(), doc.id))) {
-          liveCount += 1;
-        }
-      }
-      const next = addGrantTransition({
-        existing,
-        viewerSub: target.sub,
-        email: target.email.trim().toLowerCase(),
-        collectionId,
-        now: Date.now(),
-        liveCount,
-      });
-      if (next.kind === 'cap') {
-        return { kind: 'cap' as const };
-      }
-      if (next.kind === 'idempotent') {
-        return { kind: 'idempotent' as const, doc: next.doc };
-      }
-      tx.set(grantRef, next.doc, { merge: false });
-      tx.set(
-        shareRef,
-        incomingSharePayload(access.sub, collectionId, next.doc.updatedAt, {
-          ownerEmail: access.email,
-        }),
-        { merge: false },
-      );
-      return { kind: 'write' as const, doc: next.doc };
+    const outcome = await commitCollectionGrant({
+      ownerSub: access.sub,
+      ownerEmail: access.email,
+      collectionId,
+      viewerSub: target.sub,
+      email: target.email.trim().toLowerCase(),
     });
     if (outcome.kind === 'collectionMissing') {
       return notFound();
@@ -349,4 +304,3 @@ export async function collectionGrantsRevokePost(req: Request): Promise<Response
   }
 }
 
-export { cascadeCollectionGrants };

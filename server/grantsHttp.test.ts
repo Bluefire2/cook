@@ -41,11 +41,11 @@ describe('revokeGrantHttpResponse', () => {
     for (const outcome of [
       {
         kind: 'write' as const,
-        doc: { viewerSub: 'viewer', updatedAt: 9, deletedAt: 9 },
+        doc: { viewerSub: 'viewer', updatedAt: 9, deletedAt: 9, active: false as const },
       },
       {
         kind: 'already' as const,
-        doc: { viewerSub: 'viewer', updatedAt: 4, deletedAt: 4 },
+        doc: { viewerSub: 'viewer', updatedAt: 4, deletedAt: 4, active: false as const },
       },
     ]) {
       const response = revokeGrantHttpResponse(outcome);

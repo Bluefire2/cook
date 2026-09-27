@@ -158,7 +158,8 @@ hardening.
 Removing a member at `/admin` (or an owner from `ALLOWED_EMAILS`) also makes
 that person's outgoing shares inert within the same 60-second revocation
 bound: viewers stop receiving their recipes and photos. The grants are kept,
-so re-admitting the person restores them.
+so re-admitting the person restores them. Re-importing a foreign or legacy
+backup overwrites the previous clone; clone ids are derived, not random.
 
 On the first production verification after sharing is deployed, delete a real
 recipe that is listed in a collection and confirm the Firestore

@@ -26,3 +26,12 @@ export function isDiscardedPushReason(
 ): reason is DiscardedPushReason {
   return DISCARDED_PUSH_REASONS.has(reason as DiscardedPushReason);
 }
+
+/**
+ * Internal field stored beside viewer chat and cook rows only. The value is
+ * the shared recipe owner's Google `sub`, discovered from incoming shares.
+ * Client payloads cannot set or clear it. Absent means the parent write was
+ * authorized by a live owned recipe (or the row predates this marker). It is
+ * not part of `ChatMessage`, `CookStateRow`, or a version-3 backup entity.
+ */
+export const SHARED_PARENT_OWNER_SUB_FIELD = 'sharedParentOwnerSub';

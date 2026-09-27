@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { decideSyncToast, pullAll } from './syncEngine';
+import { decideSyncToast, MAX_SHARED_PULL_ATTEMPTS, pullAll } from './syncEngine';
 import {
   addPendingBlob,
   clearLibrary,
@@ -127,6 +127,8 @@ describe('applyPullChanges', () => {
       chat: new Map(),
       cook: new Map(),
       remotePhotoIds: new Set<string>(),
+      chatParentOrigins: new Map<string, string>(),
+      cookParentOrigins: new Map<string, string>(),
     };
     applyPullChanges(acc, {
       recipes: [
@@ -185,6 +187,8 @@ describe('applyPullChanges', () => {
       chat: new Map(),
       cook: new Map(),
       remotePhotoIds: new Set<string>(),
+      chatParentOrigins: new Map<string, string>(),
+      cookParentOrigins: new Map<string, string>(),
     };
     applyPullChanges(acc, {
       recipes: [],
@@ -210,6 +214,118 @@ describe('applyPullChanges', () => {
       collections: [{ id: 'c1', deletedAt: 9 }],
     });
     expect(acc.collections.size).toBe(0);
+  });
+
+  it('records shared parent provenance only in sidecars and drops it on tombstone', () => {
+    const acc = {
+      recipes: new Map(),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      remotePhotoIds: new Set<string>(),
+      chatParentOrigins: new Map<string, string>(),
+      cookParentOrigins: new Map<string, string>(),
+    };
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [
+        {
+          id: 'c1',
+          recipeId: 'revoked',
+          role: 'user',
+          content: 'hi',
+          createdAt: 3,
+          updatedAt: 3,
+          serverUpdatedAt: 9,
+          sharedParentOwnerSub: 'owner-sub',
+        },
+        {
+          id: 'c2',
+          recipeId: 'owned',
+          role: 'assistant',
+          content: 'ok',
+          createdAt: 4,
+          sharedParentOwnerSub: '',
+        },
+        {
+          id: 'c3',
+          recipeId: 'owned',
+          role: 'user',
+          content: 'no',
+          createdAt: 5,
+          sharedParentOwnerSub: 12,
+        },
+      ],
+      cookState: [
+        {
+          id: 'revoked',
+          recipeId: 'revoked',
+          servings: 2,
+          currentStep: 1,
+          checkedKeys: ['0-0'],
+          recipeUpdatedAt: 2,
+          sharedParentOwnerSub: 'owner-sub',
+        },
+        {
+          recipeId: 'owned',
+          servings: 1,
+          currentStep: 0,
+          checkedKeys: [],
+          recipeUpdatedAt: 2,
+          sharedParentOwnerSub: null,
+        },
+      ],
+      photos: [],
+    });
+
+    expect(Object.keys(acc.chat.get('c1')!).sort()).toEqual([
+      'content',
+      'createdAt',
+      'id',
+      'recipeId',
+      'role',
+    ]);
+    expect(acc.chat.get('c1')).not.toHaveProperty('sharedParentOwnerSub');
+    expect(Object.keys(acc.cook.get('revoked')!).sort()).toEqual([
+      'checkedKeys',
+      'currentStep',
+      'recipeId',
+      'recipeUpdatedAt',
+      'servings',
+    ]);
+    expect(acc.cook.get('revoked')).not.toHaveProperty('sharedParentOwnerSub');
+    expect(acc.chatParentOrigins.get('c1')).toBe('owner-sub');
+    expect(acc.cookParentOrigins.get('revoked')).toBe('owner-sub');
+    expect(acc.chatParentOrigins.has('c2')).toBe(false);
+    expect(acc.chatParentOrigins.has('c3')).toBe(false);
+    expect(acc.cookParentOrigins.has('owned')).toBe(false);
+
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [
+        {
+          id: 'c1',
+          recipeId: 'revoked',
+          role: 'user',
+          content: 'hi',
+          createdAt: 3,
+        },
+      ],
+      cookState: [{ id: 'revoked', deletedAt: 9 }],
+      photos: [],
+    });
+    expect(acc.chatParentOrigins.has('c1')).toBe(false);
+    expect(acc.cook.has('revoked')).toBe(false);
+    expect(acc.cookParentOrigins.has('revoked')).toBe(false);
+
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [{ id: 'c1', deletedAt: 9 }],
+      cookState: [],
+      photos: [],
+    });
+    expect(acc.chat.has('c1')).toBe(false);
+    expect(acc.chatParentOrigins.has('c1')).toBe(false);
   });
 });
 
@@ -356,9 +472,11 @@ describe('pullAll', () => {
     replaceFromPull({
       recipes: new Map([['old', recipe('old', 'Old')]]),
       collections: new Map(),
-      chat: new Map(),
-      cook: new Map(),
+      chat: new Map([['old-message', chat('old-message', 'old', 'hi')]]),
+      cook: new Map([['old', cook('old', 1)]]),
       remotePhotoIds: new Set(['old-photo']),
+      chatParentOrigins: new Map([['old-message', 'former-owner']]),
+      cookParentOrigins: new Map([['old', 'former-owner']]),
     });
     addPendingBlob('pending', new Blob(['pending']));
     setGrantCount('collection', 1);
@@ -387,6 +505,8 @@ describe('pullAll', () => {
     expect(snapshot.pendingBlobs.size).toBe(0);
     expect(snapshot.recipeOrigins.size).toBe(0);
     expect(snapshot.collectionOrigins.size).toBe(0);
+    expect(snapshot.chatParentOrigins.size).toBe(0);
+    expect(snapshot.cookParentOrigins.size).toBe(0);
     expect(snapshot.grantCounts.size).toBe(0);
   });
 
@@ -550,6 +670,300 @@ describe('pullAll', () => {
     expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
     expect(snapshot.grantCounts.get('collection-collision')).toBe(3);
     expect(snapshot.loaded).toBe(true);
+  });
+
+  it('publishes a stable reread once and drops the page staged before restart', async () => {
+    addPendingBlob('pending-photo', new Blob(['pending']));
+    setGrantCount('known-grants', 2);
+    const emissions: ReturnType<typeof getSnapshot>[] = [];
+    const unsubscribe = subscribe(() => {
+      emissions.push(getSnapshot());
+    });
+    let ownedCalls = 0;
+    const cursors: Array<string | null> = [];
+    const result = await pullAll({
+      pullPage: async () => {
+        ownedCalls += 1;
+        return ownedPage(
+          ownedChanges({ recipes: [pullDoc(recipe('owned', 'Owned'))] }),
+        );
+      },
+      pullSharedPage: async (cursor) => {
+        cursors.push(cursor);
+        if (cursors.length === 1) {
+          return sharedPage(
+            {
+              recipes: [
+                { ...recipe('revoked-recipe', 'Revoked'), ownerSub: 'owner' },
+              ],
+              collections: [
+                {
+                  ...collection('revoked-collection', 'Revoked'),
+                  ownerSub: 'owner',
+                },
+              ],
+              photos: [{ id: 'revoked-photo' }],
+            },
+            { hasMore: true, cursorToken: 'revoked-page' },
+          );
+        }
+        if (cursors.length === 2) {
+          return 'restart';
+        }
+        if (cursors.length === 3) {
+          return sharedPage(
+            {
+              recipes: [{ ...recipe('kept-one', 'Kept one'), ownerSub: 'owner' }],
+            },
+            { hasMore: true, cursorToken: 'stable-page' },
+          );
+        }
+        return sharedPage({
+          recipes: [{ ...recipe('kept-two', 'Kept two'), ownerSub: 'owner' }],
+          photos: [{ id: 'kept-photo' }],
+        });
+      },
+    });
+    unsubscribe();
+
+    const snapshot = getSnapshot();
+    expect(result).toEqual({ outcome: 'ok', pushed: 0, applied: 0 });
+    expect(ownedCalls).toBe(1);
+    expect(cursors).toEqual([null, 'revoked-page', null, 'stable-page']);
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0]).toBe(snapshot);
+    expect([...snapshot.recipes.keys()]).toEqual(['owned', 'kept-one', 'kept-two']);
+    expect(snapshot.recipes.has('revoked-recipe')).toBe(false);
+    expect(snapshot.collections.has('revoked-collection')).toBe(false);
+    expect(snapshot.recipeOrigins.has('revoked-recipe')).toBe(false);
+    expect(snapshot.remotePhotoIds.has('revoked-photo')).toBe(false);
+    expect(snapshot.remotePhotoIds.has('kept-photo')).toBe(true);
+    expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
+    expect(snapshot.grantCounts.get('known-grants')).toBe(2);
+  });
+
+  it('discards a staged recipe when membership changes and the pull restarts', async () => {
+    const cursors: Array<string | null> = [];
+    const result = await pullAll({
+      pullPage: async () =>
+        ownedPage(ownedChanges({ recipes: [pullDoc(recipe('owned', 'Owned'))] })),
+      pullSharedPage: async (cursor) => {
+        cursors.push(cursor);
+        if (cursors.length === 1) {
+          return sharedPage(
+            {
+              recipes: [
+                { ...recipe('removed-recipe', 'Removed'), ownerSub: 'owner' },
+              ],
+              photos: [{ id: 'removed-photo' }],
+            },
+            { hasMore: true, cursorToken: 'page-one' },
+          );
+        }
+        if (cursors.length === 2) {
+          return 'restart';
+        }
+        return sharedPage({
+          recipes: [{ ...recipe('remaining-recipe', 'Remaining'), ownerSub: 'owner' }],
+        });
+      },
+    });
+
+    const snapshot = getSnapshot();
+    expect(result.outcome).toBe('ok');
+    expect(cursors).toEqual([null, 'page-one', null]);
+    expect([...snapshot.recipes.keys()]).toEqual(['owned', 'remaining-recipe']);
+    expect(snapshot.recipes.has('removed-recipe')).toBe(false);
+    expect(snapshot.recipeOrigins.has('removed-recipe')).toBe(false);
+    expect(snapshot.remotePhotoIds.has('removed-photo')).toBe(false);
+  });
+
+  it('installs owned-only state when shared scope churn exhausts the retry cap', async () => {
+    replaceFromPull({
+      recipes: new Map([['prior-owned', recipe('prior-owned', 'Prior owned')]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      remotePhotoIds: new Set(['prior-owned-photo']),
+    });
+    mergeSharedFromPull({
+      recipes: new Map([['prior-shared', recipe('prior-shared', 'Prior shared')]]),
+      collections: new Map([
+        ['prior-shared-collection', collection('prior-shared-collection', 'Prior')],
+      ]),
+      remotePhotoIds: new Set(['prior-shared-photo']),
+      recipeOrigins: new Map([
+        ['prior-shared', { kind: 'shared', ownerSub: 'prior-owner' }],
+      ]),
+      collectionOrigins: new Map([
+        ['prior-shared-collection', { kind: 'shared', ownerSub: 'prior-owner' }],
+      ]),
+    });
+    addPendingBlob('pending-photo', new Blob(['pending']));
+    setGrantCount('known-grants', 4);
+    const emissions: ReturnType<typeof getSnapshot>[] = [];
+    const unsubscribe = subscribe(() => {
+      emissions.push(getSnapshot());
+    });
+    let ownedCalls = 0;
+    const cursors: Array<string | null> = [];
+    const result = await pullAll({
+      pullPage: async () => {
+        ownedCalls += 1;
+        return ownedPage(
+          ownedChanges({
+            recipes: [pullDoc(recipe('new-own', 'New owned'))],
+            photos: [{ id: 'new-owned-photo' }],
+          }),
+        );
+      },
+      pullSharedPage: async (cursor) => {
+        cursors.push(cursor);
+        if ((cursors.length - 1) % 2 === 0) {
+          return sharedPage(
+            {
+              recipes: [
+                { ...recipe('staged-shared', 'Staged'), ownerSub: 'owner' },
+              ],
+              photos: [{ id: 'staged-photo' }],
+            },
+            { hasMore: true, cursorToken: 'staged-cursor' },
+          );
+        }
+        return 'restart';
+      },
+    });
+    unsubscribe();
+
+    const snapshot = getSnapshot();
+    expect(result).toEqual({ outcome: 'error', pushed: 0, applied: 0 });
+    expect(decideSyncToast(result)).toEqual({
+      kind: 'error',
+      message: "Couldn't refresh",
+    });
+    expect(ownedCalls).toBe(1);
+    expect(cursors).toEqual(
+      Array.from({ length: MAX_SHARED_PULL_ATTEMPTS }, () => [
+        null,
+        'staged-cursor',
+      ]).flat(),
+    );
+    expect(emissions).toHaveLength(1);
+    expect([...snapshot.recipes.keys()]).toEqual(['new-own']);
+    expect(snapshot.recipes.has('staged-shared')).toBe(false);
+    expect(snapshot.recipes.has('prior-shared')).toBe(false);
+    expect(snapshot.collections.has('prior-shared-collection')).toBe(false);
+    expect(snapshot.remotePhotoIds.has('staged-photo')).toBe(false);
+    expect(snapshot.remotePhotoIds.has('prior-shared-photo')).toBe(false);
+    expect([...snapshot.remotePhotoIds]).toEqual(['new-owned-photo']);
+    expect(snapshot.recipeOrigins.has('staged-shared')).toBe(false);
+    expect(snapshot.recipeOrigins.has('prior-shared')).toBe(false);
+    expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
+    expect(snapshot.grantCounts.get('known-grants')).toBe(4);
+  });
+
+  it('keeps shared parent sidecars from owned pull after the shared recipe is gone', async () => {
+    const result = await pullAll({
+      pullPage: async () =>
+        ownedPage(
+          ownedChanges({
+            chatMessages: [
+              {
+                id: 'viewer-chat',
+                recipeId: 'revoked-recipe',
+                role: 'user',
+                content: 'salt?',
+                createdAt: 4,
+                sharedParentOwnerSub: 'owner-sub',
+              },
+            ],
+            cookState: [
+              {
+                recipeId: 'revoked-recipe',
+                servings: 2,
+                currentStep: 1,
+                checkedKeys: [],
+                recipeUpdatedAt: 1,
+                sharedParentOwnerSub: 'owner-sub',
+              },
+            ],
+          }),
+        ),
+      pullSharedPage: async () => sharedPage(),
+    });
+
+    const snapshot = getSnapshot();
+    expect(result).toEqual({ outcome: 'ok', pushed: 0, applied: 0 });
+    expect(snapshot.recipes.size).toBe(0);
+    expect(snapshot.collections.size).toBe(0);
+    expect(snapshot.recipeOrigins.has('revoked-recipe')).toBe(false);
+    expect(snapshot.chatParentOrigins.get('viewer-chat')).toBe('owner-sub');
+    expect(snapshot.cookParentOrigins.get('revoked-recipe')).toBe('owner-sub');
+    expect(snapshot.chat.get('viewer-chat')).not.toHaveProperty('sharedParentOwnerSub');
+    expect(snapshot.cook.get('revoked-recipe')).not.toHaveProperty('sharedParentOwnerSub');
+    expect(Object.keys(snapshot.chat.get('viewer-chat')!).sort()).toEqual([
+      'content',
+      'createdAt',
+      'id',
+      'recipeId',
+      'role',
+    ]);
+    expect(Object.keys(snapshot.cook.get('revoked-recipe')!).sort()).toEqual([
+      'checkedKeys',
+      'currentStep',
+      'recipeId',
+      'recipeUpdatedAt',
+      'servings',
+    ]);
+  });
+
+  it('drops a sidecar when a later owned page tombstones the row', async () => {
+    let page = 0;
+    const result = await pullAll({
+      pullPage: async () => {
+        page += 1;
+        if (page === 1) {
+          return ownedPage(
+            ownedChanges({
+              chatMessages: [
+                {
+                  id: 'viewer-chat',
+                  recipeId: 'revoked-recipe',
+                  role: 'user',
+                  content: 'salt?',
+                  createdAt: 4,
+                  sharedParentOwnerSub: 'owner-sub',
+                },
+              ],
+              cookState: [
+                {
+                  recipeId: 'revoked-recipe',
+                  servings: 2,
+                  currentStep: 0,
+                  checkedKeys: [],
+                  recipeUpdatedAt: 1,
+                  sharedParentOwnerSub: 'owner-sub',
+                },
+              ],
+            }),
+            { hasMore: true, cursor: { chatMessages: [4, 'viewer-chat'] } },
+          );
+        }
+        return ownedPage(
+          ownedChanges({
+            chatMessages: [{ id: 'viewer-chat', deletedAt: 9 }],
+            cookState: [{ id: 'revoked-recipe', deletedAt: 9 }],
+          }),
+        );
+      },
+      pullSharedPage: async () => sharedPage(),
+    });
+
+    expect(result.outcome).toBe('ok');
+    expect(getSnapshot().chat.size).toBe(0);
+    expect(getSnapshot().cook.size).toBe(0);
+    expect(getSnapshot().chatParentOrigins.size).toBe(0);
+    expect(getSnapshot().cookParentOrigins.size).toBe(0);
   });
 });
 

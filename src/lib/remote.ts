@@ -3,12 +3,15 @@ import { compactRecipe } from './compactRecipe';
 import { MAX_PUSH_OPS, type PushOp } from './pushOps';
 import {
   isDiscardedPushReason,
+  SHARED_PARENT_OWNER_SUB_FIELD,
   type DiscardedPushReason,
 } from './pushReasons';
 import { invalidateSession } from './session';
 import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 import { clearLibrary } from './libraryMemory';
+
+export { SHARED_PARENT_OWNER_SUB_FIELD };
 
 export type PullCursor = Partial<
   Record<'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections', [number, string]>
@@ -281,6 +284,14 @@ export function normalizeCookChange(
   };
 }
 
+function readSharedParentOwnerSub(raw: Record<string, unknown>): string | undefined {
+  const value = raw[SHARED_PARENT_OWNER_SUB_FIELD];
+  if (typeof value !== 'string' || value === '') {
+    return undefined;
+  }
+  return value;
+}
+
 export function applyPullChanges(
   acc: {
     recipes: Map<string, Recipe>;
@@ -288,6 +299,8 @@ export function applyPullChanges(
     chat: Map<string, ChatMessage>;
     cook: Map<string, CookStateRow>;
     remotePhotoIds: Set<string>;
+    chatParentOrigins: Map<string, string>;
+    cookParentOrigins: Map<string, string>;
   },
   changes: PullChanges,
 ): void {
@@ -314,8 +327,15 @@ export function applyPullChanges(
     const normalized = normalizeChatChange(raw);
     if (normalized === 'tombstone') {
       acc.chat.delete(id);
+      acc.chatParentOrigins.delete(id);
     } else {
       acc.chat.set(id, normalized);
+      const owner = readSharedParentOwnerSub(raw);
+      if (owner === undefined) {
+        acc.chatParentOrigins.delete(id);
+      } else {
+        acc.chatParentOrigins.set(id, owner);
+      }
     }
   }
   for (const raw of changes.cookState) {
@@ -323,8 +343,15 @@ export function applyPullChanges(
     const normalized = normalizeCookChange(raw);
     if (normalized === 'tombstone') {
       acc.cook.delete(recipeId);
+      acc.cookParentOrigins.delete(recipeId);
     } else {
       acc.cook.set(recipeId, normalized);
+      const owner = readSharedParentOwnerSub(raw);
+      if (owner === undefined) {
+        acc.cookParentOrigins.delete(recipeId);
+      } else {
+        acc.cookParentOrigins.set(recipeId, owner);
+      }
     }
   }
   for (const raw of changes.photos) {
@@ -362,9 +389,25 @@ export type SharedPullPage = {
   hasMore: boolean;
 };
 
+/** Keep aligned with server/sharedPull.ts. A 200 must not mean "scope changed". */
+const SHARED_SNAPSHOT_CHANGED_ERROR = 'shared-snapshot-changed';
+const SHARED_SNAPSHOT_CHANGED_STATUS = 409;
+
+async function isSharedSnapshotChanged(response: Response): Promise<boolean> {
+  if (response.status !== SHARED_SNAPSHOT_CHANGED_STATUS) {
+    return false;
+  }
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    return body.error === SHARED_SNAPSHOT_CHANGED_ERROR;
+  } catch {
+    return false;
+  }
+}
+
 export async function pullSharedPage(
   cursorToken: string | null,
-): Promise<SharedPullPage | 'signedOut' | 'error'> {
+): Promise<SharedPullPage | 'signedOut' | 'error' | 'restart'> {
   const params = new URLSearchParams({ limit: '200' });
   if (cursorToken) {
     params.set('cursor', cursorToken);
@@ -379,6 +422,9 @@ export async function pullSharedPage(
     return 'error';
   }
   if (!response.ok) {
+    if (await isSharedSnapshotChanged(response)) {
+      return 'restart';
+    }
     return readErrorStatus(response);
   }
   const body = (await response.json()) as {
