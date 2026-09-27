@@ -6,10 +6,12 @@
  * - B (Cloud Vision → Gemini): DOCUMENT_TEXT_DETECTION per page, then Gemini
  *   on the joined OCR text (`importFromSource`).
  *
- * For each fixture and run it prints a progress bar (finished calls, calls
- * left, and an estimate of the time left), then latency, tokens, estimated
- * cost, the judge's verdict against `golden.json`, and `calls` (Gemini
- * invocations, including a retry, not successes).
+ * For each fixture and run it prints latency, tokens, estimated cost, the
+ * judge's verdict against `golden.json`, and `calls` (Gemini invocations,
+ * including a retry, not successes). A progress bar shows finished calls,
+ * calls left, and an estimate of the time left. In a terminal that bar stays
+ * on one line and is redrawn in place; piped output prints a new line so a
+ * saved log stays plain text.
  *
  *   node --env-file=.env.local evals/ocrCompare.ts [fixture…] [--runs=N]
  *     [--split=dev|holdout|all] [--thinking=minimal|low|medium|high]
@@ -509,10 +511,19 @@ async function main(): Promise<number> {
   }
 
   const b: { auth: Headers | null; skipped: string | null } = { auth: null, skipped: null };
+  // Set while the bar occupies the current terminal line, so the next log
+  // line clears it instead of appending after a partial redraw.
+  let progressOpen = false;
+  const clearSticky = (): void => {
+    if (!progressOpen) return;
+    process.stdout.write('\r\x1b[K');
+    progressOpen = false;
+  };
   const skipB = (reason: string): void => {
     if (b.skipped !== null) return;
     b.skipped = reason;
     b.auth = null;
+    clearSticky();
     console.log(`Skipping B (Cloud Vision → Gemini): ${reason}`);
   };
 
@@ -530,12 +541,26 @@ async function main(): Promise<number> {
   let total = fixtures.length * runs * (b.auth !== null ? 2 : 1);
   let done = 0;
   const startedAt = performance.now();
+  const sticky = process.stdout.isTTY;
+  const paint = (label: string): void => {
+    const line = `${progressPrefix(done, total, startedAt)}  ${label}`;
+    if (sticky) {
+      process.stdout.write(`\r\x1b[K${line}`);
+      progressOpen = true;
+      return;
+    }
+    console.log(line);
+  };
   const record = (r: RunResult): void => {
     results.push(r);
     done += 1;
-    console.log(
-      `${progressPrefix(done, total, startedAt)}  ${r.split}/${r.fixture} run ${r.run} ${r.approach}: ${r.kind}, ${Math.round(r.visionMs + r.geminiMs)} ms, calls ${r.calls}, finish ${r.tokens.finish}, judge ${r.judge}`,
-    );
+    const detail = `${r.split}/${r.fixture} run ${r.run} ${r.approach}: ${r.kind}, ${Math.round(r.visionMs + r.geminiMs)} ms, calls ${r.calls}, finish ${r.tokens.finish}, judge ${r.judge}`;
+    if (sticky) {
+      clearSticky();
+      console.log(detail);
+      return;
+    }
+    console.log(`${progressPrefix(done, total, startedAt)}  ${detail}`);
   };
   console.log(
     `Running ${fixtures.length} fixture(s) x ${runs} run(s), split ${split}, thinking ${thinking ?? 'model default'} (A only): A${b.auth !== null ? ' and B' : ''}. ${total} call(s).`,
@@ -543,10 +568,10 @@ async function main(): Promise<number> {
   for (const fixture of fixtures) {
     for (let run = 1; run <= runs; run++) {
       const where = `${fixture.split}/${fixture.name} run ${run}`;
-      console.log(`${progressPrefix(done, total, startedAt)}  ${where} A …`);
+      paint(`${where} A …`);
       record(await runA(fixture, run, base, thinking));
       if (b.auth !== null) {
-        console.log(`${progressPrefix(done, total, startedAt)}  ${where} B …`);
+        paint(`${where} B …`);
         const result = await runB(fixture, run, base, b.auth);
         if (result.kind === 'denied') {
           skipB(result.reason);
@@ -554,12 +579,17 @@ async function main(): Promise<number> {
           const remainingB = runs - run + (fixtures.length - fixtureIndex - 1) * runs;
           total -= remainingB;
           done += 1;
-          console.log(`${progressPrefix(done, total, startedAt)}  B skipped`);
+          paint('B skipped');
         } else {
           record(result);
         }
       }
     }
+  }
+  if (sticky) {
+    paint('done');
+    process.stdout.write('\n');
+    progressOpen = false;
   }
 
   console.table(results.map(tableRow));

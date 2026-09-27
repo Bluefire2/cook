@@ -99,9 +99,9 @@ Holdout failures hide the extraction and the judge's reasons.
 `npm run eval:ocr-compare -- [fixture…] [--runs=N] [--split=dev|holdout|all] [--thinking=minimal|low|medium|high]`
 compares A (the photos straight to Gemini, as production does) with B (Cloud
 Vision OCR, then Gemini on the text), with latency, tokens, estimated cost,
-and the judge's verdict per fixture. Each call prints a progress bar with
-how many calls are finished, how many are left, and an estimate of the time
-left. `--split` defaults to `dev`.
+and the judge's verdict per fixture. A progress bar shows how many calls
+are finished, how many are left, and an estimate of the time left. In a
+terminal that bar stays on one line and updates in place. `--split` defaults to `dev`.
 `--thinking` applies to A only and does not change production. The `calls`
 column shows retries. `--runs=N` is 1–5. B needs Application Default
 Credentials and `vision.googleapis.com` enabled on
