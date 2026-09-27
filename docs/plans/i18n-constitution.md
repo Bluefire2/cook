@@ -73,7 +73,9 @@ anything is saved:
   recipe's language differs from the UI language)
 - in the import preview, the person sets or changes the guessed language to
   one that differs from the UI language while the translate checkbox is on,
-  or checks the box when no translation is held The backfill script (principle 6) only detects language; it never
+  or checks the box when no translation is held.
+
+The backfill script (principle 6) only detects language; it never
 translates.
 
 **Why.** Most recipes are never opened in a second language, so translating
@@ -145,7 +147,12 @@ Code must behave sensibly when `lang` is missing or wrong:
 
 - **Missing.** Show a neutral translate toggle, and use the language the
   provider detects.
-- **Wrong.** The person can correct it in the recipe form.
+- **Wrong.** The person corrects it in the recipe form. A detected language
+  for the recipe's current version (same `updatedAt`) beats a stored `lang`
+  that disagrees when deciding whether to offer translation, because it
+  comes from the actual text. The form keeps the stored label and shows a
+  "Looks like …" hint; it never silently overwrites a label the person
+  set.
 - **Shared with you.** The toggle and detection work the same for a
   viewer, but a viewer can't correct `lang`. Edit is hidden,
   `recipeStore.save` throws for shared recipes, and `/recipe/:id/edit`
@@ -178,7 +185,8 @@ never go through `/api/sync/*`. The server caches translations at
 `users/{uid}/translations/{recipeId}.{target}`, keyed by a hash of the source
 text. A hash mismatch is a miss. It can be deleted at any time without losing
 data. It is deleted in the same transaction that tombstones its recipe
-(`cascadeRecipeDelete`), even when the tombstone loses to a newer edit. The
+(`cascadeRecipeDelete`), on every branch: tombstone applied, tombstone
+rejected because a newer edit won, and recipe doc missing. The
 doc ids are deterministic, so no query is needed (principle 14).
 
 The server caches only a translation of the caller's own live recipe:
