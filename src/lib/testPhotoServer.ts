@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { clearLibrary } from './libraryMemory';
 import { postPhoto, pushOps } from './remote';
 import type { PushOp } from './pushOps';
 
@@ -17,7 +18,8 @@ export type PhotoServerFake = {
  * the server. `photosPost` answers 409 `recipe-deleted` (which `postPhoto`
  * reports as `'error'`) unless the recipe row is live, and only an applied
  * `recipe.put` makes it live. `failPush` / `failPhoto` inject a failure; a
- * failed push applies nothing.
+ * failed push applies nothing, and `'signedOut'` clears the library as
+ * `remote` does on a 401.
  */
 export function installPhotoServerFake(opts?: {
   failPush?: (ops: PushOp[]) => PushResult | undefined;
@@ -30,6 +32,9 @@ export function installPhotoServerFake(opts?: {
     }
     const failure = opts?.failPush?.(ops);
     if (failure !== undefined && failure !== 'ok') {
+      if (failure === 'signedOut') {
+        clearLibrary();
+      }
       return failure;
     }
     for (const op of ops) {
@@ -46,6 +51,9 @@ export function installPhotoServerFake(opts?: {
     fake.calls.push(`photo:${photoId}`);
     const failure = opts?.failPhoto?.(photoId);
     if (failure !== undefined && failure !== 'ok') {
+      if (failure === 'signedOut') {
+        clearLibrary();
+      }
       return failure;
     }
     return fake.liveRecipeIds.has(recipeId) ? 'ok' : 'error';

@@ -91,6 +91,7 @@ describe('recipeStore.create with photos', () => {
     expect(server.calls).toEqual(['push:recipe.put', 'push:collection.put']);
     expect(listRecipes()).toEqual([]);
     expect(getCollection(COLLECTION_ID)).toEqual(collection);
+    expect([...getSnapshot().pendingBlobs.keys()].sort()).toEqual([COVER, GALLERY]);
   });
 
   it('deletes the recipe and scrubs its collection when a photo upload fails', async () => {
@@ -126,8 +127,59 @@ describe('recipeStore.create with photos', () => {
     expect(server.liveRecipeIds.size).toBe(0);
     expect(listRecipes()).toEqual([]);
     expect(getCollection(COLLECTION_ID)?.recipeIds).toEqual([EXISTING_RECIPE]);
-    expect(getSnapshot().pendingBlobs.size).toBe(0);
+    // Staged bytes stay for a retry, including the cover that did upload.
+    expect([...getSnapshot().pendingBlobs.keys()].sort()).toEqual([COVER, GALLERY]);
     expect(getSnapshot().remotePhotoIds.size).toBe(0);
+  });
+
+  it('uploads the same staged photos when create is retried after a photo failure', async () => {
+    stagePhotos();
+    const coverBlob = getSnapshot().pendingBlobs.get(COVER);
+    const galleryBlob = getSnapshot().pendingBlobs.get(GALLERY);
+    let galleryFailures = 1;
+    const server = installPhotoServerFake({
+      failPhoto: (id) => {
+        if (id === GALLERY && galleryFailures > 0) {
+          galleryFailures -= 1;
+          return 'error';
+        }
+        return undefined;
+      },
+    });
+    const input = { ...draft, photoId: COVER, galleryPhotoIds: [GALLERY] };
+
+    await expect(recipeStore.create(input)).rejects.toThrow(t('error.photoSave'));
+    vi.mocked(postPhoto).mockClear();
+    const created = await recipeStore.create(input);
+
+    expect(postPhoto).toHaveBeenCalledWith(COVER, created.id, created.updatedAt, coverBlob);
+    expect(postPhoto).toHaveBeenCalledWith(GALLERY, created.id, created.updatedAt, galleryBlob);
+    expect(server.liveRecipeIds).toEqual(new Set([created.id]));
+    expect(listRecipes().map((recipe) => recipe.id)).toEqual([created.id]);
+    expect(getSnapshot().remotePhotoIds).toEqual(new Set([COVER, GALLERY]));
+    expect(getSnapshot().pendingBlobs.size).toBe(0);
+  });
+
+  it('uploads the staged photo when create is retried after a recipe push failure', async () => {
+    stagePhotos();
+    let pushFailures = 1;
+    const server = installPhotoServerFake({
+      failPush: () => {
+        if (pushFailures > 0) {
+          pushFailures -= 1;
+          return 'error';
+        }
+        return undefined;
+      },
+    });
+    const input = { ...draft, photoId: COVER };
+
+    await expect(recipeStore.create(input)).rejects.toThrow(t('error.recipeSave'));
+    const created = await recipeStore.create(input);
+
+    expect(server.calls).toEqual(['push:recipe.put', 'push:recipe.put', `photo:${COVER}`]);
+    expect(server.liveRecipeIds).toEqual(new Set([created.id]));
+    expect(getSnapshot().remotePhotoIds.has(COVER)).toBe(true);
   });
 
   it('still reports the photo error when the cleanup delete also fails', async () => {
@@ -155,5 +207,19 @@ describe('recipeStore.create with photos', () => {
 
     expect(server.calls).toEqual(['push:recipe.put', `photo:${COVER}`]);
     expect(listRecipes()).toEqual([]);
+    expect(getSnapshot().pendingBlobs.size).toBe(0);
+  });
+
+  it('keeps nothing when the recipe push signs the user out', async () => {
+    stagePhotos();
+    installPhotoServerFake({ failPush: () => 'signedOut' });
+
+    await expect(recipeStore.create({ ...draft, photoId: COVER })).rejects.toThrow(
+      t('error.sessionExpired'),
+    );
+
+    expect(postPhoto).not.toHaveBeenCalled();
+    expect(listRecipes()).toEqual([]);
+    expect(getSnapshot().pendingBlobs.size).toBe(0);
   });
 });

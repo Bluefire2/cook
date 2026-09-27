@@ -1,6 +1,7 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { t } from '../i18n';
 import {
+  addPendingBlob,
   beginLocalWrite,
   captureSnapshot,
   dropPhoto,
@@ -192,6 +193,30 @@ async function saveShared(recipe: Recipe): Promise<void> {
   }
 }
 
+/** Bytes a new recipe's photos are waiting to upload, captured before any upload. */
+function stagedBlobs(recipe: Recipe): Map<string, Blob> {
+  const staged = new Map<string, Blob>();
+  for (const photoId of recipePhotoIds(recipe)) {
+    const blob = getPendingBlob(photoId);
+    if (blob) {
+      staged.set(photoId, blob);
+    }
+  }
+  return staged;
+}
+
+/**
+ * Drops a failed create from memory but puts its staged bytes back, including
+ * any this attempt uploaded before the rollback, so a retry with the same
+ * photo ids uploads them again. `remove` of a saved recipe still drops them.
+ */
+function rollBackCreateLocal(id: string, staged: Map<string, Blob>): void {
+  removeRecipeLocal(id);
+  for (const [photoId, blob] of staged) {
+    addPendingBlob(photoId, blob);
+  }
+}
+
 /**
  * Undoes a create whose recipe row landed but whose photos did not. The
  * server's delete cascade tombstones any photo already stored under the
@@ -199,7 +224,11 @@ async function saveShared(recipe: Recipe): Promise<void> {
  * push fails, the photo-less row stays on the server and the next refresh
  * shows it.
  */
-async function discardCreatedRecipe(id: string, cause: unknown): Promise<void> {
+async function discardCreatedRecipe(
+  id: string,
+  staged: Map<string, Blob>,
+  cause: unknown,
+): Promise<void> {
   if (cause instanceof SessionExpiredError) {
     // The 401 already cleared the library, and a delete would 401 as well.
     removeRecipeLocal(id);
@@ -219,7 +248,7 @@ async function discardCreatedRecipe(id: string, cause: unknown): Promise<void> {
   // A pull that read the live row before the delete landed must not paint it
   // back; hold the library as `remove` does.
   const writeEpoch = beginLocalWrite();
-  removeRecipeLocal(id);
+  rollBackCreateLocal(id, staged);
   for (const collection of scrubbed) {
     upsertCollection(collection);
   }
@@ -335,12 +364,22 @@ export const recipeStore = {
    */
   async createFromAsk(parent: Recipe, draft: RecipeDraft): Promise<Recipe> {
     const copied = await copyParentPhotos(parent);
-    return recipeStore.create({
-      ...draft,
-      lang: parent.lang,
-      photoId: copied.photoId,
-      galleryPhotoIds: copied.galleryPhotoIds,
-    });
+    try {
+      return await recipeStore.create({
+        ...draft,
+        lang: parent.lang,
+        photoId: copied.photoId,
+        galleryPhotoIds: copied.galleryPhotoIds,
+      });
+    } catch (err) {
+      // A retry copies onto fresh ids, so these copies would never upload.
+      for (const photoId of [copied.photoId, ...(copied.galleryPhotoIds ?? [])]) {
+        if (photoId !== undefined) {
+          dropPhoto(photoId);
+        }
+      }
+      throw err;
+    }
   },
 
   async create(
@@ -371,6 +410,7 @@ export const recipeStore = {
         updatedAt: now,
       });
     }
+    const staged = stagedBlobs(recipe);
     upsertRecipe(recipe);
     if (nextCollection) {
       upsertCollection(nextCollection);
@@ -387,7 +427,11 @@ export const recipeStore = {
         throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
       }
     } catch (err) {
-      removeRecipeLocal(recipe.id);
+      if (err instanceof SessionExpiredError) {
+        removeRecipeLocal(recipe.id);
+      } else {
+        rollBackCreateLocal(recipe.id, staged);
+      }
       if (previousCollection) {
         upsertCollection(previousCollection);
       }
@@ -396,7 +440,7 @@ export const recipeStore = {
     try {
       await uploadRecipePhotos(recipe);
     } catch (err) {
-      await discardCreatedRecipe(recipe.id, err);
+      await discardCreatedRecipe(recipe.id, staged, err);
       throw err;
     }
     return recipe;
