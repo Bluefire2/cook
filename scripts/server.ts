@@ -40,6 +40,7 @@ import { extensionImport, extensionImportOptions } from '../server/extensionImpo
 import { inviteLandingGet } from '../server/invites.ts';
 import { withMembership } from '../server/membership.ts';
 import { photosGet, photosPost } from '../server/photos.ts';
+import { agentPost } from '../server/agent/index.ts';
 import { sttPost } from '../server/stt.ts';
 import {
   collectionGrantsGet,
@@ -60,6 +61,7 @@ const apiRoutes: ApiRoute[] = [
   { method: 'POST', path: '/api/chat', handler: withMembership(chatPost) },
   { method: 'POST', path: '/api/import', handler: withMembership(importPost) },
   { method: 'POST', path: '/api/stt', handler: sttPost },
+  { method: 'POST', path: '/api/agent', handler: agentPost },
   { method: 'POST', path: '/api/access-request', handler: accessRequestPost },
   { method: 'GET', path: '/api/admin/requests', handler: adminRequestsGet },
   { method: 'POST', path: '/api/admin/decision', handler: adminDecisionPost },
