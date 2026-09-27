@@ -393,6 +393,7 @@ describe('write-constitution skill copies', () => {
     const stub = openingScalars(claude);
     expect(stub.get('name')).toBe(cursor.get('name'));
     expect(stub.get('description')).toBe(cursor.get('description'));
+    expect(cursor.get('description')).toBeTruthy();
     expect(stub.get('name')).toBe('write-constitution');
     expect(claude).toContain('Read and follow `.cursor/skills/write-constitution/SKILL.md`.');
   });
