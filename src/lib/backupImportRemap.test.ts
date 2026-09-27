@@ -286,6 +286,7 @@ describe('remapBackupImport', () => {
       collections: new Map([[cloned.collections[0]!.id, cloned.collections[0]!]]),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
 

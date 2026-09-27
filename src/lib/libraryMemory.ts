@@ -148,7 +148,7 @@ type OwnedPullSnapshot = {
   collections: Map<string, Collection>;
   chat: Map<string, ChatMessage>;
   cook: Map<string, CookStateRow>;
-  cookLogs?: Map<string, CookLog>;
+  cookLogs: Map<string, CookLog>;
   remotePhotoIds: Set<string>;
   chatParentOrigins?: ReadonlyMap<string, string>;
   cookParentOrigins?: ReadonlyMap<string, string>;
@@ -182,7 +182,7 @@ export function replaceFromPull(next: OwnedPullSnapshot): void {
     collections: next.collections,
     chat: next.chat,
     cook: next.cook,
-    cookLogs: next.cookLogs ?? new Map(),
+    cookLogs: next.cookLogs,
     remotePhotoIds: next.remotePhotoIds,
     pendingBlobs: snapshot.pendingBlobs,
     recipeOrigins,
@@ -234,7 +234,7 @@ export function replaceFromPullWithShared(
     collections,
     chat: owned.chat,
     cook: owned.cook,
-    cookLogs: owned.cookLogs ?? new Map(),
+    cookLogs: owned.cookLogs,
     remotePhotoIds: new Set([...owned.remotePhotoIds, ...shared.remotePhotoIds]),
     pendingBlobs: snapshot.pendingBlobs,
     recipeOrigins,

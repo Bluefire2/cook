@@ -445,6 +445,7 @@ describe('pullAll', () => {
       collections: new Map([['old-owned-collection', collection('old-owned-collection', 'Old')]]),
       chat: new Map([['old-message', chat('old-message', oldOwn.id, 'old')]]),
       cook: new Map([[oldOwn.id, cook(oldOwn.id, 1)]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(['old-owned-photo']),
     });
     installSharedRows({
@@ -506,6 +507,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(['prior-owned-photo']),
     });
     installSharedRows({
@@ -579,6 +581,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map([['old-message', chat('old-message', 'old', 'hi')]]),
       cook: new Map([['old', cook('old', 1)]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(['old-photo']),
       chatParentOrigins: new Map([['old-message', 'former-owner']]),
       cookParentOrigins: new Map([['old', 'former-owner']]),
@@ -619,6 +622,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     let ownedCalls = 0;
@@ -666,6 +670,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
 
@@ -971,6 +976,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(['prior-owned-photo']),
     });
     installSharedRows({
@@ -1160,6 +1166,7 @@ describe('pullAll overlapping a local delete', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     let release: (page: PullPage) => void = () => {};
@@ -1188,6 +1195,7 @@ describe('pullAll overlapping a local delete', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     beginLocalWrite();

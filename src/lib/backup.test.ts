@@ -224,6 +224,7 @@ describe('exportLibrary', () => {
         [sharedChat.id, sharedChat],
         [orphanChat.id, orphanChat],
       ]),
+      cookLogs: new Map(),
       cook: new Map([
         [COOK.recipeId, COOK],
         [sharedCook.recipeId, sharedCook],
@@ -319,6 +320,7 @@ describe('exportLibrary', () => {
         [revokedChat.id, revokedChat],
         [orphanChat.id, orphanChat],
       ]),
+      cookLogs: new Map(),
       cook: new Map([
         [ownedCook.recipeId, ownedCook],
         [revokedCook.recipeId, revokedCook],
@@ -401,6 +403,7 @@ describe('exportLibrary', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     installSharedRows({
@@ -471,6 +474,7 @@ describe('importLibrary', () => {
       collections: new Map([[COLLECTION.id, COLLECTION]]),
       chat: new Map([[CHAT.id, CHAT]]),
       cook: new Map([[COOK.recipeId, COOK]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set([PHOTO]),
     });
 
@@ -591,6 +595,7 @@ describe('importLibrary', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
 
@@ -609,6 +614,7 @@ describe('importLibrary', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
 
@@ -740,6 +746,7 @@ describe('importLibrary', () => {
       collections: new Map([[COLLECTION.id, COLLECTION]]),
       chat: new Map([[CHAT.id, CHAT]]),
       cook: new Map([[COOK.recipeId, COOK]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set([PHOTO]),
     });
 
@@ -862,6 +869,7 @@ describe('importLibrary', () => {
         [sharedChat.id, sharedChat],
         [orphanChat.id, orphanChat],
       ]),
+      cookLogs: new Map(),
       cook: new Map([
         [COOK.recipeId, COOK],
         [sharedCook.recipeId, sharedCook],
@@ -938,6 +946,7 @@ describe('importLibrary', () => {
       collections: new Map(),
       chat: new Map([[CHAT.id, { ...CHAT, content: 'owned chat', photoIds: undefined }]]),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     let danglingBeforeRemoteWrite = false;
@@ -1007,6 +1016,7 @@ describe('importLibrary', () => {
       collections: new Map(),
       chat: new Map([[CHAT.id, { ...CHAT, content: 'on revoked' }]]),
       cook: new Map([[COOK.recipeId, COOK]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set([PHOTO]),
       chatParentOrigins: new Map([[CHAT.id, 'former-owner']]),
       cookParentOrigins: new Map([[COOK.recipeId, 'former-owner']]),

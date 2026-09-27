@@ -10,6 +10,7 @@ import {
   getRecipe,
   getSnapshot,
   isSharedRecipe,
+  listCookLogs,
   ownedBackupGraphIds,
   removeRecipeLocal,
   replaceFromPull,
@@ -50,6 +51,7 @@ describe('shared rows', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     const collision = recipe('own-1', 'Theirs');
@@ -80,6 +82,43 @@ describe('shared rows', () => {
 });
 
 describe('replaceFromPullWithShared', () => {
+  it('keeps owned cook logs when shared rows are merged in', () => {
+    const log = {
+      id: 'log-1',
+      recipeId: 'owned-recipe',
+      cookedOn: '2026-09-20',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    replaceFromPullWithShared(
+      {
+        recipes: new Map([['owned-recipe', recipe('owned-recipe', 'Mine')]]),
+        collections: new Map(),
+        chat: new Map(),
+        cook: new Map(),
+        cookLogs: new Map([[log.id, log]]),
+        remotePhotoIds: new Set(),
+      },
+      {
+        recipes: new Map([['shared-recipe', recipe('shared-recipe', 'Shared')]]),
+        collections: new Map(),
+        remotePhotoIds: new Set(),
+        recipeOrigins: new Map([['shared-recipe', { kind: 'shared', ownerSub: 'owner' }]]),
+        collectionOrigins: new Map(),
+      },
+    );
+    expect(listCookLogs()).toEqual([log]);
+
+    installSharedRows({
+      recipes: new Map([['another-shared', recipe('another-shared', 'Also shared')]]),
+      collections: new Map(),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map([['another-shared', { kind: 'shared', ownerSub: 'owner' }]]),
+      collectionOrigins: new Map(),
+    });
+    expect(listCookLogs()).toEqual([log]);
+  });
+
   it('publishes one complete owned-precedence snapshot and preserves local caches', () => {
     addPendingBlob('pending-photo', new Blob(['pending']));
     let calls = 0;
@@ -95,6 +134,7 @@ describe('replaceFromPullWithShared', () => {
         ]),
         chat: new Map(),
         cook: new Map(),
+        cookLogs: new Map(),
         remotePhotoIds: new Set(['owned-photo']),
       },
       {
@@ -158,6 +198,7 @@ describe('countOwnedNamedCollections', () => {
       ]),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     expect(countOwnedNamedCollections()).toBe(2);
@@ -207,6 +248,7 @@ describe('chat and cook parent sidecars', () => {
         collections: new Map(),
         chat: new Map([['m', message('m', 'revoked')]]),
         cook: new Map([['revoked', cookRow('revoked')]]),
+        cookLogs: new Map(),
         remotePhotoIds: new Set(),
         chatParentOrigins: new Map([['m', 'owner-sub']]),
         cookParentOrigins: new Map([['revoked', 'owner-sub']]),
@@ -251,6 +293,7 @@ describe('chat and cook parent sidecars', () => {
       collections: new Map(),
       chat: new Map([[ownedMessage.id, ownedMessage]]),
       cook: new Map([['owned', cookRow('owned')]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
       chatParentOrigins: new Map([[ownedMessage.id, 'stale-owner']]),
       cookParentOrigins: new Map([['owned', 'stale-owner']]),
@@ -268,6 +311,7 @@ describe('chat and cook parent sidecars', () => {
       collections: new Map(),
       chat: new Map([[revokedMessage.id, revokedMessage]]),
       cook: new Map([['revoked', cookRow('revoked')]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
       chatParentOrigins: new Map([[revokedMessage.id, 'alice']]),
       cookParentOrigins: new Map([['revoked', 'alice']]),
@@ -289,6 +333,7 @@ describe('chat and cook parent sidecars', () => {
         ['other', message('other', 'other-recipe')],
       ]),
       cook: new Map([['revoked', cookRow('revoked')]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
       chatParentOrigins: new Map([
         [revokedMessage.id, 'alice'],
@@ -328,6 +373,7 @@ describe('chat and cook parent sidecars', () => {
         ['orphan-chat', { ...message('orphan-chat', 'missing'), photoIds: ['orphan-photo'] }],
         ['owned-chat', message('owned-chat', 'owned')],
       ]),
+      cookLogs: new Map(),
       cook: new Map([
         ['revoked', cookRow('revoked')],
         ['missing', cookRow('missing')],

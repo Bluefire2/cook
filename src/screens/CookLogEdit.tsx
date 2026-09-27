@@ -13,7 +13,7 @@ import {
 import { cookLogStore, useCookLog } from '../lib/cookLogStore';
 import { encodeImageForStorage } from '../lib/image';
 import { photoStore } from '../lib/photoStore';
-import { useRecipe } from '../lib/recipeStore';
+import { recipeStore, useRecipe } from '../lib/recipeStore';
 import type { CookLog, Recipe } from '../lib/types';
 import {
   backLink,
@@ -345,6 +345,17 @@ export default function CookLogEdit() {
         Recipe not found.{' '}
         <Link to="/" className="underline hover:text-ink">
           Back to library
+        </Link>
+      </div>
+    );
+  }
+
+  if (recipeStore.isShared(recipe.id)) {
+    return (
+      <div className="p-6 text-center text-ink-muted">
+        Cook logs are only for your own recipes.{' '}
+        <Link to={`/recipe/${recipe.id}`} className="underline hover:text-ink">
+          Back to recipe
         </Link>
       </div>
     );
