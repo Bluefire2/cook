@@ -63,6 +63,8 @@ function ProposalCard({
 }) {
   const navigate = useNavigate();
   const [applied, setApplied] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const apply = async () => {
     await recipeStore.applyDraft(recipe.id, proposal);
@@ -70,10 +72,20 @@ function ProposalCard({
   };
 
   const saveAsVariant = async () => {
-    const created = await recipeStore.create(proposal);
-    setApplied('Saved as a new recipe ✓');
-    onNavigateAway();
-    navigate(`/recipe/${created.id}`);
+    if (saving) {
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const created = await recipeStore.createFromAsk(recipe, proposal);
+      setApplied('Saved as a new recipe ✓');
+      onNavigateAway();
+      navigate(`/recipe/${created.id}`);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Couldn't save the recipe.");
+      setSaving(false);
+    }
   };
 
   // The diff is against a recipe that no longer exists in that form.
@@ -128,7 +140,8 @@ function ProposalCard({
           <button
             type="button"
             onClick={() => void apply()}
-            className={`${primaryBtn} flex-1 py-2 text-sm`}
+            disabled={saving}
+            className={`${primaryBtn} flex-1 py-2 text-sm disabled:opacity-40`}
           >
             Apply
           </button>
@@ -136,11 +149,13 @@ function ProposalCard({
         <button
           type="button"
           onClick={() => void saveAsVariant()}
-          className={`${secondaryBtn} flex-1 py-2 text-sm`}
+          disabled={saving}
+          className={`${secondaryBtn} flex-1 py-2 text-sm disabled:opacity-40`}
         >
-          {allowApply ? 'Save as variant' : 'Save as a new recipe'}
+          {saving ? 'Saving…' : allowApply ? 'Save as variant' : 'Save as a new recipe'}
         </button>
       </div>
+      {saveError && <p className="mt-2 text-sm text-danger">{saveError}</p>}
     </div>
   );
 }

@@ -222,10 +222,13 @@ export async function postPhoto(
   return readErrorStatus(response);
 }
 
-export async function fetchPhotoBlob(
+/** `missing` is a 404. `unavailable` is a network error or any other non-OK status. */
+export type PhotoFetchOutcome = Blob | 'missing' | 'unavailable' | 'signedOut';
+
+export async function fetchPhotoBlobOutcome(
   id: string,
   ownerSub?: string,
-): Promise<Blob | null | 'signedOut'> {
+): Promise<PhotoFetchOutcome> {
   let response: Response;
   try {
     const params = ownerSub ? `?owner=${encodeURIComponent(ownerSub)}` : '';
@@ -234,17 +237,31 @@ export async function fetchPhotoBlob(
       cache: 'no-store',
     });
   } catch {
-    return null;
+    return 'unavailable';
   }
   if (response.status === 401 || response.status === 403) {
     invalidateSession();
     clearLibrary();
     return 'signedOut';
   }
+  if (response.status === 404) {
+    return 'missing';
+  }
   if (!response.ok) {
-    return null;
+    return 'unavailable';
   }
   return response.blob();
+}
+
+export async function fetchPhotoBlob(
+  id: string,
+  ownerSub?: string,
+): Promise<Blob | null | 'signedOut'> {
+  const outcome = await fetchPhotoBlobOutcome(id, ownerSub);
+  if (outcome === 'missing' || outcome === 'unavailable') {
+    return null;
+  }
+  return outcome;
 }
 
 export function normalizeRecipeChange(raw: Record<string, unknown>): Recipe | 'tombstone' {

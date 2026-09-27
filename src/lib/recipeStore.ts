@@ -10,6 +10,7 @@ import {
   libraryEpoch,
   listRecipes,
   markPhotoRemote,
+  photoOwnerSub,
   removeRecipeLocal,
   restoreSnapshot,
   subscribe,
@@ -20,7 +21,8 @@ import {
   listCollections,
   upsertCollection,
 } from './libraryMemory';
-import { postPhoto, pushOps } from './remote';
+import { fetchPhotoBlobOutcome, postPhoto, pushOps } from './remote';
+import { photoStore } from './photoStore';
 import { localWriteOverlapsPull, pullAfterLocalWrite } from './syncEngine';
 import { compactRecipe } from './compactRecipe';
 import { compactCollection } from './compactCollection';
@@ -48,6 +50,65 @@ async function uploadPhotoIfNeeded(
     throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the photo.");
   }
   markPhotoRemote(photoId);
+}
+
+type ParentPhotoSlot = { kind: 'cover' | 'gallery'; id: string };
+
+function parentPhotoSlots(parent: Recipe): ParentPhotoSlot[] {
+  const slots: ParentPhotoSlot[] = [];
+  if (parent.photoId !== undefined) {
+    slots.push({ kind: 'cover', id: parent.photoId });
+  }
+  for (const id of parent.galleryPhotoIds ?? []) {
+    slots.push({ kind: 'gallery', id });
+  }
+  return slots;
+}
+
+async function loadParentPhoto(id: string): Promise<Blob | 'missing' | 'unavailable' | 'signedOut'> {
+  const pending = getPendingBlob(id);
+  if (pending) {
+    return pending;
+  }
+  return fetchPhotoBlobOutcome(id, photoOwnerSub(id));
+}
+
+/**
+ * Cover and gallery copied onto new ids owned by the saver. A 404 is skipped.
+ * A temporary fetch failure or a signed-out session aborts before any copy is
+ * minted, so the save can be retried with the original photos still in place.
+ */
+async function copyParentPhotos(parent: Recipe): Promise<{
+  photoId: string | undefined;
+  galleryPhotoIds: string[] | undefined;
+}> {
+  const slots = parentPhotoSlots(parent);
+  const loaded = await Promise.all(slots.map((slot) => loadParentPhoto(slot.id)));
+  if (loaded.some((item) => item === 'signedOut')) {
+    throw new Error('Please sign in again — your session expired.');
+  }
+  if (loaded.some((item) => item === 'unavailable')) {
+    throw new Error("Couldn't copy the photos. Try again.");
+  }
+
+  let photoId: string | undefined;
+  const galleryPhotoIds: string[] = [];
+  for (let index = 0; index < slots.length; index += 1) {
+    const blob = loaded[index];
+    if (!(blob instanceof Blob)) {
+      continue;
+    }
+    const nextId = await photoStore.add(blob);
+    if (slots[index]?.kind === 'cover') {
+      photoId = nextId;
+    } else {
+      galleryPhotoIds.push(nextId);
+    }
+  }
+  return {
+    photoId,
+    galleryPhotoIds: galleryPhotoIds.length > 0 ? galleryPhotoIds : undefined,
+  };
 }
 
 async function uploadRecipePhotos(recipe: Recipe): Promise<void> {
@@ -140,6 +201,19 @@ export const recipeStore = {
       sourceUrl: draft.sourceUrl ?? existing.sourceUrl,
       photoId,
       galleryPhotoIds,
+    });
+  },
+
+  /**
+   * A new recipe from an Ask proposal. Photos come from `parent`, copied onto
+   * new ids. Fields on the draft never supply a photo.
+   */
+  async createFromAsk(parent: Recipe, draft: RecipeDraft): Promise<Recipe> {
+    const copied = await copyParentPhotos(parent);
+    return recipeStore.create({
+      ...draft,
+      photoId: copied.photoId,
+      galleryPhotoIds: copied.galleryPhotoIds,
     });
   },
 

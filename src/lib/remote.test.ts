@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   applyPullChanges,
+  fetchPhotoBlob,
+  fetchPhotoBlobOutcome,
   firstPushRejection,
   normalizeChatChange,
   normalizeCookChange,
@@ -98,6 +100,40 @@ describe('firstPushRejection', () => {
     expect(
       firstPushRejection({ results: [{ applied: false, reason: 'caps' }] }),
     ).toBeNull();
+  });
+});
+
+describe('fetchPhotoBlobOutcome', () => {
+  it('returns the blob on 200', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 })),
+    );
+    const outcome = await fetchPhotoBlobOutcome('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    expect(outcome).toBeInstanceOf(Blob);
+  });
+
+  it('returns missing on 404 and unavailable on 503 or a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })));
+    expect(await fetchPhotoBlobOutcome('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')).toBe('missing');
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
+    expect(await fetchPhotoBlobOutcome('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')).toBe('unavailable');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    );
+    expect(await fetchPhotoBlobOutcome('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')).toBe('unavailable');
+  });
+
+  it('keeps fetchPhotoBlob collapsing missing and unavailable to null', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })));
+    expect(await fetchPhotoBlob('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')).toBeNull();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
+    expect(await fetchPhotoBlob('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')).toBeNull();
   });
 });
 
