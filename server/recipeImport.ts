@@ -7,6 +7,8 @@
  * routes map `ImportOutcome` / `PageFetchOutcome` to statuses and copy. The
  * Gemini client and model are passed in; `recipeImportDepsFromEnv` is the only
  * place that reads the environment.
+ *
+ * Photo import is bound by `docs/constitutions/image-import.md`.
  */
 import { GoogleGenAI, Type, type Schema } from '@google/genai';
 

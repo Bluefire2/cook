@@ -3,6 +3,8 @@
  * client to review and save. Gated by `withMembership` in `scripts/server.ts`.
  * The pipeline lives in `server/recipeImport.ts`; this file only maps its
  * outcomes to HTTP.
+ *
+ * Photo import is bound by `docs/constitutions/image-import.md`.
  */
 import type { MembershipHandlerContext } from './membership.ts';
 import {

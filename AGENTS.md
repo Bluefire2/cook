@@ -195,6 +195,19 @@ Cloud Build.
 - Polling sync, Firestore listeners, WebSockets
 - Conflict-merge UI (LWW is the product)
 
+## Constitutions
+
+A constitution in `docs/constitutions/` records a feature's principles and
+why each one exists. Before changing anything in a constitution's scope, read
+it. A change that breaks a principle must amend the constitution in the same
+PR: edit the principle, add an Amendments entry saying why the break is worth
+it, and say so in the PR description. A break without an amendment is a bug,
+even if tests pass.
+
+| Constitution | Scope |
+| --- | --- |
+| `docs/constitutions/image-import.md` | Recipe import from photos: `importFromImages` in `server/recipeImport.ts`, the `images` field in `server/importRoute.ts`, `encodeImageForImport` in `src/lib/image.ts`, `src/lib/importApi.ts`, the photo picker in `src/screens/ImportScreen.tsx`, `evals/import-handwritten/`, `evals/ocrCompare.ts`, and the photo copy in `public/privacy.html` and `public/terms.html`. |
+
 ## Plans (source of truth for unfinished work)
 
 Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
