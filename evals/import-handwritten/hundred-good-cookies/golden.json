@@ -1,6 +1,6 @@
 {
   "title": "100 Good Cookies",
-  "servings": 1,
+  "servings": 100,
   "ingredientSections": [
     {
       "items": [
@@ -27,5 +27,5 @@
     { "text": "Bake at 350° for 8-10 minutes." }
   ],
   "tags": ["cookies", "baking"],
-  "notes": "The card is marked \"(over)\"; the back is not in the photo. No yield is written apart from the title."
+  "notes": "The card is marked \"(over)\"; the back is not in the photo. The only yield is the title's \"100\"."
 }

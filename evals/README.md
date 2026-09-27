@@ -44,7 +44,7 @@ reconciled with zoomed crops, and still need the owner's review.
 | `blueberry-muffins` | Low-resolution scan (500 px wide); yield written as "Makes 1 dozen". |
 | `broccoli-salad` | Ingredients only, no method: the importer must not invent steps. |
 | `choc-pie-tea-towel` | Handwriting printed on a tea towel, photographed at an angle with props. |
-| `hundred-good-cookies` | Two ingredient columns; card continues on the back ("over"). |
+| `hundred-good-cookies` | Two ingredient columns; yield only in the title ("100"); card continues on the back ("over"). |
 | `lemon-tea-bread` | Loose cursive on a printed card; card continues on the back ("over"). |
 | `peanut-butter-cookies` | Two ingredient columns, ditto marks, no mixing method written. |
 | `potatoe-pancakes-platter` | Block capitals on a decorated platter; misspelled title kept as written. |

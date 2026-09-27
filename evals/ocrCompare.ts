@@ -55,6 +55,8 @@ interface TokenUsage {
   prompt: number;
   output: number;
   thinking: number;
+  /** Gemini `finishReason` per call, joined with `+`; anything but STOP means the reply was cut short. */
+  finish: string;
 }
 
 interface RunResult {
@@ -96,6 +98,7 @@ function recordingDeps(base: RecipeImportDeps): { deps: RecipeImportDeps; usage:
             prompt: response.usageMetadata?.promptTokenCount ?? 0,
             output: response.usageMetadata?.candidatesTokenCount ?? 0,
             thinking: response.usageMetadata?.thoughtsTokenCount ?? 0,
+            finish: response.candidates?.[0]?.finishReason ?? 'none',
           });
           return response;
         },
@@ -111,8 +114,9 @@ function sumUsage(usage: readonly TokenUsage[]): TokenUsage {
       prompt: total.prompt + row.prompt,
       output: total.output + row.output,
       thinking: total.thinking + row.thinking,
+      finish: total.finish === '' ? row.finish : `${total.finish}+${row.finish}`,
     }),
-    { prompt: 0, output: 0, thinking: 0 },
+    { prompt: 0, output: 0, thinking: 0, finish: '' },
   );
 }
 
@@ -278,7 +282,7 @@ async function runB(
         ...shared,
         kind: 'vision_error',
         geminiMs: 0,
-        tokens: { prompt: 0, output: 0, thinking: 0 },
+        tokens: { prompt: 0, output: 0, thinking: 0, finish: '—' },
         geminiUsd: 0,
       },
       null,
@@ -328,6 +332,7 @@ function tableRow(r: RunResult): Record<string, string | number> {
     'prompt tok': r.tokens.prompt,
     'output tok': r.tokens.output,
     'thinking tok': r.tokens.thinking,
+    finish: r.tokens.finish,
     'vision units': r.visionUnits,
     'est USD': usd(r.geminiUsd + r.visionUnits * VISION_USD_PER_UNIT),
     judge: r.judge,
