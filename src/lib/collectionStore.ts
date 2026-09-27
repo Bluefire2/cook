@@ -14,7 +14,6 @@ import {
   isSharedRecipe,
   listCollections,
   removeCollectionLocal,
-  setGrantCount,
   subscribe,
   upsertCollection,
 } from './libraryMemory';
@@ -145,9 +144,7 @@ export const collectionStore = {
     if (result.kind === 'error') {
       throw new Error(result.message);
     }
-    const grants = result.grants ?? [];
-    setGrantCount(id, grants.length);
-    return grants;
+    return result.grants ?? [];
   },
 
   async addGrant(id: string, email: string): Promise<CollectionGrant> {

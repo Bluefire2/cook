@@ -4,11 +4,10 @@ import {
   addPendingBlob,
   clearLibrary,
   getSnapshot,
-  mergeSharedFromPull,
   replaceFromPull,
-  setGrantCount,
   subscribe,
 } from './libraryMemory';
+import { installSharedRows } from './testLibrary';
 import {
   applyPullChanges,
   mergePullCursor,
@@ -340,7 +339,7 @@ describe('pullAll', () => {
       cook: new Map([[oldOwn.id, cook(oldOwn.id, 1)]]),
       remotePhotoIds: new Set(['old-owned-photo']),
     });
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map([[oldShared.id, oldShared]]),
       collections: new Map([
         ['old-shared-collection', collection('old-shared-collection', 'Old shared')],
@@ -354,7 +353,6 @@ describe('pullAll', () => {
       ]),
     });
     addPendingBlob('pending-photo', new Blob(['pending']));
-    setGrantCount('known-grants', 2);
     const emissions: ReturnType<typeof getSnapshot>[] = [];
     const unsubscribe = subscribe(() => {
       emissions.push(getSnapshot());
@@ -392,7 +390,6 @@ describe('pullAll', () => {
     expect(snapshot.recipeOrigins.has('old-shared')).toBe(false);
     expect(snapshot.collectionOrigins.has('old-shared-collection')).toBe(false);
     expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
-    expect(snapshot.grantCounts.get('known-grants')).toBe(2);
   });
 
   it('does not merge a successful first shared page when a later page fails', async () => {
@@ -403,7 +400,7 @@ describe('pullAll', () => {
       cook: new Map(),
       remotePhotoIds: new Set(['prior-owned-photo']),
     });
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map([['prior-shared', recipe('prior-shared', 'Prior shared')]]),
       collections: new Map([
         ['prior-shared-collection', collection('prior-shared-collection', 'Prior shared')],
@@ -479,7 +476,6 @@ describe('pullAll', () => {
       cookParentOrigins: new Map([['old', 'former-owner']]),
     });
     addPendingBlob('pending', new Blob(['pending']));
-    setGrantCount('collection', 1);
     const emissions: ReturnType<typeof getSnapshot>[] = [];
     const unsubscribe = subscribe(() => {
       emissions.push(getSnapshot());
@@ -507,7 +503,6 @@ describe('pullAll', () => {
     expect(snapshot.collectionOrigins.size).toBe(0);
     expect(snapshot.chatParentOrigins.size).toBe(0);
     expect(snapshot.cookParentOrigins.size).toBe(0);
-    expect(snapshot.grantCounts.size).toBe(0);
   });
 
   it('does not install incomplete owned state when a later owned page fails', async () => {
@@ -577,7 +572,6 @@ describe('pullAll', () => {
 
   it('publishes completed owned and multi-page shared state exactly once', async () => {
     addPendingBlob('pending-photo', new Blob(['pending']));
-    setGrantCount('collection-collision', 3);
     const emissions: ReturnType<typeof getSnapshot>[] = [];
     const unsubscribe = subscribe(() => {
       emissions.push(getSnapshot());
@@ -668,13 +662,11 @@ describe('pullAll', () => {
       'shared-photo-two',
     ]);
     expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
-    expect(snapshot.grantCounts.get('collection-collision')).toBe(3);
     expect(snapshot.loaded).toBe(true);
   });
 
   it('publishes a stable reread once and drops the page staged before restart', async () => {
     addPendingBlob('pending-photo', new Blob(['pending']));
-    setGrantCount('known-grants', 2);
     const emissions: ReturnType<typeof getSnapshot>[] = [];
     const unsubscribe = subscribe(() => {
       emissions.push(getSnapshot());
@@ -739,7 +731,6 @@ describe('pullAll', () => {
     expect(snapshot.remotePhotoIds.has('revoked-photo')).toBe(false);
     expect(snapshot.remotePhotoIds.has('kept-photo')).toBe(true);
     expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
-    expect(snapshot.grantCounts.get('known-grants')).toBe(2);
   });
 
   it('discards a staged recipe when membership changes and the pull restarts', async () => {
@@ -786,7 +777,7 @@ describe('pullAll', () => {
       cook: new Map(),
       remotePhotoIds: new Set(['prior-owned-photo']),
     });
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map([['prior-shared', recipe('prior-shared', 'Prior shared')]]),
       collections: new Map([
         ['prior-shared-collection', collection('prior-shared-collection', 'Prior')],
@@ -800,7 +791,6 @@ describe('pullAll', () => {
       ]),
     });
     addPendingBlob('pending-photo', new Blob(['pending']));
-    setGrantCount('known-grants', 4);
     const emissions: ReturnType<typeof getSnapshot>[] = [];
     const unsubscribe = subscribe(() => {
       emissions.push(getSnapshot());
@@ -859,7 +849,6 @@ describe('pullAll', () => {
     expect(snapshot.recipeOrigins.has('staged-shared')).toBe(false);
     expect(snapshot.recipeOrigins.has('prior-shared')).toBe(false);
     expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
-    expect(snapshot.grantCounts.get('known-grants')).toBe(4);
   });
 
   it('keeps shared parent sidecars from owned pull after the shared recipe is gone', async () => {

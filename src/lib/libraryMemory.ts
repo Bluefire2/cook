@@ -22,7 +22,6 @@ export type LibrarySnapshot = {
   chatParentOrigins: ReadonlyMap<string, string>;
   /** Same marker for cook rows, keyed by recipe id. */
   cookParentOrigins: ReadonlyMap<string, string>;
-  grantCounts: ReadonlyMap<string, number>;
   loaded: boolean;
 };
 
@@ -40,7 +39,6 @@ function empty(loaded: boolean): LibrarySnapshot {
     collectionOrigins: new Map(),
     chatParentOrigins: new Map(),
     cookParentOrigins: new Map(),
-    grantCounts: new Map(),
     loaded,
   };
 }
@@ -65,7 +63,6 @@ function cloneMaps(from: LibrarySnapshot): {
   collectionOrigins: Map<string, ItemOrigin>;
   chatParentOrigins: Map<string, string>;
   cookParentOrigins: Map<string, string>;
-  grantCounts: Map<string, number>;
 } {
   return {
     recipes: new Map(from.recipes),
@@ -78,7 +75,6 @@ function cloneMaps(from: LibrarySnapshot): {
     collectionOrigins: new Map(from.collectionOrigins),
     chatParentOrigins: new Map(from.chatParentOrigins),
     cookParentOrigins: new Map(from.cookParentOrigins),
-    grantCounts: new Map(from.grantCounts),
   };
 }
 
@@ -128,7 +124,7 @@ function copyOwnerMap(
   return new Map(source ?? []);
 }
 
-type SharedPullSnapshot = {
+export type SharedPullSnapshot = {
   recipes: Map<string, Recipe>;
   collections: Map<string, Collection>;
   remotePhotoIds: Set<string>;
@@ -156,7 +152,6 @@ export function replaceFromPull(next: OwnedPullSnapshot): void {
     collectionOrigins,
     chatParentOrigins: copyOwnerMap(next.chatParentOrigins),
     cookParentOrigins: copyOwnerMap(next.cookParentOrigins),
-    grantCounts: snapshot.grantCounts,
     loaded: true,
   });
 }
@@ -208,37 +203,8 @@ export function replaceFromPullWithShared(
     collectionOrigins,
     chatParentOrigins: copyOwnerMap(owned.chatParentOrigins),
     cookParentOrigins: copyOwnerMap(owned.cookParentOrigins),
-    grantCounts: snapshot.grantCounts,
     loaded: true,
   });
-}
-
-export function mergeSharedFromPull(next: SharedPullSnapshot): void {
-  const maps = cloneMaps(snapshot);
-  for (const [id, recipe] of next.recipes) {
-    if (maps.recipeOrigins.get(id)?.kind === 'own' || maps.recipes.has(id)) {
-      continue;
-    }
-    maps.recipes.set(id, recipe);
-    const origin = next.recipeOrigins.get(id);
-    if (origin) {
-      maps.recipeOrigins.set(id, origin);
-    }
-  }
-  for (const [id, collection] of next.collections) {
-    if (maps.collectionOrigins.get(id)?.kind === 'own' || maps.collections.has(id)) {
-      continue;
-    }
-    maps.collections.set(id, collection);
-    const origin = next.collectionOrigins.get(id);
-    if (origin) {
-      maps.collectionOrigins.set(id, origin);
-    }
-  }
-  for (const id of next.remotePhotoIds) {
-    maps.remotePhotoIds.add(id);
-  }
-  emit({ ...snapshot, ...maps });
 }
 
 export function upsertRecipe(recipe: Recipe): void {
@@ -412,7 +378,6 @@ export function removeCollectionLocal(id: string): void {
   const next = cloneMaps(snapshot);
   next.collections.delete(id);
   next.collectionOrigins.delete(id);
-  next.grantCounts.delete(id);
   emit({ ...snapshot, ...next });
 }
 
@@ -444,15 +409,6 @@ export function photoOwnerSub(photoId: string): string | undefined {
     return undefined;
   }
   return undefined;
-}
-
-export function setGrantCount(collectionId: string, count: number): void {
-  if (snapshot.grantCounts.get(collectionId) === count) {
-    return;
-  }
-  const next = cloneMaps(snapshot);
-  next.grantCounts.set(collectionId, count);
-  emit({ ...snapshot, ...next });
 }
 
 export function listChat(recipeId: string): ChatMessage[] {

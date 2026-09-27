@@ -10,19 +10,18 @@ import {
   getRecipe,
   getSnapshot,
   isSharedRecipe,
-  mergeSharedFromPull,
   ownedBackupGraphIds,
   removeRecipeLocal,
   replaceFromPull,
   replaceFromPullWithShared,
   restoreSnapshot,
-  setGrantCount,
   subscribe,
   upsertChat,
   upsertCollection,
   upsertCook,
   upsertRecipe,
 } from './libraryMemory';
+import { installSharedRows } from './testLibrary';
 import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 
@@ -43,7 +42,7 @@ afterEach(() => {
   clearLibrary();
 });
 
-describe('mergeSharedFromPull', () => {
+describe('shared rows', () => {
   it('adds a shared recipe and refuses to overwrite an owned id', () => {
     const own = recipe('own-1', 'Mine');
     replaceFromPull({
@@ -55,7 +54,7 @@ describe('mergeSharedFromPull', () => {
     });
     const collision = recipe('own-1', 'Theirs');
     const shared = recipe('shared-1', 'Shared soup');
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map([
         [collision.id, collision],
         [shared.id, shared],
@@ -83,7 +82,6 @@ describe('mergeSharedFromPull', () => {
 describe('replaceFromPullWithShared', () => {
   it('publishes one complete owned-precedence snapshot and preserves local caches', () => {
     addPendingBlob('pending-photo', new Blob(['pending']));
-    setGrantCount('owned-collection', 2);
     let calls = 0;
     const unsubscribe = subscribe(() => {
       calls += 1;
@@ -137,7 +135,6 @@ describe('replaceFromPullWithShared', () => {
     });
     expect([...snapshot.remotePhotoIds]).toEqual(['owned-photo', 'shared-photo']);
     expect(snapshot.pendingBlobs.has('pending-photo')).toBe(true);
-    expect(snapshot.grantCounts.get('owned-collection')).toBe(2);
   });
 });
 
@@ -150,30 +147,6 @@ function collection(id: string, name: string): Collection {
     updatedAt: 1,
   };
 }
-
-describe('setGrantCount', () => {
-  it('distinguishes an unknown count from known zero and positive counts', () => {
-    expect(getSnapshot().grantCounts.get('col-1')).toBeUndefined();
-    setGrantCount('col-1', 0);
-    expect(getSnapshot().grantCounts.get('col-1')).toBe(0);
-    setGrantCount('col-1', 2);
-    expect(getSnapshot().grantCounts.get('col-1')).toBe(2);
-  });
-
-  it('does not notify subscribers when the count is unchanged', () => {
-    let calls = 0;
-    const unsub = subscribe(() => {
-      calls += 1;
-    });
-    setGrantCount('col-1', 2);
-    expect(calls).toBe(1);
-    setGrantCount('col-1', 2);
-    expect(calls).toBe(1);
-    setGrantCount('col-1', 3);
-    expect(calls).toBe(2);
-    unsub();
-  });
-});
 
 describe('countOwnedNamedCollections', () => {
   it('counts only owned and missing-origin collections', () => {
@@ -189,7 +162,7 @@ describe('countOwnedNamedCollections', () => {
     });
     expect(countOwnedNamedCollections()).toBe(2);
 
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map(),
       collections: new Map([['shared-1', collection('shared-1', 'Shared')]]),
       remotePhotoIds: new Set(),
@@ -260,7 +233,7 @@ describe('chat and cook parent sidecars', () => {
   });
 
   it('infers a sidecar from a live shared origin and clears it for an owned origin', () => {
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map([['shared', recipe('shared', 'Shared')]]),
       collections: new Map(),
       remotePhotoIds: new Set(),

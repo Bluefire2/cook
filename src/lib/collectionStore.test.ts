@@ -5,9 +5,9 @@ import {
   clearLibrary,
   countOwnedNamedCollections,
   listCollections,
-  mergeSharedFromPull,
   upsertCollection,
 } from './libraryMemory';
+import { installSharedRows } from './testLibrary';
 import {
   addCollectionGrant,
   listCollectionGrants,
@@ -72,7 +72,7 @@ describe('collectionStore.create cap', () => {
     }
     expect(countOwnedNamedCollections()).toBe(MAX_NAMED_COLLECTIONS - 1);
 
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map(),
       collections: new Map([
         ['shared-a', collection('shared-a', 'Shared A')],
@@ -97,7 +97,7 @@ describe('collectionStore.create cap', () => {
     for (let i = 0; i < MAX_NAMED_COLLECTIONS; i += 1) {
       upsertCollection(collection(`owned-${i}`, `Owned ${i}`));
     }
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map(),
       collections: new Map([['shared-only', collection('shared-only', 'Shared')]]),
       remotePhotoIds: new Set(),

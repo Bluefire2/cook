@@ -9,11 +9,11 @@ import {
   listAllCook,
   listCollections,
   listRecipes,
-  mergeSharedFromPull,
   replaceFromPull,
   upsertChat,
   upsertCook,
 } from './libraryMemory';
+import { installSharedRows } from './testLibrary';
 import { postPhoto, pushOps } from './remote';
 import type { PushOp } from './pushOps';
 
@@ -228,7 +228,7 @@ describe('exportLibrary', () => {
       ]),
       remotePhotoIds: new Set(),
     });
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map([[sharedRecipe.id, sharedRecipe]]),
       collections: new Map(),
       remotePhotoIds: new Set(),
@@ -398,7 +398,7 @@ describe('exportLibrary', () => {
       cook: new Map(),
       remotePhotoIds: new Set(),
     });
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map([[sharedRecipe.id, sharedRecipe]]),
       collections: new Map(),
       remotePhotoIds: new Set(),
@@ -549,7 +549,7 @@ describe('importLibrary', () => {
     vi.mocked(pushOps).mockResolvedValue('ok');
     vi.mocked(postPhoto).mockResolvedValue('ok');
     const sharedRecipe = { ...RECIPE, title: 'Shared original', photoId: PHOTO };
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map([[RECIPE.id, sharedRecipe]]),
       collections: new Map([[COLLECTION.id, COLLECTION]]),
       remotePhotoIds: new Set([PHOTO]),
@@ -864,7 +864,7 @@ describe('importLibrary', () => {
       ]),
       remotePhotoIds: new Set(),
     });
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map([[sharedRecipe.id, sharedRecipe]]),
       collections: new Map(),
       remotePhotoIds: new Set(),

@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   clearLibrary,
   getRecipe,
-  mergeSharedFromPull,
   replaceFromPull,
 } from './libraryMemory';
+import { installSharedRows } from './testLibrary';
 import {
   backupGraphIds,
   cloneUuid,
@@ -286,7 +286,7 @@ describe('remapBackupImport', () => {
       remotePhotoIds: new Set(),
     });
 
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map([
         [
           ALICE_RECIPE,
@@ -333,7 +333,7 @@ describe('remapBackupImport', () => {
       createdAt: 1,
       updatedAt: 1,
     };
-    mergeSharedFromPull({
+    installSharedRows({
       recipes: new Map([[ALICE_RECIPE, sharedRecipe]]),
       collections: new Map(),
       remotePhotoIds: new Set(),
