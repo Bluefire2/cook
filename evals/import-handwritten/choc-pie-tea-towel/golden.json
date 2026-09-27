@@ -1,5 +1,5 @@
 {
-  "title": "Chocolate Pie",
+  "title": "Choc Pie",
   "servings": 1,
   "ingredientSections": [
     {
@@ -26,5 +26,5 @@
     { "text": "Serve with whipped cream." }
   ],
   "tags": ["pie", "dessert", "chocolate"],
-  "notes": "Titled \"Choc Pie\". Signed \"All my love, Alice\". The baked pie shell and whipped cream appear only in the method."
+  "notes": "Signed \"All my love, Alice\". The baked pie shell and whipped cream appear only in the method."
 }

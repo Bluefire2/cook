@@ -36,8 +36,8 @@ Photos of handwritten recipes, for the photo import path
 Ten single-page fixtures, added 2026-09-27 from publicly accessible photos the
 repo owner supplied as stock images. Their redistribution licences have not
 been independently verified; each `source.txt` records the original file name.
-Goldens were transcribed from the photos by hand-checked model reading and
-still need the owner's review.
+Goldens were transcribed from the photos by two independent model readings,
+reconciled with zoomed crops, and still need the owner's review.
 
 | Fixture | What it tests |
 | --- | --- |
