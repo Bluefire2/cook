@@ -229,10 +229,35 @@ export async function collectionGrantsPost(req: Request): Promise<Response> {
   }
 }
 
-export async function collectionGrantsRevokePost(req: Request): Promise<Response> {
+export type RevokeGrantRequestDependencies = {
+  requireOwnedLiveCollection: (
+    req: Request,
+    collectionId: string,
+  ) => Promise<Awaited<ReturnType<typeof requireOwnedLiveCollection>>>;
+  revoke: (
+    ownerSub: string,
+    collectionId: string,
+    viewerSub: string,
+  ) => Promise<RevokeGrantOutcome>;
+};
+
+/** Auth runs before the body is read, so unauthenticated callers never see body validation. */
+export async function handleRevokeGrantRequest(
+  req: Request,
+  dependencies: RevokeGrantRequestDependencies,
+): Promise<Response> {
   const collectionId = collectionIdFromPath(new URL(req.url).pathname);
   if (collectionId === null) {
     return jsonResponse({ error: 'Bad request' }, 400);
+  }
+
+  const access = await dependencies.requireOwnedLiveCollection(req, collectionId);
+  const early = accessResponse(access);
+  if (early) {
+    return early;
+  }
+  if (access.kind !== 'ok') {
+    return notFound();
   }
 
   const raw = await readBoundedText(req, BODY_LIMIT);
@@ -253,54 +278,60 @@ export async function collectionGrantsRevokePost(req: Request): Promise<Response
     return jsonResponse({ error: 'Bad request' }, 400);
   }
 
-  const access = await requireOwnedLiveCollection(req, collectionId);
-  const early = accessResponse(access);
-  if (early) {
-    return early;
-  }
-  if (access.kind !== 'ok') {
-    return notFound();
-  }
-
   try {
-    const outcome = await orchestrateGrantRevoke(sub, Date.now(), {
-      runTransaction: async (work) => {
-        const db = getStoreFirestore();
-        return db.runTransaction(async (tx) => {
-          const grantRef = grantColRef(access.sub, collectionId).doc(sub);
-          return work({
-            readForwardGrant: async (viewerSub) => {
-              const snap = await tx.get(grantRef);
-              return parseGrantDoc(
-                snap.exists ? snap.data() : undefined,
-                viewerSub,
-              );
-            },
-            writePair: async (viewerSub, tombstone) => {
-              const shareRef = incomingShareRef(
-                viewerSub,
-                shareGrantId(access.sub, collectionId),
-              );
-              tx.set(grantRef, tombstone, { merge: false });
-              tx.set(
-                shareRef,
-                incomingSharePayload(
-                  access.sub,
-                  collectionId,
-                  tombstone.updatedAt,
-                  { deletedAt: tombstone.deletedAt },
-                ),
-                { merge: false },
-              );
-            },
-          });
-        });
-      },
-    });
+    const outcome = await dependencies.revoke(access.sub, collectionId, sub);
     return revokeGrantHttpResponse(outcome);
   } catch (err) {
     console.error('collectionGrantsRevokePost store error:', err);
     return storeUnavailable();
   }
+}
+
+async function revokeGrantInFirestore(
+  ownerSub: string,
+  collectionId: string,
+  viewerSub: string,
+): Promise<RevokeGrantOutcome> {
+  return orchestrateGrantRevoke(viewerSub, Date.now(), {
+    runTransaction: async (work) => {
+      const db = getStoreFirestore();
+      return db.runTransaction(async (tx) => {
+        const grantRef = grantColRef(ownerSub, collectionId).doc(viewerSub);
+        return work({
+          readForwardGrant: async (expectedViewerSub) => {
+            const snap = await tx.get(grantRef);
+            return parseGrantDoc(
+              snap.exists ? snap.data() : undefined,
+              expectedViewerSub,
+            );
+          },
+          writePair: async (expectedViewerSub, tombstone) => {
+            const shareRef = incomingShareRef(
+              expectedViewerSub,
+              shareGrantId(ownerSub, collectionId),
+            );
+            tx.set(grantRef, tombstone, { merge: false });
+            tx.set(
+              shareRef,
+              incomingSharePayload(
+                ownerSub,
+                collectionId,
+                tombstone.updatedAt,
+                { deletedAt: tombstone.deletedAt },
+              ),
+              { merge: false },
+            );
+          },
+        });
+      });
+    },
+  });
+}
+
+export async function collectionGrantsRevokePost(req: Request): Promise<Response> {
+  return handleRevokeGrantRequest(req, {
+    requireOwnedLiveCollection,
+    revoke: revokeGrantInFirestore,
+  });
 }
 
