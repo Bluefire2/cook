@@ -9,6 +9,7 @@ import {
   cascadeRecipeDelete,
   clearChatForRecipe,
   compactCollectionFields,
+  compactCookLogFields,
   compactRecipeFields,
   countLiveNamedCollections,
   decodePullCursor,
@@ -25,7 +26,14 @@ import {
   validatePushOp,
 } from './store.ts';
 
-const STORE_KINDS: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos', 'collections'];
+export const STORE_KINDS: StoreKind[] = [
+  'recipes',
+  'chatMessages',
+  'cookState',
+  'photos',
+  'collections',
+  'cookLogs',
+];
 
 const MAX_PUSH_OPS = 50;
 const MAX_PUSH_BYTES = 1_000_000;
@@ -40,7 +48,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<string, unknown> {
+export function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<string, unknown> {
   const deletedAt = doc.deletedAt;
   if (deletedAt !== undefined && deletedAt !== null) {
     return { id: doc.id, deletedAt };
@@ -53,6 +61,9 @@ function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<stri
   }
   if (kind === 'collections') {
     return compactCollectionFields(copy);
+  }
+  if (kind === 'cookLogs') {
+    return compactCookLogFields(copy);
   }
   if (kind === 'photos') {
     return {
@@ -102,6 +113,7 @@ export async function syncPull(req: Request): Promise<Response> {
     cookState: [],
     photos: [],
     collections: [],
+    cookLogs: [],
   };
 
   let nextCursor: PullCursor = { ...cursor };
@@ -204,6 +216,17 @@ export async function applyPushOp(
     case 'collection.delete': {
       const body = payload as { id: string; updatedAt: number };
       return tombstoneDoc(uid, 'collections', body.id, body.updatedAt);
+    }
+    case 'cookLog.put': {
+      const body = payload as Record<string, unknown>;
+      const id = body.id as string;
+      const updatedAt = body.updatedAt as number;
+      const compact = compactCookLogFields(body);
+      return putDoc(uid, 'cookLogs', id, compact, updatedAt);
+    }
+    case 'cookLog.delete': {
+      const body = payload as { id: string; updatedAt: number };
+      return tombstoneDoc(uid, 'cookLogs', body.id, body.updatedAt);
     }
     default:
       return { applied: false, reason: 'unknown' };
