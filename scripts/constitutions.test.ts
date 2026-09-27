@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -173,11 +173,14 @@ function constitutionDrift(input: { constitutions: ConstitutionFile[]; agentsMd:
 
   const indexed = new Set<string>();
   for (const entry of index.entries) {
+    if (indexed.has(entry.path)) {
+      errors.push(`duplicate index line for ${entry.path}`);
+    }
+    indexed.add(entry.path);
     if (!files.has(entry.path)) {
       errors.push(`index line points to missing file ${entry.path}`);
       continue;
     }
-    indexed.add(entry.path);
     const fields = parsed.get(entry.path);
     if (!fields) continue;
     if (entry.name !== fields.name) {
@@ -194,6 +197,9 @@ function constitutionDrift(input: { constitutions: ConstitutionFile[]; agentsMd:
 
   if (files.size === 0 && index.entries.length === 0 && !index.noneYet) {
     errors.push('index must say "None yet." when there are no constitutions');
+  }
+  if (index.noneYet && (files.size > 0 || index.entries.length > 0)) {
+    errors.push('index still says "None yet."');
   }
 
   return errors;
@@ -323,11 +329,71 @@ describe('constitution index drift', () => {
     expect(errors).toContain('index line points to missing file docs/constitutions/sync-toast.md');
   });
 
+  it('reports a leftover "None yet." beside real entries', () => {
+    const parsed = parseFrontmatter(VALID);
+    if ('errors' in parsed) throw new Error(parsed.errors.join('\n'));
+    const errors = constitutionDrift({
+      constitutions: [{ file: 'docs/constitutions/sync-toast.md', text: VALID }],
+      agentsMd: [
+        '## Feature constitutions',
+        '',
+        'None yet.',
+        '',
+        `- **Sync toast** (\`docs/constitutions/sync-toast.md\`): ${parsed.fields.description}`,
+        '',
+        '## Plans',
+        '',
+      ].join('\n'),
+    });
+    expect(errors).toContain('index still says "None yet."');
+  });
+
+  it('reports a duplicate index line for the same file', () => {
+    const parsed = parseFrontmatter(VALID);
+    if ('errors' in parsed) throw new Error(parsed.errors.join('\n'));
+    const line = `- **Sync toast** (\`docs/constitutions/sync-toast.md\`): ${parsed.fields.description}`;
+    const errors = constitutionDrift({
+      constitutions: [{ file: 'docs/constitutions/sync-toast.md', text: VALID }],
+      agentsMd: ['## Feature constitutions', '', line, line, '', '## Plans', ''].join('\n'),
+    });
+    expect(errors).toContain('duplicate index line for docs/constitutions/sync-toast.md');
+  });
+
   it('matches the constitutions in this repo', () => {
     const errors = constitutionDrift({
       constitutions: listConstitutions(),
       agentsMd: readFileSync(join(repoRoot, 'AGENTS.md'), 'utf8'),
     });
     expect(errors).toEqual([]);
+  });
+});
+
+function openingScalars(text: string): Map<string, string> {
+  const lines = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').split('\n');
+  const scalars = new Map<string, string>();
+  if (lines[0] !== '---') return scalars;
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === '---') break;
+    const match = /^([A-Za-z][A-Za-z0-9]*): (.*)$/.exec(line ?? '');
+    const key = match?.[1];
+    const value = match?.[2];
+    if (key !== undefined && value !== undefined) scalars.set(key, value);
+  }
+  return scalars;
+}
+
+describe('write-constitution skill copies', () => {
+  it('keeps the Claude Code stub as a real file with the same frontmatter', () => {
+    const claudePath = join(repoRoot, '.claude/skills/write-constitution/SKILL.md');
+    const cursorPath = join(repoRoot, '.cursor/skills/write-constitution/SKILL.md');
+    expect(lstatSync(claudePath).isSymbolicLink()).toBe(false);
+    const claude = readFileSync(claudePath, 'utf8');
+    const cursor = openingScalars(readFileSync(cursorPath, 'utf8'));
+    const stub = openingScalars(claude);
+    expect(stub.get('name')).toBe(cursor.get('name'));
+    expect(stub.get('description')).toBe(cursor.get('description'));
+    expect(stub.get('name')).toBe('write-constitution');
+    expect(claude).toContain('Read and follow `.cursor/skills/write-constitution/SKILL.md`.');
   });
 });

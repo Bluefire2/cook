@@ -33,7 +33,10 @@ this, the setup below may already be present. Step 1 covers both cases.
   versioned in the repo. That makes it available in local Cursor, in Cloud
   Agents, and to anyone who clones the repo. Agents that don't use Cursor can
   still read the file by path. `.claude/skills/write-constitution/SKILL.md`
-  is a symlink to that copy, so Claude Code finds the same skill.
+  is a real stub with the same `name` and `description` and a body that points
+  at that copy, so Claude Code finds the skill on a Windows checkout where Git
+  does not materialize symlinks. The drift test checks that the two
+  frontmatters match.
 - **It is triggered by `/write-constitution` or by plain language.** Do **not**
   set `disable-model-invocation: true`, because that would turn off the plain
   language trigger.
@@ -184,8 +187,12 @@ Contents:
   - a constitution has no index line;
   - an index line points to a missing file;
   - an index `name` or `description` differs from the frontmatter by even one
-    character.
+    character;
+  - "None yet." is still present beside real entries;
+  - the same file has more than one index line.
 - It passes when there are zero constitutions and the index says "None yet."
+- It checks that `.claude/skills/write-constitution/SKILL.md` is a regular file
+  whose `name` and `description` match `.cursor/skills/write-constitution/SKILL.md`.
 - Negative cases on inline fixture strings:
   - frontmatter missing `description` must be reported;
   - a one-character description mismatch must be reported.
@@ -271,7 +278,9 @@ runs the skill:
 Also state in `SKILL.md`: once `docs/constitutions/cook-log.md` exists, it is
 the worked example to imitate. Until then, `template.md` is the only reference.
 
-Add `.claude/skills/write-constitution/SKILL.md` as a relative symlink to
+Add `.claude/skills/write-constitution/SKILL.md` as a regular file, not a
+symlink. Copy the Cursor skill's `name` and `description` frontmatter, and
+set the body to one line: Read and follow
 `.cursor/skills/write-constitution/SKILL.md`.
 
 ### 3. [core] Write `.cursor/skills/write-constitution/template.md`
