@@ -14,6 +14,7 @@ import { recipeStore, useRecipes } from '../lib/recipeStore';
 import { visibleLibraryRecipes } from '../lib/visibleLibraryRecipes';
 import { useSession } from '../lib/session';
 import { useSyncStatus } from '../lib/syncEngine';
+import { AssistantEntryLink } from '../agent/index';
 import {
   dangerBtn,
   ghostBtn,
@@ -246,9 +247,12 @@ export default function Library() {
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="flex items-center justify-between py-4">
         <h1 className="text-2xl font-bold">Sous</h1>
-        <Link to="/settings" className={ghostBtn}>
-          Settings
-        </Link>
+        <div className="flex items-center gap-1">
+          <AssistantEntryLink />
+          <Link to="/settings" className={ghostBtn}>
+            Settings
+          </Link>
+        </div>
       </header>
 
       {showSwitcher && (
