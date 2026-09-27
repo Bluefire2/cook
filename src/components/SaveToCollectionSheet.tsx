@@ -50,7 +50,9 @@ export default function SaveToCollectionSheet({
   title?: string;
   createLabel?: string;
 }) {
-  const collections = useCollections();
+  const collections = useCollections()?.filter(
+    (collection) => !collectionStore.isShared(collection.id),
+  );
   const inFlight = useRef(false);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);

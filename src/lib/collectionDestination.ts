@@ -1,3 +1,4 @@
+import { isSharedCollection } from './libraryMemory';
 import type { Collection } from './types';
 
 export type CollectionDestination =
@@ -14,7 +15,10 @@ export function resolveCollectionDestination(
   if (collections === undefined) return { kind: 'loading' };
   if (selectedId === null) return { kind: 'save', collectionId: undefined };
   const id = selectedId ?? requestedId;
-  return id && collections.some((collection) => collection.id === id)
+  return id &&
+    collections.some(
+      (collection) => collection.id === id && !isSharedCollection(collection.id),
+    )
     ? { kind: 'save', collectionId: id }
     : { kind: 'choose' };
 }
