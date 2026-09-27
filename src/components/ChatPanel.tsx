@@ -141,7 +141,7 @@ function ProposalCard({
             type="button"
             onClick={() => void apply()}
             disabled={saving}
-            className={`${primaryBtn} flex-1 py-2 text-sm`}
+            className={`${primaryBtn} flex-1 py-2 text-sm disabled:opacity-40`}
           >
             Apply
           </button>

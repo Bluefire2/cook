@@ -9,14 +9,14 @@ import {
   listRecipes,
   upsertRecipe,
 } from './libraryMemory';
-import { fetchPhotoBlob, postPhoto, pushOps } from './remote';
+import { fetchPhotoBlobOutcome, postPhoto, pushOps } from './remote';
 import { installSharedRows } from './testLibrary';
 import type { Recipe, RecipeDraft } from './types';
 
 vi.mock('./remote', () => ({
   postPhoto: vi.fn(),
   pushOps: vi.fn(),
-  fetchPhotoBlob: vi.fn(),
+  fetchPhotoBlobOutcome: vi.fn(),
 }));
 
 const COVER = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -50,7 +50,7 @@ afterEach(() => {
   clearLibrary();
   vi.mocked(postPhoto).mockReset();
   vi.mocked(pushOps).mockReset();
-  vi.mocked(fetchPhotoBlob).mockReset();
+  vi.mocked(fetchPhotoBlobOutcome).mockReset();
 });
 
 describe('recipeStore.createFromAsk', () => {
@@ -59,8 +59,8 @@ describe('recipeStore.createFromAsk', () => {
     const galleryBlob = new Blob(['gallery'], { type: 'image/jpeg' });
     upsertRecipe(parentRecipe(COVER, [GALLERY]));
     addPendingBlob(COVER, coverBlob);
-    vi.mocked(fetchPhotoBlob).mockImplementation(async (id) =>
-      id === GALLERY ? galleryBlob : null,
+    vi.mocked(fetchPhotoBlobOutcome).mockImplementation(async (id) =>
+      id === GALLERY ? galleryBlob : 'missing',
     );
     vi.mocked(postPhoto).mockResolvedValue('ok');
     vi.mocked(pushOps).mockResolvedValue('ok');
@@ -72,8 +72,8 @@ describe('recipeStore.createFromAsk', () => {
     expect(created.galleryPhotoIds).toEqual([expect.any(String)]);
     expect(created.galleryPhotoIds?.[0]).not.toBe(GALLERY);
     expect(created.galleryPhotoIds?.[0]).not.toBe(created.photoId);
-    expect(fetchPhotoBlob).toHaveBeenCalledTimes(1);
-    expect(fetchPhotoBlob).toHaveBeenCalledWith(GALLERY, undefined);
+    expect(fetchPhotoBlobOutcome).toHaveBeenCalledTimes(1);
+    expect(fetchPhotoBlobOutcome).toHaveBeenCalledWith(GALLERY, undefined);
     expect(postPhoto).toHaveBeenCalledWith(
       created.photoId,
       created.id,
@@ -102,20 +102,20 @@ describe('recipeStore.createFromAsk', () => {
       recipeOrigins: new Map([[parent.id, { kind: 'shared', ownerSub: 'owner-1' }]]),
       collectionOrigins: new Map(),
     });
-    vi.mocked(fetchPhotoBlob).mockResolvedValue(new Blob(['bytes'], { type: 'image/jpeg' }));
+    vi.mocked(fetchPhotoBlobOutcome).mockResolvedValue(new Blob(['bytes'], { type: 'image/jpeg' }));
     vi.mocked(postPhoto).mockResolvedValue('ok');
     vi.mocked(pushOps).mockResolvedValue('ok');
 
     await recipeStore.createFromAsk(parent, draft);
 
-    expect(fetchPhotoBlob).toHaveBeenCalledWith(COVER, 'owner-1');
-    expect(fetchPhotoBlob).toHaveBeenCalledWith(GALLERY, 'owner-1');
+    expect(fetchPhotoBlobOutcome).toHaveBeenCalledWith(COVER, 'owner-1');
+    expect(fetchPhotoBlobOutcome).toHaveBeenCalledWith(GALLERY, 'owner-1');
   });
 
   it('omits a photo that could not be copied and still saves the recipe', async () => {
     upsertRecipe(parentRecipe(COVER, [GALLERY]));
-    vi.mocked(fetchPhotoBlob).mockImplementation(async (id) =>
-      id === COVER ? new Blob(['cover'], { type: 'image/jpeg' }) : null,
+    vi.mocked(fetchPhotoBlobOutcome).mockImplementation(async (id) =>
+      id === COVER ? new Blob(['cover'], { type: 'image/jpeg' }) : 'missing',
     );
     vi.mocked(postPhoto).mockResolvedValue('ok');
     vi.mocked(pushOps).mockResolvedValue('ok');
@@ -129,7 +129,7 @@ describe('recipeStore.createFromAsk', () => {
 
   it('creates nothing when the photo fetch signs the user out', async () => {
     upsertRecipe(parentRecipe(COVER, [GALLERY]));
-    vi.mocked(fetchPhotoBlob).mockImplementation(async (id) =>
+    vi.mocked(fetchPhotoBlobOutcome).mockImplementation(async (id) =>
       id === COVER ? new Blob(['cover'], { type: 'image/jpeg' }) : 'signedOut',
     );
 
@@ -141,9 +141,36 @@ describe('recipeStore.createFromAsk', () => {
     expect(pushOps).not.toHaveBeenCalled();
   });
 
+  it('saves nothing when a photo fetch fails temporarily', async () => {
+    upsertRecipe(parentRecipe(COVER, [GALLERY]));
+    vi.mocked(fetchPhotoBlobOutcome).mockImplementation(async (id) =>
+      id === COVER ? new Blob(['cover'], { type: 'image/jpeg' }) : 'unavailable',
+    );
+
+    await expect(recipeStore.createFromAsk(parentRecipe(COVER, [GALLERY]), draft)).rejects.toThrow(
+      "Couldn't copy the photos. Try again.",
+    );
+    expect(listRecipes().map((recipe) => recipe.id)).toEqual([PARENT_ID]);
+    expect(getSnapshot().pendingBlobs.size).toBe(0);
+    expect(pushOps).not.toHaveBeenCalled();
+  });
+
+  it('leaves no recipe and drops copied blobs when create fails', async () => {
+    upsertRecipe(parentRecipe(COVER, [GALLERY]));
+    vi.mocked(fetchPhotoBlobOutcome).mockResolvedValue(new Blob(['bytes'], { type: 'image/jpeg' }));
+    vi.mocked(postPhoto).mockResolvedValue('ok');
+    vi.mocked(pushOps).mockResolvedValue('error');
+
+    await expect(recipeStore.createFromAsk(parentRecipe(COVER, [GALLERY]), draft)).rejects.toThrow(
+      "Couldn't save the recipe.",
+    );
+    expect(listRecipes().map((recipe) => recipe.id)).toEqual([PARENT_ID]);
+    expect(getSnapshot().pendingBlobs.size).toBe(0);
+  });
+
   it('ignores a photo id on the proposal', async () => {
     upsertRecipe(parentRecipe(COVER, [GALLERY]));
-    vi.mocked(fetchPhotoBlob).mockResolvedValue(new Blob(['bytes'], { type: 'image/jpeg' }));
+    vi.mocked(fetchPhotoBlobOutcome).mockResolvedValue(new Blob(['bytes'], { type: 'image/jpeg' }));
     vi.mocked(postPhoto).mockResolvedValue('ok');
     vi.mocked(pushOps).mockResolvedValue('ok');
 

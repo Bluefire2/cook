@@ -8,9 +8,9 @@ import {
   getRecipe,
   getSnapshot,
   libraryEpoch,
-  photoOwnerSub,
   listRecipes,
   markPhotoRemote,
+  photoOwnerSub,
   removeRecipeLocal,
   restoreSnapshot,
   subscribe,
@@ -21,7 +21,7 @@ import {
   listCollections,
   upsertCollection,
 } from './libraryMemory';
-import { fetchPhotoBlob, postPhoto, pushOps } from './remote';
+import { fetchPhotoBlobOutcome, postPhoto, pushOps } from './remote';
 import { photoStore } from './photoStore';
 import { localWriteOverlapsPull, pullAfterLocalWrite } from './syncEngine';
 import { compactRecipe } from './compactRecipe';
@@ -52,58 +52,62 @@ async function uploadPhotoIfNeeded(
   markPhotoRemote(photoId);
 }
 
-async function blobForParentPhoto(id: string): Promise<Blob | null | 'signedOut'> {
+type ParentPhotoSlot = { kind: 'cover' | 'gallery'; id: string };
+
+function parentPhotoSlots(parent: Recipe): ParentPhotoSlot[] {
+  const slots: ParentPhotoSlot[] = [];
+  if (parent.photoId !== undefined) {
+    slots.push({ kind: 'cover', id: parent.photoId });
+  }
+  for (const id of parent.galleryPhotoIds ?? []) {
+    slots.push({ kind: 'gallery', id });
+  }
+  return slots;
+}
+
+async function loadParentPhoto(id: string): Promise<Blob | 'missing' | 'unavailable' | 'signedOut'> {
   const pending = getPendingBlob(id);
   if (pending) {
     return pending;
   }
-  return fetchPhotoBlob(id, photoOwnerSub(id));
+  return fetchPhotoBlobOutcome(id, photoOwnerSub(id));
 }
 
 /**
- * Cover and gallery copied onto new ids owned by the saver. A missing photo
- * is skipped. Signing out aborts and drops any copies already minted.
+ * Cover and gallery copied onto new ids owned by the saver. A 404 is skipped.
+ * A temporary fetch failure or a signed-out session aborts before any copy is
+ * minted, so the save can be retried with the original photos still in place.
  */
 async function copyParentPhotos(parent: Recipe): Promise<{
   photoId: string | undefined;
   galleryPhotoIds: string[] | undefined;
-  minted: string[];
 }> {
-  const minted: string[] = [];
-  const discardMinted = () => {
-    for (const id of minted) {
-      photoStore.discardLocal(id);
-    }
-  };
-  const copyOne = async (id: string): Promise<string | undefined> => {
-    const blob = await blobForParentPhoto(id);
-    if (blob === 'signedOut') {
-      discardMinted();
-      throw new Error('Please sign in again — your session expired.');
-    }
-    if (blob === null) {
-      return undefined;
-    }
-    const nextId = await photoStore.add(blob);
-    minted.push(nextId);
-    return nextId;
-  };
+  const slots = parentPhotoSlots(parent);
+  const loaded = await Promise.all(slots.map((slot) => loadParentPhoto(slot.id)));
+  if (loaded.some((item) => item === 'signedOut')) {
+    throw new Error('Please sign in again — your session expired.');
+  }
+  if (loaded.some((item) => item === 'unavailable')) {
+    throw new Error("Couldn't copy the photos. Try again.");
+  }
 
   let photoId: string | undefined;
-  if (parent.photoId !== undefined) {
-    photoId = await copyOne(parent.photoId);
-  }
   const galleryPhotoIds: string[] = [];
-  for (const id of parent.galleryPhotoIds ?? []) {
-    const copied = await copyOne(id);
-    if (copied !== undefined) {
-      galleryPhotoIds.push(copied);
+  for (let index = 0; index < slots.length; index += 1) {
+    const blob = loaded[index];
+    if (!(blob instanceof Blob)) {
+      continue;
+    }
+    const nextId = await photoStore.add(blob);
+    if (slots[index]?.kind === 'cover') {
+      photoId = nextId;
+    } else {
+      galleryPhotoIds.push(nextId);
     }
   }
   return {
     photoId,
     galleryPhotoIds: galleryPhotoIds.length > 0 ? galleryPhotoIds : undefined,
-    minted,
   };
 }
 
@@ -206,18 +210,11 @@ export const recipeStore = {
    */
   async createFromAsk(parent: Recipe, draft: RecipeDraft): Promise<Recipe> {
     const copied = await copyParentPhotos(parent);
-    try {
-      return await recipeStore.create({
-        ...draft,
-        photoId: copied.photoId,
-        galleryPhotoIds: copied.galleryPhotoIds,
-      });
-    } catch (err) {
-      for (const id of copied.minted) {
-        photoStore.discardLocal(id);
-      }
-      throw err;
-    }
+    return recipeStore.create({
+      ...draft,
+      photoId: copied.photoId,
+      galleryPhotoIds: copied.galleryPhotoIds,
+    });
   },
 
   async create(
