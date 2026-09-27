@@ -44,7 +44,12 @@ If a principle below seems wrong, amend it; don't route around it.
 ### 1. The saved recipe text is the source of truth; runtime translation is a view
 
 Translating on the recipe screen never writes recipe text. It produces a
-display-only recipe that is thrown away when the view closes.
+display-only recipe, kept separate from the stored recipe (the screen holds
+both, and only the rendered body uses the translation). The client may keep
+display translations in memory for the session, so going back or into cook
+mode doesn't retranslate. They are gone on reload and never written to the
+recipe, sync, or the device (principle 8). Chat, edit, share, and backup
+always receive the stored recipe.
 
 **Why.** Sync is last-write-wins on `updatedAt`. If a translation were
 written back, it would overwrite the original on every device, lose the
@@ -106,6 +111,9 @@ keeps a translated view from silently mixing languages or dropping lines.
   - canonical case via `Intl.getCanonicalLocales`
   - a small alias map for common country-code mistakes (`ua` becomes `uk`,
     `cn` becomes `zh`)
+  - Chinese script taken from the region before the region is stripped:
+    `zh-CN` and `zh-SG` become `zh-Hans`; `zh-TW`, `zh-HK` and `zh-MO`
+    become `zh-Hant`. An explicit script always wins.
 - **Provider codes.** Codes a provider needs (for example `zh-CN`) exist only
   inside that provider's adapter. They are never stored or returned.
 
@@ -143,7 +151,8 @@ and bumps only `serverUpdatedAt`.
 Translations are never stored on a recipe, a chat message, or cook state, and
 never go through `/api/sync/*`. The server caches translations at
 `users/{uid}/translations/{recipeId}.{target}`, keyed by a hash of the source
-text. It can be deleted at any time without losing data.
+text. A hash mismatch is a miss. It can be deleted at any time without losing
+data, and it is deleted when its recipe is deleted (principle 14).
 
 **Why.** `Recipe` is schema-locked (`src/lib/recipeStore.test.ts`) because
 every field has to be threaded through the compacting on both client and
@@ -161,9 +170,18 @@ database. This app dropped IndexedDB on purpose.
 
 ### 9. UI copy lives only in the catalogs
 
-- **One place.** Every piece of user-facing text is a key in `src/i18n/`.
-  `en` defines the key set, and TypeScript fails the build if any locale is
-  missing a key.
+- **One place.** Every piece of user-facing text in the app (the React SPA)
+  is a key in `src/i18n/`. `en` defines the key set, and TypeScript fails the
+  build if any locale is missing a key.
+- **Deliberate exceptions.** These stay English and outside the catalogs
+  and the review manifest:
+  - the static pages `/about`, `/privacy`, and `/terms` (`public/*.html`),
+    because legal text is not machine-translated
+  - the owner notification email
+  - server-rendered access and invite HTML
+  - the Chrome extension, until its own milestone
+
+  The app's links to these pages are translated.
 - **Sentences.** Sentences are never built by joining translated fragments.
   Interpolation uses named parameters.
 - **Formatting.** Plurals go through `Intl.PluralRules`, with
@@ -245,8 +263,9 @@ the legal pages are the promise made to users.
 
 ### 16. New UI text ships translated and reviewed in context
 
-- **Translated.** Any change that adds or changes user-facing text adds it
-  to every catalog in the same change. English-only strings "to translate
+- **Translated.** Any change that adds or changes user-facing text in the
+  app adds it to every catalog in the same change. The exceptions in
+  principle 9 are the only ones. English-only strings "to translate
   later" are not allowed.
 - **Reviewed in context.** The same change runs the in-context translation
   review (`.cursor/skills/i18n-visual-review/SKILL.md`, later `npm run
@@ -273,8 +292,10 @@ These are reversible under principle 11. Each lists what it optimizes for.
   level `minimal`, default temperature.** Selected by
   `TRANSLATE_PROVIDER=gemini` (the default; `nmt` selects the fallback) and
   `TRANSLATE_MODEL`.
-  - **Measured.** Not yet. Step 14 of the plan records translate-eval quality
-    and p50/p95 latency from Cloud Run `europe-west1` here.
+  - **Measured.** Not yet. Step 14 of the plan records translate-eval
+    quality and local p50/p95 latency here. Cloud Run `europe-west1` p95 is
+    measured by the owner after the reviewed deploy and added here; there is
+    no staging to measure on earlier.
   - **Setup cost is not a factor.** NMT's API enablement and IAM role are
     one-time owner steps, so the choice rests on context, latency, and cost.
   - **Context.** One call sees the whole recipe. That matters most for `uk`
@@ -299,10 +320,14 @@ These are reversible under principle 11. Each lists what it optimizes for.
     input, and free up to 500k characters a month.
   - **Why not the default.** It translates sentence by sentence without
     recipe context.
-  - **When to switch.** If whole-recipe Gemini latency measured from Cloud
-    Run is too slow for the toggle (p95 above about 4 s after splitting into
-    parallel chunks), or if the translation eval shows Gemini quality
-    problems NMT doesn't have. The one-time setup is listed in the plan.
+  - **When to switch.**
+    - **Latency.** If deployed Cloud Run p95 for the toggle is above about
+      4 s, first split each recipe into two parallel Gemini requests. If p95
+      is still above 4 s, switch to NMT.
+    - **Quality.** If the translation eval shows Gemini quality problems
+      that NMT doesn't have, switch to NMT.
+
+    The one-time setup is listed in the plan.
 - **Import labels.** The import's existing structured Gemini call returns
   `lang` for no extra call.
 - **Dictation.** `/api/stt` names the UI language in its prompt. If testing
