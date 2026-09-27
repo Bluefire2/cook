@@ -8,6 +8,7 @@ import {
   getRecipe,
   getSnapshot,
   libraryEpoch,
+  photoOwnerSub,
   listRecipes,
   markPhotoRemote,
   removeRecipeLocal,
@@ -20,7 +21,8 @@ import {
   listCollections,
   upsertCollection,
 } from './libraryMemory';
-import { postPhoto, pushOps } from './remote';
+import { fetchPhotoBlob, postPhoto, pushOps } from './remote';
+import { photoStore } from './photoStore';
 import { localWriteOverlapsPull, pullAfterLocalWrite } from './syncEngine';
 import { compactRecipe } from './compactRecipe';
 import { compactCollection } from './compactCollection';
@@ -48,6 +50,61 @@ async function uploadPhotoIfNeeded(
     throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the photo.");
   }
   markPhotoRemote(photoId);
+}
+
+async function blobForParentPhoto(id: string): Promise<Blob | null | 'signedOut'> {
+  const pending = getPendingBlob(id);
+  if (pending) {
+    return pending;
+  }
+  return fetchPhotoBlob(id, photoOwnerSub(id));
+}
+
+/**
+ * Cover and gallery copied onto new ids owned by the saver. A missing photo
+ * is skipped. Signing out aborts and drops any copies already minted.
+ */
+async function copyParentPhotos(parent: Recipe): Promise<{
+  photoId: string | undefined;
+  galleryPhotoIds: string[] | undefined;
+  minted: string[];
+}> {
+  const minted: string[] = [];
+  const discardMinted = () => {
+    for (const id of minted) {
+      photoStore.discardLocal(id);
+    }
+  };
+  const copyOne = async (id: string): Promise<string | undefined> => {
+    const blob = await blobForParentPhoto(id);
+    if (blob === 'signedOut') {
+      discardMinted();
+      throw new Error('Please sign in again — your session expired.');
+    }
+    if (blob === null) {
+      return undefined;
+    }
+    const nextId = await photoStore.add(blob);
+    minted.push(nextId);
+    return nextId;
+  };
+
+  let photoId: string | undefined;
+  if (parent.photoId !== undefined) {
+    photoId = await copyOne(parent.photoId);
+  }
+  const galleryPhotoIds: string[] = [];
+  for (const id of parent.galleryPhotoIds ?? []) {
+    const copied = await copyOne(id);
+    if (copied !== undefined) {
+      galleryPhotoIds.push(copied);
+    }
+  }
+  return {
+    photoId,
+    galleryPhotoIds: galleryPhotoIds.length > 0 ? galleryPhotoIds : undefined,
+    minted,
+  };
 }
 
 async function uploadRecipePhotos(recipe: Recipe): Promise<void> {
@@ -141,6 +198,26 @@ export const recipeStore = {
       photoId,
       galleryPhotoIds,
     });
+  },
+
+  /**
+   * A new recipe from an Ask proposal. Photos come from `parent`, copied onto
+   * new ids. Fields on the draft never supply a photo.
+   */
+  async createFromAsk(parent: Recipe, draft: RecipeDraft): Promise<Recipe> {
+    const copied = await copyParentPhotos(parent);
+    try {
+      return await recipeStore.create({
+        ...draft,
+        photoId: copied.photoId,
+        galleryPhotoIds: copied.galleryPhotoIds,
+      });
+    } catch (err) {
+      for (const id of copied.minted) {
+        photoStore.discardLocal(id);
+      }
+      throw err;
+    }
   },
 
   async create(
