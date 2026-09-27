@@ -51,7 +51,7 @@
   </head>
   <body>
     <h1>Privacy policy</h1>
-    <p class="muted">Last updated: 19 September 2026</p>
+    <p class="muted">Last updated: 27 September 2026</p>
 
     <h2>What is stored</h2>
     <p>
@@ -67,7 +67,8 @@
       Your recipes, chat messages, cooking progress, and attached photos are
       stored in Google Cloud (Firestore and Cloud Storage) in the
       <code>europe-west1</code> region. They are loaded into this browser
-      while you are signed in. There is no on-device recipe database.
+      while you are signed in. There is no on-device recipe database. Photos
+      used only to import a recipe are not kept.
     </p>
     <p>
       No password and no Google refresh token is stored — the app only ever
@@ -110,12 +111,17 @@
       Recipe text, your chat messages and any photo you send the assistant are
       passed to Google's Gemini API at request time to produce a reply. Using
       Dictate uploads a short microphone recording to Sous, which sends it to
-      Gemini to turn into text and does not store the audio. Recipe
-      import fetches the URL you paste. If you press Request access, the
-      notification email to the owner is sent through Resend and contains
-      your email address, display name and the time of the request; it
-      includes no one-click approval link — approval only ever happens on the
-      owner's own signed-in screen. Hosting is on Google Cloud.
+      Gemini to turn into text and does not store the audio. Photos you add
+      on the Import screen are uploaded to Sous, which sends them to Google's
+      Gemini API to extract the recipe. They are not stored and are not
+      attached to the saved recipe. Gemini processes these requests on
+      Google's infrastructure, which is not limited to the
+      <code>europe-west1</code> region. Recipe import fetches the URL you
+      paste. If you press Request access, the notification email to the owner
+      is sent through Resend and contains your email address, display name and
+      the time of the request; it includes no one-click approval link —
+      approval only ever happens on the owner's own signed-in screen. Hosting
+      is on Google Cloud.
     </p>
 
     <h2>Retention and deletion</h2>
