@@ -203,9 +203,12 @@ database. This app dropped IndexedDB on purpose.
 - **Sentences.** Sentences are never built by joining translated fragments.
   Interpolation uses named parameters.
 - **Formatting.** Plurals go through `Intl.PluralRules`, with
-  `one`/`few`/`many`/`other` for `uk` and `ru`. Numbers, relative times,
-  and language names come from `Intl`: `Intl.NumberFormat`,
-  `Intl.RelativeTimeFormat`, and `Intl.DisplayNames`.
+  `one`/`few`/`many`/`other` for `uk` and `ru`. Numbers and language names
+  come from `Intl` (`Intl.NumberFormat`, `Intl.DisplayNames`). Relative
+  times come from date-fns `formatDistance`, with the date-fns locale
+  mapped from the UI language. date-fns is already a dependency, chooses the
+  unit, and ships correct `uk` / `ru` / `zhCN` locales. No relative time is
+  built by hand, such as "N min ago".
 
 **Why.** Word order and plural forms differ across the supported languages.
 Text that isn't in a catalog is text that silently stays English.
@@ -384,7 +387,9 @@ These are reversible under principle 11. Each lists what it optimizes for.
   English and the mic shows an "EN" badge saying so. Step 4 of the plan
   records the result here.
 - **Catalogs.** No i18n library: about 400 strings, four locales, typed
-  catalogs, and `Intl`.
+  catalogs, `Intl`, and date-fns locales for relative time. date-fns is
+  already a dependency (PR #37); its `formatDistance` chooses the unit, so
+  the plan uses it instead of hand-built `Intl.RelativeTimeFormat` logic.
 - **Chinese.** "Mandarin" means Simplified Chinese, `zh-Hans`.
 - **Register and glossary.** Proposed: `uk` uses "ви", `ru` uses "вы", and
   `zh-Hans` uses "你". Step 1 of the plan confirms these and adds a glossary
