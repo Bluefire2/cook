@@ -42,6 +42,7 @@ export default function CreateRecipeForm({
   resolveLang,
   onEditStateChange,
   submitLocked,
+  hideLanguage,
 }: {
   initial: RecipeDraft;
   collectionId?: string;
@@ -58,6 +59,8 @@ export default function CreateRecipeForm({
   onEditStateChange?: (state: { dirty: boolean; photosPicked: boolean }) => void;
   /** Disables Save without disabling the rest of the form. */
   submitLocked?: boolean;
+  /** Hides RecipeForm's language field. Import preview sets `lang` at save. */
+  hideLanguage?: boolean;
 }) {
   const t = useT();
   const collections = useCollections();
@@ -138,6 +141,7 @@ export default function CreateRecipeForm({
           onCanSubmitChange={setCanSubmit}
           onEditStateChange={onEditStateChange}
           submitLocked={submitLocked}
+          hideLanguage={hideLanguage}
           submitLabel={t('recipeEdit.saveToLibrary')}
           onCancel={onCancel}
           onSubmit={async (pending) => {

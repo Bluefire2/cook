@@ -92,7 +92,7 @@
   {
     "id": "recipe-edit",
     "route": "/recipe/:id/edit",
-    "setup": "The edit form for an owned recipe (heading Edit recipe). Do not change fields and do not save. A shared recipe has no Edit link; this route shows Recipe not found. If there is no owned recipe, mark skipped: needs data.",
+    "setup": "The edit form for an owned recipe (heading Edit recipe), including the Recipe language field. Do not change fields and do not save. A shared recipe has no Edit link; this route shows Recipe not found. If there is no owned recipe, mark skipped: needs data.",
     "needsData": true
   },
   {

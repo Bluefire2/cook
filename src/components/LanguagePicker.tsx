@@ -4,20 +4,24 @@ import { buildLanguagePickerOptions } from '../i18n/languageOptions';
 import { inputClass } from '../lib/uiClasses';
 
 /**
- * Native language select shared by the import preview and, later, the
- * recipe form. An empty option is "Unknown" and means no `lang`.
+ * Native language select shared by the import preview and the recipe form.
+ * An empty option is "Unknown" and means no `lang`. A value the lists do not
+ * contain stays as its own option, so opening the form cannot change it.
  */
 export default function LanguagePicker({
   id,
   value,
   onChange,
   disabled,
+  className,
 }: {
   id?: string;
   /** `undefined` selects Unknown. */
   value: string | undefined;
   onChange: (lang: string | undefined) => void;
   disabled?: boolean;
+  /** Replaces the default top margin. The import preview uses that default. */
+  className?: string;
 }): ReactElement {
   const t = useT();
   const locale = useLocale();
@@ -32,7 +36,7 @@ export default function LanguagePicker({
         const next = event.target.value;
         onChange(next === '' ? undefined : next);
       }}
-      className={`${inputClass} mt-2 disabled:opacity-40`}
+      className={`${inputClass} disabled:opacity-40 ${className ?? 'mt-2'}`}
     >
       <option value="">{t('langPicker.unknown')}</option>
       {options.current && (

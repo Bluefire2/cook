@@ -218,6 +218,7 @@ export const zhHans: Messages = {
   'form.titlePlaceholder': '工作日肉酱',
   'form.description': '简介',
   'form.descriptionPlaceholder': '用一句话介绍这道菜',
+  'form.recipeLanguage': '食谱语言',
   'form.mainPhoto': '主图',
   'form.addPhoto': '+ 照片',
   'form.replace': '更换',

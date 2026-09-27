@@ -246,6 +246,7 @@ export const en = {
   'form.titlePlaceholder': 'Weeknight ragù',
   'form.description': 'Description',
   'form.descriptionPlaceholder': 'A short line about the dish',
+  'form.recipeLanguage': 'Recipe language',
   'form.mainPhoto': 'Main photo',
   'form.addPhoto': '+ Photo',
   'form.replace': 'Replace',

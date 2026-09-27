@@ -240,6 +240,7 @@ export const uk: Messages = {
   'form.titlePlaceholder': 'Буденне рагу',
   'form.description': 'Опис',
   'form.descriptionPlaceholder': 'Коротко про страву',
+  'form.recipeLanguage': 'Мова рецепта',
   'form.mainPhoto': 'Головне фото',
   'form.addPhoto': '+ Фото',
   'form.replace': 'Замінити',

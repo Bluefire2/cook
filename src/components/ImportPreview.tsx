@@ -22,7 +22,8 @@ function pastedImport(recipe: RecipeDraft): boolean {
 /**
  * Single-recipe import preview. `sourceLang` is the original text's language.
  * The translated draft's language is the UI language, applied at save.
- * The form has no language field here; that field arrives in a later step.
+ * The form's own language field is hidden. This line owns `sourceLang`, and
+ * each draft's `lang` is set at save.
  */
 export default function ImportPreview({
   result,
@@ -276,6 +277,7 @@ export default function ImportPreview({
         formId={formId}
         submitLocked={translating}
         resolveLang={resolveLang}
+        hideLanguage
         onEditStateChange={onEditStateChange}
         onSubmitStatusChange={onSubmitStatusChange}
         onCreated={onCreated}

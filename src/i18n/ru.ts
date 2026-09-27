@@ -237,6 +237,7 @@ export const ru: Messages = {
   'form.titlePlaceholder': 'Будничное рагу',
   'form.description': 'Описание',
   'form.descriptionPlaceholder': 'Коротко о блюде',
+  'form.recipeLanguage': 'Язык рецепта',
   'form.mainPhoto': 'Главное фото',
   'form.addPhoto': '+ Фото',
   'form.replace': 'Заменить',

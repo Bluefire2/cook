@@ -5,9 +5,12 @@ import { unitLabel } from '../i18n/unitLabel';
 import { encodeImageForStorage } from '../lib/image';
 import { photoStore, useObjectUrl, usePhotoUrl } from '../lib/photoStore';
 import { blankDraft } from '../lib/recipeDraft';
+import { defaultRecipeFormLang } from '../lib/recipeFormLang';
 import { MAX_GALLERY_PHOTOS } from '../lib/recipePhotos';
+import { settings } from '../lib/settings';
 import type { Ingredient, IngredientSection, RecipeDraft } from '../lib/types';
 import { COMMON_UNITS, CUSTOM_UNIT, resolveUnit, unitChoice, type UnitChoice } from '../lib/units';
+import LanguagePicker from './LanguagePicker';
 import PhotoPickerField from './PhotoPickerField';
 import {
   addBtn,
@@ -46,7 +49,10 @@ interface FormState {
   notes: string;
   sections: SectionFields[];
   steps: string[];
-  /** Carried so an edit does not drop `Recipe.lang`. No field renders it yet. */
+  /**
+   * Recipe language. A new recipe starts as the UI language. An edit keeps
+   * the stored tag. Unknown clears it, and the key is then omitted.
+   */
   lang?: string;
 }
 
@@ -61,13 +67,20 @@ function toNumber(text: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function fromDraft(draft: RecipeDraft): FormState {
+/**
+ * `uiLocale` is the current UI language when the language field is shown, and
+ * fills in a missing `lang`. Pass `undefined` when the field is hidden so a
+ * missing `lang` stays missing; the import preview sets `lang` at save.
+ */
+export function fromDraft(draft: RecipeDraft, uiLocale: string | undefined): FormState {
   const fallback = blankDraft();
   const sections =
     draft.ingredientSections.length > 0
       ? draft.ingredientSections
       : fallback.ingredientSections;
   const steps = draft.steps.length > 0 ? draft.steps : fallback.steps;
+  const lang =
+    uiLocale === undefined ? draft.lang : defaultRecipeFormLang(draft.lang, uiLocale);
 
   return {
     title: draft.title,
@@ -90,7 +103,7 @@ function fromDraft(draft: RecipeDraft): FormState {
           : [blankItem()],
     })),
     steps: steps.map((step) => step.text),
-    ...(draft.lang !== undefined ? { lang: draft.lang } : {}),
+    ...(lang !== undefined ? { lang } : {}),
   };
 }
 
@@ -129,11 +142,12 @@ function toTags(text: string): string[] {
  * Optional fields are spread in only when present, so clearing one drops the
  * key instead of storing `undefined` in a record that gets fully replaced.
  * `sourceUrl` is carried through untouched because the form has no UI for it.
- * `lang` is carried the same way so an edit does not drop it; the language
- * field itself comes later. `photoId` and `galleryPhotoIds` are passed in
- * because they are only known once picked blobs are stored.
+ * `lang` is the recipe-language field: the UI language on a new recipe, the
+ * stored tag on edit, or omitted when Unknown is chosen. `photoId` and
+ * `galleryPhotoIds` are passed in because they are only known once picked
+ * blobs are stored.
  */
-function toDraft(
+export function toDraft(
   form: FormState,
   initial: RecipeDraft,
   photoId: string | undefined,
@@ -280,6 +294,7 @@ export default function RecipeForm({
   onCanSubmitChange,
   onEditStateChange,
   submitLocked,
+  hideLanguage,
 }: {
   /** Starting values. Use a blank draft for create-from-scratch. */
   initial: RecipeDraft;
@@ -297,8 +312,16 @@ export default function RecipeForm({
   onEditStateChange?: (state: { dirty: boolean; photosPicked: boolean }) => void;
   /** Keeps Save disabled while a preview translation is in flight. */
   submitLocked?: boolean;
+  /**
+   * Import preview hides this field. The guessed-language line owns the
+   * language there, and save sets `lang` from that preview state.
+   */
+  hideLanguage?: boolean;
 }): ReactElement {
-  const [form, setForm] = useState(() => fromDraft(initial));
+  const [form, setForm] = useState(() =>
+    // Captured once. A later UI-language change must not rewrite this recipe's lang.
+    fromDraft(initial, hideLanguage ? undefined : settings.getLocale()),
+  );
   const baseline = useRef(form);
   const [photoId, setPhotoId] = useState(initial.photoId);
   const [picked, setPicked] = useState<File>();
@@ -547,6 +570,17 @@ export default function RecipeForm({
           className={inputClass}
         />
       </Field>
+
+      {!hideLanguage && (
+        <Field label={t('form.recipeLanguage')}>
+          <LanguagePicker
+            id="recipe-language"
+            value={form.lang}
+            onChange={(lang) => patch({ lang })}
+            className="mt-0"
+          />
+        </Field>
+      )}
 
       <section className="mt-6">
         <h2 className="text-lg font-semibold">{t('common.ingredients')}</h2>
