@@ -32,7 +32,11 @@ this, the setup below may already be present. Step 1 covers both cases.
 - **The skill is a project skill at `.cursor/skills/write-constitution/`,**
   versioned in the repo. That makes it available in local Cursor, in Cloud
   Agents, and to anyone who clones the repo. Agents that don't use Cursor can
-  still read the file by path.
+  still read the file by path. `.claude/skills/write-constitution/SKILL.md`
+  is a real stub with the same `name` and `description` and a body that points
+  at that copy, so Claude Code finds the skill on a Windows checkout where Git
+  does not materialize symlinks. The drift test checks that the two
+  frontmatters match.
 - **It is triggered by `/write-constitution` or by plain language.** Do **not**
   set `disable-model-invocation: true`, because that would turn off the plain
   language trigger.
@@ -44,8 +48,9 @@ this, the setup below may already be present. Step 1 covers both cases.
   section gives a one-sentence summary and points to the skill. The test
   enforces the parts that can be checked mechanically.
 - **The skill writes constitutions and does not amend them.** If a
-  constitution already covers the feature, the skill stops and proposes an
-  amendment following that constitution's own procedure.
+  constitution already covers the feature, or `docs/constitutions/<slug>.md`
+  already exists, the skill stops, proposes an amendment following that
+  constitution's own procedure, and leaves the edit to normal feature work.
 - **No new dependencies.** The test parses frontmatter with a small parser, not
   a YAML library.
 
@@ -58,16 +63,13 @@ The file is `docs/constitutions/<slug>.md`. `<slug>` is kebab-case and matches
 ---
 name: <Title Case Name>
 description: <What the feature is>. Read before changing <concrete concepts, data, and surfaces>.
-status: draft
+status: <draft or ratified>
 scope:
   - path/to/owned-file.ts
   - path/to/shared-file.ts (the part in scope)
 ---
 
 # <Name> constitution
-
-Status: draft. It becomes ratified when <the implementing plan> merges. At that
-point, set `status: ratified` in the frontmatter.
 
 <One paragraph: this document binds changes to `scope`; for shared files only
 the part in parentheses; breaking a principle requires an amendment in the same
@@ -124,11 +126,12 @@ None yet.
 
 Frontmatter rules:
 - `name`, `description`, `status`, and `scope` are required.
+- Unquoted, single-line values; `scope` items indented exactly two spaces.
 - `name` and `description` each fit on one line.
-- `description` is at most about 300 characters.
-- `status` is `draft` or `ratified`.
+- `description` is at most 300 characters.
+- `status` is `draft` or `ratified`. A built feature (already in the code, or its implementing plan has merged) uses `ratified`. An unbuilt feature uses `draft`.
 - `scope` has at least one `- ` item.
-- `ratified` is allowed only once the feature has merged.
+- Do not repeat `status` in the body.
 
 ## The index in root `AGENTS.md`
 
@@ -184,8 +187,12 @@ Contents:
   - a constitution has no index line;
   - an index line points to a missing file;
   - an index `name` or `description` differs from the frontmatter by even one
-    character.
+    character;
+  - "None yet." is still present beside real entries;
+  - the same file has more than one index line.
 - It passes when there are zero constitutions and the index says "None yet."
+- It checks that `.claude/skills/write-constitution/SKILL.md` is a regular file
+  whose `name` and `description` match `.cursor/skills/write-constitution/SKILL.md`.
 - Negative cases on inline fixture strings:
   - frontmatter missing `description` must be reported;
   - a one-character description mismatch must be reported.
@@ -213,7 +220,7 @@ Frontmatter:
 ```yaml
 ---
 name: write-constitution
-description: Use only when the user explicitly asks to create, write, or draft a feature constitution (for example "make a constitution for this feature", "write down the principles for X", /write-constitution). Writes docs/constitutions/<slug>.md in the standard format, adds it to the Feature constitutions index in root AGENTS.md, and runs the drift test.
+description: Use only when the user explicitly asks to create, write, or draft a feature constitution (for example "make a constitution for this feature", "write a constitution for X", /write-constitution). Writes docs/constitutions/<slug>.md in the standard format, adds it to the Feature constitutions index in root AGENTS.md, and runs the drift test.
 ---
 ```
 
@@ -224,33 +231,39 @@ runs the skill:
    it is for), and the content the user wants covered: decisions, trade-offs,
    and non-goals. Take whatever the user supplied, whether "job XYZ, content
    XYZ", a plan file, or the conversation. Fill gaps by reading
-   `docs/plans/<slug>.md` and the code. Use AskQuestion only for what cannot be
+   `docs/plans/<slug>.md` and the code. Ask the user only for what cannot be
    derived, at most 3 questions, typically which decisions are firm and which
    are provisional.
 2. **Check for an existing constitution or overlap.** Read the index in root
-   `AGENTS.md`.
-   - If a constitution already covers this feature, stop and propose an
-     amendment following that constitution's procedure. Wait for the user to
-     confirm.
+   `AGENTS.md`, and check whether `docs/constitutions/<slug>.md` already exists.
+   - If a constitution already covers this feature, or that file already
+     exists, stop. Propose the amendment following that constitution's
+     procedure, and leave the edit to normal feature work. Do not change the
+     constitution.
    - If another constitution's `scope` overlaps, cross-reference it rather than
      restating its principles.
 3. **Research the mechanisms.** Every **Why** must name a real mechanism or
    risk. For a built feature, confirm with grep that the named files and
-   symbols exist. For an unbuilt feature, use `status: draft` and name the
-   planned symbols as planned.
-4. **Write the principles.** Aim for 5-15, following `template.md`.
+   symbols exist, and set `status: ratified`. For an unbuilt feature, set
+   `status: draft` and name the planned symbols as planned. A built feature is
+   one already in the code, or one whose implementing plan has merged. Status
+   lives only in the frontmatter. Do not repeat it in the body.
+4. **Write the principles.** Aim for 5–15; fewer is fine if every one is real.
+   Follow `template.md`.
    - Each **Rule** must be checkable against a diff.
    - Each **Why** gives the failure prevented or the value protected, not a
      restatement of the rule.
    - Record known costs as **Accepted side effect**.
    - Do not restate general repo rules unless the feature depends on them, and
      then link the `AGENTS.md` section.
-   - Include Non-goals, Tests, the verbatim amendment procedure, and
-     "Amendment log: None yet."
-5. **Write the frontmatter** following the rules in `template.md`. The
+   - Include Non-goals, Tests, the verbatim amendment procedure, and the
+     Amendment log section, containing None yet.
+5. **Write the frontmatter** following the rules in `template.md`. Unquoted,
+   single-line values; `scope` items indented exactly two spaces. The
    description follows the pattern "<what the feature is>. Read before
    changing <concrete concepts, data, and surfaces>." Use nouns an agent will
-   see in a task, such as type names, routes, and screens.
+   see in a task, such as type names, routes, and screens. `description` is
+   at most 300 characters.
 6. **Register it.** Add
    `- **<name>** (\`docs/constitutions/<slug>.md\`): <description>` to the
    index, replacing "None yet." if present. The description must match the
@@ -264,6 +277,11 @@ runs the skill:
 
 Also state in `SKILL.md`: once `docs/constitutions/cook-log.md` exists, it is
 the worked example to imitate. Until then, `template.md` is the only reference.
+
+Add `.claude/skills/write-constitution/SKILL.md` as a regular file, not a
+symlink. Copy the Cursor skill's `name` and `description` frontmatter, and
+set the body to one line: Read and follow
+`.cursor/skills/write-constitution/SKILL.md`.
 
 ### 3. [core] Write `.cursor/skills/write-constitution/template.md`
 
