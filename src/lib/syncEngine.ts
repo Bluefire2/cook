@@ -12,6 +12,8 @@ import {
 } from './remote';
 import {
   clearLibrary,
+  libraryEpoch,
+  localWritesOpen,
   markLoaded,
   replaceFromPull,
   replaceFromPullWithShared,
@@ -20,7 +22,7 @@ import {
 import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 
-export type SyncOutcome = 'ok' | 'error' | 'offline' | 'signedOut' | 'skipped';
+export type SyncOutcome = 'ok' | 'error' | 'offline' | 'signedOut' | 'skipped' | 'superseded';
 
 export interface SyncResult {
   outcome: SyncOutcome;
@@ -58,7 +60,14 @@ export type SyncStatusSnapshot = {
 const VISIBILITY_DEBOUNCE_MS = 30_000;
 
 let lastVisibilitySync = 0;
-let inFlight: Promise<void> | null = null;
+
+type Flight = {
+  startedEpoch: number;
+  sawOpenWrite: boolean;
+  promise: Promise<SyncResult>;
+};
+
+let flight: Flight | null = null;
 
 let snapshot: SyncStatusSnapshot = {
   status: 'idle',
@@ -103,7 +112,8 @@ export function decideSyncToast(result: SyncResult): SyncToastSpec | null {
   if (
     result.outcome === 'offline' ||
     result.outcome === 'signedOut' ||
-    result.outcome === 'skipped'
+    result.outcome === 'skipped' ||
+    result.outcome === 'superseded'
   ) {
     return null;
   }
@@ -113,7 +123,14 @@ export function decideSyncToast(result: SyncResult): SyncToastSpec | null {
   return null;
 }
 
-export async function pullAll(dependencies: PullDependencies): Promise<SyncResult> {
+export async function pullAll(
+  dependencies: PullDependencies,
+  epochAtStart = libraryEpoch(),
+  sawOpenWrite = localWritesOpen() > 0,
+): Promise<SyncResult> {
+  const stale = (): boolean =>
+    sawOpenWrite || localWritesOpen() > 0 || libraryEpoch() !== epochAtStart;
+  const superseded = (): SyncResult => ({ outcome: 'superseded', pushed: 0, applied: 0 });
   const acc = {
     recipes: new Map<string, Recipe>(),
     collections: new Map<string, Collection>(),
@@ -173,11 +190,13 @@ export async function pullAll(dependencies: PullDependencies): Promise<SyncResul
         return { outcome: 'signedOut', pushed: 0, applied: 0 };
       }
       if (page === 'error') {
+        if (stale()) return superseded();
         replaceFromPull(acc);
         return { outcome: 'error', pushed: 0, applied: 0 };
       }
       if (page === 'restart') {
         if (sharedAttempt >= MAX_SHARED_PULL_ATTEMPTS) {
+          if (stale()) return superseded();
           replaceFromPull(acc);
           return { outcome: 'error', pushed: 0, applied: 0 };
         }
@@ -227,10 +246,12 @@ export async function pullAll(dependencies: PullDependencies): Promise<SyncResul
       }
     }
   } catch {
+    if (stale()) return superseded();
     replaceFromPull(acc);
     return { outcome: 'error', pushed: 0, applied: 0 };
   }
 
+  if (stale()) return superseded();
   replaceFromPullWithShared(
     acc,
     {
@@ -244,7 +265,7 @@ export async function pullAll(dependencies: PullDependencies): Promise<SyncResul
   return { outcome: 'ok', pushed: 0, applied: 0 };
 }
 
-async function runOnce(): Promise<SyncResult> {
+async function runOnce(epochAtStart: number, sawOpenWrite: boolean): Promise<SyncResult> {
   const sessionRaw = localStorage.getItem('cook.session');
   if (!sessionRaw) {
     clearLibrary();
@@ -253,9 +274,13 @@ async function runOnce(): Promise<SyncResult> {
   }
   setSnapshot({ status: 'loading' });
   try {
-    const result = await pullAll({ pullPage, pullSharedPage });
+    const result = await pullAll({ pullPage, pullSharedPage }, epochAtStart, sawOpenWrite);
     if (result.outcome === 'signedOut') {
       setSnapshot({ status: 'signedOut' });
+      return result;
+    }
+    if (result.outcome === 'superseded') {
+      setSnapshot({ status: 'idle' });
       return result;
     }
     if (result.outcome === 'error') {
@@ -273,22 +298,63 @@ async function runOnce(): Promise<SyncResult> {
   }
 }
 
-export function sync(): Promise<void> {
-  if (inFlight) {
-    return inFlight;
+function startFlight(): Promise<SyncResult> {
+  if (flight) {
+    return flight.promise;
   }
-  const run = (async () => {
-    const result = await runOnce();
+  const startedEpoch = libraryEpoch();
+  const sawOpenWrite = localWritesOpen() > 0;
+  const promise = (async () => {
+    const result = await runOnce(startedEpoch, sawOpenWrite);
     emitSyncFinished(result);
+    return result;
   })();
-  inFlight = run;
+  const current: Flight = { startedEpoch, sawOpenWrite, promise };
+  flight = current;
   const clear = () => {
-    if (inFlight === run) {
-      inFlight = null;
+    if (flight === current) {
+      flight = null;
     }
   };
-  void run.then(clear, clear);
-  return run;
+  void promise.then(clear, clear);
+  return promise;
+}
+
+/**
+ * True when a pull already running read (or may still read) library state
+ * from before this write. Its snapshot must not be published.
+ */
+export function localWriteOverlapsPull(writeEpoch: number): boolean {
+  return flight !== null && (flight.startedEpoch < writeEpoch || flight.sawOpenWrite);
+}
+
+/**
+ * Pull after a local write has finished. Waits out any pull that overlapped
+ * the write, then reads the server again so a tombstone committed during
+ * the write is what the library shows.
+ */
+export async function pullAfterLocalWrite(writeEpoch: number): Promise<SyncOutcome> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    while (flight && (flight.startedEpoch < writeEpoch || flight.sawOpenWrite)) {
+      await flight.promise;
+    }
+    if (localWritesOpen() > 0) {
+      return 'superseded';
+    }
+    const current = flight;
+    const result = current ? await current.promise : await startFlight();
+    if (result.outcome !== 'superseded') {
+      return result.outcome;
+    }
+    if (libraryEpoch() !== writeEpoch) {
+      return 'superseded';
+    }
+  }
+  return 'error';
+}
+
+export function sync(): Promise<void> {
+  return startFlight().then(() => undefined);
 }
 
 export function triggerSyncAfterSession(_sub: string): void {

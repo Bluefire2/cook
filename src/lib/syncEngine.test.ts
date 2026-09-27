@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { decideSyncToast, MAX_SHARED_PULL_ATTEMPTS, pullAll } from './syncEngine';
 import {
   addPendingBlob,
+  beginLocalWrite,
   clearLibrary,
+  endLocalWrite,
   getSnapshot,
+  removeRecipeLocal,
   replaceFromPull,
   subscribe,
 } from './libraryMemory';
@@ -1044,6 +1047,64 @@ describe('pullAll', () => {
   });
 });
 
+describe('pullAll overlapping a local delete', () => {
+  it('does not put back a recipe deleted while the pull was in flight', async () => {
+    const kept = recipe('kept', 'Kept');
+    replaceFromPull({
+      recipes: new Map([[kept.id, kept]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    let release: (page: PullPage) => void = () => {};
+    const gate = new Promise<PullPage>((resolve) => {
+      release = resolve;
+    });
+    const pending = pullAll({
+      pullPage: () => gate,
+      pullSharedPage: async () => sharedPage(),
+    });
+    beginLocalWrite();
+    removeRecipeLocal(kept.id);
+    endLocalWrite();
+    release(ownedPage(ownedChanges({ recipes: [pullDoc(kept)] })));
+
+    const result = await pending;
+
+    expect(result.outcome).toBe('superseded');
+    expect(getSnapshot().recipes.has(kept.id)).toBe(false);
+  });
+
+  it('does not publish a pull that started while a delete was still open', async () => {
+    const kept = recipe('kept-open', 'Kept');
+    replaceFromPull({
+      recipes: new Map([[kept.id, kept]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    beginLocalWrite();
+    removeRecipeLocal(kept.id);
+    let release: (page: PullPage) => void = () => {};
+    const gate = new Promise<PullPage>((resolve) => {
+      release = resolve;
+    });
+    const pending = pullAll({
+      pullPage: () => gate,
+      pullSharedPage: async () => sharedPage(),
+    });
+    endLocalWrite();
+    release(ownedPage(ownedChanges({ recipes: [pullDoc(kept)] })));
+
+    const result = await pending;
+
+    expect(result.outcome).toBe('superseded');
+    expect(getSnapshot().recipes.has(kept.id)).toBe(false);
+  });
+});
+
 describe('decideSyncToast', () => {
   it('toasts a material refresh', () => {
     expect(decideSyncToast({ outcome: 'ok', pushed: 0, applied: 3 })).toEqual({
@@ -1063,9 +1124,10 @@ describe('decideSyncToast', () => {
     });
   });
 
-  it('stays silent for signed-out, offline, and skipped', () => {
+  it('stays silent for signed-out, offline, skipped, and superseded', () => {
     expect(decideSyncToast({ outcome: 'offline', pushed: 0, applied: 0 })).toBeNull();
     expect(decideSyncToast({ outcome: 'signedOut', pushed: 1, applied: 0 })).toBeNull();
     expect(decideSyncToast({ outcome: 'skipped', pushed: 0, applied: 0 })).toBeNull();
+    expect(decideSyncToast({ outcome: 'superseded', pushed: 0, applied: 0 })).toBeNull();
   });
 });

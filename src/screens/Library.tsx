@@ -65,6 +65,7 @@ export default function Library() {
   const [collectionName, setCollectionName] = useState('');
   const [collectionError, setCollectionError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [createdCollection, setCreatedCollection] = useState<{
     id: string;
     name: string;
@@ -98,7 +99,12 @@ export default function Library() {
 
   const remove = async (id: string) => {
     setPendingDeleteId(null);
-    await recipeStore.remove(id);
+    setDeleteError(null);
+    try {
+      await recipeStore.remove(id);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Couldn't delete the recipe.");
+    }
   };
 
   const closeSheets = () => {
@@ -367,6 +373,10 @@ export default function Library() {
           onChange={(e) => setQuery(e.target.value)}
           className={`${inputClass} mb-4`}
         />
+      )}
+
+      {deleteError && (
+        <p className="mb-3 text-sm text-danger">{deleteError}</p>
       )}
 
       {recipes === undefined ? (
