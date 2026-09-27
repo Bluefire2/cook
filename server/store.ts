@@ -10,6 +10,7 @@ import {
   type PushRejectReason,
 } from './pushReasons.ts';
 import { normalizeLang } from './lang.ts';
+import { TRANSLATIONS_COLLECTION, translationCacheDocIds } from './recipeTranslation.ts';
 import { canViewRecipe } from './shareAuth.ts';
 
 export { SHARED_PARENT_OWNER_SUB_FIELD };
@@ -1195,6 +1196,12 @@ export async function cascadeRecipeDelete(
     } else {
       const serverUpdatedAt = Date.now();
       tx.set(recipeRef, tombstonePayload(recipeId, at, serverUpdatedAt), { merge: false });
+    }
+    // Derived cache, not a sync doc. Delete on every branch after the one
+    // read: tombstone applied, stale reject, and missing doc. A missing
+    // cache doc is a no-op. Firestore rejects any read after these writes.
+    for (const docId of translationCacheDocIds(recipeId)) {
+      tx.delete(userRef(uid).collection(TRANSLATIONS_COLLECTION).doc(docId));
     }
   });
 

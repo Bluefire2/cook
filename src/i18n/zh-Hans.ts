@@ -349,4 +349,10 @@ export const zhHans: Messages = {
   'error.adminUnknownInvite': '没有找到这个邀请链接。',
   'error.unsupportedMedia': '这个请求必须是 JSON。',
   'error.payloadTooLarge': '这个请求太大了。',
+  'error.translateBadRequest': '这个请求无效。',
+  'error.translateTooLarge': '这个食谱太长，无法翻译。',
+  'error.translateUnavailable': '翻译暂时不可用。',
+  'error.translateProviderUnavailable': '这个翻译服务不可用。',
+  'error.translateFailed': '无法翻译这个食谱。',
+  'error.translateRateLimited': '翻译太频繁了，请你稍后再试。',
 };

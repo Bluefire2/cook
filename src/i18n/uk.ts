@@ -378,4 +378,10 @@ export const uk: Messages = {
   'error.adminUnknownInvite': 'Це посилання-запрошення не знайдено.',
   'error.unsupportedMedia': 'Цей запит має бути у форматі JSON.',
   'error.payloadTooLarge': 'Цей запит завеликий.',
+  'error.translateBadRequest': 'Цей запит некоректний.',
+  'error.translateTooLarge': 'Цей рецепт задовгий для перекладу.',
+  'error.translateUnavailable': 'Переклад тимчасово недоступний.',
+  'error.translateProviderUnavailable': 'Ця служба перекладу недоступна.',
+  'error.translateFailed': 'Не вдалося перекласти цей рецепт.',
+  'error.translateRateLimited': 'Забагато перекладів. Спробуйте пізніше.',
 };

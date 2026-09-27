@@ -246,6 +246,10 @@ if [[ -n "${SOUS_DISABLE_RESEND:-}" ]]; then
 else
   resolve_optional_secret RESEND_API_KEY "RESEND_API_KEY (blank to disable notification email)"
 fi
+# Optional. Blank keeps the gemini / gemini-3.5-flash-lite defaults. An empty
+# value is omitted from the env file so a redeploy does not fail closed.
+resolve_optional_secret TRANSLATE_PROVIDER "TRANSLATE_PROVIDER (blank keeps gemini)"
+resolve_optional_secret TRANSLATE_MODEL "TRANSLATE_MODEL (blank keeps gemini-3.5-flash-lite)"
 
 IMAGE_TAG="${IMAGE_TAG:-$(date -u +%Y%m%d-%H%M%S)}"
 IMAGE="${IMAGE:-${IMAGE_REPO}:${IMAGE_TAG}}"
@@ -270,7 +274,7 @@ trap 'rm -f "$ENV_FILE"' EXIT
 # JSON.stringify produces a double-quoted YAML scalar and escapes quotes and
 # backslashes. Do not put the values on the node command line — they are
 # already in the environment. Single-line -e: see strip_controls.
-node -e 'const fs=require("fs");const dest=process.argv[process.argv.length-1];const fixed={PUBLIC_ORIGIN:"https://sous.kyrylo.lol",GOOGLE_CLOUD_PROJECT:"cooking-assistant-508423",PHOTO_BUCKET:"sous-photos-cooking-assistant-508423"};const keys=["GEMINI_API_KEY","AUTH_GOOGLE_ID","AUTH_GOOGLE_SECRET","SESSION_SECRET","ALLOWED_EMAILS","PUBLIC_ORIGIN","GOOGLE_CLOUD_PROJECT","PHOTO_BUCKET","MAIL_FROM","OWNER_NOTIFY_EMAIL","RESEND_API_KEY"];const optional=new Set(["RESEND_API_KEY"]);const lines=keys.flatMap(k=>{const v=fixed[k]??process.env[k];if(typeof v!=="string"||v===""){if(optional.has(k))return[];process.exit(2)}return[k+": "+JSON.stringify(v)]});fs.writeFileSync(dest,lines.join("\n")+"\n");' "$(to_native_path "$ENV_FILE")" \
+node -e 'const fs=require("fs");const dest=process.argv[process.argv.length-1];const fixed={PUBLIC_ORIGIN:"https://sous.kyrylo.lol",GOOGLE_CLOUD_PROJECT:"cooking-assistant-508423",PHOTO_BUCKET:"sous-photos-cooking-assistant-508423"};const keys=["GEMINI_API_KEY","AUTH_GOOGLE_ID","AUTH_GOOGLE_SECRET","SESSION_SECRET","ALLOWED_EMAILS","PUBLIC_ORIGIN","GOOGLE_CLOUD_PROJECT","PHOTO_BUCKET","MAIL_FROM","OWNER_NOTIFY_EMAIL","RESEND_API_KEY","TRANSLATE_PROVIDER","TRANSLATE_MODEL"];const optional=new Set(["RESEND_API_KEY","TRANSLATE_PROVIDER","TRANSLATE_MODEL"]);const lines=keys.flatMap(k=>{const v=fixed[k]??process.env[k];if(typeof v!=="string"||v===""){if(optional.has(k))return[];process.exit(2)}return[k+": "+JSON.stringify(v)]});fs.writeFileSync(dest,lines.join("\n")+"\n");' "$(to_native_path "$ENV_FILE")" \
   || die "failed to write --env-vars-file (a required secret was empty?)"
 
 info "Deploying Cloud Run service ${SERVICE_NAME} in ${REGION}"

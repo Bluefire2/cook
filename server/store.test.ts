@@ -45,6 +45,7 @@ import {
   validatePushOp,
   isKnownPushKind,
 } from './store.ts';
+import { translationCacheDocIds } from './recipeTranslation.ts';
 
 describe('emailLowerBackfill', () => {
   it('returns the normalized address when emailLower is missing or stale', () => {
@@ -1050,5 +1051,21 @@ describe('cascadeChildJobs', () => {
         chunk.map((job) => job.id),
       ),
     ).toEqual([['m1', 'r1', 'l1'], ['p1']]);
+  });
+});
+
+describe('translationCacheDocIds', () => {
+  it('names the four UI-language cache docs, in order, with no query', () => {
+    const recipeId = '550e8400-e29b-41d4-a716-446655440000';
+    expect(translationCacheDocIds(recipeId)).toEqual([
+      `${recipeId}.en`,
+      `${recipeId}.uk`,
+      `${recipeId}.ru`,
+      `${recipeId}.zh-Hans`,
+    ]);
+    expect(translationCacheDocIds(recipeId)).toEqual(translationCacheDocIds(recipeId));
+    for (const id of translationCacheDocIds(recipeId)) {
+      expect(id.includes('/')).toBe(false);
+    }
   });
 });

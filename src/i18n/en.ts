@@ -379,6 +379,12 @@ export const en = {
   'error.adminUnknownInvite': 'That invite link was not found.',
   'error.unsupportedMedia': 'That request must be JSON.',
   'error.payloadTooLarge': 'That request was too large.',
+  'error.translateBadRequest': 'That request was not valid.',
+  'error.translateTooLarge': 'This recipe is too long to translate.',
+  'error.translateUnavailable': 'Translation is temporarily unavailable.',
+  'error.translateProviderUnavailable': 'This translation provider is not available.',
+  'error.translateFailed': "Couldn't translate this recipe.",
+  'error.translateRateLimited': 'Too many translations. Try again later.',
 } as const satisfies Record<string, string | PluralForms>;
 
 type EnMessages = typeof en;

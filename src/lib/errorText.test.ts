@@ -97,6 +97,23 @@ describe('serverErrorText', () => {
     ).toBe('This collection already has 20 people');
   });
 
+  it('maps translate failures to catalog text', () => {
+    settings.setLocale('uk');
+    expect(
+      serverErrorText(
+        { code: 'translate-failed', error: "Couldn't translate this recipe." },
+        'error.requestFailed',
+      ),
+    ).toBe('Не вдалося перекласти цей рецепт.');
+    settings.setLocale('zh-Hans');
+    expect(
+      serverErrorText(
+        { code: 'translate-rate-limited', error: 'Too many translations. Try again later.' },
+        'error.requestFailed',
+      ),
+    ).toBe('翻译太频繁了，请你稍后再试。');
+  });
+
   it('uses the generic catalog fallback when code and error are absent', () => {
     settings.setLocale('en');
     expect(serverErrorText(null, 'error.sharingUpdate')).toBe("Couldn't update sharing.");

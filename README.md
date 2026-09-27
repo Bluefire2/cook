@@ -257,6 +257,8 @@ the full map).
 | `OWNER_NOTIFY_EMAIL` | yes (prod) | Inbox that receives access-request notifications. |
 | `RESEND_API_KEY` | no | Resend API key. Unset ⇒ no notification email; requests still land in `/admin`. |
 | `CHAT_MODEL` | no | Model id for the Gemini endpoints (chat, import, and Ask dictation). Defaults to `gemini-3.7-flash`. A bare `CHAT_MODEL=` is read as `''` by `--env-file`, which defeats the default — comment the line out instead. |
+| `TRANSLATE_PROVIDER` | no | Recipe translation provider. Defaults to `gemini`, the only accepted value. Any other value fails closed (`503`, code `translate-provider-unavailable`). A bare `TRANSLATE_PROVIDER=` is read as `''` and keeps the default — comment the line out instead. |
+| `TRANSLATE_MODEL` | no | Gemini model for recipe translation. Defaults to `gemini-3.5-flash-lite`. A bare `TRANSLATE_MODEL=` is read as `''` and keeps the default — comment the line out instead. |
 
 No `VITE_`-prefixed variable exists anywhere in the app, and none should. Vite
 inlines `VITE_*` values into the client bundle, so prefixing the Gemini key
@@ -284,8 +286,9 @@ Build, push, and deploy with the env map the container needs. The generator
 writes **ten** required keys (`GEMINI_API_KEY`, `AUTH_GOOGLE_ID`,
 `AUTH_GOOGLE_SECRET`, `SESSION_SECRET`, `ALLOWED_EMAILS`, `PUBLIC_ORIGIN`,
 `GOOGLE_CLOUD_PROJECT`, `PHOTO_BUCKET`, `MAIL_FROM`, `OWNER_NOTIFY_EMAIL`)
-and adds **`RESEND_API_KEY`** only when it is set — omitting it removes the
-key from Cloud Run because `--env-vars-file` replaces the whole map.
+and adds **`RESEND_API_KEY`**, **`TRANSLATE_PROVIDER`**, and **`TRANSLATE_MODEL`**
+only when they are set — omitting an empty optional key removes it from Cloud
+Run because `--env-vars-file` replaces the whole map.
 
 ```bash
 bash scripts/deploy.sh

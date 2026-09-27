@@ -375,4 +375,10 @@ export const ru: Messages = {
   'error.adminUnknownInvite': 'Эта ссылка-приглашение не найдена.',
   'error.unsupportedMedia': 'Этот запрос должен быть в формате JSON.',
   'error.payloadTooLarge': 'Этот запрос слишком большой.',
+  'error.translateBadRequest': 'Этот запрос некорректен.',
+  'error.translateTooLarge': 'Этот рецепт слишком длинный для перевода.',
+  'error.translateUnavailable': 'Перевод временно недоступен.',
+  'error.translateProviderUnavailable': 'Эта служба перевода недоступна.',
+  'error.translateFailed': 'Не удалось перевести этот рецепт.',
+  'error.translateRateLimited': 'Слишком много переводов. Попробуйте позже.',
 };
