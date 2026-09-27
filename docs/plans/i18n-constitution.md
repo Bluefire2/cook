@@ -50,7 +50,9 @@ both, and only the rendered body uses the translation). The client may keep
 display translations in memory for the session, so going back or into cook
 mode doesn't retranslate. They are gone on reload and never written to the
 recipe, sync, or the device (principle 8). Chat, edit, share, and backup
-always receive the stored recipe.
+always receive the stored recipe. For sharing, that means the shared pull
+(`GET /api/sync/shared`) serves the owner's stored recipe, so a translation
+never reaches a viewer through sharing.
 
 **Why.** Sync is last-write-wins on `updatedAt`. If a translation were
 written back, it would overwrite the original on every device, lose the
@@ -144,6 +146,13 @@ Code must behave sensibly when `lang` is missing or wrong:
 - **Missing.** Show a neutral translate toggle, and use the language the
   provider detects.
 - **Wrong.** The person can correct it in the recipe form.
+- **Shared with you.** The toggle and detection work the same for a
+  viewer, but a viewer can't correct `lang`. Edit is hidden,
+  `recipeStore.save` throws for shared recipes, and `/recipe/:id/edit`
+  shows "Recipe not found.". So a viewer's `detectedLang` stays in memory
+  for the session only, and only the owner can fix the label. A copy made
+  with chat's "Save as a new recipe" is the viewer's own recipe and
+  inherits the shared recipe's `lang`.
 
 Nothing may crash or block without it, and no feature may treat it as
 guaranteed.
@@ -172,10 +181,25 @@ data. It is deleted in the same transaction that tombstones its recipe
 (`cascadeRecipeDelete`), even when the tombstone loses to a newer edit. The
 doc ids are deterministic, so no query is needed (principle 14).
 
+The server caches only a translation of the caller's own live recipe:
+`users/{uid}/recipes/{recipeId}` must exist and not be tombstoned, checked
+in the same transaction that writes the cache doc. Translations of recipes
+shared with you, and of unknown ids, are never stored server-side; they are
+translated each session, and the client's in-memory cache (principle 8)
+avoids repeats within it.
+
 **Why.** `Recipe` is schema-locked (`src/lib/recipeStore.test.ts`) because
 every field has to be threaded through the compacting on both client and
 server, backups, and validation. A cache can be rebuilt, so it doesn't need
 tombstones, pull cursors, or last-write-wins.
+
+**Why only your own recipes.** A viewer opens a shared recipe under the
+owner's recipe id. A cache doc under `users/{viewerUid}` would be out of
+reach of the owner's `cascadeRecipeDelete`, so deleting the recipe would
+leave a copy of its text behind, and root `AGENTS.md` (Sharing) forbids
+inventing cleanup for viewer rows. Doing the check in the write's
+transaction also stops a translation in flight from recreating a cache doc
+after its recipe was deleted.
 
 ### 8. No recipe text or translation is stored on the device
 
@@ -272,7 +296,9 @@ and Gemini already follows the user's language.
 ### 14. Every place recipe text goes is disclosed
 
 Before any new provider or cache receives recipe text, `/privacy` and
-`/terms` must say so.
+`/terms` must say so. That includes what is not stored: translations of
+recipes shared with you are never stored server-side (principle 7), and the
+pages say so.
 
 **Why.** Recipes can be private (pasted from paid sites or family notes), and
 the legal pages are the promise made to users.
@@ -315,8 +341,16 @@ the legal pages are the promise made to users.
   (`docs/i18n-review/screens.json`) in the same change.
 - **The review writes nothing.** Local dev talks to production Firestore,
   so the review never creates, edits, or deletes library data, and doesn't
-  touch cook state. It writes the translation cache only when the person who
-  starts the run opts in, and the report lists every cache doc written.
+  touch cook state or sharing: opening `ShareCollectionSheet` is fine, but
+  adding or removing a person is not. It writes the translation cache only
+  when the person who starts the run opts in, and the report lists every
+  cache doc written.
+- **Other members' data stays out of the judge.** If the account has
+  incoming shares or shared collections, some states show another member's
+  recipe content or email (an owner's or a grantee's). Those states are
+  captured only if the reviewer redacts that data (for example by cropping
+  or blurring) before the image goes to the judging model; otherwise they
+  are skipped. The report lists what was skipped or redacted.
 - **Register and glossary.** Catalog text follows the register and glossary
   in [Current decisions](#current-decisions).
 
