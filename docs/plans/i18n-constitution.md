@@ -21,8 +21,9 @@ It covers any change that touches:
   the translate options on `/api/import`, `src/lib/translationStore.ts`)
 - the language passed to dictation (`/api/stt`)
 - anywhere recipe text is sent to a translation provider
-- the in-context translation review (`.cursor/skills/i18n-visual-review/`,
-  and later `scripts/i18n-review/`), and any UI change that adds or changes
+- the in-context translation review (`docs/i18n-review/`, its tool
+  wrappers such as `.cursor/skills/i18n-visual-review/`, and later
+  `scripts/i18n-review/`), and any UI change that adds or changes
   user-facing text (principle 16)
 
 ## How to change this file
@@ -63,10 +64,14 @@ is authoring, not a view.
 ### 2. Translation happens only when a person asks
 
 Nothing translates the library in the background, ahead of time, or on a
-schedule. Translation runs only when the recipe screen's toggle is tapped, or
-when an import runs with its translate option on (checked by default when the
-recipe's language differs from the UI language, and visible before anything
-is saved). The backfill script (principle 6) only detects language; it never
+schedule. Translation runs only on these triggers, each visible before
+anything is saved:
+- the recipe screen's toggle is tapped
+- an import runs with its translate option on (checked by default when the
+  recipe's language differs from the UI language)
+- in the import preview, the person sets or changes the guessed language to
+  one that differs from the UI language while the translate checkbox is on,
+  or checks the box when no translation is held The backfill script (principle 6) only detects language; it never
 translates.
 
 **Why.** Most recipes are never opened in a second language, so translating
@@ -88,7 +93,8 @@ line and lose the context from nearby lines.
 
 Only text is translated: title, description, notes, section names,
 ingredient `item` and `note`, custom unit strings, and step text. Quantities,
-known unit tokens, the order and number of sections, ingredients and steps,
+known unit tokens (`COMMON_UNITS`), the order and number of sections,
+ingredients and steps,
 and ids pass through untouched. Translated text maps back to its segment by
 id, one to one. A response with missing, extra, or reordered ids is an error.
 It is never partly applied.
@@ -104,6 +110,12 @@ keeps a translated view from silently mixing languages or dropping lines.
   primary subtag is an ISO 639-1 language code (`uk` Ukrainian, `ru` Russian,
   `zh` Chinese, `it` Italian). It gets an ISO 15924 script subtag only when
   the script changes the meaning (`zh-Hans`, `zh-Hant`).
+- **Only Chinese keeps a script, for now.** Other languages written in more
+  than one script (Serbian `sr-Latn` / `sr-Cyrl`, Uzbek, Azerbaijani) lose
+  it, so `sameLanguage('sr-Latn', 'sr-Cyrl')` is "same". That is acceptable
+  while translation targets only the four UI languages. It is not settled
+  for other languages: keeping another script is an amendment to this
+  principle, and the parity table covers it.
 - **No country codes.** Country codes (ISO 3166) are never used as language
   codes: not `ua`, `cn`, `jp`, `gr`, or `cz`.
 - **Normalizing.** Tags are normalized at every boundary:
@@ -156,7 +168,8 @@ Translations are never stored on a recipe, a chat message, or cook state, and
 never go through `/api/sync/*`. The server caches translations at
 `users/{uid}/translations/{recipeId}.{target}`, keyed by a hash of the source
 text. A hash mismatch is a miss. It can be deleted at any time without losing
-data. It is deleted in the same transaction that tombstones its recipe: the
+data. It is deleted in the same transaction that tombstones its recipe
+(`cascadeRecipeDelete`), even when the tombstone loses to a newer edit. The
 doc ids are deterministic, so no query is needed (principle 14).
 
 **Why.** `Recipe` is schema-locked (`src/lib/recipeStore.test.ts`) because
@@ -244,8 +257,11 @@ anything is saved, because the saved text becomes the source of truth
 ### 13. Chat stays out of i18n
 
 No locale is added to the `/api/chat` request, and its system prompt is not
-changed for language. The assistant answers in the language the person
-writes in.
+changed for language. `Recipe.lang` is stripped from the recipe the client
+sends, so the request stays exactly as before this feature. The assistant
+answers in the language the person writes in. A recipe translated through
+chat keeps its old `lang` until the person corrects it; that is expected
+(principle 6).
 
 **Why.** The chat request shape is on the root `AGENTS.md` do-not-touch list,
 and Gemini already follows the user's language.
@@ -280,11 +296,13 @@ the legal pages are the promise made to users.
   principle 9 are the only ones. English-only strings "to translate
   later" are not allowed.
 - **Reviewed in context.** The same change runs the in-context translation
-  review (`.cursor/skills/i18n-visual-review/SKILL.md`, later `npm run
-  test:i18n`) for every screen that shows the new text, in every
-  non-English language. Blockers are fixed before the change is done.
+  review (`docs/i18n-review/README.md`, later `npm run test:i18n`) for
+  every screen that shows the new text, in every non-English language.
+  Blockers are fixed before the change is done. The review is defined in a
+  tool-neutral place because this rule binds every agent. Tool wrappers,
+  such as the Cursor skill, only point to it.
 - **Manifest.** New screens or states are added to the review manifest
-  (`screens.json`) in the same change.
+  (`docs/i18n-review/screens.json`) in the same change.
 - **The review writes nothing.** Local dev talks to production Firestore,
   so the review never creates, edits, or deletes library data, and doesn't
   touch cook state. It writes the translation cache only when the person who
@@ -362,11 +380,12 @@ These are reversible under principle 11. Each lists what it optimizes for.
   of core terms (recipe, collection, library, import, servings, step,
   ingredient) for each language. The in-context review checks catalog text
   against both.
-- **In-context review delivery.** A Cursor project skill first (no new
-  dependency; it reuses the browser tooling agents already have, and lets
-  the rubric and manifest settle). A standalone `npm run test:i18n`
-  (Playwright plus a Gemini vision judge) comes later, as its own
-  milestone.
+- **In-context review delivery.** Written, tool-neutral instructions first
+  (`docs/i18n-review/README.md` and `screens.json`), with thin wrappers per
+  tool (a Cursor skill on this branch). This needs no new dependency, reuses
+  the browser tooling agents already have, and lets the rubric and manifest
+  settle. A standalone `npm run test:i18n` (Playwright plus a Gemini vision
+  judge) comes later, as its own milestone.
 
 ## Amendments
 
