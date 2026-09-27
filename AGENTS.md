@@ -180,7 +180,10 @@ and the original id, so re-importing a file overwrites the earlier clone.
 
 Profile upsert writes display `email` plus normalized `emailLower`. Add-by-email
 queries `emailLower` first and falls back only to exact normalized `email` for
-legacy profiles that already stored lowercase email. The success-vs-generic
+legacy profiles that already stored lowercase email. Profiles written before
+`emailLower` existed are repaired once with
+`scripts/backfill-email-lower.ts` (dry run, then `--apply`); do not widen the
+lookup into a case-insensitive scan instead. The success-vs-generic
 failure account-existence signal is a conscious invitation-only product
 choice; do not make failure responses more revealing.
 

@@ -588,6 +588,16 @@ export async function upsertUser(
   });
 }
 
+/** The `emailLower` a stored profile is missing, or null when it already matches or has no email. */
+export function emailLowerBackfill(profile: Record<string, unknown>): string | null {
+  const email = profile.email;
+  if (typeof email !== 'string' || email.trim() === '') {
+    return null;
+  }
+  const lower = email.trim().toLowerCase();
+  return profile.emailLower === lower ? null : lower;
+}
+
 export function userProfileUpsertFields(
   profile: { email: string; name?: string },
   now: number,

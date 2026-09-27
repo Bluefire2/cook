@@ -20,9 +20,30 @@ import {
   encodePullCursor,
   isUuid,
   messageIdsToClearAtBoundary,
+  emailLowerBackfill,
   userProfileUpsertFields,
   validatePushOp,
 } from './store.ts';
+
+describe('emailLowerBackfill', () => {
+  it('returns the normalized address when emailLower is missing or stale', () => {
+    expect(emailLowerBackfill({ email: 'Mixed.Case@Example.com' })).toBe(
+      'mixed.case@example.com',
+    );
+    expect(
+      emailLowerBackfill({ email: 'New@Example.com', emailLower: 'old@example.com' }),
+    ).toBe('new@example.com');
+  });
+
+  it('skips profiles that already match or have no usable email', () => {
+    expect(
+      emailLowerBackfill({ email: 'A@Example.com', emailLower: 'a@example.com' }),
+    ).toBeNull();
+    expect(emailLowerBackfill({})).toBeNull();
+    expect(emailLowerBackfill({ email: '  ' })).toBeNull();
+    expect(emailLowerBackfill({ email: 42 })).toBeNull();
+  });
+});
 
 describe('userProfileUpsertFields', () => {
   it('derives emailLower while preserving the original email and name', () => {
