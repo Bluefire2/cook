@@ -27,6 +27,59 @@ runtime image.
 | `messy-sections` | Pasted-text fixture. No external source is recorded; added in PR #1. |
 | `not-a-recipe` | Pasted-text fixture (deliberately not a recipe). No external source is recorded; added in PR #1. |
 
+## `evals/import-handwritten/`
+
+Photos of handwritten recipes, for the photo import path
+(`importFromImages`). Bound by `docs/constitutions/image-import.md`. There
+are no fixtures yet; `evals/handwrittenFixtures.ts` discovers whatever is
+here.
+
+**Layout.** One directory per fixture:
+
+```
+<name>/page-1.jpg … page-4.jpg   # or .jpeg, .png, .webp; 1–4 pages, numbered from 1
+<name>/golden.json               # an ImportedRecipe of what is actually written
+<name>/source.txt                # provenance and permission, see below
+```
+
+`golden.json` records what the pages say, not a tidied-up recipe: servings
+`1` if none is written, no invented quantities.
+
+**`source.txt` format.** The first lines are:
+
+```
+provenance: <whose notes, when written, how photographed>
+permission: <owner's own notes | written permission from …, date>
+```
+
+then any `#` notes.
+
+**Preparation.** Pages must look like what the app sends: upright, at most
+2048 px on the long edge, JPEG at about 85, and metadata stripped. For
+example:
+
+```bash
+magick in.heic -auto-orient -resize '2048x2048>' -quality 85 -strip page-1.jpg
+```
+
+The harness rejects EXIF, more than 4 pages, gaps in the numbering, and any
+page `checkImportImages` would refuse. A broken fixture fails the run with
+`evals/import-handwritten/<name>: <problem>`; it is never skipped silently.
+
+**Warning.** This repository is **public**. Committing a fixture publishes
+the photo. Only commit the owner's own notes, or notes with recorded
+permission to publish, and never other people's private notes.
+
+**Running.** `npm run test:import` runs the handwritten suite alongside the
+others, and shows `1 skipped` when there are no fixtures.
+`npm run eval:ocr-compare` compares A (the photos straight to Gemini, as
+production does) with B (Cloud Vision OCR, then Gemini on the text), with
+latency, tokens, estimated cost, and the judge's verdict per fixture. Pass
+fixture names to limit it and `--runs=N` (1–5) to repeat. B needs
+Application Default Credentials and `vision.googleapis.com` enabled on
+`cooking-assistant-508423`, and is skipped with a message otherwise. It
+prints to stdout only and writes no files.
+
 ## `evals/import-sites/`
 
 22 pages from a spread of site types, fetched 2026-09-23 with a desktop Chrome
