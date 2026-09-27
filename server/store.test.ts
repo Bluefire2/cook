@@ -27,6 +27,7 @@ import {
   collectionDeletePayload,
   compactCollectionFields,
   compactRecipeFields,
+  MAX_RECIPE_LANG_CHARS,
   compareMutation,
   SHARED_PARENT_OWNER_SUB_FIELD,
   sharedParentMarkerForWrite,
@@ -217,6 +218,40 @@ describe('validatePushOp', () => {
     ).toBe(true);
   });
 
+  it('rejects a non-string or oversized lang and accepts anything shorter', () => {
+    const base = {
+      id: '11111111-1111-4111-8111-111111111111',
+      title: 'T',
+      servings: 1,
+      ingredientSections: [],
+      steps: [],
+      tags: [],
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    expect(validatePushOp({ kind: 'recipe.put', payload: { ...base, lang: 'it' } }).ok).toBe(true);
+    expect(validatePushOp({ kind: 'recipe.put', payload: { ...base, lang: 'garbage!!' } }).ok).toBe(
+      true,
+    );
+    expect(
+      validatePushOp({
+        kind: 'recipe.put',
+        payload: { ...base, lang: 'x'.repeat(MAX_RECIPE_LANG_CHARS) },
+      }).ok,
+    ).toBe(true);
+    expect(
+      validatePushOp({
+        kind: 'recipe.put',
+        payload: { ...base, lang: 'x'.repeat(MAX_RECIPE_LANG_CHARS + 1) },
+      }).ok,
+    ).toBe(false);
+    expect(validatePushOp({ kind: 'recipe.put', payload: { ...base, lang: 1 } }).ok).toBe(false);
+    expect(validatePushOp({ kind: 'recipe.put', payload: { ...base, lang: null } }).ok).toBe(false);
+    expect(validatePushOp({ kind: 'recipe.put', payload: { ...base, lang: ['it'] } }).ok).toBe(
+      false,
+    );
+  });
+
   it('rejects recipe.put with more than 8 gallery photos or a non-UUID', () => {
     const id = '11111111-1111-4111-8111-111111111111';
     const base = {
@@ -340,6 +375,17 @@ describe('compactRecipeFields', () => {
       galleryPhotoIds: ['g1', 'g2'],
     });
     expect(compacted.galleryPhotoIds).toEqual(['g1', 'g2']);
+  });
+
+  it('normalizes lang and omits a value it cannot understand', () => {
+    expect(compactRecipeFields({ ...required, lang: 'it-IT' }).lang).toBe('it');
+    expect(compactRecipeFields({ ...required, lang: 'ua' }).lang).toBe('uk');
+    expect(compactRecipeFields({ ...required, lang: 'zh-CN' }).lang).toBe('zh-Hans');
+    expect(compactRecipeFields({ ...required, lang: 'garbage!!' })).not.toHaveProperty('lang');
+    expect(compactRecipeFields({ ...required, lang: 4 })).not.toHaveProperty('lang');
+    expect(
+      compactRecipeFields({ ...required, lang: 'x'.repeat(MAX_RECIPE_LANG_CHARS) }),
+    ).not.toHaveProperty('lang');
   });
 
   it('omits an empty gallery and strips the cover id', () => {

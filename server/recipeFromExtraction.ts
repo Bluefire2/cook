@@ -30,6 +30,7 @@ export function recipePutFromExtraction(
   if (recipe.notes !== undefined) payload.notes = recipe.notes;
   if (recipe.prepMinutes !== undefined) payload.prepMinutes = recipe.prepMinutes;
   if (recipe.cookMinutes !== undefined) payload.cookMinutes = recipe.cookMinutes;
+  if (recipe.lang !== undefined) payload.lang = recipe.lang;
 
   const sourceUrl = options.sourceUrl?.trim();
   if (sourceUrl) payload.sourceUrl = sourceUrl;

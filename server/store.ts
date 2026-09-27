@@ -9,6 +9,7 @@ import {
   SHARED_PARENT_OWNER_SUB_FIELD,
   type PushRejectReason,
 } from './pushReasons.ts';
+import { normalizeLang } from './lang.ts';
 import { canViewRecipe } from './shareAuth.ts';
 
 export { SHARED_PARENT_OWNER_SUB_FIELD };
@@ -239,6 +240,10 @@ export function compactRecipeFields(recipe: Record<string, unknown>): Record<str
     if (recipe[key] !== undefined) {
       next[key] = recipe[key];
     }
+  }
+  const lang = normalizeLang(recipe.lang);
+  if (lang !== undefined) {
+    next.lang = lang;
   }
   const galleryPhotoIds = compactGalleryPhotoIds(
     recipe.galleryPhotoIds,
@@ -1373,6 +1378,9 @@ function jsonSize(value: unknown): number {
   return JSON.stringify(value).length;
 }
 
+/** Raw `lang` longer than this is rejected. A shorter value is normalized or dropped. */
+export const MAX_RECIPE_LANG_CHARS = 32;
+
 function validateRecipePut(payload: unknown): payload is Record<string, unknown> {
   if (!isPlainObject(payload)) {
     return false;
@@ -1407,6 +1415,11 @@ function validateRecipePut(payload: unknown): payload is Record<string, unknown>
       if (!isUuid(pid)) {
         return false;
       }
+    }
+  }
+  if (payload.lang !== undefined) {
+    if (typeof payload.lang !== 'string' || payload.lang.length > MAX_RECIPE_LANG_CHARS) {
+      return false;
     }
   }
   if (jsonSize(payload) >= 200_000) {

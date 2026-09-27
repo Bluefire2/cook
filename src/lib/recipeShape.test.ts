@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { compactRecipe } from './compactRecipe';
 import { isUsableRecipe, normalizeRecipeDraft } from './recipeShape';
 import type { Recipe } from './types';
 
@@ -108,6 +109,12 @@ describe('normalizeRecipeDraft', () => {
     expect(draft?.steps).toEqual([]);
   });
 
+  it('does not copy lang', () => {
+    const draft = normalizeRecipeDraft({ ...wellFormedProposal, lang: 'it' });
+    expect(draft).toBeDefined();
+    expect(draft).not.toHaveProperty('lang');
+  });
+
   it('omits photoId, galleryPhotoIds, and sourceUrl even when present', () => {
     const draft = normalizeRecipeDraft({
       title: 'Draft',
@@ -175,5 +182,15 @@ describe('isUsableRecipe', () => {
 
   it('returns true when galleryPhotoIds is a string array', () => {
     expect(isUsableRecipe({ ...required, galleryPhotoIds: ['g1'] })).toBe(true);
+  });
+
+  it('accepts a malformed lang and leaves stripping to compact', () => {
+    const malformed = { ...required, lang: 'garbage!!' };
+    expect(isUsableRecipe(malformed)).toBe(true);
+    expect(isUsableRecipe({ ...required, lang: 12 })).toBe(true);
+    expect(compactRecipe(malformed)).not.toHaveProperty('lang');
+    expect(compactRecipe({ ...required, lang: 12 } as unknown as Recipe)).not.toHaveProperty(
+      'lang',
+    );
   });
 });

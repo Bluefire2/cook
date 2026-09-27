@@ -68,8 +68,11 @@ UI (screens, components)
 library data. Screens must not `fetch`. Do not add fields to `Recipe`,
 `ChatMessage`, or `CookStateRow` — `compactRecipe` strips unknown keys, and
 `src/lib/recipeStore.test.ts` asserts the exact key set. That test is a
-schema lock; do not "fix" it by expanding the allow-list. Collections are a
-separate store kind. View-only grants live under
+schema lock; do not "fix" it by expanding the allow-list. Sharing avoided a
+`Recipe` field (`docs/plans/shared-recipes.md`, D3); optional `Recipe.lang`
+is the first deliberate exception since `galleryPhotoIds`
+(`docs/constitutions/i18n.md`), and code must work when `lang` is missing.
+Collections are a separate store kind. View-only grants live under
 `collections/{id}/grants/{viewerSub}` plus a reverse
 `incomingShares/{viewerSub}` index; they are REST, not LWW push. Shared
 rows stay in the owner's tree and carry origin metadata beside `Recipe`.

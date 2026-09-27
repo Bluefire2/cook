@@ -9,6 +9,7 @@
  * place that reads the environment.
  */
 import { GoogleGenAI, Type, type Schema } from '@google/genai';
+import { normalizeLang } from './lang.ts';
 
 export interface ImportedIngredient {
   quantity?: number;
@@ -33,6 +34,8 @@ export interface ImportedRecipe {
   notes?: string;
   prepMinutes?: number;
   cookMinutes?: number;
+  /** Canonical BCP 47 tag, when the source language could be normalized. */
+  lang?: string;
 }
 
 export interface RecipeImportDeps {
@@ -64,7 +67,8 @@ const DEFAULT_MODEL = 'gemini-3.7-flash';
 const MAX_SOURCE_CHARS = 60000;
 
 // NOTE: `api/chat.ts` still carries its own copy of this schema for
-// `update_recipe`. Keep the two in sync until chat gets the same treatment.
+// `update_recipe`. Keep the two in sync until chat gets the same treatment,
+// except `lang`: it is import-only and must not be copied into `api/chat.ts`.
 const RECIPE_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -116,6 +120,11 @@ const RECIPE_SCHEMA: Schema = {
       description: '2-4 short lowercase tags like "pasta", "weeknight".',
     },
     notes: { type: Type.STRING, description: 'Tips or variations worth keeping.' },
+    lang: {
+      type: Type.STRING,
+      description:
+        'BCP 47 language tag of the source recipe, such as "it" or "zh-Hans". Omit if you cannot tell.',
+    },
   },
   required: ['title', 'servings', 'ingredientSections', 'steps', 'tags'],
 };
@@ -485,6 +494,9 @@ export function normalizeImportedRecipe(raw: unknown): ImportedRecipe | null {
 
   const cookMinutes = finiteNumber(raw.cookMinutes);
   if (cookMinutes !== undefined && cookMinutes >= 0) recipe.cookMinutes = cookMinutes;
+
+  const lang = normalizeLang(raw.lang);
+  if (lang !== undefined) recipe.lang = lang;
 
   return recipe;
 }

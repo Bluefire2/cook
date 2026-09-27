@@ -212,14 +212,17 @@ describe('normalizeImportedRecipe', () => {
       notes: 'Freezes well.',
       prepMinutes: 5,
       cookMinutes: 20,
+      lang: 'it-IT',
       photoId: 'not-from-a-model',
       sourceUrl: 'https://model.example/invented',
       nutrition: { calories: 100 },
     });
+    expect(recipe?.lang).toBe('it');
     expect(Object.keys(recipe ?? {}).sort()).toEqual([
       'cookMinutes',
       'description',
       'ingredientSections',
+      'lang',
       'notes',
       'prepMinutes',
       'servings',
@@ -227,6 +230,15 @@ describe('normalizeImportedRecipe', () => {
       'tags',
       'title',
     ]);
+  });
+
+  it('drops a lang it cannot normalize without rejecting the recipe', () => {
+    for (const lang of ['garbage!!', '', 12, null]) {
+      const recipe = normalizeImportedRecipe({ ...MINIMAL, lang });
+      expect(recipe).not.toBeNull();
+      expect(recipe).not.toHaveProperty('lang');
+    }
+    expect(normalizeImportedRecipe({ ...MINIMAL, lang: 'zh-CN' })?.lang).toBe('zh-Hans');
   });
 
   it('returns null without a usable title', () => {

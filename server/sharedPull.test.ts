@@ -261,6 +261,31 @@ function base64url(value: string): string {
 }
 
 describe('buildSharedPullPage', () => {
+  it('keeps a normalized lang on a shared recipe and drops one it cannot understand', async () => {
+    const okId = 'recipe-ok';
+    const badId = 'recipe-bad';
+    const shares = [{ grantId: 'grant-a', ownerSub: 'owner-a', collectionId: collectionA }];
+    const docs = new Map<string, Record<string, unknown>>([
+      [
+        docKey('owner-a', 'collections', collectionA),
+        liveCollection(collectionA, [badId, okId]),
+      ],
+      [
+        docKey('owner-a', 'recipes', okId),
+        liveRecipe(okId, { lang: 'zh-CN', nutrition: { calories: 1 } }),
+      ],
+      [docKey('owner-a', 'recipes', badId), liveRecipe(badId, { lang: 'garbage!!' })],
+    ]);
+
+    const page = expectPage(await buildSharedPullPage(pageInput({ shares, docs })));
+    const byId = new Map(page.changes.recipes.map((recipe) => [recipe.id, recipe]));
+
+    expect(byId.get(okId)).toMatchObject({ id: okId, lang: 'zh-Hans', ownerSub: 'owner-a' });
+    expect(byId.get(okId)).not.toHaveProperty('nutrition');
+    expect(byId.get(badId)).toMatchObject({ id: badId, ownerSub: 'owner-a' });
+    expect(byId.get(badId)).not.toHaveProperty('lang');
+  });
+
   it('paginates sorted recipes without gaps and then advances to the next grant', async () => {
     const shares = [
       { grantId: 'grant-a', ownerSub: 'owner-a', collectionId: collectionA },

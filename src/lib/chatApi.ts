@@ -16,6 +16,16 @@ export interface CookingState {
   checkedIngredients: string[];
 }
 
+/**
+ * The recipe posted to `/api/chat`. `lang` is removed so the request stays
+ * the same shape it had before the field existed.
+ */
+export function recipeForChat(recipe: Recipe): Recipe {
+  const posted: Recipe = { ...recipe };
+  delete posted.lang;
+  return posted;
+}
+
 export interface ChatReply {
   text: string;
   /** Present when the assistant proposed a recipe modification. */
@@ -44,7 +54,7 @@ export async function streamChatReply(params: {
     },
     body: JSON.stringify({
       messages: params.messages,
-      recipe: params.recipe,
+      recipe: recipeForChat(params.recipe),
       cookingState: params.cookingState,
     }),
     signal: params.signal,

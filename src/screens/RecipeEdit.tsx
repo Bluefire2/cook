@@ -95,9 +95,10 @@ function EditRecipe({ id }: { id: string }) {
     );
   }
 
-  // `save` replaces the whole record, so identity and the fields the form has
-  // no UI for are carried over by hand rather than by spreading the old recipe
-  // — a spread would resurrect optional fields the user just cleared.
+  // `save` replaces the whole record. Identity and `sourceUrl` (the form has
+  // no field for it) are carried by hand rather than by spreading the old
+  // recipe — a spread would resurrect optional fields the user just cleared.
+  // `lang` arrives on `draft` from `toDraft`, so this spread keeps it.
   const save = async (draft: RecipeDraft) => {
     await recipeStore.save({
       ...draft,

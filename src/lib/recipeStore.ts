@@ -178,8 +178,9 @@ export const recipeStore = {
   /**
    * Merges a draft into the recipe with this id. Every field is named rather
    * than spread because drafts come from the `update_recipe` tool, whose schema
-   * cannot express `sourceUrl`, `photoId`, or `galleryPhotoIds` — a spread
-   * would blank them.
+   * cannot express `sourceUrl`, `photoId`, `galleryPhotoIds`, or `lang` — a
+   * spread would blank them. `lang` is carried from the existing recipe,
+   * like `sourceUrl`.
    */
   async applyDraft(id: string, draft: RecipeDraft): Promise<void> {
     const existing = getRecipe(id);
@@ -200,6 +201,7 @@ export const recipeStore = {
       tags: draft.tags,
       notes: draft.notes,
       sourceUrl: draft.sourceUrl ?? existing.sourceUrl,
+      lang: draft.lang ?? existing.lang,
       photoId,
       galleryPhotoIds,
     });
@@ -207,12 +209,15 @@ export const recipeStore = {
 
   /**
    * A new recipe from an Ask proposal. Photos come from `parent`, copied onto
-   * new ids. Fields on the draft never supply a photo.
+   * new ids. Fields on the draft never supply a photo. `lang` comes from
+   * `parent` too: the proposal never carries it, including when `parent` is
+   * a shared recipe.
    */
   async createFromAsk(parent: Recipe, draft: RecipeDraft): Promise<Recipe> {
     const copied = await copyParentPhotos(parent);
     return recipeStore.create({
       ...draft,
+      lang: parent.lang,
       photoId: copied.photoId,
       galleryPhotoIds: copied.galleryPhotoIds,
     });

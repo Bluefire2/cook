@@ -46,6 +46,8 @@ interface FormState {
   notes: string;
   sections: SectionFields[];
   steps: string[];
+  /** Carried so an edit does not drop `Recipe.lang`. No field renders it yet. */
+  lang?: string;
 }
 
 function numberText(value: number | undefined): string {
@@ -88,6 +90,7 @@ function fromDraft(draft: RecipeDraft): FormState {
           : [blankItem()],
     })),
     steps: steps.map((step) => step.text),
+    ...(draft.lang !== undefined ? { lang: draft.lang } : {}),
   };
 }
 
@@ -125,9 +128,10 @@ function toTags(text: string): string[] {
 /**
  * Optional fields are spread in only when present, so clearing one drops the
  * key instead of storing `undefined` in a record that gets fully replaced.
- * `sourceUrl` is carried through untouched because the form has no UI for it;
- * `photoId` and `galleryPhotoIds` are passed in because they are only known
- * once picked blobs are stored.
+ * `sourceUrl` is carried through untouched because the form has no UI for it.
+ * `lang` is carried the same way so an edit does not drop it; the language
+ * field itself comes later. `photoId` and `galleryPhotoIds` are passed in
+ * because they are only known once picked blobs are stored.
  */
 function toDraft(
   form: FormState,
@@ -146,6 +150,7 @@ function toDraft(
     ...(initial.sourceUrl !== undefined
       ? { sourceUrl: initial.sourceUrl }
       : {}),
+    ...(form.lang !== undefined ? { lang: form.lang } : {}),
     servings: Math.max(1, toNumber(form.servings) ?? 1),
     ...(prepMinutes !== undefined ? { prepMinutes } : {}),
     ...(cookMinutes !== undefined ? { cookMinutes } : {}),

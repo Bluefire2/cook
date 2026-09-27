@@ -31,6 +31,11 @@ export interface Recipe {
   photoId?: string;
   /** Secondary photo FKs, shown as a gallery at the end of the recipe. */
   galleryPhotoIds?: string[];
+  /**
+   * BCP 47 language of the recipe text, when known. Missing is normal;
+   * code must keep working without it (`docs/constitutions/i18n.md`).
+   */
+  lang?: string;
   createdAt: number;
   updatedAt: number;
 }
