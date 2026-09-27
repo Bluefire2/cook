@@ -270,6 +270,19 @@ After the first production deploy of sharing:
 - Polling sync, Firestore listeners, WebSockets
 - Conflict-merge UI (LWW is the product)
 
+## Agent module
+
+The library assistant (`POST /api/agent`, screen `/assistant`) is a module.
+Public entry points are `agentPost` from `server/agent/index.ts` and
+`AssistantScreen` / `AssistantEntryLink` from `src/agent/index.ts`. Nothing
+outside those directories imports agent internals. Wiring outside the module
+is one route line in `scripts/server.ts`, one route in `src/App.tsx`,
+`<AssistantEntryLink />` in `src/screens/Library.tsx`, `listLiveDocs` in
+`server/store.ts`, and `onSessionReset` in `src/lib/session.ts`. The harness
+under `server/agent/harness/` knows nothing about recipes; only
+`server/agent/harness/google.ts` imports `@google/genai`. Domain tools live in
+`server/agent/sous/`. See `docs/plans/library-agent.md`.
+
 ## Plans (source of truth for unfinished work)
 
 Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
@@ -293,6 +306,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/chrome-extension-import.md` | Built: `extension/` + `POST /api/extension/import`. Not deployed. |
 | `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web, extension, evals (`evals/recipeImport.eval.ts`). `api/import.ts` is a 401 stub. Not deployed. |
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
+| `docs/plans/library-agent.md` | Implementing on `cursor/library-agent-336b`. App-level assistant: read-only tools over the user's own library, modular cards (shopping list first), ephemeral threads. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
