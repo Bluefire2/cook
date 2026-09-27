@@ -8,11 +8,17 @@ import {
   upsertRecipe,
 } from './libraryMemory';
 import { pushOps } from './remote';
+import { localWriteOverlapsPull, pullAfterLocalWrite } from './syncEngine';
 import type { PushOp } from './pushOps';
 
 vi.mock('./remote', () => ({
   postPhoto: vi.fn(),
   pushOps: vi.fn(),
+}));
+
+vi.mock('./syncEngine', () => ({
+  localWriteOverlapsPull: vi.fn(() => false),
+  pullAfterLocalWrite: vi.fn(),
 }));
 
 const RECIPE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -40,6 +46,9 @@ const collection = {
 afterEach(() => {
   clearLibrary();
   vi.mocked(pushOps).mockReset();
+  vi.mocked(localWriteOverlapsPull).mockReset();
+  vi.mocked(localWriteOverlapsPull).mockReturnValue(false);
+  vi.mocked(pullAfterLocalWrite).mockReset();
 });
 
 describe('recipeStore.remove', () => {
@@ -61,12 +70,58 @@ describe('recipeStore.remove', () => {
       kind: 'collection.put',
       payload: { id: COLLECTION_ID, recipeIds: [] },
     });
+    expect(pullAfterLocalWrite).not.toHaveBeenCalled();
   });
 
-  it('restores the recipe and collection when pushOps fails', async () => {
+  it('pulls again when a refresh overlapped the delete', async () => {
+    upsertRecipe(recipe);
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    vi.mocked(localWriteOverlapsPull).mockReturnValue(true);
+    vi.mocked(pullAfterLocalWrite).mockResolvedValue('ok');
+
+    await recipeStore.remove(RECIPE_ID);
+
+    expect(getRecipe(RECIPE_ID)).toBeUndefined();
+    expect(pullAfterLocalWrite).toHaveBeenCalledOnce();
+  });
+
+  it('leaves the recipe deleted when the push fails after the server already removed it', async () => {
     upsertRecipe(recipe);
     upsertCollection(collection);
     vi.mocked(pushOps).mockResolvedValue('error');
+    vi.mocked(pullAfterLocalWrite).mockImplementation(async () => {
+      clearLibrary();
+      return 'ok';
+    });
+
+    await recipeStore.remove(RECIPE_ID);
+
+    expect(getRecipe(RECIPE_ID)).toBeUndefined();
+    expect(pullAfterLocalWrite).toHaveBeenCalledOnce();
+  });
+
+  it('restores the recipe when the push fails and the server still has it', async () => {
+    upsertRecipe(recipe);
+    upsertCollection(collection);
+    vi.mocked(pushOps).mockResolvedValue('error');
+    vi.mocked(pullAfterLocalWrite).mockImplementation(async () => {
+      upsertRecipe(recipe);
+      upsertCollection(collection);
+      return 'ok';
+    });
+
+    await expect(recipeStore.remove(RECIPE_ID)).rejects.toThrow(
+      "Couldn't delete the recipe.",
+    );
+    expect(getRecipe(RECIPE_ID)).toEqual(recipe);
+    expect(getCollection(COLLECTION_ID)).toEqual(collection);
+  });
+
+  it('restores the recipe and collection when the push and the follow-up pull both fail', async () => {
+    upsertRecipe(recipe);
+    upsertCollection(collection);
+    vi.mocked(pushOps).mockResolvedValue('error');
+    vi.mocked(pullAfterLocalWrite).mockResolvedValue('error');
 
     await expect(recipeStore.remove(RECIPE_ID)).rejects.toThrow(
       "Couldn't delete the recipe.",

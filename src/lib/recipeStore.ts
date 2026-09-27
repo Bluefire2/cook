@@ -1,12 +1,17 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import {
+  beginLocalWrite,
+  captureSnapshot,
   dropPhoto,
+  endLocalWrite,
   getPendingBlob,
   getRecipe,
   getSnapshot,
+  libraryEpoch,
   listRecipes,
   markPhotoRemote,
   removeRecipeLocal,
+  restoreSnapshot,
   subscribe,
   upsertRecipe,
   getCollection,
@@ -16,6 +21,7 @@ import {
   upsertCollection,
 } from './libraryMemory';
 import { postPhoto, pushOps } from './remote';
+import { localWriteOverlapsPull, pullAfterLocalWrite } from './syncEngine';
 import { compactRecipe } from './compactRecipe';
 import { compactCollection } from './compactCollection';
 import { wouldExceedRecipeIdCap } from './collectionMembership';
@@ -193,7 +199,7 @@ export const recipeStore = {
     if (isSharedRecipe(id)) {
       throw new Error('This shared collection is view-only.');
     }
-    const previous = getRecipe(id);
+    const previous = captureSnapshot();
     const at = Date.now();
     // Nothing else drops the id from collections, and a dead id still counts
     // against the per-collection cap, so scrub membership alongside the recipe.
@@ -205,6 +211,11 @@ export const recipeStore = {
         updatedAt: at,
       }),
     );
+    // The server tombstones the recipe before the rest of the delete finishes.
+    // A failed response can still mean the recipe is gone. A pull that started
+    // before this write can also paint the old card back. Hold the library
+    // until the push settles, then read the server instead of restoring blindly.
+    const writeEpoch = beginLocalWrite();
     removeRecipeLocal(id);
     for (const collection of scrubbed) {
       upsertCollection(collection);
@@ -213,16 +224,37 @@ export const recipeStore = {
     for (const collection of scrubbed) {
       ops.push({ kind: 'collection.put', payload: collection });
     }
-    const result = await pushOps(ops);
-    if (result !== 'ok') {
-      if (previous) {
-        upsertRecipe(previous);
-      }
-      for (const collection of staleIn) {
-        upsertCollection(collection);
-      }
-      throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't delete the recipe.");
+    let result: Awaited<ReturnType<typeof pushOps>>;
+    try {
+      result = await pushOps(ops);
+    } finally {
+      endLocalWrite();
     }
+    const overlaps = localWriteOverlapsPull(writeEpoch);
+    if (result === 'ok' && !overlaps) {
+      return;
+    }
+    const outcome = await pullAfterLocalWrite(writeEpoch);
+    if (result === 'ok') {
+      return;
+    }
+    if (outcome === 'signedOut') {
+      throw new Error('Please sign in again — your session expired.');
+    }
+    if (outcome === 'ok') {
+      if (getRecipe(id) === undefined) {
+        return;
+      }
+      throw new Error("Couldn't delete the recipe.");
+    }
+    if (libraryEpoch() === writeEpoch) {
+      restoreSnapshot(previous);
+    }
+    throw new Error(
+      result === 'signedOut'
+        ? 'Please sign in again — your session expired.'
+        : "Couldn't delete the recipe.",
+    );
   },
 };
 

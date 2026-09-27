@@ -47,6 +47,34 @@ function empty(loaded: boolean): LibrarySnapshot {
 
 let snapshot: LibrarySnapshot = empty(false);
 
+/**
+ * Bumped when a local write starts. A pull that began at an older epoch, or
+ * while a write was still open, must not replace the library: its snapshot
+ * can still contain a recipe the write already deleted.
+ */
+let epoch = 0;
+let openWrites = 0;
+
+export function libraryEpoch(): number {
+  return epoch;
+}
+
+export function localWritesOpen(): number {
+  return openWrites;
+}
+
+export function beginLocalWrite(): number {
+  openWrites += 1;
+  epoch += 1;
+  return epoch;
+}
+
+export function endLocalWrite(): void {
+  if (openWrites > 0) {
+    openWrites -= 1;
+  }
+}
+
 function emit(next: LibrarySnapshot): void {
   snapshot = next;
   for (const listener of listeners) {
