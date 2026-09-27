@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { FinishReason } from '@google/genai';
 import { defaultAgentLimits } from './limits.ts';
 import { encodeAgentEvent } from './ndjson.ts';
 import { googleModel } from './google.ts';
@@ -338,6 +339,62 @@ describe('startAgent', () => {
     });
     await collectEvents(agent.run);
     expect(responseForTool(calls, 1, 'boom')).toEqual({ error: 'tool failed' });
+  });
+
+  it('forwards tool validation errors to the model and still completes with text', async () => {
+    const tools: ToolSpec<Ctx>[] = [
+      {
+        name: 'validate',
+        description: 'd',
+        parameters: { type: 'object', properties: {} },
+        run: async () => ({ error: 'bad args' }),
+      },
+    ];
+    const { client, calls } = modelFromSteps([
+      [callChunk('validate', {})],
+      [textChunk('All set now')],
+    ]);
+    const agent = await startAgent({
+      model: client,
+      systemInstruction: 'sys',
+      messages: baseMessages,
+      tools,
+      cards: [],
+      ctx,
+      limits: defaultAgentLimits(),
+      signal: new AbortController().signal,
+    });
+    const events = await collectEvents(agent.run);
+    expect(responseForTool(calls, 1, 'validate')).toEqual({ error: 'bad args' });
+    expect(events).toContainEqual({ t: 'text', step: 2, d: 'All set now' });
+    expect(events.at(-1)).toEqual({ t: 'done' });
+    expect(events.filter((e) => e.t === 'error')).toHaveLength(0);
+  });
+
+  it('emits canned error when finishReason is blocked even if text was streamed', async () => {
+    const { client, calls } = modelFromSteps([
+      [chunkResponse([{ text: 'partial answer' }], FinishReason.SAFETY)],
+    ]);
+    const agent = await startAgent({
+      model: client,
+      systemInstruction: 'sys',
+      messages: baseMessages,
+      tools: [],
+      cards: [],
+      ctx,
+      limits: defaultAgentLimits(),
+      signal: new AbortController().signal,
+    });
+    const events: AgentEvent[] = [];
+    const summary = await agent.run((e) => events.push(e));
+    expect(events).toContainEqual({ t: 'text', step: 1, d: 'partial answer' });
+    expect(events).toContainEqual({
+      t: 'error',
+      message: "The assistant couldn't answer that.",
+    });
+    expect(events.at(-1)).toEqual({ t: 'done' });
+    expect(summary.finish).toBe('error');
+    expect(calls).toHaveLength(1);
   });
 
   it('emits card events and returns shown:true to the model', async () => {
