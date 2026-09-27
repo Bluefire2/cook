@@ -195,6 +195,25 @@ Cloud Build.
 - Polling sync, Firestore listeners, WebSockets
 - Conflict-merge UI (LWW is the product)
 
+## Feature constitutions
+
+A constitution records a feature's principles and why each exists. The index
+below lists every constitution by name and description only. Before planning
+or editing, check your change against these descriptions. If one plausibly
+applies, read that constitution in full before you write code; when unsure,
+read it. Its frontmatter `scope` lists the exact files and concepts it covers.
+You may break a principle only by amending the constitution in the same PR:
+rewrite the principle, add an amendment-log entry saying why the break is
+worth it, and flag it in the PR description. An unacknowledged break is a
+defect. Plans, audits, and verifications name the constitutions they applied.
+
+Create a constitution only when asked, with the `write-constitution` skill
+(`.cursor/skills/write-constitution/SKILL.md`), which defines the format.
+`scripts/constitutions.test.ts` checks that this index matches each file's
+frontmatter.
+
+None yet.
+
 ## Plans (source of truth for unfinished work)
 
 Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
@@ -217,6 +236,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/chrome-extension-import.md` | Built: `extension/` + `POST /api/extension/import`. Not deployed. |
 | `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web, extension, evals (`evals/recipeImport.eval.ts`). `api/import.ts` is a 401 stub. Not deployed. |
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
+| `docs/plans/constitution-skill.md` | Implementing. write-constitution skill + constitutions index and drift test. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
