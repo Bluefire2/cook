@@ -116,6 +116,10 @@ keeps a translated view from silently mixing languages or dropping lines.
     become `zh-Hant`. An explicit script always wins.
 - **Provider codes.** Codes a provider needs (for example `zh-CN`) exist only
   inside that provider's adapter. They are never stored or returned.
+- **One set of rules, two copies.** The server image can't import from
+  `src/`, so the helpers exist as `src/i18n/lang.ts` and `server/lang.ts`. A
+  parity test (`server/lang.test.ts`) runs one table of cases through both.
+  Change both copies together, or the test fails.
 
 **Why.** Mixing `ua`/`uk` or `zh`/`zh-CN`/`zh-Hans` makes the question "does
 this recipe need translating?" answer wrong, which shows the toggle when it
@@ -152,7 +156,8 @@ Translations are never stored on a recipe, a chat message, or cook state, and
 never go through `/api/sync/*`. The server caches translations at
 `users/{uid}/translations/{recipeId}.{target}`, keyed by a hash of the source
 text. A hash mismatch is a miss. It can be deleted at any time without losing
-data, and it is deleted when its recipe is deleted (principle 14).
+data. It is deleted in the same transaction that tombstones its recipe: the
+doc ids are deterministic, so no query is needed (principle 14).
 
 **Why.** `Recipe` is schema-locked (`src/lib/recipeStore.test.ts`) because
 every field has to be threaded through the compacting on both client and
@@ -206,7 +211,10 @@ string.
 - **The interface.** All translation and detection goes through
   `translateSegments` / `detectLanguage` in `server/translate.ts`.
 - **Configuration.** The provider and model come from env
-  (`TRANSLATE_PROVIDER`, `TRANSLATE_MODEL`).
+  (`TRANSLATE_PROVIDER`, `TRANSLATE_MODEL`). Only implemented providers are
+  accepted; an unknown value fails closed and never falls back silently.
+  Adding a provider is a reviewed code change (its adapter plus tests),
+  after which choosing it is configuration.
 - **Changing the default.** Changing it means updating
   [Current decisions](#current-decisions) with the new reasons.
 
@@ -256,8 +264,12 @@ the legal pages are the promise made to users.
 - **Adding one.** Add a catalog, parity tests, plural rules, a register and
   glossary entry, and a full in-context translation review of every
   manifest screen.
-- **Recipe languages.** A recipe may be in any language. Translation targets
-  only UI languages.
+- **Removing one.** Delete its translation cache docs as part of the same
+  change. Recipe tombstoning only deletes cache docs for current UI
+  languages.
+- **Recipe languages.** A recipe may be in any language, so the recipe
+  language picker offers every ISO 639-1 language and keeps a value it
+  doesn't list. Translation targets only UI languages.
 
 **Why.** A UI language that is only partly translated is worse than English.
 
@@ -273,6 +285,10 @@ the legal pages are the promise made to users.
   non-English language. Blockers are fixed before the change is done.
 - **Manifest.** New screens or states are added to the review manifest
   (`screens.json`) in the same change.
+- **The review writes nothing.** Local dev talks to production Firestore,
+  so the review never creates, edits, or deletes library data, and doesn't
+  touch cook state. It writes the translation cache only when the person who
+  starts the run opts in, and the report lists every cache doc written.
 - **Register and glossary.** Catalog text follows the register and glossary
   in [Current decisions](#current-decisions).
 
@@ -290,7 +306,8 @@ These are reversible under principle 11. Each lists what it optimizes for.
 
 - **Default translation provider: Gemini, `gemini-3.5-flash-lite`, thinking
   level `minimal`, default temperature.** Selected by
-  `TRANSLATE_PROVIDER=gemini` (the default; `nmt` selects the fallback) and
+  `TRANSLATE_PROVIDER=gemini` (the default, and the only value this branch
+  accepts) and
   `TRANSLATE_MODEL`.
   - **Measured.** Not yet. Step 14 of the plan records translate-eval
     quality and local p50/p95 latency here. Cloud Run `europe-west1` p95 is
@@ -327,7 +344,10 @@ These are reversible under principle 11. Each lists what it optimizes for.
     - **Quality.** If the translation eval shows Gemini quality problems
       that NMT doesn't have, switch to NMT.
 
-    The one-time setup is listed in the plan.
+    Switching is a separate reviewed PR: it adds the NMT adapter and its
+    tests, does the one-time setup listed in the plan, and then sets
+    `TRANSLATE_PROVIDER=nmt`. This branch implements only the Gemini
+    adapter.
 - **Import labels.** The import's existing structured Gemini call returns
   `lang` for no extra call.
 - **Dictation.** `/api/stt` names the UI language in its prompt. If testing
