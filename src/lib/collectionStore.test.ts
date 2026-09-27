@@ -11,18 +11,25 @@ import { recipeStore } from './recipeStore';
 import { installSharedRows } from './testLibrary';
 import {
   addCollectionGrant,
+  leaveSharedCollection,
   listCollectionGrants,
   pushOps,
   revokeCollectionGrant,
 } from './remote';
+import { sync } from './syncEngine';
 import type { CollectionGrant } from './remote';
 import type { Collection } from './types';
 
 vi.mock('./remote', () => ({
   addCollectionGrant: vi.fn(),
+  leaveSharedCollection: vi.fn(),
   listCollectionGrants: vi.fn(),
   pushOps: vi.fn(),
   revokeCollectionGrant: vi.fn(),
+}));
+
+vi.mock('./syncEngine', () => ({
+  sync: vi.fn(),
 }));
 
 function collection(id: string, name: string): Collection {
@@ -38,9 +45,11 @@ function collection(id: string, name: string): Collection {
 afterEach(() => {
   clearLibrary();
   vi.mocked(addCollectionGrant).mockReset();
+  vi.mocked(leaveSharedCollection).mockReset();
   vi.mocked(listCollectionGrants).mockReset();
   vi.mocked(pushOps).mockReset();
   vi.mocked(revokeCollectionGrant).mockReset();
+  vi.mocked(sync).mockReset();
 });
 
 describe('collectionPushErrorMessage', () => {
@@ -175,5 +184,76 @@ describe('collectionStore grant mutations', () => {
     expect(revokeCollectionGrant).toHaveBeenCalledTimes(1);
     expect(revokeCollectionGrant).toHaveBeenCalledWith('collection-id', 'member-sub');
     expect(listCollectionGrants).not.toHaveBeenCalled();
+  });
+});
+
+describe('collectionStore.leave', () => {
+  it('refuses to leave an owned collection', async () => {
+    upsertCollection(collection('owned', 'Mine'));
+
+    await expect(collectionStore.leave('owned')).rejects.toThrow(
+      'This collection is not shared with you.',
+    );
+    expect(leaveSharedCollection).not.toHaveBeenCalled();
+    expect(sync).not.toHaveBeenCalled();
+  });
+
+  it('refuses to leave an unknown collection id', async () => {
+    await expect(collectionStore.leave('does-not-exist')).rejects.toThrow(
+      'This collection is not shared with you.',
+    );
+    expect(leaveSharedCollection).not.toHaveBeenCalled();
+  });
+
+  it('leaves a shared collection by its owner sub, then refreshes', async () => {
+    installSharedRows({
+      recipes: new Map(),
+      collections: new Map([['shared', collection('shared', 'Theirs')]]),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map(),
+      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
+    });
+    vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'ok' });
+
+    await expect(collectionStore.leave('shared')).resolves.toBeUndefined();
+
+    expect(leaveSharedCollection).toHaveBeenCalledTimes(1);
+    expect(leaveSharedCollection).toHaveBeenCalledWith('alice', 'shared');
+    expect(sync).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces a signed-out result without refreshing', async () => {
+    installSharedRows({
+      recipes: new Map(),
+      collections: new Map([['shared', collection('shared', 'Theirs')]]),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map(),
+      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
+    });
+    vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'signedOut' });
+
+    await expect(collectionStore.leave('shared')).rejects.toThrow(
+      'Please sign in again — your session expired.',
+    );
+    expect(sync).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a server error without refreshing', async () => {
+    installSharedRows({
+      recipes: new Map(),
+      collections: new Map([['shared', collection('shared', 'Theirs')]]),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map(),
+      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
+    });
+    vi.mocked(leaveSharedCollection).mockResolvedValue({
+      kind: 'error',
+      message: "Couldn't leave the collection.",
+    });
+
+    await expect(collectionStore.leave('shared')).rejects.toThrow(
+      "Couldn't leave the collection.",
+    );
+    expect(sync).not.toHaveBeenCalled();
   });
 });

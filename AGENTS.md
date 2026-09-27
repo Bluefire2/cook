@@ -220,9 +220,17 @@ For a shared photo, metadata only indexes its parent recipe. Authorization
 still freshly reads the incoming share and live collection, then requires
 `canViewRecipe` and `recipeListsPhoto`; metadata alone never authorizes. Ask
 text works on shared recipes, but Ask photo attachments are intentionally
-unavailable. There is no viewer leave flow. Viewer-owned shared-parent chat
-can remain orphaned server-side after revoke; do not invent cleanup as part
-of sharing.
+unavailable.
+
+A grantee — viewer or editor, same endpoint, there is no separate "viewer
+leave" — can leave a shared collection with `POST /api/shared/leave`
+(`{ ownerSub, collectionId }`, grantee is the session sub only); it
+tombstones the same forward-grant + `incomingShares` pair as owner revoke,
+reusing that code path (so the tombstone omits `role` the same way a revoke
+does). A second leave, or a leave after the owner already revoked, 404s;
+the client treats that 404 as success. Viewer-owned shared-parent chat can
+remain orphaned server-side after revoke or leave; do not invent cleanup as
+part of sharing.
 
 ## Cloud and deploy
 

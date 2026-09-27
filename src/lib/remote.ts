@@ -591,3 +591,56 @@ export async function revokeCollectionGrant(
     },
   );
 }
+
+export type LeaveSharedResult =
+  | { kind: 'ok' }
+  | { kind: 'signedOut' }
+  | { kind: 'error'; message: string; status?: number };
+
+/**
+ * A 404 here means the grant is already gone — the owner revoked it, or a
+ * prior leave already went through. Either way, the viewer is not on the
+ * collection any more, so the caller treats a 404 as success.
+ */
+export async function leaveSharedCollection(
+  ownerSub: string,
+  collectionId: string,
+): Promise<LeaveSharedResult> {
+  let response: Response;
+  try {
+    response = await fetch('/api/shared/leave', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ ownerSub, collectionId }),
+    });
+  } catch {
+    return { kind: 'error', message: "Couldn't leave the collection." };
+  }
+  if (response.status === 401 || response.status === 403) {
+    invalidateSession();
+    clearLibrary();
+    return { kind: 'signedOut' };
+  }
+  if (response.status === 404) {
+    return { kind: 'ok' };
+  }
+  if (response.status === 503) {
+    return { kind: 'error', message: 'Sharing is temporarily unavailable.', status: 503 };
+  }
+  if (!response.ok) {
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    const message =
+      body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
+        ? (body as { error: string }).error
+        : "Couldn't leave the collection.";
+    return { kind: 'error', message, status: response.status };
+  }
+  return { kind: 'ok' };
+}

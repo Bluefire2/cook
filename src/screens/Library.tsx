@@ -62,6 +62,8 @@ export default function Library() {
   const [createOpen, setCreateOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteCollectionOpen, setDeleteCollectionOpen] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [leaveBusy, setLeaveBusy] = useState(false);
   const [collectionName, setCollectionName] = useState('');
   const [collectionError, setCollectionError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
@@ -114,6 +116,7 @@ export default function Library() {
     setCreateOpen(false);
     setRenameOpen(false);
     setDeleteCollectionOpen(false);
+    setLeaveOpen(false);
     setShareOpen(false);
     setCollectionName('');
     setCollectionError(null);
@@ -190,6 +193,25 @@ export default function Library() {
     }
   };
 
+  const submitLeave = async () => {
+    if (!currentId) {
+      return;
+    }
+    setCollectionError(null);
+    setLeaveBusy(true);
+    try {
+      await collectionStore.leave(currentId);
+      closeSheets();
+      navigate('/');
+    } catch (err) {
+      setCollectionError(
+        err instanceof Error ? err.message : "Couldn't leave the collection.",
+      );
+    } finally {
+      setLeaveBusy(false);
+    }
+  };
+
   useEffect(() => {
     setBrowseAll(false);
   }, [currentId]);
@@ -214,7 +236,8 @@ export default function Library() {
         moveRecipeId !== null ||
         createOpen ||
         renameOpen ||
-        deleteCollectionOpen
+        deleteCollectionOpen ||
+        leaveOpen
       ) {
         event.preventDefault();
         closeSheets();
@@ -230,6 +253,7 @@ export default function Library() {
     createOpen,
     renameOpen,
     deleteCollectionOpen,
+    leaveOpen,
   ]);
 
   const emptyCopy = () => {
@@ -340,14 +364,26 @@ export default function Library() {
       )}
 
       {named && namedIsShared && !browseAll && (
-        <p className="-mt-1 mb-3 text-sm text-ink-muted">
-          {collectionStore.sharedBy(named.id)
-            ? `Shared with you by ${collectionStore.sharedBy(named.id)}.`
-            : 'Shared with you.'}{' '}
-          {collectionStore.access(named.id) === 'editor'
-            ? 'You can edit these recipes.'
-            : 'View only.'}
-        </p>
+        <div className="-mt-1 mb-3 flex items-center justify-between gap-2 text-sm text-ink-muted">
+          <span>
+            {collectionStore.sharedBy(named.id)
+              ? `Shared with you by ${collectionStore.sharedBy(named.id)}.`
+              : 'Shared with you.'}{' '}
+            {collectionStore.access(named.id) === 'editor'
+              ? 'You can edit these recipes.'
+              : 'View only.'}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setCollectionError(null);
+              setLeaveOpen(true);
+            }}
+            className="shrink-0 text-sm text-danger hover:underline"
+          >
+            Leave
+          </button>
+        </div>
       )}
 
       {showSwitcher ? (
@@ -681,6 +717,34 @@ export default function Library() {
             className={`${dangerBtn} mt-3 w-full py-3`}
           >
             Delete collection
+          </button>
+          <button
+            type="button"
+            onClick={() => closeSheets()}
+            className={`${secondaryBtn} mt-2 w-full py-3`}
+          >
+            Cancel
+          </button>
+        </Sheet>
+      )}
+
+      {leaveOpen && named && namedIsShared && (
+        <Sheet onClose={() => closeSheets()}>
+          <h2 className="text-lg font-semibold">Leave “{named.name}”?</h2>
+          <p className="mt-1 text-sm text-ink-muted">
+            You will lose access to this collection. The owner and anyone
+            else it is shared with keep theirs.
+          </p>
+          {collectionError && (
+            <p className="mt-2 text-sm text-danger">{collectionError}</p>
+          )}
+          <button
+            type="button"
+            onClick={() => void submitLeave()}
+            disabled={leaveBusy}
+            className={`${dangerBtn} mt-3 w-full py-3`}
+          >
+            {leaveBusy ? 'Leaving…' : 'Leave collection'}
           </button>
           <button
             type="button"

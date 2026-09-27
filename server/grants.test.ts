@@ -631,6 +631,90 @@ describe('orchestrateGrantRevoke', () => {
   });
 });
 
+describe('leave reuses the revoke transition and cannot resurrect a grant', () => {
+  it('owner revoke then viewer leave: the second call finds it already gone', async () => {
+    const calls: string[] = [];
+    const writes: Array<{ viewerSub: string; tombstone: GrantTombstone }> = [];
+    let stored: LiveGrant | GrantTombstone | null = {
+      viewerSub,
+      email: 'viewer@example.com',
+      collectionId,
+      role: 'viewer',
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+    };
+    const deps: RevokeGrantDependencies = {
+      runTransaction: async (work) => {
+        calls.push('transaction');
+        return work({
+          readForwardGrant: async (requestedViewerSub) => {
+            calls.push(`read:${requestedViewerSub}`);
+            return stored;
+          },
+          writePair: async (requestedViewerSub, tombstone) => {
+            calls.push(`write:${requestedViewerSub}`);
+            writes.push({ viewerSub: requestedViewerSub, tombstone });
+            stored = tombstone;
+          },
+        });
+      },
+    };
+
+    // Owner revoke (calls orchestrateGrantRevoke exactly as `collectionGrantsRevokePost` does).
+    const revoked = await orchestrateGrantRevoke(viewerSub, 9, deps);
+    expect(revoked).toEqual({
+      kind: 'write',
+      doc: { viewerSub, updatedAt: 9, deletedAt: 9, active: false },
+    });
+
+    // Viewer leave (calls the identical function; `sharedLeavePost` reuses it).
+    const left = await orchestrateGrantRevoke(viewerSub, 20, deps);
+    expect(left).toEqual({
+      kind: 'already',
+      doc: { viewerSub, updatedAt: 9, deletedAt: 9, active: false },
+    });
+    expect(writes).toHaveLength(1);
+    expect(calls.filter((c) => c === 'transaction')).toHaveLength(2);
+  });
+
+  it('viewer leave then owner revoke: the second call finds it already gone', async () => {
+    let stored: LiveGrant | GrantTombstone | null = {
+      viewerSub,
+      email: 'viewer@example.com',
+      collectionId,
+      role: 'viewer',
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+    };
+    const writes: Array<{ viewerSub: string; tombstone: GrantTombstone }> = [];
+    const deps: RevokeGrantDependencies = {
+      runTransaction: async (work) =>
+        work({
+          readForwardGrant: async () => stored,
+          writePair: async (requestedViewerSub, tombstone) => {
+            writes.push({ viewerSub: requestedViewerSub, tombstone });
+            stored = tombstone;
+          },
+        }),
+    };
+
+    const left = await orchestrateGrantRevoke(viewerSub, 9, deps);
+    expect(left).toEqual({
+      kind: 'write',
+      doc: { viewerSub, updatedAt: 9, deletedAt: 9, active: false },
+    });
+
+    const revoked = await orchestrateGrantRevoke(viewerSub, 20, deps);
+    expect(revoked).toEqual({
+      kind: 'already',
+      doc: { viewerSub, updatedAt: 9, deletedAt: 9, active: false },
+    });
+    expect(writes).toHaveLength(1);
+  });
+});
+
 describe('collectionLiveForGrant', () => {
   it('matches isLiveDoc for collection reads', () => {
     expect(collectionLiveForGrant(undefined)).toBe(false);

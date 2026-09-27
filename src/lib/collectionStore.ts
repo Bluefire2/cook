@@ -22,6 +22,7 @@ import {
 } from './libraryMemory';
 import {
   addCollectionGrant,
+  leaveSharedCollection,
   listCollectionGrants,
   pushOps,
   revokeCollectionGrant,
@@ -30,6 +31,7 @@ import {
   type GrantRole,
   type RemoteResult,
 } from './remote';
+import { sync } from './syncEngine';
 import type { Collection } from './types';
 
 function rejectShared(id: string): void {
@@ -207,6 +209,22 @@ export const collectionStore = {
     if (result.kind === 'error') {
       throw new Error(result.message);
     }
+  },
+
+  /** Only for a collection shared with you. Owned collections have no Leave control. */
+  async leave(id: string): Promise<void> {
+    const origin = getCollectionOrigin(id);
+    if (origin?.kind !== 'shared') {
+      throw new Error('This collection is not shared with you.');
+    }
+    const result = await leaveSharedCollection(origin.ownerSub, id);
+    if (result.kind === 'signedOut') {
+      throw new Error('Please sign in again — your session expired.');
+    }
+    if (result.kind === 'error') {
+      throw new Error(result.message);
+    }
+    await sync();
   },
 
   async moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {
