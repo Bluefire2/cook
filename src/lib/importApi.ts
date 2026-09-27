@@ -6,8 +6,8 @@ import type { RecipeDraft } from './types';
 export type ExtractedRecipe = RecipeDraft;
 
 /**
- * `translation` is kept for the import preview. Until that preview exists,
- * callers save `recipe` (the original extraction).
+ * `translation` is the translated draft for the import preview.
+ * Callers save `recipe` unless the preview is showing the translation.
  */
 export interface ImportRecipeResult {
   recipe: ExtractedRecipe;
