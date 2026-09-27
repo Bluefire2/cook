@@ -22,10 +22,10 @@ stub that always returns 401; Cloud Run serves `/api/import` from
 `server/importRoute.ts`.
 
 Recipe import (web URL/paste, extension, evals) is one pipeline in
-`server/recipeImport.ts`: `importFromHtml` / `importFromSource` take the
-Gemini client and model as arguments and return an `ImportOutcome`; routes map
-outcomes to HTTP. `normalizeImportedRecipe` is the only cleanup of model
-output for import.
+`server/recipeImport.ts`: `importFromHtml` / `importFromSource` /
+`importFromImages` take the Gemini client and model as arguments and return an
+`ImportOutcome`; routes map outcomes to HTTP. `normalizeImportedRecipe` is the
+only cleanup of model output for import.
 
 ## How to run it
 
@@ -288,6 +288,7 @@ plus a matching index line here. `scripts/constitutions.test.ts` checks that
 this index matches each file's frontmatter.
 
 - **Cook log** (`docs/constitutions/cook-log.md`): Dated records of cooking a recipe (rating, servings, notes, lessons, photos), the /cooks journal, and promoting a lesson into recipe notes. Read before changing CookLog data, its sync ops or cascade, its photos, its backup handling, or those screens.
+- **Image import** (`docs/constitutions/image-import.md`): Importing one recipe from 1–4 photos of notes. Gemini reads the photos and they are not stored. Read before changing importFromImages, the images field, the photo picker, handwritten evals, or the photo sentences in privacy and terms.
 
 ## Plans (source of truth for unfinished work)
 
@@ -312,6 +313,8 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/chrome-extension-import.md` | Built: `extension/` + `POST /api/extension/import`. Not deployed. |
 | `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web, extension, evals (`evals/recipeImport.eval.ts`). `api/import.ts` is a 401 stub. Not deployed. |
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
+| `docs/plans/image-import.md` | Built on `cursor/image-import-38e9`, not deployed. Import one recipe from 1–4 photos (handwritten notes) via `images` on `POST /api/import`; Gemini reads them; never stored. Bound by `docs/constitutions/image-import.md`. |
+| `docs/plans/image-import-evals-and-retry.md` | Built, not deployed. Handwritten evals split into dev/holdout with `evals/AGENTS.md` rules and `ocrCompare --thinking`. The photo retry and runaway-unit check were measured and reverted (dev approach A 14/15 → 12/15; holdout stayed 15/15). |
 | `docs/plans/cook-log.md` | Built on `cursor/cook-log-5615` (constitution `docs/constitutions/cook-log.md`). Not deployed. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
@@ -330,6 +333,10 @@ and need `GEMINI_API_KEY` from `.env.local` (same as `dev:api`). Website
 fixtures use cached `page.html` (never fetch at eval time). Do not fold them
 into `npm test` or CI.
 
+Before changing an import prompt, model setting, output check, retry, or eval
+golden, read `evals/AGENTS.md` (dev/holdout split, no tuning on holdout,
+experiments logged in `evals/EXPERIMENTS.md`).
+
 UI and layout changes: exercise the flow in the browser (not a screenshot).
 Vite + `dev:api`, signed in at `localhost:5173`. Check other routes that share
 the state you touched.
@@ -347,4 +354,5 @@ database. Theme preference and `cook.session` stay in localStorage. Do not
 describe IndexedDB, offline edits, or a local library. The Chrome extension
 sends rendered page HTML, possibly from a page behind a login, to the server
 and on to Gemini; `/privacy` and `/terms` must describe that before the
-extension is offered beyond the owner.
+extension is offered beyond the owner. Photos sent for import go to Gemini and
+are not stored; `/privacy` and `/terms` say so.

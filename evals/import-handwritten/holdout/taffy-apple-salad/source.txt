@@ -1,0 +1,4 @@
+provenance: publicly accessible photo of a handwritten recipe, supplied by the repo owner on 2026-09-27 (original file name: The-Timeless-Gift-of-Handwritten-Recipes-Therese-Oldenburg-1-Custom.jpg); a 1989 Current, Inc. recipe card ("A Favorite Recipe From Betsy Morris") with a bracketed two-column layout, photographed on wood; the file name credits Therese Oldenburg. Writer and photographer unknown.
+permission: repo owner states this is a publicly accessible stock image (2026-09-27); redistribution licence not independently verified.
+# page-1.jpg re-encoded as the app does: EXIF orientation applied, <= 2048 px, JPEG quality 0.85, no metadata.
+# Method is written beside the ingredients with braces grouping them.

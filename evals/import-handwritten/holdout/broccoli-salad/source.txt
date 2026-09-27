@@ -1,0 +1,4 @@
+provenance: publicly accessible photo of a handwritten recipe, supplied by the repo owner on 2026-09-27 (original file name: how-do-i-make-this-recipe-card-not-look-so-janky-on-ds-v0-f0ntfxf2i52a1.webp); a ruled index card in pencil-style print, scanned; the file name suggests a Reddit post. Writer and photographer unknown.
+permission: repo owner states this is a publicly accessible stock image (2026-09-27); redistribution licence not independently verified.
+# page-1.jpg re-encoded as the app does: EXIF orientation applied, <= 2048 px, JPEG quality 0.85, no metadata.
+# Ingredients only, no method: a test that the importer does not invent steps.

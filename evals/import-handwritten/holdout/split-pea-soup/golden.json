@@ -1,0 +1,25 @@
+{
+  "title": "Split Pea Soup",
+  "servings": 8,
+  "ingredientSections": [
+    {
+      "items": [
+        { "quantity": 8, "unit": "cup", "item": "water" },
+        { "quantity": 1, "unit": "lb", "item": "dried split peas", "note": "2 1/4 cups" },
+        { "quantity": 2, "unit": "lb", "item": "smoked ham" },
+        { "quantity": 1, "item": "onion", "note": "medium, chopped (1/2 cup)" },
+        { "quantity": 2, "item": "carrots", "note": "medium, cut up (1 cup)" },
+        { "quantity": 2, "unit": "stalk", "item": "celery", "note": "medium, cut up (1 cup)" },
+        { "quantity": 1, "unit": "tsp", "item": "salt" },
+        { "quantity": 0.25, "unit": "tsp", "item": "pepper" }
+      ]
+    }
+  ],
+  "steps": [
+    { "text": "Heat the water and peas to a boil in a Dutch oven; boil 2 minutes." },
+    { "text": "Remove from heat, cover, and let stand 1 hour." },
+    { "text": "Stir the ham, onion, and spices into the peas." }
+  ],
+  "tags": ["soup", "split peas", "ham"],
+  "notes": "Recipe from Jean. Serves 8 (1 1/2 cups each). The written method ends after stirring in the ham, onion, and spices; the carrots and celery are not mentioned in it."
+}

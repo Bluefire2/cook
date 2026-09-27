@@ -1,0 +1,23 @@
+{
+  "title": "Potatoe Pancakes",
+  "servings": 1,
+  "ingredientSections": [
+    {
+      "items": [
+        { "quantity": 2, "item": "eggs" },
+        { "quantity": 1, "item": "onion", "note": "small" },
+        { "quantity": 1, "unit": "tsp", "item": "salt" },
+        { "quantity": 2, "unit": "tbsp", "item": "flour" },
+        { "quantity": 0.25, "unit": "tsp", "item": "baking powder" },
+        { "quantity": 3, "unit": "cup", "item": "raw potatoes", "note": "cubed" }
+      ]
+    }
+  ],
+  "steps": [
+    { "text": "Put the eggs, onion, salt, flour, baking powder and 1/2 cup of the potatoes in a blender." },
+    { "text": "Process until the potatoes have gone through the blades." },
+    { "text": "Add the remaining potatoes and process until all the potatoes have passed through the blades. Do not overblend." },
+    { "text": "Pour onto a hot, well-greased griddle." }
+  ],
+  "tags": ["potatoes", "pancakes", "breakfast"]
+}
