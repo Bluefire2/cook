@@ -80,9 +80,10 @@ after `sweet-sour-pork` derailed on "1½ #". The owner reverted it in
   would have gone unnoticed. On another card, `#` can mean "number"
   (`#10 can`).
 - It answered a symptom, reasoning written into a unit, that a
-  content-independent check handles without teaching the model any card's
-  notation: the unit-length check and retry in
-  `docs/plans/image-import-evals-and-retry.md`.
+  content-independent check could handle without teaching the model any
+  card's notation. That check (a unit-length limit, plus one retry) was
+  measured in `evals/EXPERIMENTS.md` and reverted: dev got worse and holdout
+  did not improve.
 
 The allowed path would have been to state a general reason, run
 `--split=all --runs=3` before and after, keep the line only if holdout and

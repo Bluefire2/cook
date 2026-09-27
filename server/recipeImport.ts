@@ -11,13 +11,7 @@
  *
  * Photo import is bound by `docs/constitutions/image-import.md`.
  */
-import {
-  GoogleGenAI,
-  MediaResolution,
-  Type,
-  type GenerateContentParameters,
-  type Schema,
-} from '@google/genai';
+import { GoogleGenAI, MediaResolution, Type, type Schema } from '@google/genai';
 
 export interface ImportedIngredient {
   quantity?: number;
@@ -557,31 +551,7 @@ function imageImportPrompt(extraText: string): string {
   );
 }
 
-/**
- * A photo import whose ingredient unit is longer than this is `unusable`.
- * Real units reach about 25 (package sizes such as "packages (10 ounces each)");
- * a model that writes its reasoning into the field ran to 64. Constitution principle 1.
- */
-export const MAX_PHOTO_UNIT_CHARS = 32;
-
-function hasRunawayUnit(recipe: ImportedRecipe): boolean {
-  for (const section of recipe.ingredientSections) {
-    for (const item of section.items) {
-      if (item.unit !== undefined && item.unit.length > MAX_PHOTO_UNIT_CHARS) return true;
-    }
-  }
-  return false;
-}
-
-function photoOutcome(text: string | undefined): ImportOutcome {
-  const outcome = outcomeFromModelText(text);
-  if (outcome.kind === 'ok' && hasRunawayUnit(outcome.recipe)) {
-    return { kind: 'unusable' };
-  }
-  return outcome;
-}
-
-/** Photos of one recipe, in page order, plus optional notes → outcome. One Gemini call, and one identical retry if that outcome is `parse_error` or `unusable` (constitution principle 1). */
+/** Photos of one recipe, in page order, plus optional notes → outcome. The one Gemini call. */
 export async function importFromImages(
   images: readonly ImportImage[],
   extraText: string,
@@ -591,7 +561,7 @@ export async function importFromImages(
     return { kind: 'empty_source' };
   }
 
-  const request: GenerateContentParameters = {
+  const result = await deps.ai.models.generateContent({
     model: deps.model,
     contents: [
       {
@@ -608,10 +578,9 @@ export async function importFromImages(
       ...RECIPE_OUTPUT_CONFIG,
       mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH,
     },
-  };
-  const first = photoOutcome((await deps.ai.models.generateContent(request)).text);
-  if (first.kind !== 'parse_error' && first.kind !== 'unusable') return first;
-  return photoOutcome((await deps.ai.models.generateContent(request)).text);
+  });
+
+  return outcomeFromModelText(result.text);
 }
 
 function outcomeFromModelText(text: string | undefined): ImportOutcome {

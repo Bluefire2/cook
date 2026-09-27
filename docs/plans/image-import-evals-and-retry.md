@@ -1,5 +1,11 @@
 # Handwritten evals: dev/holdout split, hill-climbing rules, one photo retry
 
+**Status:** steps 1–3 are kept (the split, `ocrCompare` flags, and
+`evals/AGENTS.md`). Step 4, the runaway-unit check and the one retry, was
+measured and reverted. Dev approach A fell from 14/15 to 12/15; holdout
+stayed 15/15. Principle 1 is one Gemini call again. The numbers are in
+`evals/EXPERIMENTS.md`. Do not re-apply step 4 from this plan.
+
 Make the handwritten photo evals able to tell a real improvement from tuning
 on the cards being measured. Then add one content-independent robustness
 change to the photo path: a runaway-unit check, plus a single retry when an

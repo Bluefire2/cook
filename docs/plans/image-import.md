@@ -22,7 +22,6 @@ import constitution"). Owner-approved design:
   one `generateContent` call with the shared `RECIPE_SCHEMA`. Its response goes
   through a private helper that `importFromSource` also uses. There are no
   retries.
-  - _Superseded 2026-09-27 by `docs/plans/image-import-evals-and-retry.md`: one identical retry on `parse_error` / `unusable`, and a runaway-unit check (constitution P1 amendment). The P1 checklist line below is superseded the same way._
 - **Additive API** (P7). `POST /api/import` accepts
   `images?: { mediaType: string; base64: string }[]`, the same shape as
   `ChatRequestImage` in `api/chat.ts` and `EncodedImage` in `src/lib/image.ts`.

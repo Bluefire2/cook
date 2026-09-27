@@ -24,21 +24,26 @@ summary, approach A.
 
 ## 2026-09-27 — Photo import: runaway-unit check (32) and one retry
 
-- Change: `importFromImages` treats an ingredient `unit` longer than 32
-  characters (`MAX_PHOTO_UNIT_CHARS`, after trimming) as `unusable`, and
-  makes exactly one identical retry when the outcome is `parse_error` or
-  `unusable`. Constitution principle 1 amended. Commit: `Photo import:
-  runaway-unit check…` (this commit; fill SHA when the owner runs the
-  measurement).
+- Change: `fdefa65` made `importFromImages` treat an ingredient `unit` longer
+  than 32 characters as `unusable`, and retry once on `parse_error` or
+  `unusable`. Reverted after the measurement below. Principle 1 is one call
+  again.
 - Reason (not fixture-specific): truncated JSON and reasoning written into a
   field are sampling failures. A second sample of the same call usually
   avoids them. The length check reads no card content.
 - Command: npm run eval:ocr-compare -- --split=all --runs=3
-- Before (63e41ba6cbe4994483d0526b2c84fa5fac4520ad): dev pending owner run, holdout pending owner run
-- After: this commit (fill SHA when the owner runs the measurement): dev pending owner run, holdout pending owner run
-- Decision: pending owner run — do not merge until filled in; revert this
-  commit (including the P1 amendment) if holdout or dev is worse
-- Run by: pending owner run, model CHAT_MODEL or default
+- Before (`63e41ba`): dev 14/15, holdout 15/15. Dev per fixture, approach A:
+  blueberry-muffins 3/3, choc-pie-tea-towel 3/3, hundred-good-cookies 3/3,
+  lemon-tea-bread 3/3, sweet-sour-pork 2/3. Every run finished `STOP` with
+  `calls` 1. No `MAX_TOKENS`.
+- After (`fdefa65`): dev 12/15, holdout 15/15. Dev per fixture, approach A:
+  blueberry-muffins 3/3, choc-pie-tea-towel 3/3, hundred-good-cookies 3/3,
+  lemon-tea-bread 2/3, sweet-sour-pork 1/3. No `MAX_TOKENS`. `calls` 2 on
+  sweet-sour-pork approach A, runs 1 and 3 (`STOP+STOP`); both failed the
+  judge. lemon-tea-bread approach A, run 1, failed with `calls` 1.
+- Decision: reverted — dev approach A fell from 14/15 to 12/15. Holdout
+  stayed 15/15, which is a tie and would have passed on its own.
+- Run by: owner, model default (`CHAT_MODEL` unset in the recorded command)
 
 ## 2026-09-27 — Dev/holdout split
 
