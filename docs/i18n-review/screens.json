@@ -72,27 +72,69 @@
     "needsData": false
   },
   {
+    "id": "recipe-view-translate-labelled",
+    "route": "/recipe/:id",
+    "setup": "An owned recipe whose language label differs from the UI language, so the meta line (prep/cook, or the line alone when the recipe has no times) shows the idle chip \"{language} · Translate\". Do not tap the chip. If every owned recipe is unlabelled or already in the UI language, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-translate-unlabelled",
+    "route": "/recipe/:id",
+    "setup": "An owned recipe with no language label, so the meta line shows a muted \"Translate\" chip. Do not tap it. If every owned recipe has a language label, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-translate-loading",
+    "route": "/recipe/:id",
+    "setup": "The translate chip in its loading state (spinner) on an owned recipe. Tapping the chip writes a production cache doc. Mark skipped: needs opt-in unless the run includes translated states. With opt-in, tap once on one named recipe and capture the spinner.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-translate-translated",
+    "route": "/recipe/:id",
+    "setup": "The recipe body showing a translation, with the chip \"Translated from {language} · Original\". Tapping the chip writes a production cache doc. Mark skipped: needs opt-in unless the run includes translated states. With opt-in, tap once on one named recipe.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-translate-error",
+    "route": "/recipe/:id",
+    "setup": "The translate chip in its error state, \"Couldn't translate · Retry\". Reaching it taps the chip, which writes a production cache doc. Mark skipped: needs opt-in unless the run includes translated states.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-translate-already",
+    "route": "/recipe/:id",
+    "setup": "After a translate tap, the response's detected language matches the UI language: the body stays the original, the chip is hidden, and the notice \"This recipe is already in {language}.\" is showing. Tapping the chip writes a production cache doc. Mark skipped: needs opt-in unless the run includes translated states. If no recipe's text is already in the UI language while its label differs or is missing, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
     "id": "recipe-view",
     "route": "/recipe/:id",
-    "setup": "An owned recipe as it loads: title, ingredients, and steps. Do not change servings, check ingredients, or advance steps. Recipe content is not judged. If there is no owned recipe, mark skipped: needs data.",
+    "setup": "An owned recipe as it loads: title, ingredients, and steps. The translate chip may sit on the prep/cook line. Do not change servings, check ingredients, or advance steps. Do not tap the translate chip. Recipe content is not judged. If there is no owned recipe, mark skipped: needs data.",
     "needsData": true
   },
   {
     "id": "recipe-view-cook",
     "route": "/recipe/:id",
-    "setup": "Cook mode is the same /recipe/:id screen when stored cook progress is already visible (a checked ingredient, a current step other than the first, or the done line). There is no separate cook-mode toggle. Use whatever progress the recipe already has. Do not toggle checkmarks, steps, or servings; cook state syncs. If no owned recipe already has that progress, mark skipped: needs data.",
+    "setup": "Cook mode is the same /recipe/:id screen when stored cook progress is already visible (a checked ingredient, a current step other than the first, or the done line). There is no separate cook-mode toggle. Use whatever progress the recipe already has. Do not toggle checkmarks, steps, or servings; cook state syncs. Do not tap the translate chip. If no owned recipe already has that progress, mark skipped: needs data.",
     "needsData": true
   },
   {
     "id": "recipe-view-your-cooks",
     "route": "/recipe/:id",
-    "setup": "On an owned recipe, scroll to the \"Your cooks\" section (heading plus Log a cook; cards if this recipe already has logs). This is the RecipeView cook-log state. The section is absent on a shared recipe. Do not log a cook. If there is no owned recipe, mark skipped: needs data.",
+    "setup": "On an owned recipe, scroll to the \"Your cooks\" section (heading plus Log a cook; cards if this recipe already has logs). This is the RecipeView cook-log state. The section is absent on a shared recipe. Do not log a cook. Do not tap the translate chip. If there is no owned recipe, mark skipped: needs data.",
     "needsData": true
   },
   {
     "id": "recipe-edit",
     "route": "/recipe/:id/edit",
     "setup": "The edit form for an owned recipe (heading Edit recipe), including the Recipe language field. Do not change fields and do not save. A shared recipe has no Edit link; this route shows Recipe not found. If there is no owned recipe, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-edit-lang-hint",
+    "route": "/recipe/:id/edit",
+    "setup": "The edit form when the stored recipe language disagrees with a detected language for this version. The Recipe language field keeps the stored value and shows a one-line \"Looks like {language}\" hint with a control to use the detected tag. Do not change the field and do not save. If no owned recipe has that disagreement, mark skipped: needs data.",
     "needsData": true
   },
   {
@@ -104,7 +146,7 @@
   {
     "id": "recipe-chat",
     "route": "/recipe/:id",
-    "setup": "On an owned recipe, tap Ask and leave the chat panel open. Do not send a message, dictate, attach a photo, or save a variant. If a thread is already on screen, include it and do not add to it. If there is no owned recipe, mark skipped: needs data.",
+    "setup": "On an owned recipe, tap Ask and leave the chat panel open. Do not send a message, dictate, attach a photo, or save a variant. Do not tap the translate chip. If a thread is already on screen, include it and do not add to it. If there is no owned recipe, mark skipped: needs data.",
     "needsData": true
   },
   {
@@ -134,13 +176,13 @@
   {
     "id": "recipe-view-shared",
     "route": "/recipe/:id",
-    "setup": "Open a recipe from an incoming share (no Edit link). Do not change servings, checks, or steps. If there is no shared recipe, mark skipped: needs data. Recipe content is another member's data: redact it before judging, or mark skipped: shows another member's data. The review never creates a share.",
+    "setup": "Open a recipe from an incoming share (no Edit link). The translate chip works the same as on an owned recipe. Do not change servings, checks, or steps. Do not tap the translate chip. If there is no shared recipe, mark skipped: needs data. Recipe content is another member's data: redact it before judging, or mark skipped: shows another member's data. The review never creates a share.",
     "needsData": true
   },
   {
     "id": "recipe-chat-shared",
     "route": "/recipe/:id",
-    "setup": "On a shared recipe, open Ask. The read-only panel shows \"Save as a new recipe\" on an existing proposal card (there is no Apply, and no photo button). Do not send a message and do not press Save as a new recipe. If the account has no shared recipe, or the shared chat has no proposal yet, mark skipped: needs data. Do not write a chat message to create one. Redact the other member's recipe content before judging, or mark skipped: shows another member's data.",
+    "setup": "On a shared recipe, open Ask. The read-only panel shows \"Save as a new recipe\" on an existing proposal card (there is no Apply, and no photo button). Do not send a message and do not press Save as a new recipe. Do not tap the translate chip. If the account has no shared recipe, or the shared chat has no proposal yet, mark skipped: needs data. Do not write a chat message to create one. Redact the other member's recipe content before judging, or mark skipped: shows another member's data.",
     "needsData": true
   },
   {

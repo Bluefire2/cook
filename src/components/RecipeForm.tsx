@@ -1,14 +1,15 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactElement, ReactNode } from 'react';
-import { useT } from '../i18n';
+import { languageName, useLocale, useT } from '../i18n';
 import { unitLabel } from '../i18n/unitLabel';
 import { encodeImageForStorage } from '../lib/image';
 import { photoStore, useObjectUrl, usePhotoUrl } from '../lib/photoStore';
 import { blankDraft } from '../lib/recipeDraft';
-import { defaultRecipeFormLang } from '../lib/recipeFormLang';
+import { defaultRecipeFormLang, detectedLangHint } from '../lib/recipeFormLang';
 import { MAX_GALLERY_PHOTOS } from '../lib/recipePhotos';
 import { settings } from '../lib/settings';
-import type { Ingredient, IngredientSection, RecipeDraft } from '../lib/types';
+import { getDetectedLang } from '../lib/translationStore';
+import type { Ingredient, IngredientSection, Recipe, RecipeDraft } from '../lib/types';
 import { COMMON_UNITS, CUSTOM_UNIT, resolveUnit, unitChoice, type UnitChoice } from '../lib/units';
 import LanguagePicker from './LanguagePicker';
 import PhotoPickerField from './PhotoPickerField';
@@ -69,10 +70,15 @@ function toNumber(text: string): number | undefined {
 
 /**
  * `uiLocale` is the current UI language when the language field is shown, and
- * fills in a missing `lang`. Pass `undefined` when the field is hidden so a
- * missing `lang` stays missing; the import preview sets `lang` at save.
+ * fills in a missing `lang` (after `detectedLang`, when this version has one).
+ * Pass `undefined` when the field is hidden so a missing `lang` stays missing;
+ * the import preview sets `lang` at save.
  */
-export function fromDraft(draft: RecipeDraft, uiLocale: string | undefined): FormState {
+export function fromDraft(
+  draft: RecipeDraft,
+  uiLocale: string | undefined,
+  detectedLang?: string,
+): FormState {
   const fallback = blankDraft();
   const sections =
     draft.ingredientSections.length > 0
@@ -80,7 +86,9 @@ export function fromDraft(draft: RecipeDraft, uiLocale: string | undefined): For
       : fallback.ingredientSections;
   const steps = draft.steps.length > 0 ? draft.steps : fallback.steps;
   const lang =
-    uiLocale === undefined ? draft.lang : defaultRecipeFormLang(draft.lang, uiLocale);
+    uiLocale === undefined
+      ? draft.lang
+      : defaultRecipeFormLang(draft.lang, uiLocale, detectedLang);
 
   return {
     title: draft.title,
@@ -202,6 +210,10 @@ function idList(ids: readonly string[] | undefined): string {
   return (ids ?? []).join('\0');
 }
 
+function isSavedRecipe(draft: RecipeDraft | Recipe): draft is Recipe {
+  return 'id' in draft && 'updatedAt' in draft && typeof draft.updatedAt === 'number';
+}
+
 function Field({
   label,
   children,
@@ -296,8 +308,8 @@ export default function RecipeForm({
   submitLocked,
   hideLanguage,
 }: {
-  /** Starting values. Use a blank draft for create-from-scratch. */
-  initial: RecipeDraft;
+  /** Starting values. Use a blank draft for create-from-scratch. An edit passes the saved recipe so a detection can pre-fill a missing lang. */
+  initial: RecipeDraft | Recipe;
   /** Label for the primary button, e.g. 'Save' or 'Save to library'. */
   submitLabel: string;
   onSubmit: (draft: RecipeDraft) => void | Promise<void>;
@@ -318,9 +330,14 @@ export default function RecipeForm({
    */
   hideLanguage?: boolean;
 }): ReactElement {
+  // Captured once. A later UI-language change must not rewrite this recipe's lang.
+  // A detection only fills a missing lang. It is not a background write.
+  const [detectedLang] = useState(() => {
+    if (hideLanguage || !isSavedRecipe(initial)) return undefined;
+    return getDetectedLang(initial.id, initial.updatedAt);
+  });
   const [form, setForm] = useState(() =>
-    // Captured once. A later UI-language change must not rewrite this recipe's lang.
-    fromDraft(initial, hideLanguage ? undefined : settings.getLocale()),
+    fromDraft(initial, hideLanguage ? undefined : settings.getLocale(), detectedLang),
   );
   const baseline = useRef(form);
   const [photoId, setPhotoId] = useState(initial.photoId);
@@ -338,6 +355,8 @@ export default function RecipeForm({
     new Set(),
   );
   const t = useT();
+  const locale = useLocale();
+  const hintTag = detectedLangHint(form.lang, detectedLang);
 
   const patch = (fields: Partial<FormState>) =>
     setForm((prev) => ({ ...prev, ...fields }));
@@ -572,14 +591,30 @@ export default function RecipeForm({
       </Field>
 
       {!hideLanguage && (
-        <Field label={t('form.recipeLanguage')}>
-          <LanguagePicker
-            id="recipe-language"
-            value={form.lang}
-            onChange={(lang) => patch({ lang })}
-            className="mt-0"
-          />
-        </Field>
+        <div>
+          <Field label={t('form.recipeLanguage')}>
+            <LanguagePicker
+              id="recipe-language"
+              value={form.lang}
+              onChange={(lang) => patch({ lang })}
+              className="mt-0"
+            />
+          </Field>
+          {hintTag !== undefined && (
+            <p className="mt-1 flex flex-wrap items-baseline gap-x-2 text-sm text-ink-muted">
+              <span>{t('form.looksLikeLanguage', { language: languageName(hintTag, locale) ?? hintTag })}</span>
+              <button
+                type="button"
+                onClick={() => patch({ lang: hintTag })}
+                className="underline hover:text-ink"
+              >
+                {t('form.useDetectedLanguage', {
+                  language: languageName(hintTag, locale) ?? hintTag,
+                })}
+              </button>
+            </p>
+          )}
+        </div>
       )}
 
       <section className="mt-6">
