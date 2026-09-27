@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { DEFAULT_LOCALE, toSupportedLocale, type Locale } from './lang.ts';
 import {
   membershipUnauthorized,
   membershipUnavailable,
@@ -18,6 +19,16 @@ const STT_MIME = new Set([
 
 const TITLE_MAX_CHARS = 200;
 
+/** English names for the transcription prompt. `zh-Hans` stays "Chinese". */
+const STT_LANGUAGE_NAMES: Record<Locale, string> = {
+  en: 'English',
+  uk: 'Ukrainian',
+  ru: 'Russian',
+  'zh-Hans': 'Chinese',
+};
+
+const STT_BAD_LANGUAGE = 'That language is not supported.';
+
 export function normalizeSttContentType(raw: string): string | null {
   const base = raw.split(';')[0]?.trim().toLowerCase() ?? '';
   if (!STT_MIME.has(base)) {
@@ -36,6 +47,40 @@ export function clipRecipeTitle(raw: string): string {
     return code >= 0x20 && code !== 0x7f;
   });
   return scalars.slice(0, TITLE_MAX_CHARS).join('').trim();
+}
+
+/**
+ * UI language for `/api/stt`. A missing header is English (old clients).
+ * Any other value goes through `normalizeLang` (via `toSupportedLocale`) and
+ * must be `en`, `uk`, `ru`, or `zh-Hans`. `undefined` is a bad header.
+ */
+export function sttLanguageFromHeader(raw: string | null): Locale | undefined {
+  if (raw === null) {
+    return DEFAULT_LOCALE;
+  }
+  return toSupportedLocale(raw);
+}
+
+/**
+ * Recipe title from `x-recipe-title`. When `x-recipe-title-encoding` is
+ * `uri`, the value is percent-decoded first. A decode failure means no
+ * title. Without the marker the raw value is used (old clients), then clipped.
+ */
+export function recipeTitleFromHeaders(headers: Headers): string | null {
+  const raw = headers.get('x-recipe-title');
+  if (raw === null || raw.trim() === '') {
+    return null;
+  }
+  const encoding = headers.get('x-recipe-title-encoding')?.trim().toLowerCase();
+  let text = raw;
+  if (encoding === 'uri') {
+    try {
+      text = decodeURIComponent(raw);
+    } catch {
+      return null;
+    }
+  }
+  return clipRecipeTitle(text) || null;
 }
 
 function jsonError(code: string, error: string, status: number): Response {
@@ -72,12 +117,12 @@ function stripTranscript(raw: string): string {
   return text;
 }
 
-function transcriptionPrompt(title: string | null): string {
+export function transcriptionPrompt(locale: Locale, title: string | null): string {
   const lines = [
     'Transcribe the speech in this audio to plain text.',
     'Return only the transcript. If there is no speech, return an empty string.',
     'Do not add quotation marks, labels, or commentary.',
-    'Language: English.',
+    `Language: ${STT_LANGUAGE_NAMES[locale]}.`,
   ];
   if (title) {
     lines.push(`The cook is making: ${title}.`);
@@ -133,6 +178,11 @@ export async function sttPost(req: Request): Promise<Response> {
     return membershipUnavailable();
   }
 
+  const locale = sttLanguageFromHeader(req.headers.get('x-sous-language'));
+  if (locale === undefined) {
+    return jsonError('stt-bad-language', STT_BAD_LANGUAGE, 400);
+  }
+
   const apiKey = process.env.GEMINI_API_KEY;
   if (apiKey === undefined || apiKey.trim() === '') {
     return jsonError('stt-unavailable', 'Assistant is unavailable.', 503);
@@ -160,11 +210,7 @@ export async function sttPost(req: Request): Promise<Response> {
     return jsonError('stt-bad-request', 'Bad request', 400);
   }
 
-  const titleHeader = req.headers.get('x-recipe-title');
-  const title =
-    titleHeader === null || titleHeader.trim() === ''
-      ? null
-      : clipRecipeTitle(titleHeader) || null;
+  const title = recipeTitleFromHeaders(req.headers);
 
   const model = process.env.CHAT_MODEL || 'gemini-3.7-flash';
   const ai = new GoogleGenAI({ apiKey });
@@ -181,7 +227,7 @@ export async function sttPost(req: Request): Promise<Response> {
                 data: Buffer.from(body.bytes).toString('base64'),
               },
             },
-            { text: transcriptionPrompt(title) },
+            { text: transcriptionPrompt(locale, title) },
           ],
         },
       ],

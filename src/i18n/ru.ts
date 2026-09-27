@@ -365,6 +365,7 @@ export const ru: Messages = {
   'error.badRequest': 'Этот запрос некорректен.',
   'error.sttUnavailable': 'Помощник недоступен.',
   'error.sttTooLong': 'Запись слишком длинная — попробуйте задать вопрос короче.',
+  'error.sttBadLanguage': 'Этот язык не поддерживается.',
   'error.notFound': 'Это не найдено.',
   'error.shareSelf': 'Вы не можете поделиться с собой.',
   'error.shareNoAccount': 'Нет аккаунта Sous с этой электронной почтой.',

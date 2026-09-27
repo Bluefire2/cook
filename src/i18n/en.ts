@@ -369,6 +369,7 @@ export const en = {
   'error.badRequest': 'That request was not valid.',
   'error.sttUnavailable': 'Assistant is unavailable.',
   'error.sttTooLong': 'Recording too long — try a shorter question.',
+  'error.sttBadLanguage': 'That language is not supported.',
   'error.notFound': 'That was not found.',
   'error.shareSelf': "You can't share with yourself.",
   'error.shareNoAccount': 'No Sous account with that email.',

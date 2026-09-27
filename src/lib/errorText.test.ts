@@ -35,6 +35,16 @@ afterEach(() => {
 });
 
 describe('serverErrorText', () => {
+  it('maps stt-bad-language to catalog text', () => {
+    settings.setLocale('uk');
+    expect(
+      serverErrorText(
+        { code: 'stt-bad-language', error: 'That language is not supported.' },
+        'error.dictationFailed',
+      ),
+    ).toBe('Ця мова не підтримується.');
+  });
+
   it('maps a known code to catalog text', () => {
     settings.setLocale('uk');
     expect(

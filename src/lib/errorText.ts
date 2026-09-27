@@ -17,6 +17,7 @@ const ERROR_CODES = {
   'stt-bad-request': 'error.badRequest',
   'stt-unavailable': 'error.sttUnavailable',
   'stt-too-long': 'error.sttTooLong',
+  'stt-bad-language': 'error.sttBadLanguage',
   'stt-failed': 'error.dictationFailed',
   'not-found': 'error.notFound',
   'share-self': 'error.shareSelf',

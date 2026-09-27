@@ -368,6 +368,7 @@ export const uk: Messages = {
   'error.badRequest': 'Цей запит некоректний.',
   'error.sttUnavailable': 'Помічник недоступний.',
   'error.sttTooLong': 'Запис задовгий — спробуйте коротше запитання.',
+  'error.sttBadLanguage': 'Ця мова не підтримується.',
   'error.notFound': 'Це не знайдено.',
   'error.shareSelf': 'Ви не можете поділитися із собою.',
   'error.shareNoAccount': 'Немає облікового запису Sous із цією електронною поштою.',

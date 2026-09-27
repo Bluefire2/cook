@@ -339,6 +339,7 @@ export const zhHans: Messages = {
   'error.badRequest': '这个请求无效。',
   'error.sttUnavailable': '助手暂不可用。',
   'error.sttTooLong': '录音太长——请你换一个更短的问题。',
+  'error.sttBadLanguage': '这种语言不受支持。',
   'error.notFound': '没有找到。',
   'error.shareSelf': '你不能分享给自己。',
   'error.shareNoAccount': '没有使用这个邮箱的 Sous 账号。',
