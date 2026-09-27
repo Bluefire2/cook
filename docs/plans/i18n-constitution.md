@@ -295,12 +295,19 @@ the legal pages are the promise made to users.
   app adds it to every catalog in the same change. The exceptions in
   principle 9 are the only ones. English-only strings "to translate
   later" are not allowed.
-- **Reviewed in context.** The same change runs the in-context translation
-  review (`docs/i18n-review/README.md`, later `npm run test:i18n`) for
-  every screen that shows the new text, in every non-English language.
-  Blockers are fixed before the change is done. The review is defined in a
-  tool-neutral place because this rule binds every agent. Tool wrappers,
-  such as the Cursor skill, only point to it.
+- **Reviewed in context, once per task, before the PR.** Every task that
+  added or changed UI text runs the in-context translation review
+  (`docs/i18n-review/README.md`, later `npm run test:i18n`) once. It runs
+  when the implementation is complete and the agent thinks the PR may be
+  ready to merge, for every screen that shows the text the task touched, in
+  every non-English language. Blockers are fixed and re-reviewed before the
+  PR is opened, and the report goes with the PR.
+  - **Not part of the iteration loop.** The review doesn't run after each
+    change or step.
+  - **No lighter variant.** Rewording-only changes get the full review too.
+  - **Tool-neutral.** The review is defined in a tool-neutral place because
+    this rule binds every agent. Tool wrappers, such as the Cursor skill,
+    only point to it.
 - **Manifest.** New screens or states are added to the review manifest
   (`docs/i18n-review/screens.json`) in the same change.
 - **The review writes nothing.** Local dev talks to production Firestore,
@@ -314,9 +321,13 @@ the legal pages are the promise made to users.
 its own can be wrong next to its neighbours: a noun on a verb button,
 Russian or Ukrainian case or gender that doesn't agree with the number
 beside it, two words for the same concept, or Chinese text wrapping inside
-a button. Only a rendered page shows that. Checking each change keeps the
-work small; waiting for a periodic audit lets problems pile up in languages
-the author can't read.
+a button. Only a rendered page shows that. The review is heavy (a live
+app, screenshots, and an LLM judge), so it runs once per task at the end,
+where it sees the final screens. Running it after each change would slow
+iteration and review screens that are still changing. Tying it to every
+PR, rather than a periodic audit, still stops problems piling up in
+languages the author can't read. Per change, the cheap guard applies: every
+string is in every catalog, and the build fails otherwise.
 
 ## Current decisions
 
