@@ -286,15 +286,18 @@ trigger.
 Docker is not installed locally; local `bash scripts/deploy.sh` still uses
 Cloud Build.
 
-After the first production deploy of sharing:
+Production is `sous-00013-ccs`, deployed from `main` at `cdf6d07` (includes
+#35 Ask photo copy, #36 cook log, #37). Later `main` merges (#42 i18n, #43,
+#45, #46, #48, #49) are not deployed.
 
-- Run `node --env-file=.env.local scripts/backfill-email-lower.ts` with ADC
-  for `cooking-assistant-508423`, review the dry run, then rerun with
-  `--apply`. It is idempotent.
-- Delete a real recipe that is listed in a collection and confirm the
-  `array-contains` query on `recipeIds` succeeds. Native Firestore creates
-  that single-field array index automatically; the check is for an index
-  exemption or misconfiguration, and it exercises the real delete path.
+The `emailLower` backfill (`node --env-file=.env.local
+scripts/backfill-email-lower.ts`, ADC for `cooking-assistant-508423`, dry run
+before `--apply`, idempotent) ran 2026-09-27: dry run found 0 pending of 4
+profiles, so nothing was applied. Still to run: delete a real recipe that is
+listed in a collection and confirm the `array-contains` query on `recipeIds`
+succeeds. Native Firestore creates that single-field array index
+automatically; the check is for an index exemption or misconfiguration, and
+it exercises the real delete path.
 
 ## Do not touch
 
@@ -341,24 +344,24 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/sous-oauth-db.md` | Parent. Identity + sync (1–17) done. |
 | `docs/plans/sync-toast.md` | Done (`b4b43b6`). |
 | `docs/plans/photos-and-deploy-docs.md` | Done (GCS photos, deploy.sh, README, legal rewrite). |
-| `docs/plans/invitation-flow.md` | In progress on branch `invitation-flow` (request access → `/admin` → Firestore membership). |
-| `docs/plans/invite-links.md` | Built. Single-use 7-day bearer invite links that admit on Google consent. Owners mint from `/admin`. |
-| `docs/plans/member-invite-links.md` | Built. A non-owner member mints one link from Settings (`POST /api/invites`). Not deployed. |
+| `docs/plans/invitation-flow.md` | Done (#8). Request access → `/admin` → Firestore membership. |
+| `docs/plans/invite-links.md` | Done (#12). Single-use 7-day bearer invite links that admit on Google consent. Owners mint from `/admin`. |
+| `docs/plans/member-invite-links.md` | Merged (#48; library-header copy in #49). A non-owner member mints one link from Settings (`POST /api/invites`). Not deployed. |
 | `docs/plans/deploy-and-end-state.md` | Production cutover (`sous-00004-mpx`) and consent In production done. |
 | `docs/plans/server-backed-library.md` | Done: drop IndexedDB; in-memory library over pull/push. |
-| `docs/plans/ask-voice-stt.md` | Implementing. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
+| `docs/plans/ask-voice-stt.md` | Done (#7). Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
-| `docs/plans/recipe-gallery.md` | In progress on branch `cursor/recipe-gallery-267b` (main photo + end-of-recipe gallery). |
-| `docs/plans/shared-recipes.md` | Done. PR 2 view-only collection grants (#23) deployed as `sous-00011-td2`. Post-deploy `emailLower` backfill and real-delete `array-contains` check still to run (see Cloud and deploy). |
+| `docs/plans/recipe-gallery.md` | Done (#10, simplified in #18). Main photo + end-of-recipe gallery. |
+| `docs/plans/shared-recipes.md` | Done. PR 2 view-only collection grants (#23) deployed as `sous-00011-td2`; production is now `sous-00013-ccs`. `emailLower` backfill ran 2026-09-27 (0 pending); real-delete `array-contains` check still to run (see Cloud and deploy). Editor role (#45) and grantee leave (#43) are merged, not deployed. |
 | `docs/plans/shared-collections-review-fixes.md`, `shared-access-hardening.md`, `shared-sharing-final-hardening.md`, `pr23-review-fixes-round-2.md` | Done. Review rounds for PR 2; history only, `shared-recipes.md` and the Sharing section here are current. |
-| `docs/plans/bulk-import.md` | Implementing. Opt-in bulk URL import on `/import`. |
+| `docs/plans/bulk-import.md` | Done (#15). Opt-in bulk URL import on `/import`. |
 | `docs/plans/chrome-extension-import.md` | Built: `extension/` + `POST /api/extension/import`. Not deployed. |
 | `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web, extension, evals (`evals/recipeImport.eval.ts`). `api/import.ts` is a 401 stub. Not deployed. |
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
 | `docs/plans/image-import.md` | Built on `cursor/image-import-38e9`, not deployed. Import one recipe from 1–4 photos (handwritten notes) via `images` on `POST /api/import`; Gemini reads them; never stored. Bound by `docs/constitutions/image-import.md`. |
 | `docs/plans/image-import-evals-and-retry.md` | Built, not deployed. Handwritten evals split into dev/holdout with `evals/AGENTS.md` rules and `ocrCompare --thinking`. The photo retry and runaway-unit check were measured and reverted (dev approach A 14/15 → 12/15; holdout stayed 15/15). |
 | `docs/plans/cook-log.md` | Built on `cursor/cook-log-5615` (constitution `docs/constitutions/cook-log.md`). Not deployed. |
-| `docs/plans/i18n.md` | Built and verified on `cursor/i18n-implement-5489` (PR #42; constitution `docs/constitutions/i18n.md`). Not deployed. UI language with `src/i18n/` catalogs, `Recipe.lang`, translation at import and on the recipe screen, dictation language. |
+| `docs/plans/i18n.md` | Merged (#42; constitution `docs/constitutions/i18n.md`). Not deployed. UI language with `src/i18n/` catalogs, `Recipe.lang`, translation at import and on the recipe screen, dictation language. |
 | `docs/plans/i18n-follow-ups.md` | Open. Post-deploy owner steps (Cloud Run translate p95, dictation clips, `lang` backfill `--write`), unrun checks, and review nits left after PR #42. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
