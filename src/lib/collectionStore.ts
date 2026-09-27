@@ -8,6 +8,7 @@ import {
 import { moveRecipe, wouldExceedRecipeIdCap } from './collectionMembership';
 import {
   countOwnedNamedCollections,
+  getCollectionOrigin,
   getCollection,
   getSnapshot,
   isSharedCollection,
@@ -76,6 +77,12 @@ export const collectionStore = {
   /** True for a collection that arrived through an incoming share (view-only). */
   isShared(id: string): boolean {
     return isSharedCollection(id);
+  },
+
+  /** Email of whoever shared this collection with you, when known. */
+  sharedBy(id: string): string | undefined {
+    const origin = getCollectionOrigin(id);
+    return origin?.kind === 'shared' ? origin.ownerEmail : undefined;
   },
 
   get(id: string): Collection | undefined {

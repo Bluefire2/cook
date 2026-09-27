@@ -138,7 +138,7 @@ function ProposalCard({
           onClick={() => void saveAsVariant()}
           className={`${secondaryBtn} flex-1 py-2 text-sm`}
         >
-          Save as a new recipe
+          {allowApply ? 'Save as variant' : 'Save as a new recipe'}
         </button>
       </div>
     </div>

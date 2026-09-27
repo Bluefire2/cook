@@ -665,6 +665,46 @@ describe('pullAll', () => {
     expect(snapshot.loaded).toBe(true);
   });
 
+  it('keeps the sharer email per collection when two owners use the same name', async () => {
+    const result = await pullAll({
+      pullPage: async () => ownedPage(ownedChanges()),
+      pullSharedPage: async () =>
+        sharedPage({
+          collections: [
+            {
+              ...collection('dinners-a', 'Dinners'),
+              ownerSub: 'owner-a',
+              ownerEmail: 'olivia@example.com',
+            },
+            {
+              ...collection('dinners-b', 'Dinners'),
+              ownerSub: 'owner-b',
+              ownerEmail: 'bruno@example.com',
+            },
+            { ...collection('dinners-c', 'Dinners'), ownerSub: 'owner-c' },
+          ],
+        }),
+    });
+
+    const snapshot = getSnapshot();
+    expect(result.outcome).toBe('ok');
+    expect(snapshot.collectionOrigins.get('dinners-a')).toEqual({
+      kind: 'shared',
+      ownerSub: 'owner-a',
+      ownerEmail: 'olivia@example.com',
+    });
+    expect(snapshot.collectionOrigins.get('dinners-b')).toEqual({
+      kind: 'shared',
+      ownerSub: 'owner-b',
+      ownerEmail: 'bruno@example.com',
+    });
+    expect(snapshot.collectionOrigins.get('dinners-c')).toEqual({
+      kind: 'shared',
+      ownerSub: 'owner-c',
+    });
+    expect(snapshot.collections.get('dinners-a')).not.toHaveProperty('ownerEmail');
+  });
+
   it('keeps an open shared recipe in every snapshot while a successful refresh is in flight', async () => {
     installSharedRows({
       recipes: new Map([['open-shared', recipe('open-shared', 'Open on screen')]]),

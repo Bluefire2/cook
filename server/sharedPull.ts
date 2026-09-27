@@ -375,6 +375,7 @@ async function readSharedPageBody(
           {
             ...compactCollectionFields({ ...collection, id: share.collectionId }),
             ownerSub: share.ownerSub,
+            ...(share.ownerEmail ? { ownerEmail: share.ownerEmail } : {}),
           },
         ],
         recipes,

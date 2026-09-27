@@ -135,9 +135,13 @@ describe('read-only selectors', () => {
       collections: new Map([['shared', collection('shared', 'Theirs')]]),
       remotePhotoIds: new Set(),
       recipeOrigins: new Map([['shared-recipe', { kind: 'shared', ownerSub: 'alice' }]]),
-      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
+      collectionOrigins: new Map([
+        ['shared', { kind: 'shared', ownerSub: 'alice', ownerEmail: 'alice@example.com' }],
+      ]),
     });
 
+    expect(collectionStore.sharedBy('shared')).toBe('alice@example.com');
+    expect(collectionStore.sharedBy('owned')).toBeUndefined();
     expect(collectionStore.isShared('shared')).toBe(true);
     expect(collectionStore.isShared('owned')).toBe(false);
     expect(recipeStore.isShared('shared-recipe')).toBe(true);

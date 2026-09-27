@@ -51,6 +51,8 @@ export type LiveIncomingShare = {
   grantId: string;
   ownerSub: string;
   collectionId: string;
+  /** The sharer's email when the grant was made; display only, never authorization. */
+  ownerEmail?: string;
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -525,6 +527,7 @@ export async function readLiveIncomingShare(
     grantId,
     ownerSub: share.ownerSub,
     collectionId: share.collectionId,
+    ...(share.ownerEmail ? { ownerEmail: share.ownerEmail } : {}),
   };
 }
 

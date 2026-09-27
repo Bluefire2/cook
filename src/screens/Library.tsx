@@ -264,14 +264,17 @@ export default function Library() {
             </Link>
             {collections?.map((collection) => {
               const shared = collectionStore.isShared(collection.id);
+              const sharedBy = shared ? collectionStore.sharedBy(collection.id) : undefined;
+              const sharedLabel = sharedBy
+                ? `${collection.name} (shared by ${sharedBy})`
+                : `${collection.name} (shared)`;
               return (
                 <Link
                   key={collection.id}
                   to={libraryHref(collection.id)}
                   onClick={() => setBrowseAll(false)}
-                  aria-label={
-                    shared ? `${collection.name} (shared)` : collection.name
-                  }
+                  aria-label={shared ? sharedLabel : collection.name}
+                  title={shared ? sharedLabel : undefined}
                   className={`${chipClass(!browseAll && collection.id === currentId)} inline-flex items-center gap-1.5`}
                 >
                   {shared && (
@@ -323,6 +326,14 @@ export default function Library() {
             )}
           </div>
         </nav>
+      )}
+
+      {named && namedIsShared && !browseAll && (
+        <p className="-mt-1 mb-3 text-sm text-ink-muted">
+          {collectionStore.sharedBy(named.id)
+            ? `Shared with you by ${collectionStore.sharedBy(named.id)}. View only.`
+            : 'Shared with you. View only.'}
+        </p>
       )}
 
       {showSwitcher ? (

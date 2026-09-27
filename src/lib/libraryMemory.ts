@@ -3,7 +3,9 @@ import type { BackupGraphIds } from './backupImportRemap';
 import type { ChatMessage, Collection, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 
-export type ItemOrigin = { kind: 'own' } | { kind: 'shared'; ownerSub: string };
+export type ItemOrigin =
+  | { kind: 'own' }
+  | { kind: 'shared'; ownerSub: string; ownerEmail?: string };
 
 export type LibrarySnapshot = {
   recipes: ReadonlyMap<string, Recipe>;

@@ -392,6 +392,35 @@ describe('buildSharedPullPage', () => {
     expect(result.cursor.grantId).toBe('grant-live');
   });
 
+  it('labels a shared collection with the sharer email from the fresh share read only', async () => {
+    const docs = new Map<string, Record<string, unknown>>([
+      [docKey('owner-a', 'collections', collectionA), liveCollection(collectionA, [])],
+      [docKey('owner-b', 'collections', collectionB), liveCollection(collectionB, [])],
+    ]);
+    const labelled = { grantId: 'grant-a', ownerSub: 'owner-a', collectionId: collectionA };
+    const unlabelled = { grantId: 'grant-b', ownerSub: 'owner-b', collectionId: collectionB };
+
+    const withEmail = expectPage(
+      await buildSharedPullPage(
+        pageInput({
+          shares: [labelled],
+          current: new Map([['grant-a', { ...labelled, ownerEmail: 'olivia@example.com' }]]),
+          docs,
+        }),
+      ),
+    );
+    const withoutEmail = expectPage(
+      await buildSharedPullPage(pageInput({ shares: [unlabelled], docs })),
+    );
+
+    expect(withEmail.changes.collections[0]).toMatchObject({
+      id: collectionA,
+      ownerSub: 'owner-a',
+      ownerEmail: 'olivia@example.com',
+    });
+    expect(withoutEmail.changes.collections[0]).not.toHaveProperty('ownerEmail');
+  });
+
   it('emits nothing through a tombstoned collection', async () => {
     const share = {
       grantId: 'grant-a',

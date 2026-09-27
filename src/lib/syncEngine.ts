@@ -193,7 +193,13 @@ export async function pullAll(dependencies: PullDependencies): Promise<SyncResul
         }
         sharedCollections.set(id, normalized);
         if (typeof raw.ownerSub === 'string' && raw.ownerSub !== '') {
-          collectionOrigins.set(id, { kind: 'shared', ownerSub: raw.ownerSub });
+          collectionOrigins.set(id, {
+            kind: 'shared',
+            ownerSub: raw.ownerSub,
+            ...(typeof raw.ownerEmail === 'string' && raw.ownerEmail !== ''
+              ? { ownerEmail: raw.ownerEmail }
+              : {}),
+          });
         }
       }
       for (const raw of page.changes.recipes) {
