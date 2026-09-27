@@ -1,7 +1,13 @@
 import type { Content } from '@google/genai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeImportDeps } from '../test/fakeGemini.ts';
-import { importPost, MAX_IMPORT_BODY_BYTES, MAX_IMPORT_IMAGE_BYTES } from './importRoute.ts';
+import {
+  IMPORT_IMAGE_TYPES,
+  importPost,
+  MAX_IMPORT_BODY_BYTES,
+  MAX_IMPORT_IMAGE_BYTES,
+  MAX_IMPORT_IMAGES,
+} from './importRoute.ts';
 import type { RecipeImportDeps } from './recipeImport.ts';
 
 const RECIPE = {
@@ -161,6 +167,13 @@ describe('POST /api/import', () => {
 describe('POST /api/import with photos', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('locks the constitution numbers', () => {
+    expect(MAX_IMPORT_IMAGES).toBe(4);
+    expect(MAX_IMPORT_IMAGE_BYTES).toBe(3 * 1024 * 1024);
+    expect(MAX_IMPORT_BODY_BYTES).toBe(12 * 1024 * 1024);
+    expect([...IMPORT_IMAGE_TYPES].sort()).toEqual(['image/jpeg', 'image/png', 'image/webp']);
   });
 
   it('imports from photos without sourceUrl', async () => {
