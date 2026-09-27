@@ -1,16 +1,22 @@
 /**
  * Compares two ways of reading the handwritten fixtures in
- * `evals/import-handwritten/`:
+ * `evals/import-handwritten/dev/` and `holdout/`:
  *
  * - A (production): the photos go straight to Gemini (`importFromImages`).
  * - B (Cloud Vision → Gemini): DOCUMENT_TEXT_DETECTION per page, then Gemini
  *   on the joined OCR text (`importFromSource`).
  *
- * For each fixture and run it prints latency, tokens, estimated cost, and the
- * judge's verdict against `golden.json`.
+ * For each fixture and run it prints latency, tokens, estimated cost, the
+ * judge's verdict against `golden.json`, and `calls` (Gemini invocations,
+ * including a retry, not successes).
  *
  *   node --env-file=.env.local evals/ocrCompare.ts [fixture…] [--runs=N]
+ *     [--split=dev|holdout|all] [--thinking=minimal|low|medium|high]
  *   npm run eval:ocr-compare
+ *
+ * `--split` defaults to `dev`. `--thinking` applies to approach A only. It is
+ * for experiments and does not change production. Holdout rows hide judge
+ * reasons (see `evals/AGENTS.md`).
  *
  * A needs `GEMINI_API_KEY` (the judge uses it too). B needs Application
  * Default Credentials with `vision.googleapis.com` enabled on the quota
@@ -22,6 +28,7 @@
  * result files: transcriptions of personal notes are personal data. Exits 0
  * whatever the judge says; non-zero only for a harness error.
  */
+import { ThinkingLevel } from '@google/genai';
 import { GoogleAuth } from 'google-auth-library';
 import {
   importFromImages,
@@ -32,7 +39,11 @@ import {
   type ImportedRecipe,
   type RecipeImportDeps,
 } from '../server/recipeImport.ts';
-import { listHandwrittenFixtures, type HandwrittenFixture } from './handwrittenFixtures.ts';
+import {
+  listHandwrittenFixtures,
+  type HandwrittenFixture,
+  type HandwrittenSplit,
+} from './handwrittenFixtures.ts';
 import { ingredientCount, judgeRecipe } from './judge.ts';
 
 // Estimates carried over from the owner-approved plan: gemini-3.7-flash is not
@@ -46,6 +57,13 @@ const VISION_USD_PER_UNIT = 1.5 / 1000;
 const VISION_URL = 'https://eu-vision.googleapis.com/v1/images:annotate';
 
 const MAX_RUNS = 5;
+
+const THINKING_LEVELS: Record<string, ThinkingLevel> = {
+  minimal: ThinkingLevel.MINIMAL,
+  low: ThinkingLevel.LOW,
+  medium: ThinkingLevel.MEDIUM,
+  high: ThinkingLevel.HIGH,
+};
 
 // Neither the Gemini SDK nor fetch times out by default; one stalled call would
 // hang the whole run with nothing printed.
@@ -76,8 +94,10 @@ interface TokenUsage {
 
 interface RunResult {
   fixture: string;
+  split: HandwrittenSplit;
   run: number;
   approach: Approach;
+  calls: number;
   kind: RunKind;
   pages: number;
   visionMs: number;
@@ -101,15 +121,33 @@ type VisionOcr =
   | { kind: 'denied'; reason: string }
   | { kind: 'vision_error' };
 
-function recordingDeps(base: RecipeImportDeps): { deps: RecipeImportDeps; usage: TokenUsage[] } {
+function recordingDeps(
+  base: RecipeImportDeps,
+  thinkingLevel?: ThinkingLevel,
+): { deps: RecipeImportDeps; usage: TokenUsage[]; counter: { calls: number } } {
   const usage: TokenUsage[] = [];
+  const counter = { calls: 0 };
   const deps: RecipeImportDeps = {
     model: base.model,
     ai: {
       models: {
         generateContent: async (params) => {
+          counter.calls += 1;
+          const request =
+            thinkingLevel !== undefined
+              ? {
+                  ...params,
+                  config: {
+                    ...params.config,
+                    thinkingConfig: {
+                      ...params.config?.thinkingConfig,
+                      thinkingLevel,
+                    },
+                  },
+                }
+              : params;
           const response = await withTimeout(
-            base.ai.models.generateContent(params),
+            base.ai.models.generateContent(request),
             GEMINI_TIMEOUT_MS,
             'Gemini',
           );
@@ -124,7 +162,7 @@ function recordingDeps(base: RecipeImportDeps): { deps: RecipeImportDeps; usage:
       },
     },
   };
-  return { deps, usage };
+  return { deps, usage, counter };
 }
 
 function sumUsage(usage: readonly TokenUsage[]): TokenUsage {
@@ -147,18 +185,39 @@ function geminiUsd(tokens: TokenUsage): number {
   );
 }
 
-function parseArgs(argv: readonly string[]): { names: string[]; runs: number } {
+function parseArgs(argv: readonly string[]): {
+  names: string[];
+  runs: number;
+  split: HandwrittenSplit | 'all';
+  thinking: ThinkingLevel | undefined;
+} {
   const names: string[] = [];
   let runs = 1;
+  let split: HandwrittenSplit | 'all' = 'dev';
+  let thinking: ThinkingLevel | undefined;
   for (const arg of argv) {
     if (arg.startsWith('--runs=')) {
       const n = Number.parseInt(arg.slice('--runs='.length), 10);
       runs = Number.isFinite(n) ? Math.min(MAX_RUNS, Math.max(1, n)) : 1;
+    } else if (arg.startsWith('--split=')) {
+      const value = arg.slice('--split='.length);
+      if (value !== 'dev' && value !== 'holdout' && value !== 'all') {
+        console.error('--split must be dev, holdout, or all.');
+        process.exit(1);
+      }
+      split = value;
+    } else if (arg.startsWith('--thinking=')) {
+      const key = arg.slice('--thinking='.length).toLowerCase();
+      if (!Object.hasOwn(THINKING_LEVELS, key)) {
+        console.error('--thinking must be minimal, low, medium, or high.');
+        process.exit(1);
+      }
+      thinking = THINKING_LEVELS[key];
     } else {
       names.push(arg);
     }
   }
-  return { names, runs };
+  return { names, runs, split, thinking };
 }
 
 async function visionOcr(pages: readonly ImportImage[], auth: Headers): Promise<VisionOcr> {
@@ -256,13 +315,16 @@ async function runA(
   fixture: HandwrittenFixture,
   run: number,
   base: RecipeImportDeps,
+  thinkingLevel?: ThinkingLevel,
 ): Promise<RunResult> {
-  const { deps, usage } = recordingDeps(base);
+  const { deps, usage, counter } = recordingDeps(base, thinkingLevel);
   const { value: outcome, ms } = await timed(() => importFromImages(fixture.pages, '', deps));
   const tokens = sumUsage(usage);
   return judged(
     {
       fixture: fixture.name,
+      split: fixture.split,
+      calls: counter.calls,
       run,
       approach: 'A',
       kind: outcome?.kind ?? 'gemini_error',
@@ -290,6 +352,7 @@ async function runB(
   if (ocr.kind === 'denied') return ocr;
   const shared = {
     fixture: fixture.name,
+    split: fixture.split,
     run,
     approach: 'B' as const,
     pages: fixture.pages.length,
@@ -300,6 +363,7 @@ async function runB(
     return judged(
       {
         ...shared,
+        calls: 0,
         kind: 'vision_error',
         geminiMs: 0,
         tokens: { prompt: 0, output: 0, thinking: 0, finish: '—' },
@@ -309,12 +373,13 @@ async function runB(
       fixture.golden,
     );
   }
-  const { deps, usage } = recordingDeps(base);
+  const { deps, usage, counter } = recordingDeps(base);
   const { value: outcome, ms } = await timed(() => importFromSource(ocr.text, deps));
   const tokens = sumUsage(usage);
   return judged(
     {
       ...shared,
+      calls: counter.calls,
       kind: outcome?.kind ?? 'gemini_error',
       geminiMs: ms,
       tokens,
@@ -343,9 +408,11 @@ function usd(value: number): number {
 function tableRow(r: RunResult): Record<string, string | number> {
   return {
     fixture: r.fixture,
+    split: r.split,
     run: r.run,
     approach: r.approach,
     outcome: r.kind,
+    calls: r.calls,
     'vision ms': Math.round(r.visionMs),
     'gemini ms': Math.round(r.geminiMs),
     'total ms': Math.round(r.visionMs + r.geminiMs),
@@ -361,9 +428,14 @@ function tableRow(r: RunResult): Record<string, string | number> {
   };
 }
 
-function summaryRow(approach: Approach, rows: readonly RunResult[]): Record<string, string | number> {
+function summaryRow(
+  split: HandwrittenSplit,
+  approach: Approach,
+  rows: readonly RunResult[],
+): Record<string, string | number> {
   const passes = rows.filter((r) => r.judge === 'pass').length;
   const row: Record<string, string | number> = {
+    split,
     approach,
     passes: `${passes}/${rows.length}`,
     'median total ms': Math.round(median(rows.map((r) => r.visionMs + r.geminiMs))),
@@ -375,27 +447,36 @@ function summaryRow(approach: Approach, rows: readonly RunResult[]): Record<stri
 }
 
 async function main(): Promise<number> {
+  const { names, runs, split, thinking } = parseArgs(process.argv.slice(2));
+
   if (!process.env.GEMINI_API_KEY?.trim()) {
     console.error('GEMINI_API_KEY is required. Put it in .env.local (same as dev:api).');
     return 1;
   }
 
-  const { names, runs } = parseArgs(process.argv.slice(2));
   let fixtures: HandwrittenFixture[];
   try {
-    fixtures = listHandwrittenFixtures();
+    fixtures =
+      split === 'all'
+        ? [...listHandwrittenFixtures('dev'), ...listHandwrittenFixtures('holdout')]
+        : listHandwrittenFixtures(split);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     return 1;
   }
   if (names.length > 0) {
     for (const name of names) {
-      if (!fixtures.some((f) => f.name === name)) console.log(`No fixture named ${name}; ignoring it.`);
+      if (!fixtures.some((f) => f.name === name)) {
+        console.log(`No fixture named ${name} in split ${split}; ignoring it.`);
+      }
     }
     fixtures = fixtures.filter((f) => names.includes(f.name));
   }
   if (fixtures.length === 0) {
-    console.log('No handwritten fixtures in evals/import-handwritten/. See evals/README.md to add some.');
+    const where = split === 'all' ? '{dev,holdout}' : split;
+    console.log(
+      `No handwritten fixtures in evals/import-handwritten/${where}/. See evals/README.md to add some.`,
+    );
     return 0;
   }
 
@@ -421,15 +502,15 @@ async function main(): Promise<number> {
   const record = (r: RunResult): void => {
     results.push(r);
     console.log(
-      `${r.fixture} run ${r.run} ${r.approach}: ${r.kind}, ${Math.round(r.visionMs + r.geminiMs)} ms, finish ${r.tokens.finish}, judge ${r.judge}`,
+      `${r.split}/${r.fixture} run ${r.run} ${r.approach}: ${r.kind}, ${Math.round(r.visionMs + r.geminiMs)} ms, calls ${r.calls}, finish ${r.tokens.finish}, judge ${r.judge}`,
     );
   };
   console.log(
-    `Running ${fixtures.length} fixture(s) x ${runs} run(s): A${b.auth !== null ? ' and B' : ''}. Each line prints as a run finishes.`,
+    `Running ${fixtures.length} fixture(s) x ${runs} run(s), split ${split}, thinking ${thinking ?? 'model default'} (A only): A${b.auth !== null ? ' and B' : ''}. Each line prints as a run finishes.`,
   );
   for (const fixture of fixtures) {
     for (let run = 1; run <= runs; run++) {
-      record(await runA(fixture, run, base));
+      record(await runA(fixture, run, base, thinking));
       if (b.auth !== null) {
         const result = await runB(fixture, run, base, b.auth);
         if (result.kind === 'denied') skipB(result.reason);
@@ -444,16 +525,27 @@ async function main(): Promise<number> {
   if (failures.length > 0) {
     console.log('Judge failures:');
     for (const r of failures) {
+      if (r.split === 'holdout') {
+        console.log(
+          `  holdout/${r.fixture} run ${r.run} ${r.approach} — judge failed with ${r.judgeFailures.length} reason(s) (hidden: holdout)`,
+        );
+        continue;
+      }
       for (const f of r.judgeFailures) {
-        console.log(`  ${r.fixture} run ${r.run} ${r.approach} — ${f.field}: ${f.reason}`);
+        console.log(`  dev/${r.fixture} run ${r.run} ${r.approach} — ${f.field}: ${f.reason}`);
       }
     }
   }
 
-  const summary = (['A', 'B'] as const)
-    .map((approach) => ({ approach, rows: results.filter((r) => r.approach === approach) }))
-    .filter(({ rows }) => rows.length > 0)
-    .map(({ approach, rows }) => summaryRow(approach, rows));
+  const summary = (['dev', 'holdout'] as const).flatMap((rowSplit) =>
+    (['A', 'B'] as const)
+      .map((approach) => ({
+        approach,
+        rows: results.filter((r) => r.split === rowSplit && r.approach === approach),
+      }))
+      .filter(({ rows }) => rows.length > 0)
+      .map(({ approach, rows }) => summaryRow(rowSplit, approach, rows)),
+  );
   console.log('Summary:');
   console.table(summary);
   if (b.skipped !== null) console.log(`B was skipped: ${b.skipped}`);

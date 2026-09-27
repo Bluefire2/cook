@@ -11,7 +11,11 @@ import {
   type ImportOutcome,
   type ImportedRecipe,
 } from '../server/recipeImport.ts';
-import { listHandwrittenFixtures } from './handwrittenFixtures.ts';
+import {
+  listHandwrittenFixtures,
+  type HandwrittenFixture,
+  type HandwrittenSplit,
+} from './handwrittenFixtures.ts';
 import { ingredientCount, judgeRecipe } from './judge.ts';
 
 const fixturesRoot = join(dirname(fileURLToPath(import.meta.url)), 'import');
@@ -19,7 +23,8 @@ const fixturesRoot = join(dirname(fileURLToPath(import.meta.url)), 'import');
 const TEXT_FIXTURES = ['pomodoro', 'messy-sections'] as const;
 const PAGE_FIXTURES = ['gumbo', 'beef-noodle-soup', 'beef-stew'] as const;
 
-const HANDWRITTEN = listHandwrittenFixtures();
+const HANDWRITTEN_DEV = listHandwrittenFixtures('dev');
+const HANDWRITTEN_HOLDOUT = listHandwrittenFixtures('holdout');
 
 function readFixtureText(name: string, file: string): string {
   return readFileSync(join(fixturesRoot, name, file), 'utf8');
@@ -48,10 +53,44 @@ async function expectCloseToGolden(
   label: string,
   golden: ImportedRecipe,
   result: ImportOutcome,
+  options: { redact?: boolean } = {},
 ): Promise<void> {
   expect(result.kind, `${label} import outcome`).toBe('ok');
   if (result.kind !== 'ok') return;
   const extracted = result.recipe;
+
+  if (options.redact === true) {
+    expect(
+      extracted.servings === golden.servings,
+      `${label} servings mismatch (holdout: values hidden)`,
+    ).toBe(true);
+
+    const gotIng = ingredientCount(extracted);
+    const goldIng = ingredientCount(golden);
+    expect(
+      Math.abs(gotIng - goldIng),
+      `${label} ingredient count ${gotIng} vs golden ${goldIng}`,
+    ).toBeLessThanOrEqual(2);
+
+    const gotSteps = extracted.steps.length;
+    const goldSteps = golden.steps.length;
+    expect(
+      Math.abs(gotSteps - goldSteps),
+      `${label} step count ${gotSteps} vs golden ${goldSteps}`,
+    ).toBeLessThanOrEqual(2);
+
+    let verdict: { pass: boolean; failures: { field: string; reason: string }[] };
+    try {
+      verdict = await judgeRecipe(extracted, golden);
+    } catch {
+      throw new Error(`${label} judge errored (holdout: message hidden)`);
+    }
+    expect(
+      verdict.pass,
+      `${label} judge failed with ${verdict.failures.length} reason(s) (holdout: reasons hidden)`,
+    ).toBe(true);
+    return;
+  }
 
   expect(extracted.servings, `${label} servings`).toBe(golden.servings);
 
@@ -120,13 +159,20 @@ describe('import from cached page (live Gemini)', () => {
   );
 });
 
-if (HANDWRITTEN.length === 0) {
-  // `it.each([])` would fail the suite with "No test found in suite".
-  describe('import from handwritten photos (live Gemini)', () => {
-    it.skip('no fixtures in evals/import-handwritten/ — see evals/README.md', () => {});
-  });
-} else {
-  describe('import from handwritten photos (live Gemini)', () => {
+function describeHandwritten(
+  split: HandwrittenSplit,
+  fixtures: HandwrittenFixture[],
+  redact: boolean,
+): void {
+  if (fixtures.length === 0) {
+    // `it.each([])` would fail the suite with "No test found in suite".
+    describe(`import from handwritten photos, ${split} split (live Gemini)`, () => {
+      it.skip(`no fixtures in evals/import-handwritten/${split}/ — see evals/README.md`, () => {});
+    });
+    return;
+  }
+
+  describe(`import from handwritten photos, ${split} split (live Gemini)`, () => {
     beforeAll(() => {
       if (!process.env.GEMINI_API_KEY?.trim()) {
         throw new Error(
@@ -135,14 +181,27 @@ if (HANDWRITTEN.length === 0) {
       }
     });
 
-    it.each(HANDWRITTEN.map((f) => f.name))(
+    it.each(fixtures.map((f) => f.name))(
       'extracts %s from photos close to the golden recipe',
       async (name) => {
-        const fixture = HANDWRITTEN.find((f) => f.name === name);
+        const fixture = fixtures.find((f) => f.name === name);
         if (fixture === undefined) throw new Error(`no handwritten fixture ${name}`);
+        if (redact) {
+          let result: ImportOutcome;
+          try {
+            result = await importFromImages(fixture.pages, '', recipeImportDepsFromEnv());
+          } catch {
+            throw new Error(`${name} import threw (holdout: message hidden)`);
+          }
+          await expectCloseToGolden(name, fixture.golden, result, { redact: true });
+          return;
+        }
         const result = await importFromImages(fixture.pages, '', recipeImportDepsFromEnv());
         await expectCloseToGolden(name, fixture.golden, result);
       },
     );
   });
 }
+
+describeHandwritten('dev', HANDWRITTEN_DEV, false);
+describeHandwritten('holdout', HANDWRITTEN_HOLDOUT, true);
