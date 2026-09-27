@@ -78,6 +78,11 @@ export const recipeStore = {
     return getRecipe(id);
   },
 
+  /** True for a recipe that arrived through an incoming share (view-only). */
+  isShared(id: string): boolean {
+    return isSharedRecipe(id);
+  },
+
   async save(recipe: Recipe): Promise<void> {
     if (isSharedRecipe(recipe.id)) {
       throw new Error('This shared collection is view-only.');

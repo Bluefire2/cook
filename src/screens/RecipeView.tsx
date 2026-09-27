@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import ChatPanel from '../components/ChatPanel';
-import { isSharedRecipe } from '../lib/libraryMemory';
 import { usePhotoUrl } from '../lib/photoStore';
-import { useRecipe } from '../lib/recipeStore';
+import { recipeStore, useRecipe } from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
 import { sync } from '../lib/syncEngine';
 import { backLink, ghostBtn } from '../lib/uiClasses';
@@ -101,7 +100,7 @@ export default function RecipeView() {
     );
   }
 
-  const shared = isSharedRecipe(recipe.id);
+  const shared = recipeStore.isShared(recipe.id);
   const scale = servings / recipe.servings;
   const source = sourceLink(recipe.sourceUrl);
 

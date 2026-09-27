@@ -73,6 +73,11 @@ export const collectionStore = {
     return listCollections();
   },
 
+  /** True for a collection that arrived through an incoming share (view-only). */
+  isShared(id: string): boolean {
+    return isSharedCollection(id);
+  },
+
   get(id: string): Collection | undefined {
     return getCollection(id);
   },

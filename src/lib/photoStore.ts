@@ -53,6 +53,11 @@ export const photoStore = {
     dropPhoto(id);
   },
 
+  /** True once the server holds this photo's bytes. */
+  isRemote(id: string): boolean {
+    return getSnapshot().remotePhotoIds.has(id);
+  },
+
   async remove(id: string): Promise<void> {
     const at = Date.now();
     dropPhoto(id);

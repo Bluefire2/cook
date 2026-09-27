@@ -7,6 +7,7 @@ import {
   listCollections,
   upsertCollection,
 } from './libraryMemory';
+import { recipeStore } from './recipeStore';
 import { installSharedRows } from './testLibrary';
 import {
   addCollectionGrant,
@@ -109,6 +110,38 @@ describe('collectionStore.create cap', () => {
       `You can have up to ${MAX_NAMED_COLLECTIONS} collections.`,
     );
     expect(pushOps).not.toHaveBeenCalled();
+  });
+});
+
+describe('read-only selectors', () => {
+  it('report shared origin for incoming rows and owned for local rows', () => {
+    upsertCollection(collection('owned', 'Mine'));
+    installSharedRows({
+      recipes: new Map([
+        [
+          'shared-recipe',
+          {
+            id: 'shared-recipe',
+            title: 'Theirs',
+            servings: 1,
+            ingredientSections: [],
+            steps: [],
+            tags: [],
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      ]),
+      collections: new Map([['shared', collection('shared', 'Theirs')]]),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map([['shared-recipe', { kind: 'shared', ownerSub: 'alice' }]]),
+      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
+    });
+
+    expect(collectionStore.isShared('shared')).toBe(true);
+    expect(collectionStore.isShared('owned')).toBe(false);
+    expect(recipeStore.isShared('shared-recipe')).toBe(true);
+    expect(recipeStore.isShared('missing')).toBe(false);
   });
 });
 

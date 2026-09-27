@@ -5,7 +5,6 @@ import CreateRecipeForm, {
 } from '../components/CreateRecipeForm';
 import SaveToCollectionSheet from '../components/SaveToCollectionSheet';
 import { collectionStore, libraryHref, useCollections } from '../lib/collectionStore';
-import { isSharedCollection } from '../lib/libraryMemory';
 import { resolveCollectionDestination } from '../lib/collectionDestination';
 import { SpinnerIcon } from '../lib/icons';
 import { importRecipe, type ExtractedRecipe } from '../lib/importApi';
@@ -32,7 +31,7 @@ export default function ImportScreen() {
   const collections = useCollections();
   const knownCollectionId =
     collectionId &&
-    collections?.some((c) => c.id === collectionId && !isSharedCollection(c.id))
+    collections?.some((c) => c.id === collectionId && !collectionStore.isShared(c.id))
       ? collectionId
       : undefined;
   const backTo = libraryHref(knownCollectionId);

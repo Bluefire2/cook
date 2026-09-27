@@ -9,7 +9,6 @@ import {
   useCollections,
 } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
-import { isSharedCollection, isSharedRecipe } from '../lib/libraryMemory';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
 import { visibleLibraryRecipes } from '../lib/visibleLibraryRecipes';
@@ -90,12 +89,12 @@ export default function Library() {
 
   const pendingDelete = allRecipes?.find((r) => r.id === pendingDeleteId);
   const moveRecipe = allRecipes?.find((r) => r.id === moveRecipeId);
-  const namedIsShared = named ? isSharedCollection(named.id) : false;
+  const namedIsShared = named ? collectionStore.isShared(named.id) : false;
   const showSwitcher = (collections?.length ?? 0) > 0;
   const addQuery =
     currentId && !namedIsShared ? `?c=${encodeURIComponent(currentId)}` : '';
   const ownedCollections =
-    collections?.filter((collection) => !isSharedCollection(collection.id)) ?? [];
+    collections?.filter((collection) => !collectionStore.isShared(collection.id)) ?? [];
 
   const remove = async (id: string) => {
     setPendingDeleteId(null);
@@ -264,7 +263,7 @@ export default function Library() {
               Recipes
             </Link>
             {collections?.map((collection) => {
-              const shared = isSharedCollection(collection.id);
+              const shared = collectionStore.isShared(collection.id);
               return (
                 <Link
                   key={collection.id}
@@ -396,7 +395,7 @@ export default function Library() {
                 </div>
               </Link>
 
-              {!isSharedRecipe(recipe.id) && (
+              {!recipeStore.isShared(recipe.id) && (
               <button
                 type="button"
                 aria-label={`Actions for ${recipe.title}`}
@@ -411,7 +410,7 @@ export default function Library() {
               </button>
               )}
 
-              {menuId === recipe.id && !isSharedRecipe(recipe.id) && (
+              {menuId === recipe.id && !recipeStore.isShared(recipe.id) && (
                 <div
                   role="group"
                   aria-label={`Actions for ${recipe.title}`}

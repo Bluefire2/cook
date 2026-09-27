@@ -3,8 +3,7 @@ import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import RecipeForm from '../components/RecipeForm';
 import CreateRecipeForm from '../components/CreateRecipeForm';
-import { libraryHref, useCollections } from '../lib/collectionStore';
-import { isSharedCollection, isSharedRecipe } from '../lib/libraryMemory';
+import { collectionStore, libraryHref, useCollections } from '../lib/collectionStore';
 import { blankDraft } from '../lib/recipeDraft';
 import { recipeStore, useRecipe } from '../lib/recipeStore';
 import { backLink, primaryBtn } from '../lib/uiClasses';
@@ -51,7 +50,7 @@ function CreateRecipe() {
   const collections = useCollections();
   const knownCollectionId =
     collectionId &&
-    collections?.some((c) => c.id === collectionId && !isSharedCollection(c.id))
+    collections?.some((c) => c.id === collectionId && !collectionStore.isShared(c.id))
       ? collectionId
       : undefined;
   const backTo = libraryHref(knownCollectionId);
@@ -82,7 +81,7 @@ function EditRecipe({ id }: { id: string }) {
       <div className="p-6 text-center text-ink-muted">Loading recipe…</div>
     );
   }
-  if (recipe === null || isSharedRecipe(id)) {
+  if (recipe === null || recipeStore.isShared(id)) {
     return (
       <div className="p-6 text-center text-ink-muted">
         Recipe not found.{' '}
