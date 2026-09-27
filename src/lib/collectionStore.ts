@@ -25,12 +25,17 @@ import {
 } from './libraryMemory';
 import {
   addCollectionGrant,
+  createCollectionLink,
   leaveSharedCollection,
   listCollectionGrants,
+  listCollectionLinks,
   pushOps,
   revokeCollectionGrant,
+  revokeCollectionLink,
   setCollectionGrantRole,
   type CollectionGrant,
+  type CollectionLink,
+  type CollectionLinkHttpResult,
   type GrantRole,
   type LeaveSharedResult,
   type RemoteResult,
@@ -56,6 +61,18 @@ export function collectionPushErrorMessage(result: RemoteResult, created = false
 
 function saveError(result: RemoteResult, created = false): Error {
   return new Error(collectionPushErrorMessage(result, created));
+}
+
+function linkResult(
+  result: CollectionLinkHttpResult,
+): { links: CollectionLink[]; url?: string } {
+  if (result.kind === 'signedOut') {
+    throw new Error('Please sign in again — your session expired.');
+  }
+  if (result.kind === 'error') {
+    throw new Error(result.message);
+  }
+  return result.url === undefined ? { links: result.links } : { links: result.links, url: result.url };
 }
 
 async function pushCollection(
@@ -250,6 +267,29 @@ export const collectionStore = {
     if (outcome !== 'ok') {
       throw new Error(t('error.leaveRefresh'));
     }
+  },
+
+  async listLinks(id: string): Promise<CollectionLink[]> {
+    rejectShared(id);
+    return linkResult(await listCollectionLinks(id)).links;
+  },
+
+  /** The returned `url` carries the raw token and is never shown again. */
+  async createLink(
+    id: string,
+    role: GrantRole = 'viewer',
+  ): Promise<{ url: string; links: CollectionLink[] }> {
+    rejectShared(id);
+    const { links, url } = linkResult(await createCollectionLink(id, role));
+    if (url === undefined) {
+      throw new Error("Couldn't update sharing.");
+    }
+    return { url, links };
+  },
+
+  async revokeLink(id: string, linkId: string): Promise<CollectionLink[]> {
+    rejectShared(id);
+    return linkResult(await revokeCollectionLink(id, linkId)).links;
   },
 
   async moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {

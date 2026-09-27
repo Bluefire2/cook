@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useT } from '../i18n';
 import Sheet from './Sheet';
 import { collectionStore } from '../lib/collectionStore';
-import type { CollectionGrant, GrantRole } from '../lib/remote';
+import { relativeExpiryLabel } from '../lib/relativeTime';
+import type { CollectionGrant, CollectionLink, GrantRole } from '../lib/remote';
 import {
   cellClass,
   dangerBtn,
@@ -25,6 +26,11 @@ export default function ShareCollectionSheet({
   const [grants, setGrants] = useState<CollectionGrant[] | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [links, setLinks] = useState<CollectionLink[] | undefined>(undefined);
+  const [linkRole, setLinkRole] = useState<GrantRole>('viewer');
+  // The raw link is only in this state: the server never returns it again.
+  const [mintedUrl, setMintedUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,10 +47,61 @@ export default function ShareCollectionSheet({
           setGrants([]);
         }
       });
+    void collectionStore
+      .listLinks(collection.id)
+      .then((rows) => {
+        if (!cancelled) {
+          setLinks(rows);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Couldn't load sharing.");
+          setLinks([]);
+        }
+      });
     return () => {
       cancelled = true;
     };
   }, [collection.id]);
+
+  const copyUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+    } catch {
+      // Clipboard can be refused; the URL stays selectable below.
+      setCopied(false);
+    }
+  };
+
+  const createLink = async () => {
+    setError(null);
+    setBusy(true);
+    setCopied(false);
+    try {
+      const created = await collectionStore.createLink(collection.id, linkRole);
+      setLinks(created.links);
+      setMintedUrl(created.url);
+      await copyUrl(created.url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't update sharing.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revokeLink = async (linkId: string) => {
+    setError(null);
+    setBusy(true);
+    try {
+      setLinks(await collectionStore.revokeLink(collection.id, linkId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't update sharing.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const add = async () => {
     setError(null);
@@ -144,6 +201,75 @@ export default function ShareCollectionSheet({
               className={`${dangerBtn} px-3 py-1.5 text-xs`}
             >
               {t('common.remove')}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <h3 className="mt-6 text-sm font-semibold">Share by link</h3>
+      <p className="mt-1 text-sm text-ink-muted">
+        Anyone who already has a Sous account can join with the link until
+        you revoke it or it expires after 7 days. The link is shown only once.
+      </p>
+      <div className="mt-3 flex gap-2">
+        <RoleSelect
+          value={linkRole}
+          onChange={setLinkRole}
+          disabled={busy}
+          label="Role for people who join by link"
+        />
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void createLink()}
+          className={`${secondaryBtn} min-w-0 flex-1 py-2`}
+        >
+          Copy link
+        </button>
+      </div>
+      {mintedUrl !== null && (
+        <div className="mt-3">
+          <label className="text-xs text-ink-muted" htmlFor="minted-collection-link">
+            {copied ? 'Copied. It will not be shown again.' : 'Copy this now. It will not be shown again.'}
+          </label>
+          <div className="mt-1 flex gap-2">
+            <input
+              id="minted-collection-link"
+              readOnly
+              value={mintedUrl}
+              onFocus={(event) => event.currentTarget.select()}
+              className={`${inputClass} min-w-0 flex-1 font-mono text-xs`}
+            />
+            <button
+              type="button"
+              onClick={() => void copyUrl(mintedUrl)}
+              className={`${secondaryBtn} shrink-0 px-3 py-1.5 text-xs`}
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+        </div>
+      )}
+      <ul className="mt-3 flex flex-col gap-2">
+        {links === undefined && (
+          <li className="text-sm text-ink-muted">Loading…</li>
+        )}
+        {links?.length === 0 && (
+          <li className="text-sm text-ink-muted">No live links.</li>
+        )}
+        {links?.map((link) => (
+          <li key={link.id} className="flex items-center justify-between gap-2 text-sm">
+            <span className="min-w-0 flex-1 truncate">
+              {link.role === 'editor' ? 'Editor link' : 'Viewer link'}
+              <span className="text-ink-muted"> · {relativeExpiryLabel(link.expiresAt)}</span>
+            </span>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void revokeLink(link.id)}
+              aria-label={`Revoke this ${link.role} link`}
+              className={`${dangerBtn} px-3 py-1.5 text-xs`}
+            >
+              Revoke
             </button>
           </li>
         ))}

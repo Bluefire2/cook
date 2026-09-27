@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   applyPullChanges,
+  createCollectionLink,
   fetchPhotoBlob,
   fetchPhotoBlobOutcome,
   firstPushRejection,
   leaveSharedCollection,
   normalizeChatChange,
   normalizeCookChange,
+  parseCollectionLinksBody,
   pullSharedPage,
   pushOps,
   SHARED_PARENT_OWNER_SUB_FIELD,
@@ -49,6 +51,47 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe('parseCollectionLinksBody', () => {
+  it('keeps well-formed rows, defaults an unknown role to viewer, and passes the one-time url', () => {
+    expect(
+      parseCollectionLinksBody({
+        url: 'https://sous.example/c/abc',
+        links: [
+          { id: 'a', role: 'editor', createdAt: 1, expiresAt: 2 },
+          { id: 'b', role: 'owner', createdAt: 1, expiresAt: 2 },
+          { id: 'c', createdAt: 'x', expiresAt: 2 },
+          null,
+        ],
+      }),
+    ).toEqual({
+      url: 'https://sous.example/c/abc',
+      links: [
+        { id: 'a', role: 'editor', createdAt: 1, expiresAt: 2 },
+        { id: 'b', role: 'viewer', createdAt: 1, expiresAt: 2 },
+      ],
+    });
+  });
+
+  it('has no url on a list or revoke response, and rejects a body without links', () => {
+    expect(parseCollectionLinksBody({ links: [] })).toEqual({ links: [] });
+    expect(parseCollectionLinksBody({ grants: [] })).toBeNull();
+    expect(parseCollectionLinksBody(null)).toBeNull();
+  });
+});
+
+describe('createCollectionLink', () => {
+  it('posts the role and treats 401 as signed out', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ error: 'Unauthorized' }, 401));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await createCollectionLink('col-1', 'editor');
+    expect(result).toEqual({ kind: 'signedOut' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/collections/col-1/links',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ role: 'editor' }) }),
+    );
+  });
 });
 
 describe('isDiscardedPushReason', () => {
