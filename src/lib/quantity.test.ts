@@ -89,4 +89,15 @@ describe('formatQuantity', () => {
     expect(formatQuantity(1.96)).toBe('1.96');
     expect(formatQuantity(0.999)).toBe('1');
   });
+
+  it('uses the locale decimal separator for the two-decimal fallback only', () => {
+    expect(formatQuantity(0.4, 'en')).toBe('0.4');
+    expect(formatQuantity(0.4, 'uk')).toBe('0,4');
+    expect(formatQuantity(2.4, 'ru')).toBe('2,4');
+    expect(formatQuantity(1.425, 'ru')).toBe('1,43');
+    expect(formatQuantity(0.4, 'zh-Hans')).toBe('0.4');
+    expect(formatQuantity(1.5, 'uk')).toBe('1½');
+    expect(formatQuantity(12, 'uk')).toBe('12');
+    expect(formatQuantity(1200.4, 'uk')).toBe('1200,4');
+  });
 });

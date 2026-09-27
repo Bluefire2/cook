@@ -1,5 +1,29 @@
-import { describe, expect, it } from 'vitest';
-import { relativeAgoLabel, relativeExpiryLabel } from './relativeTime';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { dateFnsLocale, relativeAgoLabel, relativeExpiryLabel } from './relativeTime';
+import { LOCALE_KEY } from './settings';
+
+// The default locale comes from `cook.locale`, then the browser language, so
+// the English cases below pin the stored locale instead of trusting the
+// machine's `navigator.language`.
+beforeAll(() => {
+  const store = new Map<string, string>([[LOCALE_KEY, 'en']]);
+  globalThis.localStorage = {
+    getItem: (key) => store.get(key) ?? null,
+    setItem: (key, value) => {
+      store.set(key, value);
+    },
+    removeItem: (key) => {
+      store.delete(key);
+    },
+    clear: () => {
+      store.clear();
+    },
+    key: (index) => [...store.keys()][index] ?? null,
+    get length() {
+      return store.size;
+    },
+  };
+});
 
 describe('relativeAgoLabel', () => {
   const now = 1_000_000_000_000;
@@ -31,15 +55,56 @@ describe('relativeAgoLabel', () => {
     expect(relativeAgoLabel(now - 10112 * 60_000, now)).toBe('7 days ago');
     expect(relativeAgoLabel(now - 11828 * 60_000, now)).toBe('8 days ago');
   });
+
+  it('speaks the UI language, including the "just now" fallback', () => {
+    const sevenDays = now - 7 * 24 * 60 * 60_000;
+    expect(relativeAgoLabel(sevenDays, now, 'en')).toBe('7 days ago');
+    expect(relativeAgoLabel(sevenDays, now, 'uk')).toBe('7 днів тому');
+    expect(relativeAgoLabel(sevenDays, now, 'ru')).toBe('7 дней назад');
+    expect(relativeAgoLabel(sevenDays, now, 'zh-Hans')).toBe('7 天前');
+    expect(relativeAgoLabel(now + 1, now, 'uk')).toBe('щойно');
+    expect(relativeAgoLabel(now + 1, now, 'ru')).toBe('только что');
+    expect(relativeAgoLabel(now + 1, now, 'zh-Hans')).toBe('刚刚');
+  });
+
+  it('reads the UI language from settings when no locale is passed', () => {
+    localStorage.setItem(LOCALE_KEY, 'uk');
+    try {
+      expect(relativeAgoLabel(now - 5 * 60_000, now)).toBe('5 хвилин тому');
+    } finally {
+      localStorage.setItem(LOCALE_KEY, 'en');
+    }
+  });
 });
 
 describe('relativeExpiryLabel', () => {
   const now = 1_000_000_000_000;
 
   it('describes the last minute, hours, and days', () => {
-    expect(relativeExpiryLabel(now, now)).toBe('expires in under a minute');
-    expect(relativeExpiryLabel(now + 5 * 60_000, now)).toBe('expires in 5 min');
-    expect(relativeExpiryLabel(now + 3 * 60 * 60_000, now)).toBe('expires in 3 h');
+    expect(relativeExpiryLabel(now, now)).toBe('expires in less than a minute');
+    expect(relativeExpiryLabel(now + 5 * 60_000, now)).toBe('expires in 5 minutes');
+    expect(relativeExpiryLabel(now + 3 * 60 * 60_000, now)).toBe('expires in about 3 hours');
     expect(relativeExpiryLabel(now + 7 * 24 * 60 * 60_000, now)).toBe('expires in 7 days');
+  });
+
+  it('never reads as already past, and never throws on a bad value', () => {
+    expect(relativeExpiryLabel(now - 60 * 60_000, now)).toBe('expires in less than a minute');
+    expect(relativeExpiryLabel(Number.NaN, now)).toBe('expires in less than a minute');
+  });
+
+  it('speaks the UI language', () => {
+    const sevenDays = now + 7 * 24 * 60 * 60_000;
+    expect(relativeExpiryLabel(sevenDays, now, 'uk')).toBe('закінчується за 7 днів');
+    expect(relativeExpiryLabel(sevenDays, now, 'ru')).toBe('истекает через 7 дней');
+    expect(relativeExpiryLabel(sevenDays, now, 'zh-Hans')).toBe('7 天内过期');
+  });
+});
+
+describe('dateFnsLocale', () => {
+  it('maps every UI language to a date-fns locale', () => {
+    expect(dateFnsLocale('en').code).toBe('en-US');
+    expect(dateFnsLocale('uk').code).toBe('uk');
+    expect(dateFnsLocale('ru').code).toBe('ru');
+    expect(dateFnsLocale('zh-Hans').code).toBe('zh-CN');
   });
 });

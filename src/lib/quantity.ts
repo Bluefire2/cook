@@ -1,3 +1,6 @@
+import { formatNumber } from '../i18n';
+import type { Locale } from '../i18n/lang';
+
 const UNICODE_FRACTIONS: [number, string][] = [
   [1 / 8, '⅛'],
   [1 / 4, '¼'],
@@ -13,9 +16,10 @@ const UNICODE_FRACTIONS: [number, string][] = [
 /**
  * Formats a (possibly scaled) quantity for display: whole numbers as-is,
  * common fractions as unicode glyphs ("1½"), everything else rounded to
- * two decimals.
+ * two decimals. With a `locale`, the decimal separator follows that
+ * language ("0,4" in `uk`); without one the output is the plain JS number.
  */
-export function formatQuantity(quantity: number): string {
+export function formatQuantity(quantity: number, locale?: Locale): string {
   const whole = Math.floor(quantity);
   const frac = quantity - whole;
 
@@ -27,5 +31,6 @@ export function formatQuantity(quantity: number): string {
     }
   }
 
-  return String(Math.round(quantity * 100) / 100);
+  const rounded = Math.round(quantity * 100) / 100;
+  return locale === undefined ? String(rounded) : formatNumber(rounded, locale);
 }

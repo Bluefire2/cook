@@ -1,4 +1,20 @@
-import { formatDistance } from 'date-fns';
+import { formatDistance, type Locale as DateFnsLocale } from 'date-fns';
+import { enUS, ru, uk, zhCN } from 'date-fns/locale';
+import { translate } from '../i18n';
+import type { Locale } from '../i18n/lang';
+import { settings } from './settings';
+
+const DATE_FNS_LOCALES: Readonly<Record<Locale, DateFnsLocale>> = {
+  en: enUS,
+  uk,
+  ru,
+  'zh-Hans': zhCN,
+};
+
+/** date-fns locale for a UI language; every supported language has one. */
+export function dateFnsLocale(locale: Locale): DateFnsLocale {
+  return DATE_FNS_LOCALES[locale];
+}
 
 /**
  * Past relative time for the invitations menu. date-fns picks the unit
@@ -6,26 +22,29 @@ import { formatDistance } from 'date-fns';
  * timestamp stays "just now", so a row never reads as upcoming and a bad
  * value cannot throw through the admin list.
  */
-export function relativeAgoLabel(at: number, now: number = Date.now()): string {
+export function relativeAgoLabel(
+  at: number,
+  now: number = Date.now(),
+  locale: Locale = settings.getLocale(),
+): string {
   if (!Number.isFinite(at) || !Number.isFinite(now) || at > now) {
-    return 'just now';
+    return translate(locale, 'justNow');
   }
-  return formatDistance(at, now, { addSuffix: true });
+  return formatDistance(at, now, { addSuffix: true, locale: dateFnsLocale(locale) });
 }
 
-/** Future timestamp for an unused invite link. */
-export function relativeExpiryLabel(at: number, now: number = Date.now()): string {
-  const minutes = Math.round((at - now) / 60_000);
-  if (minutes < 1) {
-    return 'expires in under a minute';
-  }
-  if (minutes < 60) {
-    return `expires in ${minutes} min`;
-  }
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) {
-    return `expires in ${hours} h`;
-  }
-  const days = Math.round(hours / 24);
-  return `expires in ${days} days`;
+/** Future timestamp for an unused invite link ("expires in 7 days"). */
+export function relativeExpiryLabel(
+  at: number,
+  now: number = Date.now(),
+  locale: Locale = settings.getLocale(),
+): string {
+  const base = Number.isFinite(now) ? now : Date.now();
+  // date-fns reads an equal instant as past; a 1 ms lead keeps the future wording.
+  const target = Number.isFinite(at) && at > base ? at : base + 1;
+  const distance = formatDistance(target, base, {
+    addSuffix: true,
+    locale: dateFnsLocale(locale),
+  });
+  return translate(locale, 'expiresIn', { in: distance });
 }

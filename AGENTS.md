@@ -288,6 +288,7 @@ plus a matching index line here. `scripts/constitutions.test.ts` checks that
 this index matches each file's frontmatter.
 
 - **Cook log** (`docs/constitutions/cook-log.md`): Dated records of cooking a recipe (rating, servings, notes, lessons, photos), the /cooks journal, and promoting a lesson into recipe notes. Read before changing CookLog data, its sync ops or cascade, its photos, its backup handling, or those screens.
+- **i18n** (`docs/constitutions/i18n.md`): UI language (the src/i18n catalogs, t(), plurals, cook.locale), the Recipe.lang label and normalizeLang, recipe translation at import and on the recipe screen, dictation language, and the in-context translation review. Read before adding or changing any user-facing text, touching Recipe.lang or a language tag, sending recipe text to a translation provider, or changing the language passed to /api/stt.
 
 ## Plans (source of truth for unfinished work)
 
@@ -313,6 +314,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web, extension, evals (`evals/recipeImport.eval.ts`). `api/import.ts` is a 401 stub. Not deployed. |
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
 | `docs/plans/cook-log.md` | Built on `cursor/cook-log-5615` (constitution `docs/constitutions/cook-log.md`). Not deployed. |
+| `docs/plans/i18n.md` | Implementing on `cursor/i18n-implement-5489` (constitution `docs/constitutions/i18n.md`). UI language with `src/i18n/` catalogs, `Recipe.lang`, translation at import and on the recipe screen, dictation language. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
@@ -339,11 +341,29 @@ Chat streaming must not grow `Content-Length` or `Content-Encoding` on
 step 2, with a `sous_session` cookie instead of `x-app-password`, is the
 guard — run it against Cloud Run after a production deploy, not only locally.
 
+## UI text and languages
+
+Any change touching UI copy, `Recipe.lang`, translation, import translation,
+or dictation language must follow `docs/constitutions/i18n.md`.
+
+**UI text rule.** Any change that adds or changes user-facing text must put
+it in the `src/i18n/` catalogs for every supported language (`en`, `uk`,
+`ru`, `zh-Hans`), with no hardcoded strings in screens, components, or
+client `lib/` messages. `src/i18n/en.ts` defines the key set; the other
+catalogs are typed `Messages`, so a missing key fails `tsc`, and the parity
+test in `src/i18n/messages.test.ts` checks plural forms and placeholders.
+Sentences are single catalog strings with named `{params}`, never joined
+fragments; relative times go through `src/lib/relativeTime.ts`.
+
+<!-- Step 2a of docs/plans/i18n.md adds the second part of the UI text rule
+here: the review manifest and the pre-PR in-context translation review. -->
+
 ## Product copy
 
 `/about` is a short public page that says what the app is for. `/privacy`
 and `/terms` describe Firestore + GCS and that there is no on-device recipe
-database. Theme preference and `cook.session` stay in localStorage. Do not
+database. Theme preference, the UI language (`cook.locale`), and
+`cook.session` stay in localStorage. Do not
 describe IndexedDB, offline edits, or a local library. The Chrome extension
 sends rendered page HTML, possibly from a page behind a login, to the server
 and on to Gemini; `/privacy` and `/terms` must describe that before the
