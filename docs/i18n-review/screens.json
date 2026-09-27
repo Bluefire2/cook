@@ -38,7 +38,37 @@
   {
     "id": "import-preview",
     "route": "/import",
-    "setup": "From /import with bulk off and no ?c= query, extract one recipe (a single https URL, or pasted recipe text) and stop when the \"Fix it here before saving\" banner and the form are showing. There is no guessed-language line and no translate checkbox on this screen yet. Do not press Save. Extraction calls Gemini and writes nothing.",
+    "setup": "From /import with bulk off and no ?c= query, extract one recipe (a single https URL, or pasted recipe text) and stop when the \"Fix it here before saving\" banner and the form are showing. Do not press Save. Extraction calls Gemini and writes nothing. The guessed-language line, translate checkbox, failure notice, and pasted-text hint are separate entries.",
+    "needsData": false
+  },
+  {
+    "id": "import-preview-guessed-language",
+    "route": "/import",
+    "setup": "From /import with bulk off and no ?c= query, extract one recipe whose language the import can guess (a single https URL). Stop when the guessed-language line (\"Looks like … Change it if that's wrong.\") and its language select are showing above the form. Do not press Save. Extraction calls Gemini and writes nothing.",
+    "needsData": false
+  },
+  {
+    "id": "import-preview-translate-on",
+    "route": "/import",
+    "setup": "Import preview for a recipe whose language differs from the UI language, with the \"Translate into …\" checkbox checked. The form shows the translated text. Do not press Save. If the extracted language matches the UI language, change the guess to another language and leave the checkbox checked. Extraction calls Gemini and writes nothing.",
+    "needsData": false
+  },
+  {
+    "id": "import-preview-translate-failed",
+    "route": "/import",
+    "setup": "Import preview when translation failed: the notice \"Couldn't translate this recipe. You can save the original.\" is showing, the translate checkbox is absent, and the form shows the original. Do not press Save. If this session cannot produce a failed translation, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "import-preview-pasted-hint",
+    "route": "/import",
+    "setup": "From /import with bulk off, paste recipe text (not a URL) in a language that differs from the UI language and extract. The translate checkbox is checked and its hint \"The original text won't be kept.\" is showing, with notice styling on the guessed-language line. Do not press Save. Extraction calls Gemini and writes nothing.",
+    "needsData": false
+  },
+  {
+    "id": "import-bulk-translate",
+    "route": "/import",
+    "setup": "Import with the bulk-import checkbox on, so the batch \"Translate into …\" checkbox is visible and checked. Do not paste links and do not extract. Bulk extract saves recipes.",
     "needsData": false
   },
   {

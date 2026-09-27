@@ -1,14 +1,14 @@
 import { useCallback, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { t as translateNow, useT } from '../i18n';
-import CreateRecipeForm, {
-  type CreateRecipeSubmitStatus,
-} from '../components/CreateRecipeForm';
+import { languageName, t as translateNow, useLocale, useT } from '../i18n';
+import ImportPreview from '../components/ImportPreview';
+import { type CreateRecipeSubmitStatus } from '../components/CreateRecipeForm';
 import SaveToCollectionSheet from '../components/SaveToCollectionSheet';
 import { collectionStore, libraryHref, useCollections } from '../lib/collectionStore';
 import { resolveCollectionDestination } from '../lib/collectionDestination';
 import { SpinnerIcon } from '../lib/icons';
-import { importRecipe, type ExtractedRecipe } from '../lib/importApi';
+import { importRecipe, type ImportRecipeResult } from '../lib/importApi';
+import { translatedPreviewDraft } from '../lib/importPreview';
 import {
   parseImportInput,
   validateImportInput,
@@ -19,11 +19,12 @@ import { backLink, inputFocus, primaryBtn, secondaryBtn } from '../lib/uiClasses
 const IMPORT_FORM_ID = 'import-recipe-form';
 
 type BulkResult =
-  | { url: string; ok: true; id: string; title: string }
+  | { url: string; ok: true; id: string; title: string; untranslated?: true }
   | { url: string; ok: false; error: string };
 
 export default function ImportScreen() {
   const t = useT();
+  const locale = useLocale();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const collectionId = params.get('c') ?? undefined;
@@ -38,12 +39,13 @@ export default function ImportScreen() {
   const backTo = libraryHref(knownCollectionId);
   const [input, setInput] = useState('');
   const [bulk, setBulk] = useState(false);
+  const [bulkTranslate, setBulkTranslate] = useState(true);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(
     null,
   );
   const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<ExtractedRecipe | null>(null);
+  const [preview, setPreview] = useState<ImportRecipeResult | null>(null);
   const [pendingUrls, setPendingUrls] = useState<string[] | null>(null);
   const [batchDestination, setBatchDestination] = useState<string | null | undefined>();
   const [retrying, setRetrying] = useState(false);
@@ -77,12 +79,28 @@ export default function ImportScreen() {
           if (destinationId && !collectionStore.get(destinationId)) {
             throw new Error(t('import.collectionNotFoundChoose'));
           }
-          const draft = (await importRecipe({ url })).recipe;
+          const imported = await importRecipe(
+            bulkTranslate ? { url, translateTo: locale } : { url },
+          );
+          const untranslated = bulkTranslate && imported.translationFailed === true;
+          const draft =
+            bulkTranslate && imported.translation && !untranslated
+              ? {
+                  ...translatedPreviewDraft(imported.recipe, imported.translation.recipe),
+                  lang: locale,
+                }
+              : imported.recipe;
           const recipe = await recipeStore.create(
             draft,
             destinationId ? { collectionId: destinationId } : undefined,
           );
-          results.push({ url, ok: true, id: recipe.id, title: recipe.title.trim() || url });
+          results.push({
+            url,
+            ok: true,
+            id: recipe.id,
+            title: recipe.title.trim() || url,
+            ...(untranslated ? { untranslated: true as const } : {}),
+          });
         } catch (e) {
           const message = e instanceof Error ? e.message : t('error.importFailed');
           results.push({ url, ok: false, error: message });
@@ -134,13 +152,10 @@ export default function ImportScreen() {
     setBusy(true);
     try {
       setPreview(
-        (
-          await importRecipe(
-            validated.mode === 'url'
-              ? { url: validated.url }
-              : { text: validated.text },
-          )
-        ).recipe,
+        await importRecipe({
+          ...(validated.mode === 'url' ? { url: validated.url } : { text: validated.text }),
+          translateTo: locale,
+        }),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : t('error.importFailed'));
@@ -210,6 +225,9 @@ export default function ImportScreen() {
                       {row.title}
                     </Link>
                     <p className="mt-1 break-all text-ink-subtle">{row.url}</p>
+                    {row.untranslated && (
+                      <p className="mt-1 text-ink-subtle">{t('import.savedUntranslated')}</p>
+                    )}
                   </>
                 ) : (
                   <>
@@ -275,6 +293,22 @@ export default function ImportScreen() {
               </span>
             </span>
           </label>
+          {bulk && (
+            <label className="mt-3 flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                checked={bulkTranslate}
+                disabled={busy || pendingUrls !== null}
+                onChange={(event) => setBulkTranslate(event.target.checked)}
+                className={`mt-1 h-4 w-4 shrink-0 accent-ink disabled:opacity-40 ${inputFocus}`}
+              />
+              <span className="block font-medium text-ink">
+                {t('import.translateInto', {
+                  language: languageName(locale, locale) ?? locale,
+                })}
+              </span>
+            </label>
+          )}
           {error && (
             <p className="mt-2 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
               {error}
@@ -342,8 +376,8 @@ export default function ImportScreen() {
             {t('import.fixBeforeSaving')}
           </div>
 
-          <CreateRecipeForm
-            initial={preview}
+          <ImportPreview
+            result={preview}
             collectionId={collectionId}
             formId={IMPORT_FORM_ID}
             onSubmitStatusChange={onSubmitStatusChange}

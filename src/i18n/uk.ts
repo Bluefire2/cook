@@ -217,6 +217,20 @@ export const uk: Messages = {
     'Схоже, це кілька посилань на рецепти. Увімкніть масовий імпорт, щоб розпізнати їх усі, або вставте одне посилання.',
   'import.bulkLinksOnly': 'Масовий імпорт приймає лише посилання на рецепти, по одному в рядку.',
   'import.bulkCap': 'Масовий імпорт обмежено {max} посиланнями.',
+  'import.looksLike': 'Схоже, що це {language}. Змініть, якщо це не так.',
+  'import.couldNotTellLanguage': 'Не вдалося визначити мову — виберіть її',
+  'import.translateInto': 'Перекласти мовою «{language}»',
+  'import.pastedOriginalNotKept': 'Оригінальний текст не збережеться.',
+  'import.translateFailedNotice': 'Не вдалося перекласти цей рецепт. Ви можете зберегти оригінал.',
+  'import.savedUntranslated': 'Збережено без перекладу',
+  'import.discardEdits': 'Зміна версії відкине правки, які ви внесли. Продовжити?',
+  'import.discardEditsAndPhotos':
+    'Зміна версії відкине правки, які ви внесли, і вибрані вами фото. Продовжити?',
+  'import.translating': 'Перекладаємо…',
+
+  'langPicker.unknown': 'Невідомо',
+  'langPicker.appLanguages': 'Мови програми',
+  'langPicker.allLanguages': 'Усі мови',
 
   'recipeEdit.newRecipe': 'Новий рецепт',
   'recipeEdit.editRecipe': 'Редагувати рецепт',

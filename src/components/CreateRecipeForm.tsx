@@ -11,6 +11,18 @@ import { primaryBtn, secondaryBtn } from '../lib/uiClasses';
 import RecipeForm from './RecipeForm';
 import SaveToCollectionSheet from './SaveToCollectionSheet';
 
+function replaceLang(draft: RecipeDraft, lang: string | undefined): RecipeDraft {
+  if (lang !== undefined) {
+    return { ...draft, lang };
+  }
+  if (draft.lang === undefined) {
+    return draft;
+  }
+  const next = { ...draft };
+  delete next.lang;
+  return next;
+}
+
 export type CreateRecipeSubmitStatus = {
   /** Same disabled condition as the form's own Save button. */
   locked: boolean;
@@ -26,6 +38,10 @@ export default function CreateRecipeForm({
   onCancel,
   formId,
   onSubmitStatusChange,
+  formKey,
+  resolveLang,
+  onEditStateChange,
+  submitLocked,
 }: {
   initial: RecipeDraft;
   collectionId?: string;
@@ -35,6 +51,13 @@ export default function CreateRecipeForm({
   formId?: string;
   /** Header Save state. Pass a stable callback; this runs in a layout effect. */
   onSubmitStatusChange?: (status: CreateRecipeSubmitStatus) => void;
+  /** Remounts the form. RecipeForm copies `initial` into state once. */
+  formKey?: string;
+  /** Replaces `lang` on the draft at save. `undefined` omits it. */
+  resolveLang?: () => string | undefined;
+  onEditStateChange?: (state: { dirty: boolean; photosPicked: boolean }) => void;
+  /** Disables Save without disabling the rest of the form. */
+  submitLocked?: boolean;
 }) {
   const t = useT();
   const collections = useCollections();
@@ -62,11 +85,12 @@ export default function CreateRecipeForm({
   useEffect(() => {
     if (draft && destination.kind === 'choose' && !busy) setChoosing(true);
   }, [draft, destination.kind, busy]);
-  const submitLocked = destination.kind === 'loading' || draft !== null || !canSubmit;
+  const headerLocked =
+    destination.kind === 'loading' || draft !== null || !canSubmit || submitLocked === true;
   const saving = busy && !choosing;
   useLayoutEffect(() => {
-    onSubmitStatusChange?.({ locked: submitLocked, saving });
-  }, [submitLocked, saving, onSubmitStatusChange]);
+    onSubmitStatusChange?.({ locked: headerLocked, saving });
+  }, [headerLocked, saving, onSubmitStatusChange]);
   useEffect(() => {
     if (error) failureRef.current?.scrollIntoView({ block: 'center' });
   }, [error]);
@@ -108,16 +132,20 @@ export default function CreateRecipeForm({
     <>
       <fieldset disabled={destination.kind === 'loading' || draft !== null} className="min-w-0">
         <RecipeForm
+          key={formKey}
           initial={initial}
           formId={formId}
           onCanSubmitChange={setCanSubmit}
+          onEditStateChange={onEditStateChange}
+          submitLocked={submitLocked}
           submitLabel={t('recipeEdit.saveToLibrary')}
           onCancel={onCancel}
           onSubmit={async (pending) => {
+            const next = resolveLang ? replaceLang(pending, resolveLang()) : pending;
             const existingPhotos = new Set(recipePhotoIds(initial));
-            stagedPhotoIds.current = recipePhotoIds(pending).filter((id) => !existingPhotos.has(id));
-            setDraft(pending);
-            await saveDirect(pending);
+            stagedPhotoIds.current = recipePhotoIds(next).filter((id) => !existingPhotos.has(id));
+            setDraft(next);
+            await saveDirect(next);
           }}
         />
       </fieldset>

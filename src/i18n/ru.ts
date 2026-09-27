@@ -214,6 +214,20 @@ export const ru: Messages = {
     'Похоже, это несколько ссылок на рецепты. Включите массовый импорт, чтобы распознать их все, или вставьте одну ссылку.',
   'import.bulkLinksOnly': 'Массовый импорт принимает только ссылки на рецепты, по одной в строке.',
   'import.bulkCap': 'Массовый импорт ограничен {max} ссылками.',
+  'import.looksLike': 'Похоже, что это {language}. Измените, если это не так.',
+  'import.couldNotTellLanguage': 'Не удалось определить язык — выберите его',
+  'import.translateInto': 'Перевести на язык «{language}»',
+  'import.pastedOriginalNotKept': 'Исходный текст не сохранится.',
+  'import.translateFailedNotice': 'Не удалось перевести этот рецепт. Вы можете сохранить оригинал.',
+  'import.savedUntranslated': 'Сохранено без перевода',
+  'import.discardEdits': 'Смена версии отменит правки, которые вы внесли. Продолжить?',
+  'import.discardEditsAndPhotos':
+    'Смена версии отменит правки, которые вы внесли, и выбранные вами фото. Продолжить?',
+  'import.translating': 'Переводим…',
+
+  'langPicker.unknown': 'Неизвестно',
+  'langPicker.appLanguages': 'Языки приложения',
+  'langPicker.allLanguages': 'Все языки',
 
   'recipeEdit.newRecipe': 'Новый рецепт',
   'recipeEdit.editRecipe': 'Редактировать рецепт',

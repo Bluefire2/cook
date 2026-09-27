@@ -223,6 +223,20 @@ export const en = {
     'This looks like several recipe links. Turn on bulk import to extract them all, or paste a single link.',
   'import.bulkLinksOnly': 'Bulk import only accepts recipe links, one per line.',
   'import.bulkCap': 'Bulk import is limited to {max} links.',
+  'import.looksLike': "Looks like {language}. Change it if that's wrong.",
+  'import.couldNotTellLanguage': "Couldn't tell the language — pick one",
+  'import.translateInto': 'Translate into {language}',
+  'import.pastedOriginalNotKept': "The original text won't be kept.",
+  'import.translateFailedNotice': "Couldn't translate this recipe. You can save the original.",
+  'import.savedUntranslated': 'Saved untranslated',
+  'import.discardEdits': 'Switching versions discards your edits. Continue?',
+  'import.discardEditsAndPhotos':
+    'Switching versions discards your edits and the photos you picked. Continue?',
+  'import.translating': 'Translating…',
+
+  'langPicker.unknown': 'Unknown',
+  'langPicker.appLanguages': 'App languages',
+  'langPicker.allLanguages': 'All languages',
 
   'recipeEdit.newRecipe': 'New recipe',
   'recipeEdit.editRecipe': 'Edit recipe',

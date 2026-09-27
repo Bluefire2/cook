@@ -184,6 +184,10 @@ function unitKey(sectionIndex: number, itemIndex: number): string {
   return `${sectionIndex}-${itemIndex}`;
 }
 
+function idList(ids: readonly string[] | undefined): string {
+  return (ids ?? []).join('\0');
+}
+
 function Field({
   label,
   children,
@@ -274,6 +278,8 @@ export default function RecipeForm({
   onCancel,
   formId,
   onCanSubmitChange,
+  onEditStateChange,
+  submitLocked,
 }: {
   /** Starting values. Use a blank draft for create-from-scratch. */
   initial: RecipeDraft;
@@ -287,8 +293,13 @@ export default function RecipeForm({
   /** Mirrors whether the submit button is enabled, for a header Save.
    * Pass a stable callback; this runs in a layout effect. */
   onCanSubmitChange?: (canSubmit: boolean) => void;
+  /** Import preview: edits, and whether a remount would drop picked photos. */
+  onEditStateChange?: (state: { dirty: boolean; photosPicked: boolean }) => void;
+  /** Keeps Save disabled while a preview translation is in flight. */
+  submitLocked?: boolean;
 }): ReactElement {
   const [form, setForm] = useState(() => fromDraft(initial));
+  const baseline = useRef(form);
   const [photoId, setPhotoId] = useState(initial.photoId);
   const [picked, setPicked] = useState<File>();
   const [galleryPhotoIds, setGalleryPhotoIds] = useState(
@@ -376,10 +387,20 @@ export default function RecipeForm({
   const showSectionChrome =
     form.sections.length > 1 || form.sections.some((s) => s.name.trim() !== '');
 
-  const canSubmit = form.title.trim() !== '' && !busy;
+  const canSubmit = form.title.trim() !== '' && !busy && submitLocked !== true;
   useLayoutEffect(() => {
     onCanSubmitChange?.(canSubmit);
   }, [canSubmit, onCanSubmitChange]);
+
+  const photosPicked = picked !== undefined || galleryPicked.length > 0;
+  const dirty =
+    JSON.stringify(form) !== JSON.stringify(baseline.current) ||
+    photoId !== initial.photoId ||
+    idList(galleryPhotoIds) !== idList(initial.galleryPhotoIds) ||
+    photosPicked;
+  useLayoutEffect(() => {
+    onEditStateChange?.({ dirty, photosPicked });
+  }, [dirty, photosPicked, onEditStateChange]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
