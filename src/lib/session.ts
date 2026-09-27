@@ -19,6 +19,7 @@ type SessionSnapshot = {
 
 let snapshot: SessionSnapshot = { user: null, status: 'loading' };
 const listeners = new Set<() => void>();
+const sessionResetListeners = new Set<() => void>();
 
 function emit(): void {
   for (const listener of listeners) {
@@ -43,11 +44,29 @@ function readCachedUser(): SessionUser | null {
   return null;
 }
 
+export function onSessionReset(listener: () => void): () => void {
+  sessionResetListeners.add(listener);
+  return () => {
+    sessionResetListeners.delete(listener);
+  };
+}
+
+function notifySessionReset(): void {
+  for (const listener of sessionResetListeners) {
+    try {
+      listener();
+    } catch {
+      // isolate listener failures
+    }
+  }
+}
+
 export function invalidateSession(): void {
   localStorage.removeItem(SESSION_CACHE_KEY);
   snapshot = { user: null, status: 'signedOut' };
   emit();
   clearLibrary();
+  notifySessionReset();
 }
 
 export async function fetchSession(): Promise<FetchSessionResult> {
