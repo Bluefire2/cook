@@ -1,0 +1,6 @@
+https://www.recipetineats.com/chicken-chow-mein/
+# Site: RecipeTin Eats
+# Recipe: Chow Mein
+# Author: Nagi Maehashi (RecipeTin Eats)
+# Rights: Content belongs to its author and publisher; cached here only so evals run offline.
+# Fetched 2026-09-23 with curl (desktop Chrome UA): HTTP 200

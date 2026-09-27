@@ -20,7 +20,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { POST as chatPost } from '../api/chat.ts';
-import { POST as importPost } from '../api/import.ts';
+import { importPost } from '../server/importRoute.ts';
 import {
   authCallbackGoogle,
   authSession,
@@ -36,6 +36,7 @@ import {
   adminRequestsGet,
 } from '../server/admin.ts';
 import { accessRequestPost } from '../server/access.ts';
+import { extensionImport, extensionImportOptions } from '../server/extensionImport.ts';
 import { inviteLandingGet } from '../server/invites.ts';
 import { withMembership } from '../server/membership.ts';
 import { photosGet, photosPost } from '../server/photos.ts';
@@ -72,6 +73,8 @@ const apiRoutes: ApiRoute[] = [
   { method: 'GET', path: '/api/sync/pull', handler: syncPull },
   { method: 'GET', path: '/api/sync/shared', handler: syncSharedPull },
   { method: 'POST', path: '/api/sync/push', handler: syncPush },
+  { method: 'POST', path: '/api/extension/import', handler: extensionImport },
+  { method: 'OPTIONS', path: '/api/extension/import', handler: extensionImportOptions },
 ];
 
 const PUBLIC_HTML: Record<string, string> = {

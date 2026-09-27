@@ -9,4 +9,5 @@ docs
 .env*
 *.local
 .DS_Store
+extension
 gha-creds-*.json

@@ -22,7 +22,9 @@
     "vite.config.ts",
     "vitest.config.ts",
     "vitest.eval.config.ts",
+    "evals",
     "scripts",
-    "server"
+    "server",
+    "test"
   ]
 }

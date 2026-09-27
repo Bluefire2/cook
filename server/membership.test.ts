@@ -286,12 +286,13 @@ describe('architecture lock', () => {
     expect(serverTs.includes('handler: importPost')).toBe(false);
   });
 
-  it('assertion 6: authorizedSub in exactly three files with fixed counts', () => {
+  // api/import.ts is a 401 stub; Cloud Run's import route (server/importRoute.ts)
+  // has no session fallback to bypass, so it must not mention authorizedSub.
+  it('assertion 6: authorizedSub in exactly two files with fixed counts', () => {
     const sources = productionSources();
     expectProductionScanReady(sources);
     const expectedCounts: Record<string, number> = {
       'api/chat.ts': 5,
-      'api/import.ts': 5,
       'server/membership.ts': 2,
     };
     const allowed = new Set(Object.keys(expectedCounts));

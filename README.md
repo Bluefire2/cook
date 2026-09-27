@@ -165,6 +165,78 @@ API on `PORT` (8080 by default). That is what the container runs.
 `npm run build` type-checks everything, including `api/`, `server/`, and
 `scripts/`, which the running dev servers do not — run it before deploying.
 
+## The Chrome extension
+
+[`extension/`](extension) is an unpacked MV3 extension that imports the recipe
+page you are looking at, straight into your library — one button, no review
+step. It is plain JavaScript with no build step, so nothing in `npm run build`
+or the container image touches it.
+
+**Load it**
+
+1. `chrome://extensions` → turn on **Developer mode** → **Load unpacked** →
+   pick the `extension/` directory.
+2. Sign in to Sous in that browser profile.
+3. Open a recipe page, click the toolbar icon, click **Import to Sous**.
+
+It posts to `POST /api/extension/import`, which extracts with Gemini and writes
+the recipe to Firestore under your account; your devices pick it up on their
+next sync, and the popup links straight to it. **That route has to be deployed
+for the production origin to work** — against a local checkout the extension
+talks to `http://localhost:5173`, which needs both `npm run dev` and
+`npm run dev:api` running.
+
+It tries `localhost` before production and only falls through to the next
+origin when the connection is refused, so a local run never posts your test
+imports into the real library.
+
+| Permission | Why |
+| --- | --- |
+| `cookies` | Reads the `sous_session` cookie for the two Sous origins and sends it as `X-Sous-Session`. The cookie is `SameSite=Lax`, so relying on the browser to attach it to an extension request would be relying on a browser implementation detail. |
+| `activeTab` + `scripting` | Grabs the rendered HTML of the tab you invoked it on, which is what makes it work on sites the server cannot fetch. No `<all_urls>`: access is granted per invocation. |
+| `storage` | Keeps per-tab import state in `chrome.storage.session`, so closing the popup mid-import does not lose the run. |
+| `host_permissions` | `https://sous.kyrylo.lol/*` and `http://localhost/*` — the localhost pattern is port-wide because cookies are not port-scoped and `chrome.cookies.get` has to match it. |
+
+The extension sends the page's HTML to the server, which forwards a trimmed
+version to Gemini, exactly as pasting the page into the import screen would.
+
+## The Chrome extension
+
+[`extension/`](extension) is an unpacked MV3 extension that imports the recipe
+page you are looking at, straight into your library — one button, no review
+step. It is plain JavaScript with no build step, so nothing in `npm run build`
+or the container image touches it.
+
+**Load it**
+
+1. `chrome://extensions` → turn on **Developer mode** → **Load unpacked** →
+   pick the `extension/` directory.
+2. Sign in to Sous in that browser profile.
+3. Open a recipe page, click the toolbar icon, click **Import to Sous**.
+
+It posts to `POST /api/extension/import`, which extracts with Gemini and writes
+the recipe to Firestore under your account; your devices pick it up on their
+next sync, and the popup links straight to it. **That route has to be deployed
+for the production origin to work** — against a local checkout the extension
+talks to `http://localhost:5173`, which needs both `npm run dev` and
+`npm run dev:api` running.
+
+It tries `localhost` before production and only falls through to the next
+origin when the connection is refused, so a local run never posts your test
+imports into the real library.
+
+| Permission | Why |
+| --- | --- |
+| `cookies` | Reads the `sous_session` cookie for the two Sous origins and sends it as `X-Sous-Session`. The cookie is `SameSite=Lax`, so relying on the browser to attach it to an extension request would be relying on a browser implementation detail. |
+| `activeTab` + `scripting` | Grabs the rendered HTML of the tab you invoked it on, which is what makes it work on sites the server cannot fetch. No `<all_urls>`: access is granted per invocation. |
+| `storage` | Keeps per-tab import state in `chrome.storage.session`, so closing the popup mid-import does not lose the run. |
+| `host_permissions` | `https://sous.kyrylo.lol/*` and `http://localhost/*` — the localhost pattern is port-wide because cookies are not port-scoped and `chrome.cookies.get` has to match it. |
+
+The extension sends the page's HTML to the server, which forwards a trimmed
+version to Gemini, exactly as pasting the page into the import screen would.
+If it cannot read the tab, that is an error — the server never fetches the
+URL on its behalf.
+
 ## Environment variables
 
 All of these are **server-side only**. They belong in `.env.local` for local dev
@@ -268,12 +340,16 @@ is untouched. Chat and import there return 401.
 
 ```
 api/chat.ts               streaming Gemini proxy + the update_recipe tool
-api/import.ts             URL fetch, JSON-LD extraction, Gemini extraction
+api/import.ts             Vercel-only stub; always 401
+server/recipeImport.ts    import pipeline: page fetch, JSON-LD/region extraction, Gemini, cleanup
+server/importRoute.ts     POST /api/import: URL or pasted text in, recipe draft out
+extension/                Chrome extension: import the page you are reading
 server/stt.ts             Ask dictation: raw audio in, `{ text }` out via Gemini
 server/auth.ts            Google OAuth and session cookie
 server/sync.ts            Firestore pull/push
 server/photos.ts          GCS staged upload and download
 server/store.ts           Firestore paths and mutation helpers
+server/extensionImport.ts Chrome extension import: extract a page and save it
 scripts/server.ts         production server: server/ + api/ + static dist/
 scripts/dev-api-server.ts same listener, static serving off, port 3001
 Dockerfile                multi-stage image; CMD node scripts/server.ts
@@ -292,10 +368,12 @@ HTTP lives in [`src/lib/adminApi.ts`](src/lib/adminApi.ts).
 Two details that are easy to trip over:
 
 - The recipe JSON schema Gemini fills in is duplicated verbatim between
-  [`api/chat.ts`](api/chat.ts) and [`api/import.ts`](api/import.ts), because
-  Vercel transpiles each `api/` entrypoint in isolation and cannot import a
-  sibling helper. The two copies must stay in sync, and neither has a
-  compile-time relationship to the `RecipeDraft` type.
+  [`api/chat.ts`](api/chat.ts) and
+  [`server/recipeImport.ts`](server/recipeImport.ts), because Vercel
+  transpiles each `api/` entrypoint in isolation and cannot import a sibling
+  helper. The two copies must stay in sync. Import's output type,
+  `ImportedRecipe`, has a compile-time check against `RecipeDraft` in
+  `server/recipeImport.test.ts`; chat's has none.
 - `/api/chat` streams **plain text**, then a Record Separator (`0x1E`), then
   any proposal JSON (or empty), then a final `0x1E` that marks a clean end.
   That is why there is no SSE framing: the client splits on `\x1E`, renders the

@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createHmac } from 'node:crypto';
 import { sessionSub as chatSessionSub } from './chat';
-import { sessionSub as importSessionSub } from './import';
 
 const SECRET = 'gate-test-secret';
 
@@ -21,7 +20,6 @@ function reqWithCookie(token: string | null): Request {
 
 const runners = [
   { name: 'chat', fn: chatSessionSub },
-  { name: 'import', fn: importSessionSub },
 ] as const;
 
 beforeEach(() => {

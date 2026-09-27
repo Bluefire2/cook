@@ -3,8 +3,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
-// Load .env.local before test files import api/import.ts, which reads
-// CHAT_MODEL at module scope. Do not log values.
+// Load .env.local so the evals get GEMINI_API_KEY and CHAT_MODEL, the same
+// env dev:api reads. Do not log values.
 const envPath = join(dirname(fileURLToPath(import.meta.url)), '.env.local');
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, 'utf8').split('\n')) {
@@ -31,7 +31,7 @@ if (existsSync(envPath)) {
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/**/*.eval.ts'],
+    include: ['evals/**/*.eval.ts'],
     testTimeout: 120_000,
     fileParallelism: false,
   },
