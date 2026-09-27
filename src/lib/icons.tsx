@@ -51,6 +51,25 @@ export function FolderIcon({ className }: { className?: string }) {
   );
 }
 
+export function SharedIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <circle cx="8" cy="8" r="3" />
+      <circle cx="16" cy="16" r="3" />
+      <path d="M10.5 10.5 13.5 13.5" />
+    </svg>
+  );
+}
+
 export function SpinnerIcon({ className }: { className?: string }) {
   return (
     <svg

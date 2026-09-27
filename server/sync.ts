@@ -1,3 +1,10 @@
+import {
+  deleteCollectionWithGrants,
+  listLiveIncomingShares,
+  readLiveIncomingShare,
+  readSharedAuthorizationScope,
+  sharingOwnerAdmitted,
+} from './grants.ts';
 import { drainGcsDeletes } from './photos.ts';
 import {
   membershipUnauthorized,
@@ -6,26 +13,47 @@ import {
   storeUnavailable,
 } from './membership.ts';
 import {
+  buildSharedPullPage,
+  decodeSharedCursor,
+  encodeSharedCursor,
+  SHARED_SNAPSHOT_CHANGED_ERROR,
+  SHARED_SNAPSHOT_CHANGED_STATUS,
+} from './sharedPull.ts';
+import {
+  addedCollectionRecipeIds,
   cascadeRecipeDelete,
   clearChatForRecipe,
   compactCollectionFields,
+  compactCookLogFields,
   compactRecipeFields,
   countLiveNamedCollections,
   decodePullCursor,
   isKnownPushKind,
   isLiveDoc,
   listChangedSince,
-  namedCollectionCreateCapReason,
+  MAX_NAMED_COLLECTIONS,
   putDoc,
   readDocData,
+  readDocsData,
+  readTombstonedRecipeIds,
+  recipeIdsWithoutTombstones,
+  chatCookPullFields,
   tombstoneDoc,
   tombstonePhotoWithGcs,
   type PullCursor,
+  type PushRejectReason,
   type StoreKind,
   validatePushOp,
 } from './store.ts';
 
-const STORE_KINDS: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos', 'collections'];
+export const STORE_KINDS: StoreKind[] = [
+  'recipes',
+  'chatMessages',
+  'cookState',
+  'photos',
+  'collections',
+  'cookLogs',
+];
 
 const MAX_PUSH_OPS = 50;
 const MAX_PUSH_BYTES = 1_000_000;
@@ -40,10 +68,13 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<string, unknown> {
+export function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<string, unknown> {
   const deletedAt = doc.deletedAt;
   if (deletedAt !== undefined && deletedAt !== null) {
     return { id: doc.id, deletedAt };
+  }
+  if (kind === 'chatMessages' || kind === 'cookState') {
+    return chatCookPullFields(doc);
   }
   const copy = { ...doc };
   delete copy.serverUpdatedAt;
@@ -53,6 +84,9 @@ function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<stri
   }
   if (kind === 'collections') {
     return compactCollectionFields(copy);
+  }
+  if (kind === 'cookLogs') {
+    return compactCookLogFields(copy);
   }
   if (kind === 'photos') {
     return {
@@ -102,6 +136,7 @@ export async function syncPull(req: Request): Promise<Response> {
     cookState: [],
     photos: [],
     collections: [],
+    cookLogs: [],
   };
 
   let nextCursor: PullCursor = { ...cursor };
@@ -131,14 +166,14 @@ export async function syncPull(req: Request): Promise<Response> {
 export type PushResult = {
   index: number;
   applied: boolean;
-  reason?: string;
+  reason?: PushRejectReason;
   current?: Record<string, unknown>;
 };
 
 export async function applyPushOp(
   uid: string,
   op: { kind: string; payload: unknown },
-): Promise<{ applied: boolean; reason?: string; current?: Record<string, unknown> }> {
+): Promise<{ applied: boolean; reason?: PushRejectReason; current?: Record<string, unknown> }> {
   if (!isKnownPushKind(op.kind)) {
     return { applied: false, reason: 'unknown' };
   }
@@ -193,17 +228,43 @@ export async function applyPushOp(
       const existing = await readDocData(uid, 'collections', id);
       if (!isLiveDoc(existing)) {
         const live = await countLiveNamedCollections(uid);
-        const cap = namedCollectionCreateCapReason(live);
-        if (cap) {
-          return { applied: false, reason: cap };
+        if (live >= MAX_NAMED_COLLECTIONS) {
+          return { applied: false, reason: 'cap' };
         }
       }
       const compact = compactCollectionFields(body);
-      return putDoc(uid, 'collections', id, compact, updatedAt);
+      const recipeIds = Array.isArray(compact.recipeIds)
+        ? compact.recipeIds.filter((recipeId): recipeId is string => typeof recipeId === 'string')
+        : [];
+      const addedRecipeIds = addedCollectionRecipeIds(existing, recipeIds);
+      // This preflight is intentionally outside putDoc's transaction. A concurrent
+      // recipe delete may briefly win this race, but its membership cascade converges.
+      const tombstonedRecipeIds = await readTombstonedRecipeIds(uid, addedRecipeIds);
+      return putDoc(
+        uid,
+        'collections',
+        id,
+        {
+          ...compact,
+          recipeIds: recipeIdsWithoutTombstones(recipeIds, tombstonedRecipeIds),
+        },
+        updatedAt,
+      );
     }
     case 'collection.delete': {
       const body = payload as { id: string; updatedAt: number };
-      return tombstoneDoc(uid, 'collections', body.id, body.updatedAt);
+      return deleteCollectionWithGrants(uid, body.id, body.updatedAt);
+    }
+    case 'cookLog.put': {
+      const body = payload as Record<string, unknown>;
+      const id = body.id as string;
+      const updatedAt = body.updatedAt as number;
+      const compact = compactCookLogFields(body);
+      return putDoc(uid, 'cookLogs', id, compact, updatedAt);
+    }
+    case 'cookLog.delete': {
+      const body = payload as { id: string; updatedAt: number };
+      return tombstoneDoc(uid, 'cookLogs', body.id, body.updatedAt);
     }
     default:
       return { applied: false, reason: 'unknown' };
@@ -276,6 +337,77 @@ export async function syncPush(req: Request): Promise<Response> {
   return jsonResponse({ results });
   } catch (err) {
     console.error('syncPush store error:', err);
+    return storeUnavailable();
+  }
+}
+
+export async function syncSharedPull(req: Request): Promise<Response> {
+  const access = await requireMember(req);
+  if (access.kind === 'denied') {
+    return membershipUnauthorized();
+  }
+  if (access.kind === 'unknown') {
+    return membershipUnavailable();
+  }
+
+  try {
+    const url = new URL(req.url);
+    const limitRaw = url.searchParams.get('limit');
+    let limit = 200;
+    if (limitRaw !== null) {
+      const parsed = Number(limitRaw);
+      if (Number.isFinite(parsed)) {
+        limit = Math.min(500, Math.max(1, Math.floor(parsed)));
+      }
+    }
+    const decoded = decodeSharedCursor(
+      url.searchParams.get('cursor'),
+      access.sub,
+    );
+    if (decoded.kind === 'reject') {
+      return jsonResponse(
+        { error: SHARED_SNAPSHOT_CHANGED_ERROR },
+        SHARED_SNAPSHOT_CHANGED_STATUS,
+      );
+    }
+    const page = await buildSharedPullPage({
+      viewerSub: access.sub,
+      cursor:
+        decoded.kind === 'start'
+          ? { kind: 'start' }
+          : {
+              kind: 'continue',
+              generation: decoded.cursor.generation,
+              grantId: decoded.cursor.grantId,
+              recipeId: decoded.cursor.recipeId,
+            },
+      limit,
+      listLiveIncomingShares,
+      readLiveIncomingShare,
+      ownerAdmitted: sharingOwnerAdmitted,
+      readDocData,
+      readDocsData,
+      readAuthorizationScope: readSharedAuthorizationScope,
+    });
+    if (page.kind === 'snapshot-changed') {
+      return jsonResponse(
+        { error: SHARED_SNAPSHOT_CHANGED_ERROR },
+        SHARED_SNAPSHOT_CHANGED_STATUS,
+      );
+    }
+    return jsonResponse({
+      changes: page.changes,
+      cursorToken: encodeSharedCursor({
+        v: 1,
+        viewerSub: access.sub,
+        generation: page.generation,
+        grantId: page.cursor.grantId,
+        recipeId: page.cursor.recipeId,
+      }),
+      hasMore: page.hasMore,
+    });
+  } catch (err) {
+    console.error('syncSharedPull store error:', err);
     return storeUnavailable();
   }
 }

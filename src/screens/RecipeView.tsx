@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import ChatPanel from '../components/ChatPanel';
+import CookLogCard from '../components/CookLogCard';
+import { useCookLogs } from '../lib/cookLogStore';
 import { usePhotoUrl } from '../lib/photoStore';
-import { useRecipe } from '../lib/recipeStore';
+import { recipeStore, useRecipe } from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
 import { sync } from '../lib/syncEngine';
-import { backLink, ghostBtn } from '../lib/uiClasses';
+import { backLink, ghostBtn, secondaryBtn } from '../lib/uiClasses';
 import { useWakeLock } from '../lib/useWakeLock';
 import { useCookState } from '../lib/useCookState';
 import type { Ingredient } from '../lib/types';
@@ -63,6 +65,7 @@ export default function RecipeView() {
     checkedItemNames,
   } = useCookState(recipe);
   const [chatOpen, setChatOpen] = useState(false);
+  const cookLogs = useCookLogs(recipe?.id) ?? [];
 
   /**
    * A link from the Chrome extension is the first this device hears of a recipe
@@ -100,6 +103,7 @@ export default function RecipeView() {
     );
   }
 
+  const shared = recipeStore.isShared(recipe.id);
   const scale = servings / recipe.servings;
   const source = sourceLink(recipe.sourceUrl);
 
@@ -110,9 +114,11 @@ export default function RecipeView() {
           <Link to="/" className={backLink}>
             &larr; Library
           </Link>
-          <Link to={`/recipe/${recipe.id}/edit`} className={ghostBtn}>
-            Edit
-          </Link>
+          {!shared && (
+            <Link to={`/recipe/${recipe.id}/edit`} className={ghostBtn}>
+              Edit
+            </Link>
+          )}
         </div>
         {photoUrl && (
           <img
@@ -236,16 +242,24 @@ export default function RecipeView() {
           })}
         </ol>
         {currentStep >= recipe.steps.length && (
-          <p className="mt-4 text-center font-medium text-amber-600">
-            Done — enjoy!
-          </p>
+          <div className="mt-4 text-center">
+            <p className="font-medium text-amber-600">Done — enjoy!</p>
+            {!shared && (
+              <Link
+                to={`/recipe/${recipe.id}/cooks/new`}
+                className={`${secondaryBtn} mt-3 inline-block px-5 py-2`}
+              >
+                Log this cook
+              </Link>
+            )}
+          </div>
         )}
       </section>
 
       {recipe.notes && (
         <section className="mt-6">
           <h2 className="text-lg font-semibold">Notes</h2>
-          <p className="mt-2 rounded-lg bg-surface px-3 py-3 text-ink-muted shadow-sm">
+          <p className="mt-2 rounded-lg bg-surface px-3 py-3 whitespace-pre-line text-ink-muted shadow-sm">
             {recipe.notes}
           </p>
         </section>
@@ -256,6 +270,31 @@ export default function RecipeView() {
           {recipe.galleryPhotoIds.map((id) => (
             <GalleryImage key={id} photoId={id} />
           ))}
+        </section>
+      )}
+
+      {!shared && (
+        <section className="mt-6">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">
+              Your cooks
+              {cookLogs.length > 0 && (
+                <span className="ml-2 font-normal text-ink-subtle">{cookLogs.length}</span>
+              )}
+            </h2>
+            <Link to={`/recipe/${recipe.id}/cooks/new`} className={ghostBtn}>
+              Log a cook
+            </Link>
+          </div>
+          {cookLogs.length > 0 && (
+            <ul className="mt-2 flex flex-col gap-3">
+              {cookLogs.map((log) => (
+                <li key={log.id}>
+                  <CookLogCard log={log} recipe={recipe} />
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
 
@@ -285,6 +324,7 @@ export default function RecipeView() {
       {chatOpen && (
         <ChatPanel
           recipe={recipe}
+          readOnly={shared}
           cookingState={{
             servings,
             currentStep: currentStep + 1,

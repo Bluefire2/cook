@@ -1,16 +1,19 @@
+import { formatDistance } from 'date-fns';
+
 /**
- * The "Synced N min ago" idiom from Settings, extracted so the /admin screen
- * uses the same relative-time label instead of growing a second one.
+ * Past relative time for the invitations menu. date-fns picks the unit
+ * (minutes, hours, days, and beyond) from the delta. A future or unusable
+ * timestamp stays "just now", so a row never reads as upcoming and a bad
+ * value cannot throw through the admin list.
  */
-export function relativeMinutesLabel(at: number, now: number = Date.now()): string {
-  const minutes = Math.round((now - at) / 60_000);
-  if (minutes < 1) {
+export function relativeAgoLabel(at: number, now: number = Date.now()): string {
+  if (!Number.isFinite(at) || !Number.isFinite(now) || at > now) {
     return 'just now';
   }
-  return `${minutes} min ago`;
+  return formatDistance(at, now, { addSuffix: true });
 }
 
-/** Future timestamp for unused invite expiry, matching the same rounding. */
+/** Future timestamp for an unused invite link. */
 export function relativeExpiryLabel(at: number, now: number = Date.now()): string {
   const minutes = Math.round((at - now) / 60_000);
   if (minutes < 1) {

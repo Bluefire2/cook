@@ -1,6 +1,27 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyPushOp, syncPull, syncPush } from './sync.ts';
-import { compareMutation, decodePullCursor, encodePullCursor, validatePushOp } from './store.ts';
+import { FULL_COOK_LOG, FULL_COOK_LOG_UNCOMPACTED } from '../test/cookLogFixtures.ts';
+import { SESSION_COOKIE_NAME, signSession } from './session.ts';
+import {
+  encodeSharedCursor,
+  SHARED_SNAPSHOT_CHANGED_ERROR,
+  SHARED_SNAPSHOT_CHANGED_STATUS,
+} from './sharedPull.ts';
+import { planCollectionGrantDelete } from './grants.ts';
+import {
+  applyPushOp,
+  docToChange,
+  STORE_KINDS,
+  syncPull,
+  syncPush,
+  syncSharedPull,
+} from './sync.ts';
+import {
+  compareMutation,
+  decodePullCursor,
+  encodePullCursor,
+  isKnownPushKind,
+  validatePushOp,
+} from './store.ts';
 
 beforeEach(() => {
   process.env.SESSION_SECRET = 'test-secret-for-session-hmac';
@@ -56,9 +77,163 @@ describe('applyPushOp unknown kind', () => {
   });
 });
 
+describe('applyPushOp cook log ops', () => {
+  it('are known kinds', () => {
+    expect(isKnownPushKind('cookLog.put')).toBe(true);
+    expect(isKnownPushKind('cookLog.delete')).toBe(true);
+  });
+
+  it('rejects an invalid cookLog.put before touching the store', async () => {
+    const result = await applyPushOp('sub-1', {
+      kind: 'cookLog.put',
+      payload: { ...FULL_COOK_LOG, cookedOn: '2026-02-30' },
+    });
+    expect(result).toEqual({ applied: false, reason: 'invalid' });
+  });
+
+  it('rejects an invalid cookLog.delete before touching the store', async () => {
+    const result = await applyPushOp('sub-1', {
+      kind: 'cookLog.delete',
+      payload: { id: FULL_COOK_LOG.id },
+    });
+    expect(result).toEqual({ applied: false, reason: 'invalid' });
+  });
+});
+
+describe('pull kinds', () => {
+  it('pulls every store kind, including cookLogs', () => {
+    expect(STORE_KINDS).toEqual([
+      'recipes',
+      'chatMessages',
+      'cookState',
+      'photos',
+      'collections',
+      'cookLogs',
+    ]);
+  });
+
+  it('compacts a live cook log doc and strips server fields', () => {
+    expect(
+      docToChange('cookLogs', { ...FULL_COOK_LOG_UNCOMPACTED, serverUpdatedAt: 9 }),
+    ).toEqual(FULL_COOK_LOG);
+  });
+
+  it('returns a cook log tombstone as id and deletedAt', () => {
+    expect(
+      docToChange('cookLogs', { id: 'l1', updatedAt: 5, deletedAt: 5, serverUpdatedAt: 9 }),
+    ).toEqual({ id: 'l1', deletedAt: 5 });
+  });
+});
+
 describe('syncPull unauthorized', () => {
   it('returns 401 without cookie', async () => {
     const res = await syncPull(new Request('http://localhost/api/sync/pull'));
     expect(res.status).toBe(401);
+  });
+});
+
+describe('planCollectionGrantDelete', () => {
+  it('applies a delete of a live collection without using the client clock as the cascade', () => {
+    expect(planCollectionGrantDelete({ updatedAt: 50 }, 100)).toEqual({ kind: 'apply' });
+    expect(planCollectionGrantDelete({ updatedAt: 100, deletedAt: null }, 100)).toEqual({
+      kind: 'apply',
+    });
+  });
+
+  it('heals a canonical tombstone at its stored grantCascadeAt', () => {
+    expect(
+      planCollectionGrantDelete(
+        { updatedAt: 200, deletedAt: 200, grantCascadeAt: 900 },
+        100,
+      ),
+    ).toEqual({ kind: 'heal', grantCascadeAt: 900, writeCollection: false });
+    expect(
+      planCollectionGrantDelete(
+        { updatedAt: 100, deletedAt: 100, grantCascadeAt: 900 },
+        100,
+      ),
+    ).toEqual({ kind: 'heal', grantCascadeAt: 900, writeCollection: true });
+  });
+
+  it('does not revoke a newer live collection', () => {
+    expect(planCollectionGrantDelete({ updatedAt: 200 }, 100)).toEqual({ kind: 'reject' });
+  });
+
+  it('does not revoke a missing or malformed collection and does not fall back to the client clock', () => {
+    expect(planCollectionGrantDelete(undefined, 100)).toEqual({ kind: 'tombstone-only' });
+    expect(planCollectionGrantDelete({}, 100)).toEqual({ kind: 'tombstone-only' });
+    expect(planCollectionGrantDelete({ updatedAt: 50, deletedAt: 40 }, 100)).toEqual({
+      kind: 'tombstone-only',
+    });
+    expect(planCollectionGrantDelete({ updatedAt: 200, deletedAt: 199 }, 100)).toEqual({
+      kind: 'reject',
+    });
+    expect(planCollectionGrantDelete({ updatedAt: 200, deletedAt: 200 }, 100)).toEqual({
+      kind: 'reject',
+    });
+  });
+});
+
+describe('syncSharedPull snapshot change', () => {
+  function memberRequest(url: string): Request {
+    const token = signSession(
+      { sub: 'owner-sub', email: 'allowed@example.com' },
+      Date.now(),
+    );
+    return new Request(url, {
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${token}` },
+    });
+  }
+
+  async function expectRestart(cursor: string): Promise<void> {
+    const res = await syncSharedPull(
+      memberRequest(
+        `http://localhost/api/sync/shared?cursor=${encodeURIComponent(cursor)}`,
+      ),
+    );
+    expect(res.status).toBe(SHARED_SNAPSHOT_CHANGED_STATUS);
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(403);
+    expect(await res.json()).toEqual({ error: SHARED_SNAPSHOT_CHANGED_ERROR });
+  }
+
+  it('returns 401 without a session', async () => {
+    const res = await syncSharedPull(new Request('http://localhost/api/sync/shared'));
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects an unsigned positional cursor and a cursor for another viewer', async () => {
+    const legacy = Buffer.from(
+      JSON.stringify({ grantId: 'grant-a', recipeId: 'recipe-9' }),
+      'utf8',
+    ).toString('base64url');
+    await expectRestart(legacy);
+    await expectRestart('%%%');
+    await expectRestart(
+      encodeSharedCursor({
+        v: 1,
+        viewerSub: 'someone-else',
+        generation: 'generation',
+        grantId: 'grant-a',
+        recipeId: 'recipe-9',
+      }),
+    );
+    const token = encodeSharedCursor({
+      v: 1,
+      viewerSub: 'owner-sub',
+      generation: 'generation',
+      grantId: 'grant-a',
+      recipeId: 'recipe-1',
+    });
+    const [payload, signature] = token.split('.');
+    const swapped = encodeSharedCursor({
+      v: 1,
+      viewerSub: 'owner-sub',
+      generation: 'generation',
+      grantId: 'grant-b',
+      recipeId: 'recipe-secret',
+    });
+    await expectRestart(`${payload}.${swapped.split('.')[1]}`);
+    await expectRestart(`${payload}.${signature.slice(0, -1)}x`);
   });
 });

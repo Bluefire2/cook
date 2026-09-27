@@ -1,19 +1,29 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import {
+  beginLocalWrite,
+  captureSnapshot,
   dropPhoto,
+  endLocalWrite,
   getPendingBlob,
   getRecipe,
   getSnapshot,
+  libraryEpoch,
   listRecipes,
   markPhotoRemote,
+  photoOwnerSub,
   removeRecipeLocal,
+  restoreSnapshot,
   subscribe,
   upsertRecipe,
   getCollection,
+  isSharedCollection,
+  isSharedRecipe,
   listCollections,
   upsertCollection,
 } from './libraryMemory';
-import { postPhoto, pushOps } from './remote';
+import { fetchPhotoBlobOutcome, postPhoto, pushOps } from './remote';
+import { photoStore } from './photoStore';
+import { localWriteOverlapsPull, pullAfterLocalWrite } from './syncEngine';
 import { compactRecipe } from './compactRecipe';
 import { compactCollection } from './compactCollection';
 import { wouldExceedRecipeIdCap } from './collectionMembership';
@@ -40,6 +50,65 @@ async function uploadPhotoIfNeeded(
     throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the photo.");
   }
   markPhotoRemote(photoId);
+}
+
+type ParentPhotoSlot = { kind: 'cover' | 'gallery'; id: string };
+
+function parentPhotoSlots(parent: Recipe): ParentPhotoSlot[] {
+  const slots: ParentPhotoSlot[] = [];
+  if (parent.photoId !== undefined) {
+    slots.push({ kind: 'cover', id: parent.photoId });
+  }
+  for (const id of parent.galleryPhotoIds ?? []) {
+    slots.push({ kind: 'gallery', id });
+  }
+  return slots;
+}
+
+async function loadParentPhoto(id: string): Promise<Blob | 'missing' | 'unavailable' | 'signedOut'> {
+  const pending = getPendingBlob(id);
+  if (pending) {
+    return pending;
+  }
+  return fetchPhotoBlobOutcome(id, photoOwnerSub(id));
+}
+
+/**
+ * Cover and gallery copied onto new ids owned by the saver. A 404 is skipped.
+ * A temporary fetch failure or a signed-out session aborts before any copy is
+ * minted, so the save can be retried with the original photos still in place.
+ */
+async function copyParentPhotos(parent: Recipe): Promise<{
+  photoId: string | undefined;
+  galleryPhotoIds: string[] | undefined;
+}> {
+  const slots = parentPhotoSlots(parent);
+  const loaded = await Promise.all(slots.map((slot) => loadParentPhoto(slot.id)));
+  if (loaded.some((item) => item === 'signedOut')) {
+    throw new Error('Please sign in again — your session expired.');
+  }
+  if (loaded.some((item) => item === 'unavailable')) {
+    throw new Error("Couldn't copy the photos. Try again.");
+  }
+
+  let photoId: string | undefined;
+  const galleryPhotoIds: string[] = [];
+  for (let index = 0; index < slots.length; index += 1) {
+    const blob = loaded[index];
+    if (!(blob instanceof Blob)) {
+      continue;
+    }
+    const nextId = await photoStore.add(blob);
+    if (slots[index]?.kind === 'cover') {
+      photoId = nextId;
+    } else {
+      galleryPhotoIds.push(nextId);
+    }
+  }
+  return {
+    photoId,
+    galleryPhotoIds: galleryPhotoIds.length > 0 ? galleryPhotoIds : undefined,
+  };
 }
 
 async function uploadRecipePhotos(recipe: Recipe): Promise<void> {
@@ -76,7 +145,15 @@ export const recipeStore = {
     return getRecipe(id);
   },
 
+  /** True for a recipe that arrived through an incoming share (view-only). */
+  isShared(id: string): boolean {
+    return isSharedRecipe(id);
+  },
+
   async save(recipe: Recipe): Promise<void> {
+    if (isSharedRecipe(recipe.id)) {
+      throw new Error('This shared collection is view-only.');
+    }
     const previous = getRecipe(recipe.id);
     const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
     upsertRecipe(next);
@@ -127,6 +204,19 @@ export const recipeStore = {
     });
   },
 
+  /**
+   * A new recipe from an Ask proposal. Photos come from `parent`, copied onto
+   * new ids. Fields on the draft never supply a photo.
+   */
+  async createFromAsk(parent: Recipe, draft: RecipeDraft): Promise<Recipe> {
+    const copied = await copyParentPhotos(parent);
+    return recipeStore.create({
+      ...draft,
+      photoId: copied.photoId,
+      galleryPhotoIds: copied.galleryPhotoIds,
+    });
+  },
+
   async create(
     data: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>,
     opts?: { collectionId?: string },
@@ -143,7 +233,7 @@ export const recipeStore = {
       collectionId !== undefined ? getCollection(collectionId) : undefined;
     let nextCollection = previousCollection;
     if (collectionId !== undefined) {
-      if (!previousCollection) {
+      if (!previousCollection || isSharedCollection(collectionId)) {
         throw new Error('Collection not found.');
       }
       if (wouldExceedRecipeIdCap([...previousCollection.recipeIds, recipe.id])) {
@@ -180,7 +270,10 @@ export const recipeStore = {
   },
 
   async remove(id: string): Promise<void> {
-    const previous = getRecipe(id);
+    if (isSharedRecipe(id)) {
+      throw new Error('This shared collection is view-only.');
+    }
+    const previous = captureSnapshot();
     const at = Date.now();
     // Nothing else drops the id from collections, and a dead id still counts
     // against the per-collection cap, so scrub membership alongside the recipe.
@@ -192,6 +285,11 @@ export const recipeStore = {
         updatedAt: at,
       }),
     );
+    // The server tombstones the recipe before the rest of the delete finishes.
+    // A failed response can still mean the recipe is gone. A pull that started
+    // before this write can also paint the old card back. Hold the library
+    // until the push settles, then read the server instead of restoring blindly.
+    const writeEpoch = beginLocalWrite();
     removeRecipeLocal(id);
     for (const collection of scrubbed) {
       upsertCollection(collection);
@@ -200,16 +298,37 @@ export const recipeStore = {
     for (const collection of scrubbed) {
       ops.push({ kind: 'collection.put', payload: collection });
     }
-    const result = await pushOps(ops);
-    if (result !== 'ok') {
-      if (previous) {
-        upsertRecipe(previous);
-      }
-      for (const collection of staleIn) {
-        upsertCollection(collection);
-      }
-      throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't delete the recipe.");
+    let result: Awaited<ReturnType<typeof pushOps>>;
+    try {
+      result = await pushOps(ops);
+    } finally {
+      endLocalWrite();
     }
+    const overlaps = localWriteOverlapsPull(writeEpoch);
+    if (result === 'ok' && !overlaps) {
+      return;
+    }
+    const outcome = await pullAfterLocalWrite(writeEpoch);
+    if (result === 'ok') {
+      return;
+    }
+    if (outcome === 'signedOut') {
+      throw new Error('Please sign in again — your session expired.');
+    }
+    if (outcome === 'ok') {
+      if (getRecipe(id) === undefined) {
+        return;
+      }
+      throw new Error("Couldn't delete the recipe.");
+    }
+    if (libraryEpoch() === writeEpoch) {
+      restoreSnapshot(previous);
+    }
+    throw new Error(
+      result === 'signedOut'
+        ? 'Please sign in again — your session expired.'
+        : "Couldn't delete the recipe.",
+    );
   },
 };
 

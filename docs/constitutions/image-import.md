@@ -1,3 +1,21 @@
+---
+name: Image import
+description: Importing one recipe from 1–4 photos of notes. Gemini reads the photos and they are not stored. Read before changing importFromImages, the images field, the photo picker, handwritten evals, or the photo sentences in privacy and terms.
+status: ratified
+scope:
+  - server/recipeImport.ts (importFromImages)
+  - server/importRoute.ts (the images field on POST /api/import)
+  - src/lib/image.ts (encodeImageForImport)
+  - src/lib/importApi.ts
+  - src/screens/ImportScreen.tsx (the photo picker)
+  - evals/import-handwritten/ (dev/ and holdout/)
+  - evals/AGENTS.md
+  - evals/EXPERIMENTS.md
+  - evals/ocrCompare.ts
+  - public/privacy.html (photo copy)
+  - public/terms.html (photo copy)
+---
+
 # Image import constitution
 
 Scope: importing a recipe from photos, typically of handwritten notes. The
