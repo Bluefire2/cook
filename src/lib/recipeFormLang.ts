@@ -3,15 +3,17 @@ import { sameLanguage } from '../i18n/lang';
 /**
  * Initial value of the recipe-language field.
  * A stored tag is kept, including one the picker does not list.
- * A recipe with no `lang` takes a detection for this version, then the UI
- * language. Choosing Unknown later clears the field; that clear is not
- * passed back through this function. This does not write the recipe.
+ * A recipe with no `lang` takes a detection for this version. The UI
+ * language fills in only when the caller passes it, which is a new recipe;
+ * an edit passes `undefined` and stays unlabelled. Choosing Unknown later
+ * clears the field; that clear is not passed back through this function.
+ * This does not write the recipe.
  */
 export function defaultRecipeFormLang(
   lang: string | undefined,
-  uiLocale: string,
+  uiLocale: string | undefined,
   detectedLang?: string,
-): string {
+): string | undefined {
   if (lang !== undefined) return lang;
   if (detectedLang !== undefined) return detectedLang;
   return uiLocale;

@@ -69,10 +69,11 @@ function toNumber(text: string): number | undefined {
 }
 
 /**
- * `uiLocale` is the current UI language when the language field is shown, and
- * fills in a missing `lang` (after `detectedLang`, when this version has one).
- * Pass `undefined` when the field is hidden so a missing `lang` stays missing;
- * the import preview sets `lang` at save.
+ * `uiLocale` is the current UI language for a new recipe, and fills in a
+ * missing `lang` after `detectedLang`. Pass `undefined` on edit and when the
+ * field is hidden. An edit keeps the stored tag, then a detection for this
+ * version, and otherwise stays unlabelled. The UI language is not a
+ * detection. The import preview sets `lang` at save.
  */
 export function fromDraft(
   draft: RecipeDraft,
@@ -85,10 +86,7 @@ export function fromDraft(
       ? draft.ingredientSections
       : fallback.ingredientSections;
   const steps = draft.steps.length > 0 ? draft.steps : fallback.steps;
-  const lang =
-    uiLocale === undefined
-      ? draft.lang
-      : defaultRecipeFormLang(draft.lang, uiLocale, detectedLang);
+  const lang = defaultRecipeFormLang(draft.lang, uiLocale, detectedLang);
 
   return {
     title: draft.title,
@@ -332,12 +330,17 @@ export default function RecipeForm({
 }): ReactElement {
   // Captured once. A later UI-language change must not rewrite this recipe's lang.
   // A detection only fills a missing lang. It is not a background write.
+  // The UI language is a default for a new recipe only.
   const [detectedLang] = useState(() => {
     if (hideLanguage || !isSavedRecipe(initial)) return undefined;
     return getDetectedLang(initial.id, initial.updatedAt);
   });
   const [form, setForm] = useState(() =>
-    fromDraft(initial, hideLanguage ? undefined : settings.getLocale(), detectedLang),
+    fromDraft(
+      initial,
+      hideLanguage || isSavedRecipe(initial) ? undefined : settings.getLocale(),
+      detectedLang,
+    ),
   );
   const baseline = useRef(form);
   const [photoId, setPhotoId] = useState(initial.photoId);

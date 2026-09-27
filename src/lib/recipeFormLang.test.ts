@@ -4,16 +4,19 @@ import { blankDraft } from './recipeDraft';
 import { defaultRecipeFormLang, detectedLangHint } from './recipeFormLang';
 
 describe('defaultRecipeFormLang', () => {
-  it('uses the UI locale when the recipe has no lang and keeps a stored tag', () => {
+  it('uses a passed UI locale for a missing lang and keeps a stored tag', () => {
     expect(defaultRecipeFormLang(undefined, 'uk')).toBe('uk');
     expect(defaultRecipeFormLang('it', 'uk')).toBe('it');
     expect(defaultRecipeFormLang('yue', 'en')).toBe('yue');
+    expect(defaultRecipeFormLang(undefined, undefined)).toBeUndefined();
   });
 
   it('pre-fills a missing lang from a detection and does not overwrite a stored tag', () => {
     expect(defaultRecipeFormLang(undefined, 'uk', 'it')).toBe('it');
     expect(defaultRecipeFormLang('it', 'uk', 'en')).toBe('it');
     expect(defaultRecipeFormLang(undefined, 'uk', undefined)).toBe('uk');
+    expect(defaultRecipeFormLang(undefined, undefined, 'it')).toBe('it');
+    expect(defaultRecipeFormLang('en', undefined, 'it')).toBe('en');
   });
 });
 
@@ -68,5 +71,19 @@ describe('recipe form lang through fromDraft and toDraft', () => {
 
     const labelled = { ...blankDraft(), lang: 'it' };
     expect(fromDraft(labelled, undefined).lang).toBe('it');
+  });
+
+  it('leaves an unlabelled edit unknown unless this version was detected', () => {
+    const unlabelled = blankDraft();
+    const form = fromDraft(unlabelled, undefined);
+    expect(form.lang).toBeUndefined();
+    const saved = toDraft(form, unlabelled, undefined, []);
+    expect(saved.lang).toBeUndefined();
+    expect('lang' in saved).toBe(false);
+
+    expect(fromDraft(unlabelled, undefined, 'it').lang).toBe('it');
+    expect(toDraft(fromDraft(unlabelled, undefined, 'it'), unlabelled, undefined, []).lang).toBe(
+      'it',
+    );
   });
 });
