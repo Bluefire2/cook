@@ -1,5 +1,7 @@
 # Eval fixtures and their sources
 
+Agents: read evals/AGENTS.md before changing an import prompt, model setting, output check, retry, or golden.
+
 Recipe pages here are cached copies of other people's work. Each belongs to
 its author and publisher; the copies exist only so `npm run test:import`
 runs offline and repeatably, without fetching at eval time. Do not publish,
@@ -31,7 +33,7 @@ runtime image.
 
 Photos of handwritten recipes, for the photo import path
 (`importFromImages`). Bound by `docs/constitutions/image-import.md`.
-`evals/handwrittenFixtures.ts` discovers whatever is here.
+`evals/handwrittenFixtures.ts` discovers fixtures in `dev/` and `holdout/`.
 
 Ten single-page fixtures, added 2026-09-27 from publicly accessible photos the
 repo owner supplied as stock images. Their redistribution licences have not
@@ -39,26 +41,29 @@ been independently verified; each `source.txt` records the original file name.
 Goldens were transcribed from the photos by two independent model readings,
 reconciled with zoomed crops, and still need the owner's review.
 
-| Fixture | What it tests |
-| --- | --- |
-| `blueberry-muffins` | Low-resolution scan (500 px wide); yield written as "Makes 1 dozen". |
-| `broccoli-salad` | Ingredients only, no method: the importer must not invent steps. |
-| `choc-pie-tea-towel` | Handwriting printed on a tea towel, photographed at an angle with props. |
-| `hundred-good-cookies` | Two ingredient columns; yield only in the title ("100"); card continues on the back ("over"). |
-| `lemon-tea-bread` | Loose cursive on a printed card; card continues on the back ("over"). |
-| `peanut-butter-cookies` | Two ingredient columns, ditto marks, no mixing method written. |
-| `potatoe-pancakes-platter` | Block capitals on a decorated platter; misspelled title kept as written. |
-| `split-pea-soup` | Filled-in printed card at an angle; "Serves 8" written; a correction above the line. |
-| `sweet-sour-pork` | Heavily stained card; numbered steps. |
-| `taffy-apple-salad` | Braces group ingredients with the method written beside them; a quantity range (4-6). |
+| Fixture | Split | What it tests |
+| --- | --- | --- |
+| `blueberry-muffins` | dev | Low-resolution scan (500 px wide); yield written as "Makes 1 dozen". |
+| `broccoli-salad` | holdout | Ingredients only, no method: the importer must not invent steps. |
+| `choc-pie-tea-towel` | dev | Handwriting printed on a tea towel, photographed at an angle with props. |
+| `hundred-good-cookies` | dev | Two ingredient columns; yield only in the title ("100"); card continues on the back ("over"). |
+| `lemon-tea-bread` | dev | Loose cursive on a printed card; card continues on the back ("over"). |
+| `peanut-butter-cookies` | holdout | Two ingredient columns, ditto marks, no mixing method written. |
+| `potatoe-pancakes-platter` | holdout | Block capitals on a decorated platter; misspelled title kept as written. |
+| `split-pea-soup` | holdout | Filled-in printed card at an angle; "Serves 8" written; a correction above the line. |
+| `sweet-sour-pork` | dev | Heavily stained card; numbered steps. |
+| `taffy-apple-salad` | holdout | Braces group ingredients with the method written beside them; a quantity range (4-6). |
 
-**Layout.** One directory per fixture:
+**Layout.** One directory per fixture. `<split>` is `dev` or `holdout`:
 
 ```
-<name>/page-1.jpg … page-4.jpg   # or .jpeg, .png, .webp; 1–4 pages, numbered from 1
-<name>/golden.json               # an ImportedRecipe of what is actually written
-<name>/source.txt                # provenance and permission, see below
+<split>/<name>/page-1.jpg … page-4.jpg   # or .jpeg, .png, .webp; 1–4 pages, numbered from 1
+<split>/<name>/golden.json               # an ImportedRecipe of what is actually written
+<split>/<name>/source.txt                # provenance and permission, see below
 ```
+
+A directory directly under `evals/import-handwritten/` that is not `dev` or
+`holdout` fails the run. New fixtures go in `holdout/`.
 
 `golden.json` records what the pages say, not a tidied-up recipe: servings
 `1` if none is written, no invented quantities.
@@ -82,21 +87,25 @@ magick in.heic -auto-orient -resize '2048x2048>' -quality 85 -strip page-1.jpg
 
 The harness rejects EXIF, more than 4 pages, gaps in the numbering, and any
 page `checkImportImages` would refuse. A broken fixture fails the run with
-`evals/import-handwritten/<name>: <problem>`; it is never skipped silently.
+`evals/import-handwritten/<split>/<name>: <problem>`; it is never skipped silently.
 
 **Warning.** This repository is **public**. Committing a fixture publishes
 the photo. Only commit the owner's own notes, or notes with recorded
 permission to publish, and never other people's private notes.
 
-**Running.** `npm run test:import` runs the handwritten suite alongside the
-others, and shows `1 skipped` when there are no fixtures.
-`npm run eval:ocr-compare` compares A (the photos straight to Gemini, as
-production does) with B (Cloud Vision OCR, then Gemini on the text), with
-latency, tokens, estimated cost, and the judge's verdict per fixture. Pass
-fixture names to limit it and `--runs=N` (1–5) to repeat. B needs
-Application Default Credentials and `vision.googleapis.com` enabled on
+**Running.** `npm run test:import` runs a dev suite and a holdout suite
+alongside the others. Each shows `1 skipped` when that split is empty.
+Holdout failures hide the extraction and the judge's reasons.
+`npm run eval:ocr-compare -- [fixture…] [--runs=N] [--split=dev|holdout|all] [--thinking=minimal|low|medium|high]`
+compares A (the photos straight to Gemini, as production does) with B (Cloud
+Vision OCR, then Gemini on the text), with latency, tokens, estimated cost,
+and the judge's verdict per fixture. `--split` defaults to `dev`.
+`--thinking` applies to A only and does not change production. The `calls`
+column shows retries. `--runs=N` is 1–5. B needs Application Default
+Credentials and `vision.googleapis.com` enabled on
 `cooking-assistant-508423`, and is skipped with a message otherwise. It
-prints to stdout only and writes no files.
+prints to stdout only and writes no files. Experiments are logged in
+`evals/EXPERIMENTS.md`.
 
 ## `evals/import-sites/`
 

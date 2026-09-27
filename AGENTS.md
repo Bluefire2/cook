@@ -231,6 +231,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web, extension, evals (`evals/recipeImport.eval.ts`). `api/import.ts` is a 401 stub. Not deployed. |
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
 | `docs/plans/image-import.md` | Built on `cursor/image-import-38e9`, not deployed. Import one recipe from 1–4 photos (handwritten notes) via `images` on `POST /api/import`; Gemini reads them; never stored. Bound by `docs/constitutions/image-import.md`. |
+| `docs/plans/image-import-evals-and-retry.md` | Implementing. Handwritten evals split into dev/holdout with `evals/AGENTS.md` rules; photo import rejects runaway units and retries once on parse_error/unusable (constitution P1 amended); `ocrCompare --thinking`. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
@@ -247,6 +248,10 @@ Live paste-to-recipe evals are `npm run test:import` (`evals/**/*.eval.ts`,
 and need `GEMINI_API_KEY` from `.env.local` (same as `dev:api`). Website
 fixtures use cached `page.html` (never fetch at eval time). Do not fold them
 into `npm test` or CI.
+
+Before changing an import prompt, model setting, output check, retry, or eval
+golden, read `evals/AGENTS.md` (dev/holdout split, no tuning on holdout,
+experiments logged in `evals/EXPERIMENTS.md`).
 
 UI and layout changes: exercise the flow in the browser (not a screenshot).
 Vite + `dev:api`, signed in at `localhost:5173`. Check other routes that share
