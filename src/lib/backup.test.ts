@@ -8,10 +8,13 @@ import {
   listAllChat,
   listAllCook,
   listCollections,
+  listCookLogs,
   listRecipes,
   replaceFromPull,
   upsertChat,
   upsertCook,
+  upsertCookLog,
+  upsertRecipe,
 } from './libraryMemory';
 import { installSharedRows } from './testLibrary';
 import { postPhoto, pushOps } from './remote';
@@ -221,6 +224,7 @@ describe('exportLibrary', () => {
         [sharedChat.id, sharedChat],
         [orphanChat.id, orphanChat],
       ]),
+      cookLogs: new Map(),
       cook: new Map([
         [COOK.recipeId, COOK],
         [sharedCook.recipeId, sharedCook],
@@ -253,7 +257,7 @@ describe('exportLibrary', () => {
 
     expect(backup).toMatchObject({
       app: 'cook',
-      version: 3,
+      version: 4,
       exportedBySub: 'viewer-sub',
     });
     expect(backup.recipes).toEqual([ownedRecipe]);
@@ -279,6 +283,7 @@ describe('exportLibrary', () => {
       'app',
       'chatMessages',
       'collections',
+      'cookLogs',
       'cookState',
       'exportedAt',
       'exportedBySub',
@@ -315,6 +320,7 @@ describe('exportLibrary', () => {
         [revokedChat.id, revokedChat],
         [orphanChat.id, orphanChat],
       ]),
+      cookLogs: new Map(),
       cook: new Map([
         [ownedCook.recipeId, ownedCook],
         [revokedCook.recipeId, revokedCook],
@@ -339,7 +345,7 @@ describe('exportLibrary', () => {
 
     expect(backup).toMatchObject({
       app: 'cook',
-      version: 3,
+      version: 4,
       exportedBySub: 'viewer-sub',
     });
     expect(backup.recipes).toEqual([ownedRecipe]);
@@ -358,6 +364,7 @@ describe('exportLibrary', () => {
       'app',
       'chatMessages',
       'collections',
+      'cookLogs',
       'cookState',
       'exportedAt',
       'exportedBySub',
@@ -396,6 +403,7 @@ describe('exportLibrary', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     installSharedRows({
@@ -422,7 +430,7 @@ describe('exportLibrary', () => {
     const backup = JSON.parse(
       await (await exportLibrary('viewer-sub')).text(),
     ) as Record<string, unknown>;
-    expect(backup).toMatchObject({ app: 'cook', version: 3, exportedBySub: 'viewer-sub' });
+    expect(backup).toMatchObject({ app: 'cook', version: 4, exportedBySub: 'viewer-sub' });
     expect(backup.chatMessages).toEqual([ownedChat]);
     expect(backup.cookState).toEqual([ownedCook]);
     expect(backup.recipes).toEqual([ownedRecipe]);
@@ -466,6 +474,7 @@ describe('importLibrary', () => {
       collections: new Map([[COLLECTION.id, COLLECTION]]),
       chat: new Map([[CHAT.id, CHAT]]),
       cook: new Map([[COOK.recipeId, COOK]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set([PHOTO]),
     });
 
@@ -586,6 +595,7 @@ describe('importLibrary', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
 
@@ -604,6 +614,7 @@ describe('importLibrary', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
 
@@ -735,6 +746,7 @@ describe('importLibrary', () => {
       collections: new Map([[COLLECTION.id, COLLECTION]]),
       chat: new Map([[CHAT.id, CHAT]]),
       cook: new Map([[COOK.recipeId, COOK]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set([PHOTO]),
     });
 
@@ -857,6 +869,7 @@ describe('importLibrary', () => {
         [sharedChat.id, sharedChat],
         [orphanChat.id, orphanChat],
       ]),
+      cookLogs: new Map(),
       cook: new Map([
         [COOK.recipeId, COOK],
         [sharedCook.recipeId, sharedCook],
@@ -933,6 +946,7 @@ describe('importLibrary', () => {
       collections: new Map(),
       chat: new Map([[CHAT.id, { ...CHAT, content: 'owned chat', photoIds: undefined }]]),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     let danglingBeforeRemoteWrite = false;
@@ -1002,6 +1016,7 @@ describe('importLibrary', () => {
       collections: new Map(),
       chat: new Map([[CHAT.id, { ...CHAT, content: 'on revoked' }]]),
       cook: new Map([[COOK.recipeId, COOK]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set([PHOTO]),
       chatParentOrigins: new Map([[CHAT.id, 'former-owner']]),
       cookParentOrigins: new Map([[COOK.recipeId, 'former-owner']]),
@@ -1058,10 +1073,110 @@ describe('importLibrary', () => {
       cookState: Array<Record<string, unknown>>;
     };
     expect(exported.app).toBe('cook');
-    expect(exported.version).toBe(3);
+    expect(exported.version).toBe(4);
     expect(exported.chatMessages.every((message) => !('sharedParentOwnerSub' in message))).toBe(
       true,
     );
     expect(exported.cookState.every((row) => !('sharedParentOwnerSub' in row))).toBe(true);
+  });
+});
+
+describe('cook logs in backups', () => {
+  const LOG_PHOTO = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const COOK_LOG = {
+    id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+    recipeId: RECIPE.id,
+    cookedOn: '2026-09-20',
+    rating: 4,
+    lessons: 'Less salt.',
+    photoIds: [LOG_PHOTO],
+    createdAt: 3,
+    updatedAt: 4,
+  };
+
+  function v4File(body: Record<string, unknown>): File {
+    return new File(
+      [JSON.stringify({ app: 'cook', version: 4, exportedAt: 5, chatMessages: [], ...body })],
+      'cook-backup.json',
+      { type: 'application/json' },
+    );
+  }
+
+  it('exports version 4 with cook logs and their photos', async () => {
+    installFileReader();
+    upsertRecipe(RECIPE);
+    upsertCookLog(COOK_LOG);
+    addPendingBlob(LOG_PHOTO, new Blob(['jpeg'], { type: 'image/jpeg' }));
+
+    const backup = JSON.parse(await (await exportLibrary('me')).text());
+
+    expect(backup.version).toBe(4);
+    expect(backup.cookLogs).toEqual([COOK_LOG]);
+    expect(backup.photos.map((p: { id: string }) => p.id)).toEqual([LOG_PHOTO]);
+  });
+
+  it('preserves same-account cook logs, uploads their photos after recipes, and drops unusable rows', async () => {
+    const events = recordImportCalls();
+    const file = v4File({
+      exportedBySub: 'me',
+      recipes: [RECIPE],
+      cookLogs: [
+        { ...COOK_LOG, stray: 'dropped' },
+        { ...COOK_LOG, id: '99999999-9999-4999-8999-999999999999', cookedOn: '2026-02-30' },
+      ],
+      photos: [{ id: LOG_PHOTO, type: 'image/jpeg', base64: 'YQ==', createdAt: 6 }],
+    });
+
+    await expect(importLibrary(file, 'me')).resolves.toEqual({ imported: 1, skipped: 0 });
+
+    expect(eventLabels(events)).toEqual(ONE_PHOTO_ORDER);
+    expect(events.find((e) => e.type === 'photo-start')).toMatchObject({
+      id: LOG_PHOTO,
+      recipeId: RECIPE.id,
+    });
+    expect(phaseOps(events, 'dependents')).toEqual([{ kind: 'cookLog.put', payload: COOK_LOG }]);
+    expect(listCookLogs(RECIPE.id)).toEqual([COOK_LOG]);
+  });
+
+  it('clones a foreign cook log with its recipe and photo ids remapped together', async () => {
+    const events = recordImportCalls();
+    const file = v4File({
+      exportedBySub: 'someone-else',
+      recipes: [RECIPE],
+      cookLogs: [COOK_LOG],
+      photos: [{ id: LOG_PHOTO, type: 'image/jpeg', base64: 'YQ==', createdAt: 6 }],
+    });
+
+    await importLibrary(file, 'me');
+
+    const recipeOp = phaseOps(events, 'recipes')[0];
+    const logOp = phaseOps(events, 'dependents')[0];
+    if (recipeOp?.kind !== 'recipe.put' || logOp?.kind !== 'cookLog.put') {
+      throw new Error('unexpected ops');
+    }
+    const photo = events.find((e) => e.type === 'photo-start');
+    expect(recipeOp.payload.id).not.toBe(RECIPE.id);
+    expect(logOp.payload.id).not.toBe(COOK_LOG.id);
+    expect(logOp.payload.recipeId).toBe(recipeOp.payload.id);
+    expect(logOp.payload.photoIds).toEqual([photo?.type === 'photo-start' ? photo.id : '']);
+    expect(photo).toMatchObject({ recipeId: recipeOp.payload.id });
+    expect(logOp.payload.photoIds?.[0]).not.toBe(LOG_PHOTO);
+  });
+
+  it('drops a cook log whose recipe is not in the backup, with its photo', async () => {
+    const events = recordImportCalls();
+    const file = v4File({
+      exportedBySub: 'me',
+      recipes: [RECIPE],
+      cookLogs: [{ ...COOK_LOG, recipeId: '12121212-1212-4212-8212-121212121212' }],
+      photos: [{ id: LOG_PHOTO, type: 'image/jpeg', base64: 'YQ==', createdAt: 6 }],
+    });
+
+    await importLibrary(file, 'me');
+
+    expect(events.some((e) => e.type === 'photo-start')).toBe(false);
+    expect(allPushedOps().some((op) => op.kind === 'cookLog.put')).toBe(false);
+    expect(listCookLogs()).toEqual([]);
+    expect(getPendingBlob(LOG_PHOTO)).toBeUndefined();
   });
 });

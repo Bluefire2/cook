@@ -270,6 +270,25 @@ After the first production deploy of sharing:
 - Polling sync, Firestore listeners, WebSockets
 - Conflict-merge UI (LWW is the product)
 
+## Feature constitutions
+
+A constitution records a feature's principles and why each exists. The index
+below lists every constitution by name and description only. Before planning
+or editing, check your change against these descriptions. If one plausibly
+applies, read that constitution in full before you write code; when unsure,
+read it. Its frontmatter `scope` lists the exact files and concepts it covers.
+You may break a principle only by amending the constitution in the same PR:
+rewrite the principle, add an amendment-log entry saying why the break is
+worth it, and flag it in the PR description. An unacknowledged break is a
+defect. Plans, audits, and verifications name the constitutions they applied.
+
+A new constitution goes in `docs/constitutions/<slug>.md` with `name`,
+`description`, `status` (`draft` or `ratified`), and `scope` frontmatter,
+plus a matching index line here. `scripts/constitutions.test.ts` checks that
+this index matches each file's frontmatter.
+
+- **Cook log** (`docs/constitutions/cook-log.md`): Dated records of cooking a recipe (rating, servings, notes, lessons, photos), the /cooks journal, and promoting a lesson into recipe notes. Read before changing CookLog data, its sync ops or cascade, its photos, its backup handling, or those screens.
+
 ## Plans (source of truth for unfinished work)
 
 Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
@@ -293,6 +312,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/chrome-extension-import.md` | Built: `extension/` + `POST /api/extension/import`. Not deployed. |
 | `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web, extension, evals (`evals/recipeImport.eval.ts`). `api/import.ts` is a 401 stub. Not deployed. |
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
+| `docs/plans/cook-log.md` | Built on `cursor/cook-log-5615` (constitution `docs/constitutions/cook-log.md`). Not deployed. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not

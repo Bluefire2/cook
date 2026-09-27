@@ -64,8 +64,9 @@
       signed in.
     </p>
     <p>
-      Your recipes, chat messages, cooking progress, and attached photos are
-      stored in Google Cloud (Firestore and Cloud Storage) in the
+      Your recipes, chat messages, cooking progress, cook log entries (the
+      date you cooked, rating, servings, notes, lessons and photos), and
+      attached photos are stored in Google Cloud (Firestore and Cloud Storage) in the
       <code>europe-west1</code> region. They are loaded into this browser
       while you are signed in. There is no on-device recipe database.
     </p>
@@ -128,8 +129,10 @@
 
     <h2>Retention and deletion</h2>
     <p>
-      Deleting a recipe in Sous deletes its chat thread, cooking progress, and
-      attached photos from your stored library.
+      Deleting a recipe in Sous deletes its chat thread, cooking progress,
+      cook log entries (dates, ratings, notes, lessons and their photos), and
+      attached photos from your stored library. Deleting a single cook log
+      entry deletes its photos too.
     </p>
     <p>
       Access records are kept as follows. A pending access request is kept
@@ -152,7 +155,8 @@
       button. A deletion request covers all of it: your access-request record,
       your membership record, any invite-link redemption recorded for your
       account, and your stored library — recipes, chat
-      messages, cooking progress and photos — and deleting these also removes
+      messages, cooking progress, cook log entries (dates, ratings, notes,
+      lessons and photos) and photos — and deleting these also removes
       your access. Revoking Sous's access from your Google account permissions
       page signs you out but does not by itself delete your stored recipes.
     </p>

@@ -14,7 +14,13 @@ import { canViewRecipe } from './shareAuth.ts';
 export { SHARED_PARENT_OWNER_SUB_FIELD };
 export type { PushRejectReason };
 
-export type StoreKind = 'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections';
+export type StoreKind =
+  | 'recipes'
+  | 'chatMessages'
+  | 'cookState'
+  | 'photos'
+  | 'collections'
+  | 'cookLogs';
 
 export type CursorTuple = [number, string];
 
@@ -143,7 +149,14 @@ export function decodePullCursor(raw: string | null | undefined): PullCursor {
       return {};
     }
     const out: PullCursor = {};
-    const kinds: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos', 'collections'];
+    const kinds: StoreKind[] = [
+      'recipes',
+      'chatMessages',
+      'cookState',
+      'photos',
+      'collections',
+      'cookLogs',
+    ];
     for (const kind of kinds) {
       const entry = parsed[kind];
       if (!Array.isArray(entry) || entry.length !== 2) {
@@ -350,6 +363,146 @@ function compactGalleryPhotoIds(
     }
   }
   return next.length > 0 ? next : undefined;
+}
+
+export const MAX_COOK_LOG_PHOTOS = 8;
+export const MAX_COOK_LOG_TEXT = 10_000;
+export const MAX_COOK_LOG_SERVINGS = 1000;
+
+/** Same rule as the client's `isCookedOn`; `server/` cannot import `src/`. */
+export function isCookedOn(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return false;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1) {
+    return false;
+  }
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= daysInMonth[month - 1];
+}
+
+function compactCookLogText(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed;
+}
+
+/** Must keep the same keys as the client's `compactCookLog`. */
+export function compactCookLogFields(log: Record<string, unknown>): Record<string, unknown> {
+  const next: Record<string, unknown> = {
+    id: log.id,
+    recipeId: log.recipeId,
+    cookedOn: log.cookedOn,
+    createdAt: log.createdAt,
+    updatedAt: log.updatedAt,
+  };
+  if (finiteNumber(log.rating) !== undefined) {
+    next.rating = log.rating;
+  }
+  if (finiteNumber(log.servings) !== undefined) {
+    next.servings = log.servings;
+  }
+  const notes = compactCookLogText(log.notes);
+  if (notes !== undefined) {
+    next.notes = notes;
+  }
+  const lessons = compactCookLogText(log.lessons);
+  if (lessons !== undefined) {
+    next.lessons = lessons;
+  }
+  if (Array.isArray(log.photoIds)) {
+    const seen = new Set<string>();
+    const photoIds: string[] = [];
+    for (const id of log.photoIds) {
+      if (typeof id !== 'string' || id === '' || seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      photoIds.push(id);
+      if (photoIds.length >= MAX_COOK_LOG_PHOTOS) {
+        break;
+      }
+    }
+    if (photoIds.length > 0) {
+      next.photoIds = photoIds;
+    }
+  }
+  return next;
+}
+
+/** An entry cannot move between recipes: its photos stay owned by the first one. */
+export function cookLogMovesRecipe(
+  storedRaw: Record<string, unknown> | null,
+  payload: Record<string, unknown>,
+): boolean {
+  return storedRaw !== null && isLiveDoc(storedRaw) && storedRaw.recipeId !== payload.recipeId;
+}
+
+/**
+ * Cascade tombstone time for children that must die with the recipe even when
+ * edited later (a back-dated cook log, or a device with a fast clock). Safe
+ * because the `putDoc` parent check refuses any put under a deleted recipe.
+ * `null` means already a tombstone: skip, and do not re-queue `gcsDeletes`.
+ */
+export function forcedTombstoneAt(
+  at: number,
+  stored: StoredMutationState | null,
+): number | null {
+  if (stored?.deletedAt !== undefined && Number.isFinite(stored.deletedAt)) {
+    return null;
+  }
+  return Math.max(at, stored?.updatedAt ?? 0);
+}
+
+export interface CascadeChildJob {
+  kind: StoreKind;
+  id: string;
+  forced: boolean;
+}
+
+/**
+ * Every photo here belongs to the recipe being deleted, and the photos route
+ * refuses uploads for a dead recipe, so photos are forced like cook logs.
+ * Chat and cookState keep plain last-write-wins.
+ */
+export function cascadeChildJobs(children: {
+  chatIds: string[];
+  cookStateIds: string[];
+  cookLogIds: string[];
+  photoIds: string[];
+}): CascadeChildJob[] {
+  return [
+    ...children.chatIds.map((id) => ({ kind: 'chatMessages' as StoreKind, id, forced: false })),
+    ...children.cookStateIds.map((id) => ({ kind: 'cookState' as StoreKind, id, forced: false })),
+    ...children.cookLogIds.map((id) => ({ kind: 'cookLogs' as StoreKind, id, forced: true })),
+    ...children.photoIds.map((id) => ({ kind: 'photos' as StoreKind, id, forced: true })),
+  ];
+}
+
+/** A photo tombstone also writes its `gcsDeletes` doc. */
+export function cascadeJobCost(job: Pick<CascadeChildJob, 'kind'>): number {
+  return job.kind === 'photos' ? 2 : 1;
+}
+
+export function cascadeTombstoneAt(
+  job: Pick<CascadeChildJob, 'forced'>,
+  at: number,
+  stored: StoredMutationState | null,
+): number | null {
+  if (job.forced) {
+    return forcedTombstoneAt(at, stored);
+  }
+  return compareMutation(stored, at, 'tombstone').allow ? at : null;
 }
 
 export type MutationResult =
@@ -864,8 +1017,12 @@ export async function putDoc(
       };
     }
 
+    if (kind === 'cookLogs' && cookLogMovesRecipe(storedRaw, payload)) {
+      return { applied: false, reason: 'invalid' };
+    }
+
     let parentRecipeId: string | null = null;
-    if (kind === 'chatMessages') {
+    if (kind === 'chatMessages' || kind === 'cookLogs') {
       const recipeId = payload.recipeId;
       if (typeof recipeId !== 'string') {
         return { applied: false, reason: 'invalid' };
@@ -886,8 +1043,9 @@ export async function putDoc(
     if (parentRecipeId !== null) {
       ownedParentLive = await readRecipeLive(tx, uid, parentRecipeId);
       if (!ownedParentLive) {
-        // Photo bytes stay owned-parent-only. Never fall back to a share.
-        if (kind === 'photos') {
+        // Photo bytes and cook logs (which own photos) stay owned-parent-only.
+        // Never fall back to a share.
+        if (kind === 'photos' || kind === 'cookLogs') {
           return { applied: false, reason: 'recipe-deleted' };
         }
         let hintOwnerSub = storedSharedParentOwner(storedRaw);
@@ -1067,6 +1225,20 @@ export async function cascadeRecipeDelete(
     }
   }
 
+  const cookLogSnap = await colRef(uid, 'cookLogs').where('recipeId', '==', recipeId).get();
+  const cookLogIds: string[] = [];
+  for (const doc of cookLogSnap.docs) {
+    const data = doc.data() as Record<string, unknown>;
+    if (isLiveDoc(data)) {
+      cookLogIds.push(doc.id);
+      for (const pid of (data.photoIds as string[] | undefined) ?? []) {
+        if (isUuid(pid)) {
+          photoIds.add(pid);
+        }
+      }
+    }
+  }
+
   const photosSnap = await colRef(uid, 'photos').where('recipeId', '==', recipeId).get();
   for (const doc of photosSnap.docs) {
     const data = doc.data() as Record<string, unknown>;
@@ -1075,47 +1247,37 @@ export async function cascadeRecipeDelete(
     }
   }
 
-  const childJobs: { kind: StoreKind; id: string }[] = [
-    ...chatIds.map((id) => ({ kind: 'chatMessages' as StoreKind, id })),
-    ...cookIds.map((id) => ({ kind: 'cookState' as StoreKind, id })),
-    ...[...photoIds].map((id) => ({ kind: 'photos' as StoreKind, id })),
-  ];
+  const childJobs = cascadeChildJobs({
+    chatIds,
+    cookStateIds: cookIds,
+    cookLogIds,
+    photoIds: [...photoIds],
+  });
 
-  for (const chunk of chunkByCost(
-    childJobs,
-    (job) => (job.kind === 'photos' ? 2 : 1),
-    400,
-  )) {
+  for (const chunk of chunkByCost(childJobs, cascadeJobCost, 400)) {
     const serverUpdatedAt = Date.now();
     await getFirestore().runTransaction(async (tx) => {
-      for (const job of chunk) {
-        if (job.kind === 'photos') {
-          const photoRef = colRef(uid, 'photos').doc(job.id);
-          const snap = await tx.get(photoRef);
-          const stored = readStoredState(
-            snap.exists ? (snap.data() as Record<string, unknown>) : undefined,
-          );
-          const cmp = compareMutation(stored, at, 'tombstone');
-          if (cmp.allow) {
-            tx.set(photoRef, tombstonePayload(job.id, at, serverUpdatedAt), { merge: false });
-            tx.set(
-              gcsDeletesRef(uid).doc(job.id),
-              { photoId: job.id, createdAt: Date.now() },
-              { merge: true },
-            );
-          }
-        } else {
-          const ref = colRef(uid, job.kind).doc(job.id);
-          const snap = await tx.get(ref);
-          const stored = readStoredState(
-            snap.exists ? (snap.data() as Record<string, unknown>) : undefined,
-          );
-          const cmp = compareMutation(stored, at, 'tombstone');
-          if (cmp.allow) {
-            tx.set(ref, tombstonePayload(job.id, at, serverUpdatedAt), { merge: false });
-          }
+      // Firestore transactions reject any read after a write, so read the whole chunk first.
+      const refs = chunk.map((job) => colRef(uid, job.kind).doc(job.id));
+      const snaps = await tx.getAll(...refs);
+      chunk.forEach((job, i) => {
+        const snap = snaps[i];
+        const stored = readStoredState(
+          snap.exists ? (snap.data() as Record<string, unknown>) : undefined,
+        );
+        const writeAt = cascadeTombstoneAt(job, at, stored);
+        if (writeAt === null) {
+          return;
         }
-      }
+        tx.set(refs[i], tombstonePayload(job.id, writeAt, serverUpdatedAt), { merge: false });
+        if (job.kind === 'photos') {
+          tx.set(
+            gcsDeletesRef(uid).doc(job.id),
+            { photoId: job.id, createdAt: Date.now() },
+            { merge: true },
+          );
+        }
+      });
     });
   }
 
@@ -1199,7 +1361,9 @@ export type PushOpKind =
   | 'cookState.put'
   | 'photo.delete'
   | 'collection.put'
-  | 'collection.delete';
+  | 'collection.delete'
+  | 'cookLog.put'
+  | 'cookLog.delete';
 
 export interface PushOpBase {
   kind: PushOpKind;
@@ -1383,6 +1547,70 @@ function validateCollectionDelete(payload: unknown): payload is { id: string; up
   return isUuid(payload.id) && updatedAt !== undefined;
 }
 
+function isOptionalCookLogText(value: unknown): boolean {
+  return value === undefined || (typeof value === 'string' && value.length <= MAX_COOK_LOG_TEXT);
+}
+
+/**
+ * The client's `isUsableCookLog` enforces exactly these rules; a row accepted
+ * here but rejected there would be dropped on pull while still owning photos.
+ */
+export function validateCookLogPut(payload: unknown): payload is Record<string, unknown> {
+  if (!isPlainObject(payload)) {
+    return false;
+  }
+  if (!isUuid(payload.id) || !isUuid(payload.recipeId)) {
+    return false;
+  }
+  if (!isCookedOn(payload.cookedOn)) {
+    return false;
+  }
+  if (finiteNumber(payload.createdAt) === undefined || finiteNumber(payload.updatedAt) === undefined) {
+    return false;
+  }
+  if (payload.rating !== undefined) {
+    const rating = finiteNumber(payload.rating);
+    if (rating === undefined || !Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return false;
+    }
+  }
+  if (payload.servings !== undefined) {
+    const servings = finiteNumber(payload.servings);
+    if (servings === undefined || servings <= 0 || servings > MAX_COOK_LOG_SERVINGS) {
+      return false;
+    }
+  }
+  if (!isOptionalCookLogText(payload.notes) || !isOptionalCookLogText(payload.lessons)) {
+    return false;
+  }
+  if (payload.photoIds !== undefined) {
+    if (!Array.isArray(payload.photoIds) || payload.photoIds.length > MAX_COOK_LOG_PHOTOS) {
+      return false;
+    }
+    const seen = new Set<string>();
+    for (const pid of payload.photoIds) {
+      if (!isUuid(pid) || seen.has(pid)) {
+        return false;
+      }
+      seen.add(pid);
+    }
+  }
+  if (jsonSize(payload) >= 200_000) {
+    return false;
+  }
+  return true;
+}
+
+export function validateCookLogDelete(
+  payload: unknown,
+): payload is { id: string; updatedAt: number } {
+  if (!isPlainObject(payload)) {
+    return false;
+  }
+  const updatedAt = finiteNumber(payload.updatedAt);
+  return isUuid(payload.id) && updatedAt !== undefined;
+}
+
 export function validatePushOp(op: unknown): { ok: true; op: { kind: PushOpKind; payload: unknown } } | { ok: false } {
   if (!isPlainObject(op)) {
     return { ok: false };
@@ -1409,6 +1637,10 @@ export function validatePushOp(op: unknown): { ok: true; op: { kind: PushOpKind;
       return validateCollectionPut(payload) ? { ok: true, op: { kind, payload } } : { ok: false };
     case 'collection.delete':
       return validateCollectionDelete(payload) ? { ok: true, op: { kind, payload } } : { ok: false };
+    case 'cookLog.put':
+      return validateCookLogPut(payload) ? { ok: true, op: { kind, payload } } : { ok: false };
+    case 'cookLog.delete':
+      return validateCookLogDelete(payload) ? { ok: true, op: { kind, payload } } : { ok: false };
     default:
       return { ok: false };
   }
@@ -1423,7 +1655,9 @@ export function isKnownPushKind(kind: unknown): kind is PushOpKind {
     kind === 'cookState.put' ||
     kind === 'photo.delete' ||
     kind === 'collection.put' ||
-    kind === 'collection.delete'
+    kind === 'collection.delete' ||
+    kind === 'cookLog.put' ||
+    kind === 'cookLog.delete'
   );
 }
 

@@ -1,8 +1,8 @@
 import type { CookStateRow } from './useCookState';
-import type { ChatMessage, Collection, Recipe } from './types';
+import type { ChatMessage, Collection, CookLog, Recipe } from './types';
 import { recipePhotoIds } from './recipePhotos';
 
-export type CloneIdNamespace = 'recipe' | 'collection' | 'photo' | 'chatMessage';
+export type CloneIdNamespace = 'recipe' | 'collection' | 'photo' | 'chatMessage' | 'cookLog';
 
 export type CloneIdFor = (namespace: CloneIdNamespace, originalId: string) => string;
 
@@ -13,6 +13,7 @@ export interface BackupGraphIds {
   recipeIds: ReadonlySet<string>;
   collectionIds: ReadonlySet<string>;
   chatMessageIds: ReadonlySet<string>;
+  cookLogIds: ReadonlySet<string>;
   photoIds: ReadonlySet<string>;
 }
 
@@ -45,6 +46,7 @@ export function decideBackupImportMode(
   return overlaps(backupIds.recipeIds, existingOwnedIds.recipeIds)
     || overlaps(backupIds.collectionIds, existingOwnedIds.collectionIds)
     || overlaps(backupIds.chatMessageIds, existingOwnedIds.chatMessageIds)
+    || overlaps(backupIds.cookLogIds, existingOwnedIds.cookLogIds)
     || overlaps(backupIds.photoIds, existingOwnedIds.photoIds)
     ? 'preserve'
     : 'clone';
@@ -92,6 +94,20 @@ function remapChatMessage(
   };
 }
 
+function remapCookLog(
+  log: CookLog,
+  cookLogIdMap: Map<string, string>,
+  recipeIdMap: Map<string, string>,
+  photoIdMap: Map<string, string>,
+): CookLog {
+  return {
+    ...log,
+    id: remapId(cookLogIdMap, log.id),
+    recipeId: remapId(recipeIdMap, log.recipeId),
+    photoIds: log.photoIds?.map((id) => remapId(photoIdMap, id)),
+  };
+}
+
 function remapCookRow(row: CookStateRow, recipeIdMap: Map<string, string>): CookStateRow {
   return {
     ...row,
@@ -104,6 +120,7 @@ export interface BackupImportEntities {
   collections: Collection[];
   chatMessages: ChatMessage[];
   cookState: CookStateRow[];
+  cookLogs: CookLog[];
   /** Photo ids present in the backup file (before remap). */
   backupPhotoIds: string[];
 }
@@ -113,6 +130,7 @@ export interface RemappedBackupImport {
   collections: Collection[];
   chatMessages: ChatMessage[];
   cookState: CookStateRow[];
+  cookLogs: CookLog[];
   /** Old photo id → new photo id (identity when preserving). */
   photoIdMap: Map<string, string>;
 }
@@ -121,6 +139,7 @@ export function backupGraphIds(input: BackupImportEntities): BackupGraphIds {
   const recipeIds = new Set<string>();
   const collectionIds = new Set<string>();
   const chatMessageIds = new Set<string>();
+  const cookLogIds = new Set<string>();
   const photoIds = new Set(input.backupPhotoIds);
 
   for (const recipe of input.recipes) {
@@ -145,8 +164,15 @@ export function backupGraphIds(input: BackupImportEntities): BackupGraphIds {
   for (const row of input.cookState) {
     recipeIds.add(row.recipeId);
   }
+  for (const log of input.cookLogs) {
+    cookLogIds.add(log.id);
+    recipeIds.add(log.recipeId);
+    for (const id of log.photoIds ?? []) {
+      photoIds.add(id);
+    }
+  }
 
-  return { recipeIds, collectionIds, chatMessageIds, photoIds };
+  return { recipeIds, collectionIds, chatMessageIds, cookLogIds, photoIds };
 }
 
 /**
@@ -182,6 +208,7 @@ export async function deterministicCloneIds(
     ['collection', graphIds.collectionIds],
     ['photo', graphIds.photoIds],
     ['chatMessage', graphIds.chatMessageIds],
+    ['cookLog', graphIds.cookLogIds],
   ];
   const ids = new Map<string, string>();
   await Promise.all(
@@ -212,6 +239,7 @@ export function remapBackupImport(
       collections: input.collections,
       chatMessages: input.chatMessages,
       cookState: input.cookState,
+      cookLogs: input.cookLogs,
       photoIdMap: new Map([...graphIds.photoIds].map((id) => [id, id])),
     };
   }
@@ -236,6 +264,11 @@ export function remapBackupImport(
     chatIdMap.set(id, cloneId('chatMessage', id));
   }
 
+  const cookLogIdMap = new Map<string, string>();
+  for (const id of graphIds.cookLogIds) {
+    cookLogIdMap.set(id, cloneId('cookLog', id));
+  }
+
   return {
     recipes: input.recipes.map((r) => remapRecipe(r, recipeIdMap, photoIdMap)),
     collections: input.collections.map((c) =>
@@ -245,6 +278,9 @@ export function remapBackupImport(
       remapChatMessage(m, chatIdMap, recipeIdMap, photoIdMap),
     ),
     cookState: input.cookState.map((row) => remapCookRow(row, recipeIdMap)),
+    cookLogs: input.cookLogs.map((log) =>
+      remapCookLog(log, cookLogIdMap, recipeIdMap, photoIdMap),
+    ),
     photoIdMap,
   };
 }

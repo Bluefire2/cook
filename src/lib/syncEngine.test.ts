@@ -128,6 +128,7 @@ describe('applyPullChanges', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set<string>(),
       chatParentOrigins: new Map<string, string>(),
       cookParentOrigins: new Map<string, string>(),
@@ -188,6 +189,7 @@ describe('applyPullChanges', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set<string>(),
       chatParentOrigins: new Map<string, string>(),
       cookParentOrigins: new Map<string, string>(),
@@ -218,12 +220,115 @@ describe('applyPullChanges', () => {
     expect(acc.collections.size).toBe(0);
   });
 
+  const COOK_LOG_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const COOK_RECIPE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+  function emptyAcc() {
+    return {
+      recipes: new Map(),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set<string>(),
+      chatParentOrigins: new Map<string, string>(),
+      cookParentOrigins: new Map<string, string>(),
+    };
+  }
+
+  it('upserts live cook logs compacted and drops tombstones', () => {
+    const acc = emptyAcc();
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+      cookLogs: [
+        {
+          id: COOK_LOG_ID,
+          recipeId: COOK_RECIPE_ID,
+          cookedOn: '2026-09-20',
+          rating: 4,
+          notes: '  Less salt.  ',
+          stray: 'dropped',
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    });
+    expect(acc.cookLogs.get(COOK_LOG_ID)).toEqual({
+      id: COOK_LOG_ID,
+      recipeId: COOK_RECIPE_ID,
+      cookedOn: '2026-09-20',
+      createdAt: 1,
+      updatedAt: 2,
+      rating: 4,
+      notes: 'Less salt.',
+    });
+
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+      cookLogs: [{ id: COOK_LOG_ID, deletedAt: 9 }],
+    });
+    expect(acc.cookLogs.size).toBe(0);
+  });
+
+  it('drops an unusable live cook log from the map', () => {
+    const acc = emptyAcc();
+    acc.cookLogs.set(COOK_LOG_ID, {
+      id: COOK_LOG_ID,
+      recipeId: COOK_RECIPE_ID,
+      cookedOn: '2026-09-20',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+      cookLogs: [
+        {
+          id: COOK_LOG_ID,
+          recipeId: COOK_RECIPE_ID,
+          cookedOn: '2026-02-30',
+          createdAt: 1,
+          updatedAt: 3,
+        },
+      ],
+    });
+    expect(acc.cookLogs.size).toBe(0);
+  });
+
+  it('leaves cook logs alone when an old server omits the key', () => {
+    const acc = emptyAcc();
+    const log = {
+      id: COOK_LOG_ID,
+      recipeId: COOK_RECIPE_ID,
+      cookedOn: '2026-09-20',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    acc.cookLogs.set(COOK_LOG_ID, log);
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+    });
+    expect(acc.cookLogs.get(COOK_LOG_ID)).toEqual(log);
+  });
+
   it('records shared parent provenance only in sidecars and drops it on tombstone', () => {
     const acc = {
       recipes: new Map(),
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set<string>(),
       chatParentOrigins: new Map<string, string>(),
       cookParentOrigins: new Map<string, string>(),
@@ -340,6 +445,7 @@ describe('pullAll', () => {
       collections: new Map([['old-owned-collection', collection('old-owned-collection', 'Old')]]),
       chat: new Map([['old-message', chat('old-message', oldOwn.id, 'old')]]),
       cook: new Map([[oldOwn.id, cook(oldOwn.id, 1)]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(['old-owned-photo']),
     });
     installSharedRows({
@@ -401,6 +507,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(['prior-owned-photo']),
     });
     installSharedRows({
@@ -474,6 +581,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map([['old-message', chat('old-message', 'old', 'hi')]]),
       cook: new Map([['old', cook('old', 1)]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(['old-photo']),
       chatParentOrigins: new Map([['old-message', 'former-owner']]),
       cookParentOrigins: new Map([['old', 'former-owner']]),
@@ -514,6 +622,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     let ownedCalls = 0;
@@ -561,6 +670,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
 
@@ -866,6 +976,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(['prior-owned-photo']),
     });
     installSharedRows({
@@ -1055,6 +1166,7 @@ describe('pullAll overlapping a local delete', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     let release: (page: PullPage) => void = () => {};
@@ -1083,6 +1195,7 @@ describe('pullAll overlapping a local delete', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     beginLocalWrite();

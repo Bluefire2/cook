@@ -284,6 +284,7 @@ describe('normalizeChatChange / normalizeCookChange', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set<string>(),
       chatParentOrigins: new Map<string, string>(),
       cookParentOrigins: new Map<string, string>(),

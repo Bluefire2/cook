@@ -1,6 +1,7 @@
+import { sortCookLogs } from './cookLogShape';
 import { recipePhotoIds } from './recipePhotos';
 import type { BackupGraphIds } from './backupImportRemap';
-import type { ChatMessage, Collection, Recipe } from './types';
+import type { ChatMessage, Collection, CookLog, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 
 export type ItemOrigin =
@@ -12,6 +13,7 @@ export type LibrarySnapshot = {
   collections: ReadonlyMap<string, Collection>;
   chat: ReadonlyMap<string, ChatMessage>;
   cook: ReadonlyMap<string, CookStateRow>;
+  cookLogs: ReadonlyMap<string, CookLog>;
   remotePhotoIds: ReadonlySet<string>;
   pendingBlobs: ReadonlyMap<string, Blob>;
   recipeOrigins: ReadonlyMap<string, ItemOrigin>;
@@ -35,6 +37,7 @@ function empty(loaded: boolean): LibrarySnapshot {
     collections: new Map(),
     chat: new Map(),
     cook: new Map(),
+    cookLogs: new Map(),
     remotePhotoIds: new Set(),
     pendingBlobs: new Map(),
     recipeOrigins: new Map(),
@@ -87,6 +90,7 @@ function cloneMaps(from: LibrarySnapshot): {
   collections: Map<string, Collection>;
   chat: Map<string, ChatMessage>;
   cook: Map<string, CookStateRow>;
+  cookLogs: Map<string, CookLog>;
   remotePhotoIds: Set<string>;
   pendingBlobs: Map<string, Blob>;
   recipeOrigins: Map<string, ItemOrigin>;
@@ -99,6 +103,7 @@ function cloneMaps(from: LibrarySnapshot): {
     collections: new Map(from.collections),
     chat: new Map(from.chat),
     cook: new Map(from.cook),
+    cookLogs: new Map(from.cookLogs),
     remotePhotoIds: new Set(from.remotePhotoIds),
     pendingBlobs: new Map(from.pendingBlobs),
     recipeOrigins: new Map(from.recipeOrigins),
@@ -143,6 +148,7 @@ type OwnedPullSnapshot = {
   collections: Map<string, Collection>;
   chat: Map<string, ChatMessage>;
   cook: Map<string, CookStateRow>;
+  cookLogs: Map<string, CookLog>;
   remotePhotoIds: Set<string>;
   chatParentOrigins?: ReadonlyMap<string, string>;
   cookParentOrigins?: ReadonlyMap<string, string>;
@@ -176,6 +182,7 @@ export function replaceFromPull(next: OwnedPullSnapshot): void {
     collections: next.collections,
     chat: next.chat,
     cook: next.cook,
+    cookLogs: next.cookLogs,
     remotePhotoIds: next.remotePhotoIds,
     pendingBlobs: snapshot.pendingBlobs,
     recipeOrigins,
@@ -227,6 +234,7 @@ export function replaceFromPullWithShared(
     collections,
     chat: owned.chat,
     cook: owned.cook,
+    cookLogs: owned.cookLogs,
     remotePhotoIds: new Set([...owned.remotePhotoIds, ...shared.remotePhotoIds]),
     pendingBlobs: snapshot.pendingBlobs,
     recipeOrigins,
@@ -256,6 +264,15 @@ export function removeRecipeLocal(id: string): void {
       next.chat.delete(messageId);
       next.chatParentOrigins.delete(messageId);
       for (const photoId of message.photoIds ?? []) {
+        next.pendingBlobs.delete(photoId);
+        next.remotePhotoIds.delete(photoId);
+      }
+    }
+  }
+  for (const [logId, log] of next.cookLogs) {
+    if (log.recipeId === id) {
+      next.cookLogs.delete(logId);
+      for (const photoId of log.photoIds ?? []) {
         next.pendingBlobs.delete(photoId);
         next.remotePhotoIds.delete(photoId);
       }
@@ -327,6 +344,18 @@ export function upsertCook(row: CookStateRow): void {
     row.recipeId,
     next.recipeOrigins,
   );
+  emit({ ...snapshot, ...next });
+}
+
+export function upsertCookLog(log: CookLog): void {
+  const next = cloneMaps(snapshot);
+  next.cookLogs.set(log.id, log);
+  emit({ ...snapshot, ...next });
+}
+
+export function removeCookLogLocal(id: string): void {
+  const next = cloneMaps(snapshot);
+  next.cookLogs.delete(id);
   emit({ ...snapshot, ...next });
 }
 
@@ -451,6 +480,18 @@ export function getCook(recipeId: string): CookStateRow | undefined {
   return snapshot.cook.get(recipeId);
 }
 
+export function getCookLog(id: string): CookLog | undefined {
+  return snapshot.cookLogs.get(id);
+}
+
+/** Newest cook first; every entry when `recipeId` is omitted. */
+export function listCookLogs(recipeId?: string): CookLog[] {
+  const logs = [...snapshot.cookLogs.values()];
+  return sortCookLogs(
+    recipeId === undefined ? logs : logs.filter((log) => log.recipeId === recipeId),
+  );
+}
+
 export function getPendingBlob(id: string): Blob | undefined {
   return snapshot.pendingBlobs.get(id);
 }
@@ -544,8 +585,19 @@ export function ownedBackupGraphIds(): BackupGraphIds {
     }
     recipeIds.add(row.recipeId);
   }
+  const cookLogIds = new Set<string>();
+  for (const log of snapshot.cookLogs.values()) {
+    if (!isOwnedRecipeId(log.recipeId)) {
+      continue;
+    }
+    cookLogIds.add(log.id);
+    recipeIds.add(log.recipeId);
+    for (const id of log.photoIds ?? []) {
+      photoIds.add(id);
+    }
+  }
 
-  return { recipeIds, collectionIds, chatMessageIds, photoIds };
+  return { recipeIds, collectionIds, chatMessageIds, cookLogIds, photoIds };
 }
 
 export function discardLegacyCookDb(): void {

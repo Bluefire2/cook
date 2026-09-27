@@ -1,4 +1,5 @@
 import { compactCollection } from './compactCollection';
+import { compactCookLog, isUsableCookLog } from './cookLogShape';
 import { compactRecipe } from './compactRecipe';
 import { MAX_PUSH_OPS, type PushOp } from './pushOps';
 import {
@@ -7,14 +8,17 @@ import {
   type DiscardedPushReason,
 } from './pushReasons';
 import { invalidateSession } from './session';
-import type { ChatMessage, Collection, Recipe } from './types';
+import type { ChatMessage, Collection, CookLog, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 import { clearLibrary } from './libraryMemory';
 
 export { SHARED_PARENT_OWNER_SUB_FIELD };
 
 export type PullCursor = Partial<
-  Record<'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections', [number, string]>
+  Record<
+    'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections' | 'cookLogs',
+    [number, string]
+  >
 >;
 
 export type PullChanges = {
@@ -23,6 +27,7 @@ export type PullChanges = {
   cookState: Record<string, unknown>[];
   photos: Record<string, unknown>[];
   collections?: Record<string, unknown>[];
+  cookLogs?: Record<string, unknown>[];
 };
 
 export type PullPage = {
@@ -284,6 +289,20 @@ export function normalizeCookChange(
   };
 }
 
+/**
+ * An unusable live row is dropped like a tombstone: nothing in the UI can
+ * render it, and keeping it would hand a malformed entry to the next backup.
+ */
+export function normalizeCookLogChange(raw: Record<string, unknown>): CookLog | 'tombstone' {
+  if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
+    return 'tombstone';
+  }
+  if (!isUsableCookLog(raw)) {
+    return 'tombstone';
+  }
+  return compactCookLog(raw);
+}
+
 function readSharedParentOwnerSub(raw: Record<string, unknown>): string | undefined {
   const value = raw[SHARED_PARENT_OWNER_SUB_FIELD];
   if (typeof value !== 'string' || value === '') {
@@ -298,6 +317,7 @@ export function applyPullChanges(
     collections: Map<string, Collection>;
     chat: Map<string, ChatMessage>;
     cook: Map<string, CookStateRow>;
+    cookLogs: Map<string, CookLog>;
     remotePhotoIds: Set<string>;
     chatParentOrigins: Map<string, string>;
     cookParentOrigins: Map<string, string>;
@@ -352,6 +372,15 @@ export function applyPullChanges(
       } else {
         acc.cookParentOrigins.set(recipeId, owner);
       }
+    }
+  }
+  for (const raw of changes.cookLogs ?? []) {
+    const id = raw.id as string;
+    const normalized = normalizeCookLogChange(raw);
+    if (normalized === 'tombstone') {
+      acc.cookLogs.delete(id);
+    } else {
+      acc.cookLogs.set(id, normalized);
     }
   }
   for (const raw of changes.photos) {

@@ -19,7 +19,7 @@ import {
   replaceFromPullWithShared,
   type ItemOrigin,
 } from './libraryMemory';
-import type { ChatMessage, Collection, Recipe } from './types';
+import type { ChatMessage, Collection, CookLog, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 
 export type SyncOutcome = 'ok' | 'error' | 'offline' | 'signedOut' | 'skipped' | 'superseded';
@@ -136,6 +136,7 @@ export async function pullAll(
     collections: new Map<string, Collection>(),
     chat: new Map<string, ChatMessage>(),
     cook: new Map<string, CookStateRow>(),
+    cookLogs: new Map<string, CookLog>(),
     remotePhotoIds: new Set<string>(),
     chatParentOrigins: new Map<string, string>(),
     cookParentOrigins: new Map<string, string>(),

@@ -74,6 +74,7 @@ function entities(overrides: Partial<BackupImportEntities> = {}): BackupImportEn
     collections: [collection],
     chatMessages: [chat],
     cookState: [cook],
+    cookLogs: [],
     backupPhotoIds: [ALICE_PHOTO],
     ...overrides,
   };
@@ -86,6 +87,7 @@ function graphIds(
     recipeIds: new Set(values.recipeIds),
     collectionIds: new Set(values.collectionIds),
     chatMessageIds: new Set(values.chatMessageIds),
+    cookLogIds: new Set(values.cookLogIds),
     photoIds: new Set(values.photoIds),
   };
 }
@@ -231,6 +233,7 @@ describe('remapBackupImport', () => {
       recipeIds: new Set([orphanRecipe]),
       collectionIds: new Set([ALICE_COLLECTION]),
       chatMessageIds: new Set([ALICE_CHAT]),
+      cookLogIds: new Set(),
       photoIds: new Set([orphanPhoto]),
     });
   });
@@ -283,6 +286,7 @@ describe('remapBackupImport', () => {
       collections: new Map([[cloned.collections[0]!.id, cloned.collections[0]!]]),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
 

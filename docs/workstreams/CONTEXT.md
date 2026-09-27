@@ -103,9 +103,20 @@ optional `description` / `sourceUrl` / `notes` / `photoId` /
 `RecipeDraft` is `Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>` and is what
 extraction and AI modification produce.
 
+A `CookLog` records one time a recipe was cooked. It is a sibling entity keyed
+by `recipeId`, never fields on `Recipe`, and it is deleted with its recipe.
+Fields: `id`; `recipeId` (the parent recipe, which cannot change);
+`cookedOn` (`YYYY-MM-DD`, the local calendar date, not a timestamp); optional
+`rating` (integer 1-5); optional `servings` (how many were made); optional
+`notes` (how it went, substitutions); optional `lessons` (what to do next
+time, the only field that can be appended to the recipe's `notes`); optional
+`photoIds` (up to 8); `createdAt`, `updatedAt`. Its rules are in
+`docs/constitutions/cook-log.md`.
+
 Photos are normalised into their own table and referenced by id:
 `Recipe.photoId` (cover), `Recipe.galleryPhotoIds` (end-of-recipe gallery,
-max 8), and `ChatMessage.photoIds`.
+max 8), `ChatMessage.photoIds`, and `CookLog.photoIds` (max 8, owned by the
+entry's `recipeId`).
 
 **A trap worth knowing:** the `update_recipe` / `save_recipe` JSON schema in
 `api/chat.ts:6-55` and `api/import.ts:6-55` is a byte-identical duplicate, and

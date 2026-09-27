@@ -252,9 +252,14 @@ export default function Library() {
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="flex items-center justify-between py-4">
         <h1 className="text-2xl font-bold">Sous</h1>
-        <Link to="/settings" className={ghostBtn}>
-          Settings
-        </Link>
+        <div className="flex items-center gap-1">
+          <Link to="/cooks" className={ghostBtn}>
+            Cooks
+          </Link>
+          <Link to="/settings" className={ghostBtn}>
+            Settings
+          </Link>
+        </div>
       </header>
 
       {showSwitcher && (
@@ -523,7 +528,7 @@ export default function Library() {
             Delete “{pendingDelete.title}”?
           </h2>
           <p className="mt-1 text-sm text-ink-muted">
-            This also deletes its chat history. There is no undo.
+            This also deletes its chat history and cook log. There is no undo.
           </p>
           <button
             type="button"

@@ -1,6 +1,7 @@
 import { isUsableRecipe } from './recipeShape';
 import type { CookStateRow } from './useCookState';
-import type { ChatMessage, Collection, Recipe } from './types';
+import type { ChatMessage, Collection, CookLog, Recipe } from './types';
+import { compactCookLog, isUsableCookLog } from './cookLogShape';
 import {
   addPendingBlob,
   captureSnapshot,
@@ -12,6 +13,7 @@ import {
   listAllChat,
   listAllCook,
   listCollections,
+  listCookLogs,
   listRecipes,
   markPhotoRemote,
   ownedBackupGraphIds,
@@ -19,6 +21,7 @@ import {
   upsertChat,
   upsertCollection,
   upsertCook,
+  upsertCookLog,
   upsertRecipe,
 } from './libraryMemory';
 import { compactRecipe } from './compactRecipe';
@@ -43,7 +46,7 @@ interface BackupPhoto {
 
 interface BackupFile {
   app: 'cook';
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   exportedAt: number;
   /** Google `sub` of the account that exported this file (optional on legacy backups). */
   exportedBySub?: string;
@@ -52,6 +55,7 @@ interface BackupFile {
   photos: BackupPhoto[];
   cookState?: CookStateRow[];
   collections?: unknown[];
+  cookLogs?: unknown[];
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -69,6 +73,7 @@ function blobToBase64(blob: Blob): Promise<string> {
 function attributePhotos(
   recipes: Recipe[],
   chatMessages: ChatMessage[],
+  cookLogs: CookLog[],
 ): Map<string, string> {
   const map = new Map<string, string>();
   for (const recipe of recipes) {
@@ -82,6 +87,13 @@ function attributePhotos(
     for (const photoId of message.photoIds ?? []) {
       if (!map.has(photoId)) {
         map.set(photoId, message.recipeId);
+      }
+    }
+  }
+  for (const log of cookLogs) {
+    for (const photoId of log.photoIds ?? []) {
+      if (!map.has(photoId)) {
+        map.set(photoId, log.recipeId);
       }
     }
   }
@@ -108,9 +120,10 @@ export async function exportLibrary(currentSub: string): Promise<Blob> {
   const collections = listCollections().filter(
     (collection) => !isSharedCollection(collection.id),
   );
+  const cookLogs = listCookLogs().filter((log) => !isSharedRecipe(log.recipeId));
   // Photo attribution runs after the shared-parent filter, so an attachment
   // that belongs only to an omitted chat row is not exported.
-  const photoIds = [...attributePhotos(recipes, chatMessages).keys()];
+  const photoIds = [...attributePhotos(recipes, chatMessages, cookLogs).keys()];
 
   const photos: BackupPhoto[] = [];
   for (const id of photoIds) {
@@ -132,13 +145,14 @@ export async function exportLibrary(currentSub: string): Promise<Blob> {
 
   const backup: BackupFile = {
     app: 'cook',
-    version: 3,
+    version: 4,
     exportedAt: Date.now(),
     exportedBySub: currentSub,
     recipes,
     chatMessages,
     cookState,
     collections,
+    cookLogs,
     photos,
   };
 
@@ -166,8 +180,9 @@ function isUsableCollection(raw: unknown): raw is Collection {
 }
 
 /**
- * Drops chat and cook rows whose recipe is not a usable recipe entity in this
- * backup, and photos attributable only to those rows. Recipe entities stay.
+ * Drops chat, cook, and cook log rows whose recipe is not a usable recipe
+ * entity in this backup, and photos attributable only to those rows. Recipe
+ * entities stay.
  * Legacy orphan dependents are not restorable under the server parent
  * invariant; this does not synthesize parent recipes.
  */
@@ -176,23 +191,27 @@ function sanitizeDanglingDependents(
   collections: Collection[],
   chatMessages: ChatMessage[],
   cookState: CookStateRow[],
+  cookLogs: CookLog[],
 ): {
   recipes: Recipe[];
   collections: Collection[];
   chatMessages: ChatMessage[];
   cookState: CookStateRow[];
+  cookLogs: CookLog[];
   omitPhotoIds: Set<string>;
 } {
   const usableIds = new Set(recipes.map((recipe) => recipe.id));
   const keptChat = chatMessages.filter((message) => usableIds.has(message.recipeId));
   const keptCook = cookState.filter((row) => usableIds.has(row.recipeId));
-  const keptPhotoIds = new Set(attributePhotos(recipes, keptChat).keys());
+  const keptCookLogs = cookLogs.filter((log) => usableIds.has(log.recipeId));
+  const keptPhotoIds = new Set(attributePhotos(recipes, keptChat, keptCookLogs).keys());
   const omitPhotoIds = new Set<string>();
-  for (const message of chatMessages) {
-    if (usableIds.has(message.recipeId)) {
-      continue;
-    }
-    for (const photoId of message.photoIds ?? []) {
+  const dropped = [
+    ...chatMessages.filter((message) => !usableIds.has(message.recipeId)),
+    ...cookLogs.filter((log) => !usableIds.has(log.recipeId)),
+  ];
+  for (const row of dropped) {
+    for (const photoId of row.photoIds ?? []) {
       if (!keptPhotoIds.has(photoId)) {
         omitPhotoIds.add(photoId);
       }
@@ -203,6 +222,7 @@ function sanitizeDanglingDependents(
     collections,
     chatMessages: keptChat,
     cookState: keptCook,
+    cookLogs: keptCookLogs,
     omitPhotoIds,
   };
 }
@@ -232,11 +252,15 @@ export async function importLibrary(
     .map(compactCollection);
   const chatMessages = (backup.chatMessages ?? []).map(withoutImportedProvenance);
   const cookState = (backup.cookState ?? []).map(withoutImportedProvenance);
+  const cookLogs = (Array.isArray(backup.cookLogs) ? backup.cookLogs : [])
+    .filter(isUsableCookLog)
+    .map(compactCookLog);
   const importEntities = {
     recipes,
     collections,
     chatMessages,
     cookState,
+    cookLogs,
     backupPhotoIds: (backup.photos ?? []).map((p) => p.id),
   };
   const graphIds = backupGraphIds(importEntities);
@@ -262,12 +286,14 @@ export async function importLibrary(
     remapped.collections,
     remapped.chatMessages,
     remapped.cookState,
+    remapped.cookLogs,
   );
   const importRecipes = kept.recipes;
   const importCollections = kept.collections;
   const importChat = kept.chatMessages;
   const importCook = kept.cookState;
-  const photoAttribution = attributePhotos(importRecipes, importChat);
+  const importCookLogs = kept.cookLogs;
+  const photoAttribution = attributePhotos(importRecipes, importChat, importCookLogs);
 
   const keptPhotos = (backup.photos ?? []).flatMap((photo) => {
     const id = remapped.photoIdMap.get(photo.id) ?? photo.id;
@@ -300,6 +326,9 @@ export async function importLibrary(
     }
     for (const row of importCook) {
       upsertCook(row);
+    }
+    for (const log of importCookLogs) {
+      upsertCookLog(log);
     }
 
     // Remote import is best-effort across requests. Recipe puts are
@@ -344,6 +373,9 @@ export async function importLibrary(
         kind: 'cookState.put',
         payload: { ...row, updatedAt: Date.now() },
       });
+    }
+    for (const log of importCookLogs) {
+      dependentOps.push({ kind: 'cookLog.put', payload: log });
     }
     const dependentResult = await pushOps(dependentOps);
     if (dependentResult !== 'ok') {
