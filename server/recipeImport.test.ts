@@ -1,13 +1,14 @@
 import { MediaResolution, type Content } from '@google/genai';
 import { describe, expect, it } from 'vitest';
 import type { RecipeDraft } from '../src/lib/types.ts';
-import { fakeImportDeps } from '../test/fakeGemini.ts';
+import { fakeImportDeps, fakeImportDepsReplies } from '../test/fakeGemini.ts';
 import {
   extractRecipeSource,
   fetchPageHtml,
   importFromHtml,
   importFromImages,
   importFromSource,
+  MAX_PHOTO_UNIT_CHARS,
   normalizeImportedRecipe,
   type ImportedRecipe,
 } from './recipeImport.ts';
@@ -454,6 +455,175 @@ describe('importFromImages', () => {
       const { deps } = fakeImportDeps(JSON.stringify(reply));
       expect(await importFromImages([JPEG], '', deps)).toEqual(outcome);
     }
+  });
+
+  describe('retry and unit check', () => {
+    const runaway = 'lb combat/lb weight (#) converted to lb/lb format -> lb (1.5 lb)';
+
+    function withUnit(unit: string) {
+      return {
+        ...MINIMAL,
+        ingredientSections: [{ items: [{ item: 'tomatoes', quantity: 6, unit }] }],
+      };
+    }
+
+    it('retries once after a reply that is not JSON, and returns the second outcome', async () => {
+      const fake = fakeImportDepsReplies(['Sure!', JSON.stringify(MINIMAL)]);
+      expect(await importFromImages([JPEG], '', fake.deps)).toEqual({ kind: 'ok', recipe: MINIMAL });
+      expect(fake.calls).toHaveLength(2);
+      expect(fake.calls[1]).toEqual(fake.calls[0]);
+    });
+
+    it('retries once after an unusable reply', async () => {
+      const fake = fakeImportDepsReplies([
+        JSON.stringify({ ...MINIMAL, title: ' ' }),
+        JSON.stringify(MINIMAL),
+      ]);
+      expect(await importFromImages([JPEG], '', fake.deps)).toEqual({ kind: 'ok', recipe: MINIMAL });
+      expect(fake.calls).toHaveLength(2);
+    });
+
+    it('retries once after a runaway unit', async () => {
+      const fake = fakeImportDepsReplies([
+        JSON.stringify(withUnit(runaway)),
+        JSON.stringify(MINIMAL),
+      ]);
+      expect(await importFromImages([JPEG], '', fake.deps)).toEqual({ kind: 'ok', recipe: MINIMAL });
+      expect(fake.calls).toHaveLength(2);
+    });
+
+    it('returns the second outcome without a third call', async () => {
+      const blankTitle = JSON.stringify({ ...MINIMAL, title: ' ' });
+      const bothRunaway = JSON.stringify(withUnit('x'.repeat(64)));
+      const cases: [(string | undefined | Error)[], { kind: string }][] = [
+        [['x', 'y'], { kind: 'parse_error' }],
+        [[blankTitle, 'x'], { kind: 'parse_error' }],
+        [['x', blankTitle], { kind: 'unusable' }],
+        [[bothRunaway, bothRunaway], { kind: 'unusable' }],
+      ];
+      for (const [replies, outcome] of cases) {
+        const fake = fakeImportDepsReplies(replies);
+        expect(await importFromImages([JPEG], '', fake.deps)).toEqual(outcome);
+        expect(fake.calls).toHaveLength(2);
+      }
+    });
+
+    it('does not retry an ok reply', async () => {
+      const fake = fakeImportDepsReplies([JSON.stringify(MINIMAL)]);
+      expect(await importFromImages([JPEG], '', fake.deps)).toEqual({ kind: 'ok', recipe: MINIMAL });
+      expect(fake.calls).toHaveLength(1);
+    });
+
+    it('does not retry NOT_A_RECIPE', async () => {
+      const fake = fakeImportDepsReplies([JSON.stringify({ ...MINIMAL, title: 'NOT_A_RECIPE' })]);
+      expect(await importFromImages([JPEG], '', fake.deps)).toEqual({ kind: 'not_a_recipe' });
+      expect(fake.calls).toHaveLength(1);
+    });
+
+    it('does not retry when the model call throws', async () => {
+      const fake = fakeImportDepsReplies([new Error('boom')]);
+      await expect(importFromImages([JPEG], '', fake.deps)).rejects.toThrow('boom');
+      expect(fake.calls).toHaveLength(1);
+    });
+
+    it('propagates a throw on the retry', async () => {
+      const fake = fakeImportDepsReplies(['x', new Error('boom')]);
+      await expect(importFromImages([JPEG], '', fake.deps)).rejects.toThrow('boom');
+      expect(fake.calls).toHaveLength(2);
+    });
+
+    it('makes no call with no images', async () => {
+      const fake = fakeImportDepsReplies([]);
+      expect(await importFromImages([], '', fake.deps)).toEqual({ kind: 'empty_source' });
+      expect(fake.calls).toHaveLength(0);
+    });
+
+    it('rejects a unit longer than MAX_PHOTO_UNIT_CHARS', async () => {
+      expect(MAX_PHOTO_UNIT_CHARS).toBe(32);
+
+      const over = JSON.stringify(withUnit('x'.repeat(33)));
+      const bothOver = fakeImportDepsReplies([over, over]);
+      expect(await importFromImages([JPEG], '', bothOver.deps)).toEqual({ kind: 'unusable' });
+      expect(bothOver.calls).toHaveLength(2);
+
+      const atCap = fakeImportDepsReplies([JSON.stringify(withUnit('x'.repeat(32)))]);
+      expect(await importFromImages([JPEG], '', atCap.deps)).toEqual({
+        kind: 'ok',
+        recipe: withUnit('x'.repeat(32)),
+      });
+      expect(atCap.calls).toHaveLength(1);
+
+      const padded = `  ${'x'.repeat(32)}  `;
+      const trimmed = fakeImportDepsReplies([JSON.stringify(withUnit(padded))]);
+      expect(await importFromImages([JPEG], '', trimmed.deps)).toEqual({
+        kind: 'ok',
+        recipe: withUnit('x'.repeat(32)),
+      });
+      expect(trimmed.calls).toHaveLength(1);
+
+      const secondSection = {
+        ...MINIMAL,
+        ingredientSections: [
+          { items: [{ item: 'tomatoes', quantity: 6 }] },
+          { items: [{ item: 'salt', unit: 'x'.repeat(33) }] },
+        ],
+      };
+      const second = JSON.stringify(secondSection);
+      const inSecond = fakeImportDepsReplies([second, second]);
+      expect(await importFromImages([JPEG], '', inSecond.deps)).toEqual({ kind: 'unusable' });
+      expect(inSecond.calls).toHaveLength(2);
+    });
+
+    it('keeps ordinary units', async () => {
+      const units = [
+        'tsp',
+        'tbsp',
+        'cup',
+        'lb',
+        'oz',
+        'g',
+        'ml',
+        'piece',
+        'can',
+        'square',
+        'package',
+        'slice',
+        'stalk',
+        'fl oz',
+        'heaping tablespoons',
+        'packages (10 ounces each)',
+      ];
+      const recipe = {
+        ...MINIMAL,
+        ingredientSections: [{ items: units.map((unit) => ({ item: unit, unit })) }],
+      };
+      const fake = fakeImportDepsReplies([JSON.stringify(recipe)]);
+      expect(await importFromImages([JPEG], '', fake.deps)).toEqual({ kind: 'ok', recipe });
+      expect(fake.calls).toHaveLength(1);
+    });
+
+    it('leaves text import without a retry or a unit check', async () => {
+      const parse = fakeImportDepsReplies(['x']);
+      expect(await importFromSource('soup', parse.deps)).toEqual({ kind: 'parse_error' });
+      expect(parse.calls).toHaveLength(1);
+
+      const unit = 'x'.repeat(64);
+      const recipe = {
+        ...MINIMAL,
+        ingredientSections: [{ items: [{ item: 'flour', unit }] }],
+      };
+      const text = fakeImportDepsReplies([JSON.stringify(recipe)]);
+      expect(await importFromSource('soup', text.deps)).toEqual({ kind: 'ok', recipe });
+      expect(text.calls).toHaveLength(1);
+    });
+
+    it('sends the same photo request on the retry', async () => {
+      const fake = fakeImportDepsReplies(['x', JSON.stringify(MINIMAL)]);
+      expect(await importFromImages([JPEG], '', fake.deps)).toEqual({ kind: 'ok', recipe: MINIMAL });
+      expect(fake.calls).toHaveLength(2);
+      expect(fake.calls[1].config?.mediaResolution).toBe(MediaResolution.MEDIA_RESOLUTION_HIGH);
+      expect(fake.calls[1].contents).toEqual(fake.calls[0].contents);
+    });
   });
 });
 

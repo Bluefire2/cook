@@ -206,7 +206,7 @@ even if tests pass.
 
 | Constitution | Scope |
 | --- | --- |
-| `docs/constitutions/image-import.md` | Recipe import from photos: `importFromImages` in `server/recipeImport.ts`, the `images` field in `server/importRoute.ts`, `encodeImageForImport` in `src/lib/image.ts`, `src/lib/importApi.ts`, the photo picker in `src/screens/ImportScreen.tsx`, `evals/import-handwritten/`, `evals/ocrCompare.ts`, and the photo copy in `public/privacy.html` and `public/terms.html`. |
+| `docs/constitutions/image-import.md` | Recipe import from photos: `importFromImages` in `server/recipeImport.ts`, the `images` field in `server/importRoute.ts`, `encodeImageForImport` in `src/lib/image.ts`, `src/lib/importApi.ts`, the photo picker in `src/screens/ImportScreen.tsx`, `evals/import-handwritten/` (`dev/` and `holdout/`), `evals/AGENTS.md`, `evals/EXPERIMENTS.md`, `evals/ocrCompare.ts`, and the photo copy in `public/privacy.html` and `public/terms.html`. |
 
 ## Plans (source of truth for unfinished work)
 

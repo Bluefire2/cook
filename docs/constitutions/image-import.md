@@ -4,7 +4,8 @@ Scope: importing a recipe from photos, typically of handwritten notes. The
 feature spans `server/recipeImport.ts` (`importFromImages`),
 `server/importRoute.ts` (the `images` field on `POST /api/import`),
 `src/lib/image.ts` (`encodeImageForImport`), `src/lib/importApi.ts`,
-`src/screens/ImportScreen.tsx` (the photo picker), `evals/import-handwritten/`,
+`src/screens/ImportScreen.tsx` (the photo picker), `evals/import-handwritten/`
+(`dev/` and `holdout/`), `evals/AGENTS.md`, `evals/EXPERIMENTS.md`,
 `evals/ocrCompare.ts`, and the photo sentences in `public/privacy.html` and
 `public/terms.html`.
 
@@ -33,15 +34,32 @@ files.
 ### 1. Photos are one more source in the single import pipeline
 
 Photos go through `server/recipeImport.ts` like URLs and pasted text do.
-`importFromImages` makes **one** Gemini call with the photos as `inlineData`
+`importFromImages` makes one Gemini call with the photos as `inlineData`
 parts and the shared `RECIPE_SCHEMA`. Its response goes through the same
 helper as `importFromSource`: JSON parse, the `NOT_A_RECIPE` check, then
-`normalizeImportedRecipe`. It returns the existing `ImportOutcome` kinds.
+`normalizeImportedRecipe`. On the photo path only, a recipe with any
+ingredient `unit` longer than 32 characters (`MAX_PHOTO_UNIT_CHARS`, after
+trimming) is then treated as `unusable`. If that outcome is `parse_error`
+or `unusable`, `importFromImages` makes exactly one more, identical call
+and returns its outcome, whatever it is. It does not retry `ok`,
+`not_a_recipe`, `empty_source`, or a thrown error. It returns the existing
+`ImportOutcome` kinds.
 
 **Why:** the pipeline's rule (see `docs/plans/recipe-import-module.md`) is one
 entry module, one cleanup step, and routes that only map outcomes to HTTP.
 A separate photo route or a separate normalizer would drift from the other
 sources, and the evals would stop covering the code production runs.
+
+**Why the retry:** a photo extraction can fail in ways that a second
+sample of the same call usually avoids: the model runs out of output tokens
+and returns cut-off JSON, or it writes its reasoning into a field. Both were
+already failures the person saw as a 502. So a retry costs at most one
+extra call, only on imports that had already failed, and adds one more wait
+on those. It is one retry, not a loop, so cost and latency stay bounded.
+The unit check looks only at length, never at what a unit says, so it
+encodes no particular card. A short but clean recipe is not detected: it
+cannot be told apart from a genuinely short one without reading the card,
+and principle 4's review is the safety net.
 
 ### 2. Gemini reads the photos; there is no OCR service in the request path
 
@@ -163,7 +181,10 @@ handwriting they consider private. They are told where it goes.
 Unit tests cover pure logic with fake `deps`: validation, caps, the order of
 parts sent to Gemini, and the mapping from outcomes to HTTP. Live evals
 (`evals/import-handwritten/`, `evals/ocrCompare.ts`) stay out of `npm test`,
-CI, and the runtime image. Handwritten fixtures are the owner's own notes or
+CI, and the runtime image. Handwritten fixtures are split into `dev/` and
+`holdout/`. Changes to the photo prompt, model settings, output checks, retry
+policy, or goldens follow `evals/AGENTS.md` and are logged in
+`evals/EXPERIMENTS.md`. Handwritten fixtures are the owner's own notes or
 material with recorded permission. Do not add photos of other people's
 private notes.
 
@@ -194,5 +215,20 @@ principle named.
 
 ## Amendments
 
-None yet. Add entries newest first, in this form: date, principle number,
+Add entries newest first, in this form: date, principle number,
 what changed, why the change was worth it, evidence, PR link.
+
+- **2026-09-27, principle 1.** *Was:* `importFromImages` makes one Gemini
+  call, with no retries. *Now:* one call, plus exactly one identical retry
+  when the outcome is `parse_error` or `unusable`; on the photo path, an
+  ingredient unit longer than 32 characters makes the outcome `unusable`.
+  *Why it is worth it:* the one-call rule protected predictable cost and
+  latency and a single code path. The retry keeps the single path (same
+  request, same helper, same normalizer) and spends at most one extra call,
+  only on extractions that had already failed. *Evidence:*
+  `evals/ocrCompare.ts` on `sweet-sour-pork` (3 runs): one run finished
+  `MAX_TOKENS` at 3,490 output tokens and was `parse_error`. An earlier
+  run wrote reasoning into a unit ("lb combat/lb weight (#) converted to
+  lb/lb format -> lb (1.5 lb)", 64 characters). The before/after
+  measurement across both splits is in `evals/EXPERIMENTS.md`. *PR:*
+  https://github.com/Bluefire2/cook/pull/33.

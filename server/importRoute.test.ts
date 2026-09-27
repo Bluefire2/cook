@@ -1,6 +1,6 @@
 import type { Content } from '@google/genai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fakeImportDeps } from '../test/fakeGemini.ts';
+import { fakeImportDeps, fakeImportDepsReplies } from '../test/fakeGemini.ts';
 import {
   IMPORT_IMAGE_TYPES,
   importPost,
@@ -393,5 +393,41 @@ describe('POST /api/import with photos', () => {
     expect(error.mock.calls[0]).toHaveLength(1);
     expect(String(error.mock.calls[0][0])).toMatch(/^import images failed count=1 bytes=\d+$/);
     expectNoPhotoData();
+  });
+
+  it('retries a failed photo extraction inside one logged request', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fake = fakeImportDepsReplies(['not json', JSON.stringify(RECIPE)]);
+    const result = await post({ images: [jpeg()] }, undefined, { deps: fake.deps });
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({ recipe: RECIPE });
+    expect(fake.calls).toHaveLength(2);
+    expect(
+      log.mock.calls.filter(([message]) => /^import images count=1 bytes=\d+$/.test(String(message))),
+    ).toHaveLength(1);
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('reports a throw on the retry as the photo 502', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fake = fakeImportDepsReplies(['not json', new Error('SECRET-UPSTREAM-DETAIL')]);
+    const result = await post({ images: [jpeg()] }, undefined, { deps: fake.deps });
+    expect(result).toMatchObject({
+      status: 502,
+      body: { error: "Couldn't read those photos — try again." },
+    });
+    expect(fake.calls).toHaveLength(2);
+    expect(
+      log.mock.calls.filter(([message]) => /^import images count=1 bytes=\d+$/.test(String(message))),
+    ).toHaveLength(1);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(String(error.mock.calls[0][0])).toMatch(/^import images failed count=1 bytes=\d+$/);
+    for (const args of [...log.mock.calls, ...error.mock.calls]) {
+      for (const arg of args) {
+        expect(String(arg)).not.toContain('SECRET-UPSTREAM-DETAIL');
+      }
+    }
   });
 });

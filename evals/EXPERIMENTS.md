@@ -22,6 +22,24 @@ summary, approach A.
 - Run by: <owner | agent>, model <CHAT_MODEL or default>
 ```
 
+## 2026-09-27 — Photo import: runaway-unit check (32) and one retry
+
+- Change: `importFromImages` treats an ingredient `unit` longer than 32
+  characters (`MAX_PHOTO_UNIT_CHARS`, after trimming) as `unusable`, and
+  makes exactly one identical retry when the outcome is `parse_error` or
+  `unusable`. Constitution principle 1 amended. Commit: `Photo import:
+  runaway-unit check…` (this commit; fill SHA when the owner runs the
+  measurement).
+- Reason (not fixture-specific): truncated JSON and reasoning written into a
+  field are sampling failures. A second sample of the same call usually
+  avoids them. The length check reads no card content.
+- Command: npm run eval:ocr-compare -- --split=all --runs=3
+- Before (63e41ba6cbe4994483d0526b2c84fa5fac4520ad): dev pending owner run, holdout pending owner run
+- After: this commit (fill SHA when the owner runs the measurement): dev pending owner run, holdout pending owner run
+- Decision: pending owner run — do not merge until filled in; revert this
+  commit (including the P1 amendment) if holdout or dev is worse
+- Run by: pending owner run, model CHAT_MODEL or default
+
 ## 2026-09-27 — Dev/holdout split
 
 - Change: `git mv` of the 10 handwritten fixtures into
