@@ -2,11 +2,12 @@ import { formatDistance } from 'date-fns';
 
 /**
  * Past relative time for the invitations menu. date-fns picks the unit
- * (minutes, hours, days, and beyond) from the delta. A future timestamp is
- * clock skew and stays "just now", so a row never reads as upcoming.
+ * (minutes, hours, days, and beyond) from the delta. A future or unusable
+ * timestamp stays "just now", so a row never reads as upcoming and a bad
+ * value cannot throw through the admin list.
  */
 export function relativeAgoLabel(at: number, now: number = Date.now()): string {
-  if (at > now) {
+  if (!Number.isFinite(at) || !Number.isFinite(now) || at > now) {
     return 'just now';
   }
   return formatDistance(at, now, { addSuffix: true });
