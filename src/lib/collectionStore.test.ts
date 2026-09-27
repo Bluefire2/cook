@@ -161,7 +161,7 @@ describe('collectionStore grant mutations', () => {
     await expect(collectionStore.addGrant('collection-id', grant.email)).resolves.toEqual(grant);
 
     expect(addCollectionGrant).toHaveBeenCalledTimes(1);
-    expect(addCollectionGrant).toHaveBeenCalledWith('collection-id', grant.email);
+    expect(addCollectionGrant).toHaveBeenCalledWith('collection-id', grant.email, 'viewer');
     expect(listCollectionGrants).not.toHaveBeenCalled();
   });
 

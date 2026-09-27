@@ -266,6 +266,7 @@ export default function RecipeForm({
   onCancel,
   formId,
   onCanSubmitChange,
+  photosEditable = true,
 }: {
   /** Starting values. Use a blank draft for create-from-scratch. */
   initial: RecipeDraft;
@@ -279,6 +280,9 @@ export default function RecipeForm({
   /** Mirrors whether the submit button is enabled, for a header Save.
    * Pass a stable callback; this runs in a layout effect. */
   onCanSubmitChange?: (canSubmit: boolean) => void;
+  /** False for an editor of someone else's recipe: photos stay as they are
+   * and their controls are not shown. */
+  photosEditable?: boolean;
 }): ReactElement {
   const [form, setForm] = useState(() => fromDraft(initial));
   const [photoId, setPhotoId] = useState(initial.photoId);
@@ -457,18 +461,20 @@ export default function RecipeForm({
         />
       </Field>
 
-      <PhotoField
-        photoId={photoId}
-        picked={picked}
-        onPick={(file) => {
-          setPhotoError(null);
-          setPicked(file);
-        }}
-        onRemove={() => {
-          setPicked(undefined);
-          setPhotoId(undefined);
-        }}
-      />
+      {photosEditable && (
+        <PhotoField
+          photoId={photoId}
+          picked={picked}
+          onPick={(file) => {
+            setPhotoError(null);
+            setPicked(file);
+          }}
+          onRemove={() => {
+            setPicked(undefined);
+            setPhotoId(undefined);
+          }}
+        />
+      )}
       {photoError && (
         <p className="mt-2 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
           {photoError}
@@ -798,27 +804,29 @@ export default function RecipeForm({
         />
       </Field>
 
-      <PhotoPickerField
-        label="Gallery"
-        hint="Extra photos shown at the end of the recipe."
-        max={MAX_GALLERY_PHOTOS}
-        removeLabel="Remove gallery photo"
-        photoIds={galleryPhotoIds}
-        picked={galleryPicked}
-        onPick={(files) => {
-          setPhotoError(null);
-          setGalleryPicked((prev) => {
-            const room = MAX_GALLERY_PHOTOS - galleryPhotoIds.length - prev.length;
-            return room <= 0 ? prev : [...prev, ...files.slice(0, room)];
-          });
-        }}
-        onRemoveStored={(id) =>
-          setGalleryPhotoIds((prev) => prev.filter((item) => item !== id))
-        }
-        onRemovePicked={(index) =>
-          setGalleryPicked((prev) => prev.filter((_, i) => i !== index))
-        }
-      />
+      {photosEditable && (
+        <PhotoPickerField
+          label="Gallery"
+          hint="Extra photos shown at the end of the recipe."
+          max={MAX_GALLERY_PHOTOS}
+          removeLabel="Remove gallery photo"
+          photoIds={galleryPhotoIds}
+          picked={galleryPicked}
+          onPick={(files) => {
+            setPhotoError(null);
+            setGalleryPicked((prev) => {
+              const room = MAX_GALLERY_PHOTOS - galleryPhotoIds.length - prev.length;
+              return room <= 0 ? prev : [...prev, ...files.slice(0, room)];
+            });
+          }}
+          onRemoveStored={(id) =>
+            setGalleryPhotoIds((prev) => prev.filter((item) => item !== id))
+          }
+          onRemovePicked={(index) =>
+            setGalleryPicked((prev) => prev.filter((_, i) => i !== index))
+          }
+        />
+      )}
 
       <div className="mt-6 flex gap-2">
         <button

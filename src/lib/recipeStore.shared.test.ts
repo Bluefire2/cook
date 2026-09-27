@@ -1,0 +1,212 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { recipeStore } from './recipeStore';
+import {
+  clearLibrary,
+  getRecipe,
+  getRecipeOrigin,
+  originAccess,
+  recipeAccess,
+  replaceFromPullWithShared,
+  withSharedRecipeAccess,
+  type ItemOrigin,
+} from './libraryMemory';
+import { pushOps } from './remote';
+import type { PushOp } from './pushOps';
+import type { Collection, Recipe } from './types';
+
+vi.mock('./remote', () => ({
+  postPhoto: vi.fn(),
+  pushOps: vi.fn(),
+}));
+
+vi.mock('./syncEngine', () => ({
+  localWriteOverlapsPull: vi.fn(() => false),
+  pullAfterLocalWrite: vi.fn(),
+}));
+
+const EDITABLE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const VIEW_ONLY_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const EDIT_COLLECTION = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const VIEW_COLLECTION = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const COVER = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const GALLERY = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+const OTHER_PHOTO = '12345678-1234-4234-8234-123456789012';
+
+function recipe(id: string): Recipe {
+  return {
+    id,
+    createdAt: 1,
+    updatedAt: 2,
+    title: 'Soup',
+    servings: 4,
+    ingredientSections: [{ items: [{ item: 'water' }] }],
+    steps: [{ text: 'Boil.' }],
+    tags: [],
+    photoId: COVER,
+    galleryPhotoIds: [GALLERY],
+  };
+}
+
+function collection(id: string, recipeIds: string[]): Collection {
+  return { id, name: id, recipeIds, createdAt: 1, updatedAt: 2 };
+}
+
+const shared = (access?: 'editor' | 'viewer'): ItemOrigin => ({
+  kind: 'shared',
+  ownerSub: 'owner',
+  ...(access ? { access } : {}),
+});
+
+function publishShared(): void {
+  const collections = new Map([
+    [EDIT_COLLECTION, collection(EDIT_COLLECTION, [EDITABLE_ID])],
+    [VIEW_COLLECTION, collection(VIEW_COLLECTION, [VIEW_ONLY_ID])],
+  ]);
+  const collectionOrigins = new Map<string, ItemOrigin>([
+    [EDIT_COLLECTION, shared('editor')],
+    [VIEW_COLLECTION, shared('viewer')],
+  ]);
+  replaceFromPullWithShared(
+    {
+      recipes: new Map(),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set(),
+    },
+    {
+      recipes: new Map([
+        [EDITABLE_ID, recipe(EDITABLE_ID)],
+        [VIEW_ONLY_ID, recipe(VIEW_ONLY_ID)],
+      ]),
+      collections,
+      remotePhotoIds: new Set([COVER, GALLERY]),
+      recipeOrigins: withSharedRecipeAccess(
+        new Map([
+          [EDITABLE_ID, shared()],
+          [VIEW_ONLY_ID, shared()],
+        ]),
+        collections,
+        collectionOrigins,
+      ),
+      collectionOrigins,
+    },
+  );
+}
+
+function pushed(): PushOp[] {
+  return vi.mocked(pushOps).mock.calls.flatMap(([ops]) => ops);
+}
+
+afterEach(() => {
+  clearLibrary();
+  vi.mocked(pushOps).mockReset();
+});
+
+describe('shared recipe access', () => {
+  it('reads a missing access as viewer and an own row as owner', () => {
+    expect(originAccess({ kind: 'own' })).toBe('owner');
+    expect(originAccess(shared())).toBe('viewer');
+    expect(originAccess(shared('editor'))).toBe('editor');
+    expect(originAccess(undefined)).toBeUndefined();
+  });
+
+  it('makes a recipe editable when any editor collection lists it', () => {
+    const collections = new Map([
+      [EDIT_COLLECTION, collection(EDIT_COLLECTION, [EDITABLE_ID])],
+      [VIEW_COLLECTION, collection(VIEW_COLLECTION, [EDITABLE_ID, VIEW_ONLY_ID])],
+    ]);
+    const next = withSharedRecipeAccess(
+      new Map<string, ItemOrigin>([
+        [EDITABLE_ID, shared()],
+        [VIEW_ONLY_ID, shared('editor')],
+        ['own', { kind: 'own' }],
+      ]),
+      collections,
+      new Map([
+        [EDIT_COLLECTION, shared('editor')],
+        [VIEW_COLLECTION, shared()],
+      ]),
+    );
+    expect(originAccess(next.get(EDITABLE_ID))).toBe('editor');
+    expect(originAccess(next.get(VIEW_ONLY_ID))).toBe('viewer');
+    expect(next.get('own')).toEqual({ kind: 'own' });
+  });
+
+  it('is published with the shared pull and is not a Recipe field', () => {
+    publishShared();
+    expect(recipeAccess(EDITABLE_ID)).toBe('editor');
+    expect(recipeAccess(VIEW_ONLY_ID)).toBe('viewer');
+    expect(getRecipe(EDITABLE_ID)).not.toHaveProperty('access');
+  });
+});
+
+describe('recipeStore on a shared recipe', () => {
+  it('saves an editor change as one shared recipe.put, with no photo ops', async () => {
+    publishShared();
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    await recipeStore.save({ ...recipe(EDITABLE_ID), title: 'Better soup', createdAt: 99 });
+    const ops = pushed();
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({
+      kind: 'recipe.put',
+      shared: true,
+      payload: { id: EDITABLE_ID, title: 'Better soup', createdAt: 1, photoId: COVER },
+    });
+    expect(getRecipe(EDITABLE_ID)?.title).toBe('Better soup');
+    expect(getRecipeOrigin(EDITABLE_ID)).toMatchObject({ kind: 'shared', access: 'editor' });
+  });
+
+  it('refuses an editor photo change before pushing anything', async () => {
+    publishShared();
+    for (const change of [
+      { photoId: OTHER_PHOTO },
+      { photoId: undefined },
+      { galleryPhotoIds: [GALLERY, OTHER_PHOTO] },
+      { galleryPhotoIds: undefined },
+    ]) {
+      await expect(
+        recipeStore.save({ ...recipe(EDITABLE_ID), ...change }),
+      ).rejects.toThrow("Photos on a shared recipe can't be changed.");
+    }
+    expect(pushOps).not.toHaveBeenCalled();
+    expect(getRecipe(EDITABLE_ID)).toEqual(recipe(EDITABLE_ID));
+  });
+
+  it('rolls back an editor save the server discards, keeping the shared origin', async () => {
+    publishShared();
+    vi.mocked(pushOps).mockResolvedValue('invalid');
+    await expect(
+      recipeStore.save({ ...recipe(EDITABLE_ID), title: 'Better soup' }),
+    ).rejects.toThrow("Couldn't save the recipe.");
+    expect(getRecipe(EDITABLE_ID)?.title).toBe('Soup');
+    expect(recipeAccess(EDITABLE_ID)).toBe('editor');
+  });
+
+  it('keeps photos when an editor applies an Ask draft', async () => {
+    publishShared();
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    const { id: _id, createdAt: _c, updatedAt: _u, ...draft } = recipe(EDITABLE_ID);
+    await recipeStore.applyDraft(EDITABLE_ID, {
+      ...draft,
+      title: 'Spicy soup',
+      photoId: OTHER_PHOTO,
+      galleryPhotoIds: [OTHER_PHOTO],
+    });
+    expect(pushed()[0]).toMatchObject({
+      shared: true,
+      payload: { title: 'Spicy soup', photoId: COVER, galleryPhotoIds: [GALLERY] },
+    });
+  });
+
+  it('keeps a viewer read-only and never lets an editor delete', async () => {
+    publishShared();
+    await expect(
+      recipeStore.save({ ...recipe(VIEW_ONLY_ID), title: 'Mine now' }),
+    ).rejects.toThrow('view-only');
+    await expect(recipeStore.remove(EDITABLE_ID)).rejects.toThrow('view-only');
+    await expect(recipeStore.remove(VIEW_ONLY_ID)).rejects.toThrow('view-only');
+    expect(pushOps).not.toHaveBeenCalled();
+  });
+});
