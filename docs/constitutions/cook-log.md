@@ -1,7 +1,7 @@
 ---
 name: Cook log
 description: Dated records of cooking a recipe (rating, servings, notes, lessons, photos), the /cooks journal, and promoting a lesson into recipe notes. Read before changing CookLog data, its sync ops or cascade, its photos, its backup handling, or those screens.
-status: draft
+status: ratified
 scope:
   - src/lib/types.ts (CookLog)
   - src/lib/cookLogShape.ts
@@ -29,9 +29,8 @@ scope:
 
 # Cook log constitution
 
-Status: draft. It becomes ratified when the initial cook log implementation
-(`docs/plans/cook-log.md`) merges. At that point, set `status: ratified` in the
-frontmatter.
+Status: ratified with the initial cook log implementation
+(`docs/plans/cook-log.md`, [PR #36](https://github.com/Bluefire2/cook/pull/36)).
 
 This document states the principles of the cook log and why each one exists.
 It binds any change to the files and concepts in the frontmatter `scope`. For
