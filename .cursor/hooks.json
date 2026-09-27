@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "bash .cursor/hooks/run-composer-subagent-model.sh",
+        "matcher": "Task",
+        "failClosed": false
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "bash .cursor/hooks/run-composer-subagent-model.sh",
+        "failClosed": false
+      }
+    ]
+  }
+}
