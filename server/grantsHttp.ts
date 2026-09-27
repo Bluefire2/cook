@@ -119,7 +119,7 @@ export function collectionIdFromPath(pathname: string): string | null {
   return isUuid(id) ? id : null;
 }
 
-async function requireOwnedLiveCollection(
+export async function requireOwnedLiveCollection(
   req: Request,
   collectionId: string,
 ): Promise<
@@ -146,7 +146,7 @@ async function requireOwnedLiveCollection(
   }
 }
 
-function accessResponse(
+export function accessResponse(
   access: Awaited<ReturnType<typeof requireOwnedLiveCollection>>,
 ): Response | null {
   if (access.kind === 'denied') {

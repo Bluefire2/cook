@@ -8,7 +8,9 @@ import {
   cacheSizeForTest,
   clearMembershipCache,
   lookupMemberForTest,
+  visitorMembership,
 } from './membership.ts';
+import { signSession } from './session.ts';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -227,6 +229,77 @@ describe('membership cache', () => {
       'member',
     );
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('visitorMembership', () => {
+  const sub = 'visitor-sub';
+
+  beforeEach(() => {
+    process.env.SESSION_SECRET = 'test-secret-for-visitor-membership';
+    process.env.ALLOWED_EMAILS = 'owner@example.com';
+    clearMembershipCache(sub);
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function withCookie(cookie?: string): Request {
+    return new Request('http://localhost/c/join', {
+      headers: cookie === undefined ? {} : { cookie },
+    });
+  }
+
+  it('no cookie or an unusable cookie is signed out, without a member read', async () => {
+    const spy = vi.spyOn(members, 'readMember');
+    expect(await visitorMembership(withCookie())).toEqual({ kind: 'signedOut' });
+    expect(await visitorMembership(withCookie('sous_session=garbage.garbage'))).toEqual({
+      kind: 'signedOut',
+    });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('a valid session that is not admitted is denied with its identity', async () => {
+    vi.spyOn(members, 'readMember').mockResolvedValue(null);
+    const token = signSession({ sub, email: 'stranger@example.com' }, Date.now());
+    expect(await visitorMembership(withCookie(`sous_session=${token}`))).toEqual({
+      kind: 'denied',
+      sub,
+      email: 'stranger@example.com',
+    });
+  });
+
+  it('a Firestore failure is unknown, never denied', async () => {
+    vi.spyOn(members, 'readMember').mockRejectedValue(new Error('down'));
+    const token = signSession({ sub, email: 'm@example.com' }, Date.now());
+    expect(await visitorMembership(withCookie(`sous_session=${token}`))).toEqual({
+      kind: 'unknown',
+    });
+  });
+
+  it('an owner short-circuits; an active member is ok', async () => {
+    const owner = signSession({ sub: 'owner-sub', email: 'owner@example.com' }, Date.now());
+    expect(await visitorMembership(withCookie(`sous_session=${owner}`))).toEqual({
+      kind: 'ok',
+      sub: 'owner-sub',
+      email: 'owner@example.com',
+      isOwner: true,
+    });
+    vi.spyOn(members, 'readMember').mockResolvedValue({
+      sub,
+      status: 'active',
+      approvedAt: 1,
+      approvedBy: 'owner',
+    });
+    const token = signSession({ sub, email: 'm@example.com' }, Date.now());
+    expect(await visitorMembership(withCookie(`sous_session=${token}`))).toEqual({
+      kind: 'ok',
+      sub,
+      email: 'm@example.com',
+      isOwner: false,
+    });
   });
 });
 
