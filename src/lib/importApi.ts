@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { invalidateSession } from './session';
 import type { RecipeDraft } from './types';
 
@@ -18,13 +19,13 @@ export async function importRecipe(params: {
 
   if (response.status === 401) {
     invalidateSession();
-    throw new Error('Please sign in again — your session expired.');
+    throw new Error(t('error.sessionExpired'));
   }
   const data = (await response.json().catch(() => null)) as
     | { recipe?: ExtractedRecipe; error?: string }
     | null;
   if (!response.ok || !data?.recipe) {
-    throw new Error(data?.error ?? `Import failed (${response.status}).`);
+    throw new Error(data?.error ?? t('error.importFailedStatus', { status: response.status }));
   }
 
   return {

@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { invalidateSession } from './session';
 import { baseAudioMime, stripTranscript } from './voiceRecorder';
 
@@ -23,7 +24,7 @@ export async function transcribeAudio(params: {
 
   if (response.status === 401) {
     invalidateSession();
-    throw new Error('Please sign in again — your session expired.');
+    throw new Error(t('error.sessionExpired'));
   }
 
   const data = (await response.json().catch(() => null)) as
@@ -34,7 +35,7 @@ export async function transcribeAudio(params: {
     const message =
       typeof data?.error === 'string' && data.error !== ''
         ? data.error
-        : 'Dictation failed — try again.';
+        : t('error.dictationFailed');
     throw new Error(message);
   }
 
@@ -42,7 +43,7 @@ export async function transcribeAudio(params: {
     const message =
       typeof data?.error === 'string' && data.error !== ''
         ? data.error
-        : 'Dictation failed — try again.';
+        : t('error.dictationFailed');
     throw new Error(message);
   }
 

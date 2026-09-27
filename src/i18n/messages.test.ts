@@ -75,44 +75,44 @@ describe('catalog parity', () => {
 
 describe('translate', () => {
   it('fills named params and leaves unknown placeholders alone', () => {
-    expect(translate('en', 'expiresIn', { in: 'in 7 days' })).toBe('expires in 7 days');
-    expect(translate('en', 'expiresIn')).toBe('expires {in}');
-    expect(translate('uk', 'loadedAgo', { time: '7 днів тому' })).toBe('Завантажено 7 днів тому');
+    expect(translate('en', 'time.expiresIn', { in: 'in 7 days' })).toBe('expires in 7 days');
+    expect(translate('en', 'time.expiresIn')).toBe('expires {in}');
+    expect(translate('uk', 'settings.loadedAgo', { time: '7 днів тому' })).toBe('Завантажено 7 днів тому');
   });
 
   it('selects English plural forms', () => {
-    expect(translate('en', 'servingsCount', { count: 1 })).toBe('1 serving');
-    expect(translate('en', 'servingsCount', { count: 2 })).toBe('2 servings');
-    expect(translate('en', 'servingsCount', { count: 0 })).toBe('0 servings');
+    expect(translate('en', 'common.servingsCount', { count: 1 })).toBe('1 serving');
+    expect(translate('en', 'common.servingsCount', { count: 2 })).toBe('2 servings');
+    expect(translate('en', 'common.servingsCount', { count: 0 })).toBe('0 servings');
   });
 
   it('selects Ukrainian plural forms for 1, 2, 5, and 21', () => {
-    expect(translate('uk', 'servingsCount', { count: 1 })).toBe('1 порція');
-    expect(translate('uk', 'servingsCount', { count: 2 })).toBe('2 порції');
-    expect(translate('uk', 'servingsCount', { count: 5 })).toBe('5 порцій');
-    expect(translate('uk', 'servingsCount', { count: 21 })).toBe('21 порція');
-    expect(translate('uk', 'recipesCount', { count: 1 })).toBe('1 рецепт');
-    expect(translate('uk', 'recipesCount', { count: 2 })).toBe('2 рецепти');
-    expect(translate('uk', 'recipesCount', { count: 5 })).toBe('5 рецептів');
-    expect(translate('uk', 'recipesCount', { count: 21 })).toBe('21 рецепт');
+    expect(translate('uk', 'common.servingsCount', { count: 1 })).toBe('1 порція');
+    expect(translate('uk', 'common.servingsCount', { count: 2 })).toBe('2 порції');
+    expect(translate('uk', 'common.servingsCount', { count: 5 })).toBe('5 порцій');
+    expect(translate('uk', 'common.servingsCount', { count: 21 })).toBe('21 порція');
+    expect(translate('uk', 'cookLog.stars', { count: 1 })).toBe('1 зірка');
+    expect(translate('uk', 'cookLog.stars', { count: 2 })).toBe('2 зірки');
+    expect(translate('uk', 'cookLog.stars', { count: 5 })).toBe('5 зірок');
+    expect(translate('uk', 'cookLog.stars', { count: 21 })).toBe('21 зірка');
   });
 
   it('selects Russian plural forms for 1, 2, 5, and 21', () => {
-    expect(translate('ru', 'servingsCount', { count: 1 })).toBe('1 порция');
-    expect(translate('ru', 'servingsCount', { count: 2 })).toBe('2 порции');
-    expect(translate('ru', 'servingsCount', { count: 5 })).toBe('5 порций');
-    expect(translate('ru', 'servingsCount', { count: 21 })).toBe('21 порция');
-    expect(translate('ru', 'recipesCount', { count: 1 })).toBe('1 рецепт');
-    expect(translate('ru', 'recipesCount', { count: 2 })).toBe('2 рецепта');
-    expect(translate('ru', 'recipesCount', { count: 5 })).toBe('5 рецептов');
-    expect(translate('ru', 'recipesCount', { count: 21 })).toBe('21 рецепт');
+    expect(translate('ru', 'common.servingsCount', { count: 1 })).toBe('1 порция');
+    expect(translate('ru', 'common.servingsCount', { count: 2 })).toBe('2 порции');
+    expect(translate('ru', 'common.servingsCount', { count: 5 })).toBe('5 порций');
+    expect(translate('ru', 'common.servingsCount', { count: 21 })).toBe('21 порция');
+    expect(translate('ru', 'cookLog.stars', { count: 1 })).toBe('1 звезда');
+    expect(translate('ru', 'cookLog.stars', { count: 2 })).toBe('2 звезды');
+    expect(translate('ru', 'cookLog.stars', { count: 5 })).toBe('5 звёзд');
+    expect(translate('ru', 'cookLog.stars', { count: 21 })).toBe('21 звезда');
   });
 
   it('uses the single Chinese form and the locale decimal separator', () => {
-    expect(translate('zh-Hans', 'servingsCount', { count: 1 })).toBe('1 份');
-    expect(translate('zh-Hans', 'servingsCount', { count: 21 })).toBe('21 份');
-    expect(translate('uk', 'servingsCount', { count: 1.5 })).toBe('1,5 порції');
-    expect(translate('en', 'servingsCount', { count: 1.5 })).toBe('1.5 servings');
+    expect(translate('zh-Hans', 'common.servingsCount', { count: 1 })).toBe('1 份');
+    expect(translate('zh-Hans', 'common.servingsCount', { count: 21 })).toBe('21 份');
+    expect(translate('uk', 'common.servingsCount', { count: 1.5 })).toBe('1,5 порції');
+    expect(translate('en', 'common.servingsCount', { count: 1.5 })).toBe('1.5 servings');
   });
 });
 

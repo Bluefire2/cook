@@ -28,7 +28,7 @@ export function relativeAgoLabel(
   locale: Locale = settings.getLocale(),
 ): string {
   if (!Number.isFinite(at) || !Number.isFinite(now) || at > now) {
-    return translate(locale, 'justNow');
+    return translate(locale, 'time.justNow');
   }
   return formatDistance(at, now, { addSuffix: true, locale: dateFnsLocale(locale) });
 }
@@ -46,5 +46,5 @@ export function relativeExpiryLabel(
     addSuffix: true,
     locale: dateFnsLocale(locale),
   });
-  return translate(locale, 'expiresIn', { in: distance });
+  return translate(locale, 'time.expiresIn', { in: distance });
 }

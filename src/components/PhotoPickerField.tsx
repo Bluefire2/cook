@@ -1,5 +1,6 @@
 import { useRef } from 'react';
 import type { ReactElement } from 'react';
+import { useT } from '../i18n';
 import { useObjectUrl, usePhotoUrl } from '../lib/photoStore';
 import { addBtn } from '../lib/uiClasses';
 
@@ -43,7 +44,7 @@ export default function PhotoPickerField({
   label,
   hint,
   max,
-  removeLabel = 'Remove photo',
+  removeLabel,
   photoIds,
   picked,
   onPick,
@@ -60,8 +61,10 @@ export default function PhotoPickerField({
   onRemoveStored: (id: string) => void;
   onRemovePicked: (index: number) => void;
 }): ReactElement {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const remaining = max - photoIds.length - picked.length;
+  const photoRemoveLabel = removeLabel ?? t('common.removePhoto');
 
   return (
     <div className="mt-6">
@@ -85,7 +88,7 @@ export default function PhotoPickerField({
             <PhotoThumb
               key={id}
               photoId={id}
-              removeLabel={removeLabel}
+              removeLabel={photoRemoveLabel}
               onRemove={() => onRemoveStored(id)}
             />
           ))}
@@ -93,7 +96,7 @@ export default function PhotoPickerField({
             <PhotoThumb
               key={`picked-${file.name}-${file.size}-${file.lastModified}`}
               file={file}
-              removeLabel={removeLabel}
+              removeLabel={photoRemoveLabel}
               onRemove={() => onRemovePicked(i)}
             />
           ))}
@@ -105,7 +108,7 @@ export default function PhotoPickerField({
           onClick={() => inputRef.current?.click()}
           className={`mt-2 block ${addBtn}`}
         >
-          + Photo
+          {t('form.addPhoto')}
         </button>
       )}
     </div>

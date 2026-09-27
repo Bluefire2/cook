@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactElement, ReactNode } from 'react';
+import { useT } from '../i18n';
+import { unitLabel } from '../i18n/unitLabel';
 import { encodeImageForStorage } from '../lib/image';
 import { photoStore, useObjectUrl, usePhotoUrl } from '../lib/photoStore';
 import { blankDraft } from '../lib/recipeDraft';
@@ -203,6 +205,7 @@ function PhotoField({
   onPick: (file: File) => void;
   onRemove: () => void;
 }): ReactElement {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const storedUrl = usePhotoUrl(picked ? undefined : photoId);
   const pickedUrl = useObjectUrl(picked);
@@ -210,7 +213,7 @@ function PhotoField({
 
   return (
     <div className="mt-3">
-      <span className="text-sm font-medium text-ink-muted">Main photo</span>
+      <span className="text-sm font-medium text-ink-muted">{t('form.mainPhoto')}</span>
       <input
         ref={inputRef}
         type="file"
@@ -228,7 +231,7 @@ function PhotoField({
           onClick={() => inputRef.current?.click()}
           className={`mt-2 block ${addBtn}`}
         >
-          + Photo
+          {t('form.addPhoto')}
         </button>
       ) : (
         <div className="mt-1">
@@ -243,14 +246,14 @@ function PhotoField({
               onClick={() => inputRef.current?.click()}
               className={addBtn}
             >
-              Replace
+              {t('form.replace')}
             </button>
             <button
               type="button"
               onClick={onRemove}
               className={addBtnDanger}
             >
-              Remove
+              {t('common.remove')}
             </button>
           </div>
         </div>
@@ -295,6 +298,7 @@ export default function RecipeForm({
   const [customUnits, setCustomUnits] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  const t = useT();
 
   const patch = (fields: Partial<FormState>) =>
     setForm((prev) => ({ ...prev, ...fields }));
@@ -390,7 +394,7 @@ export default function RecipeForm({
           encodedGallery.push(await encodeImageForStorage(file));
         }
       } catch {
-        setPhotoError("That photo couldn't be read — try a different one.");
+        setPhotoError(t('error.photoUnreadableTryAnother'));
         return;
       }
       let stored: string | undefined;
@@ -437,22 +441,22 @@ export default function RecipeForm({
         }
       }}
     >
-      <Field label="Title">
+      <Field label={t('form.title')}>
         <input
           type="text"
           value={form.title}
           onChange={(e) => patch({ title: e.target.value })}
-          placeholder="Weeknight ragù"
+          placeholder={t('form.titlePlaceholder')}
           className={inputClass}
         />
       </Field>
 
-      <Field label="Description">
+      <Field label={t('form.description')}>
         <textarea
           value={form.description}
           onChange={(e) => patch({ description: e.target.value })}
           rows={2}
-          placeholder="A short line about the dish"
+          placeholder={t('form.descriptionPlaceholder')}
           className={inputClass}
         />
       </Field>
@@ -477,7 +481,7 @@ export default function RecipeForm({
 
       <div className="mt-3 grid grid-cols-3 gap-2">
         <label className="block">
-          <span className="text-sm font-medium text-ink-muted">Servings</span>
+          <span className="text-sm font-medium text-ink-muted">{t('common.servings')}</span>
           <input
             type="text"
             inputMode="numeric"
@@ -487,7 +491,7 @@ export default function RecipeForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm font-medium text-ink-muted">Prep min</span>
+          <span className="text-sm font-medium text-ink-muted">{t('form.prepMin')}</span>
           <input
             type="text"
             inputMode="numeric"
@@ -497,7 +501,7 @@ export default function RecipeForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm font-medium text-ink-muted">Cook min</span>
+          <span className="text-sm font-medium text-ink-muted">{t('form.cookMin')}</span>
           <input
             type="text"
             inputMode="numeric"
@@ -508,35 +512,35 @@ export default function RecipeForm({
         </label>
       </div>
 
-      <Field label="Tags">
+      <Field label={t('form.tags')}>
         <input
           type="text"
           value={form.tags}
           onChange={(e) => patch({ tags: e.target.value })}
-          placeholder="pasta, weeknight"
+          placeholder={t('form.tagsPlaceholder')}
           className={inputClass}
         />
       </Field>
 
       <section className="mt-6">
-        <h2 className="text-lg font-semibold">Ingredients</h2>
+        <h2 className="text-lg font-semibold">{t('common.ingredients')}</h2>
         {form.sections.map((section, si) => (
           <div key={si} className="mt-3">
             {showSectionChrome && (
               <div className="flex items-center gap-1.5">
                 <input
                   type="text"
-                  aria-label={`Section ${si + 1} name`}
+                  aria-label={t('form.sectionName', { n: si + 1 })}
                   value={section.name}
                   onChange={(e) =>
                     patchSection(si, (s) => ({ ...s, name: e.target.value }))
                   }
-                  placeholder="Section name"
+                  placeholder={t('form.sectionNamePlaceholder')}
                   className={`flex-1 ${inputClass}`}
                 />
                 <button
                   type="button"
-                  aria-label={`Remove section ${si + 1}`}
+                  aria-label={t('form.removeSection', { n: si + 1 })}
                   onClick={() => {
                     patchSections((sections) =>
                       sections.filter((_, i) => i !== si),
@@ -568,7 +572,7 @@ export default function RecipeForm({
                       <input
                         type="text"
                         inputMode="decimal"
-                        aria-label="Quantity"
+                        aria-label={t('form.quantity')}
                         value={item.quantity}
                         onChange={(e) =>
                           patchItem(si, ii, { quantity: e.target.value })
@@ -577,7 +581,7 @@ export default function RecipeForm({
                         className={`w-14 ${cellClass}`}
                       />
                       <select
-                        aria-label="Unit"
+                        aria-label={t('form.unit')}
                         value={choice}
                         onChange={(e) => {
                           const next = e.target.value as UnitChoice;
@@ -601,19 +605,19 @@ export default function RecipeForm({
                         <option value="">—</option>
                         {COMMON_UNITS.map((u) => (
                           <option key={u} value={u}>
-                            {u}
+                            {unitLabel(u, t)}
                           </option>
                         ))}
-                        <option value={CUSTOM_UNIT}>Custom…</option>
+                        <option value={CUSTOM_UNIT}>{t('form.custom')}</option>
                       </select>
                       <input
                         type="text"
-                        aria-label="Ingredient"
+                        aria-label={t('form.ingredient')}
                         value={item.item}
                         onChange={(e) =>
                           patchItem(si, ii, { item: e.target.value })
                         }
-                        placeholder="flour"
+                        placeholder={t('form.ingredientPlaceholder')}
                         className={`flex-1 ${cellClass}`}
                       />
                     </div>
@@ -621,8 +625,8 @@ export default function RecipeForm({
                       <div className="mt-1.5 flex gap-1.5">
                         <input
                           type="text"
-                          aria-label="Custom unit"
-                          placeholder="unit"
+                          aria-label={t('form.customUnit')}
+                          placeholder={t('form.unitPlaceholder')}
                           value={item.unit}
                           onChange={(e) => {
                             // Raw value, untrimmed — trimming per keystroke
@@ -645,17 +649,17 @@ export default function RecipeForm({
                     <div className="mt-1.5 flex items-center gap-1.5">
                       <input
                         type="text"
-                        aria-label="Ingredient note"
+                        aria-label={t('form.ingredientNote')}
                         value={item.note}
                         onChange={(e) =>
                           patchItem(si, ii, { note: e.target.value })
                         }
-                        placeholder="note, e.g. finely chopped"
+                        placeholder={t('form.notePlaceholder')}
                         className={`flex-1 text-sm ${cellClass}`}
                       />
                       <button
                         type="button"
-                        aria-label="Move ingredient up"
+                        aria-label={t('form.moveIngredientUp')}
                         disabled={ii === 0}
                         onClick={() => moveItem(si, ii, ii - 1)}
                         className={iconBtn}
@@ -664,7 +668,7 @@ export default function RecipeForm({
                       </button>
                       <button
                         type="button"
-                        aria-label="Move ingredient down"
+                        aria-label={t('form.moveIngredientDown')}
                         disabled={ii === section.items.length - 1}
                         onClick={() => moveItem(si, ii, ii + 1)}
                         className={iconBtn}
@@ -673,7 +677,7 @@ export default function RecipeForm({
                       </button>
                       <button
                         type="button"
-                        aria-label="Remove ingredient"
+                        aria-label={t('form.removeIngredient')}
                         onClick={() => {
                           patchSection(si, (s) => ({
                             ...s,
@@ -702,7 +706,7 @@ export default function RecipeForm({
               }
               className={`mt-2 block ${addBtn}`}
             >
-              + Ingredient
+              {t('form.addIngredient')}
             </button>
           </div>
         ))}
@@ -717,12 +721,12 @@ export default function RecipeForm({
           }
           className={`mt-2 block ${addBtn}`}
         >
-          + Section
+          {t('form.addSection')}
         </button>
       </section>
 
       <section className="mt-6">
-        <h2 className="text-lg font-semibold">Steps</h2>
+        <h2 className="text-lg font-semibold">{t('common.steps')}</h2>
         <ol className="mt-2 flex flex-col gap-2">
           {form.steps.map((text, i) => (
             <li
@@ -736,7 +740,7 @@ export default function RecipeForm({
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    aria-label={`Move step ${i + 1} up`}
+                    aria-label={t('form.moveStepUp', { n: i + 1 })}
                     disabled={i === 0}
                     onClick={() => patchSteps((steps) => moved(steps, i, i - 1))}
                     className={iconBtn}
@@ -745,7 +749,7 @@ export default function RecipeForm({
                   </button>
                   <button
                     type="button"
-                    aria-label={`Move step ${i + 1} down`}
+                    aria-label={t('form.moveStepDown', { n: i + 1 })}
                     disabled={i === form.steps.length - 1}
                     onClick={() => patchSteps((steps) => moved(steps, i, i + 1))}
                     className={iconBtn}
@@ -754,7 +758,7 @@ export default function RecipeForm({
                   </button>
                   <button
                     type="button"
-                    aria-label={`Remove step ${i + 1}`}
+                    aria-label={t('form.removeStep', { n: i + 1 })}
                     onClick={() =>
                       patchSteps((steps) => steps.filter((_, j) => j !== i))
                     }
@@ -765,7 +769,7 @@ export default function RecipeForm({
                 </div>
               </div>
               <textarea
-                aria-label={`Step ${i + 1}`}
+                aria-label={t('form.step', { n: i + 1 })}
                 value={text}
                 onChange={(e) =>
                   patchSteps((steps) =>
@@ -773,7 +777,7 @@ export default function RecipeForm({
                   )
                 }
                 rows={2}
-                placeholder="What to do"
+                placeholder={t('form.stepPlaceholder')}
                 className={`mt-1 w-full ${cellClass}`}
               />
             </li>
@@ -784,25 +788,25 @@ export default function RecipeForm({
           onClick={() => patchSteps((steps) => [...steps, ''])}
           className={`mt-2 block ${addBtn}`}
         >
-          + Step
+          {t('form.addStep')}
         </button>
       </section>
 
-      <Field label="Notes">
+      <Field label={t('common.notes')}>
         <textarea
           value={form.notes}
           onChange={(e) => patch({ notes: e.target.value })}
           rows={3}
-          placeholder="Anything worth remembering next time"
+          placeholder={t('form.notesPlaceholder')}
           className={inputClass}
         />
       </Field>
 
       <PhotoPickerField
-        label="Gallery"
-        hint="Extra photos shown at the end of the recipe."
+        label={t('form.gallery')}
+        hint={t('form.galleryHint')}
         max={MAX_GALLERY_PHOTOS}
-        removeLabel="Remove gallery photo"
+        removeLabel={t('form.removeGalleryPhoto')}
         photoIds={galleryPhotoIds}
         picked={galleryPicked}
         onPick={(files) => {
@@ -826,7 +830,7 @@ export default function RecipeForm({
           onClick={onCancel}
           className={`${secondaryBtn} flex-1 py-3`}
         >
-          Cancel
+          {t('common.cancel')}
         </button>
         <button
           type="submit"

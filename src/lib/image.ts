@@ -1,3 +1,5 @@
+import { t } from '../i18n';
+
 export interface EncodedImage {
   mediaType: string;
   base64: string;
@@ -56,7 +58,7 @@ export async function encodeImageForStorage(
       (encoded) =>
         encoded
           ? resolve(encoded)
-          : reject(new Error('That image could not be encoded.')),
+          : reject(new Error(t('error.imageEncode'))),
       'image/jpeg',
       JPEG_QUALITY,
     );

@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import type { EncodedImage } from './image';
 import { invalidateSession } from './session';
 import { normalizeRecipeDraft } from './recipeShape';
@@ -51,10 +52,10 @@ export async function streamChatReply(params: {
 
   if (response.status === 401) {
     invalidateSession();
-    throw new Error('Please sign in again — your session expired.');
+    throw new Error(t('error.sessionExpired'));
   }
   if (!response.ok || !response.body) {
-    throw new Error(`Assistant request failed (${response.status}).`);
+    throw new Error(t('error.assistantRequestFailed', { status: response.status }));
   }
 
   const reader = response.body.getReader();

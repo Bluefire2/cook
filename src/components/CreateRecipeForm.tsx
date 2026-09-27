@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useT } from '../i18n';
 import { resolveCollectionDestination } from '../lib/collectionDestination';
 import { useCollections } from '../lib/collectionStore';
 import { photoStore } from '../lib/photoStore';
@@ -35,6 +36,7 @@ export default function CreateRecipeForm({
   /** Header Save state. Pass a stable callback; this runs in a layout effect. */
   onSubmitStatusChange?: (status: CreateRecipeSubmitStatus) => void;
 }) {
+  const t = useT();
   const collections = useCollections();
   const destination = resolveCollectionDestination(collections, collectionId);
   const [draft, setDraft] = useState<RecipeDraft | null>(null);
@@ -98,7 +100,7 @@ export default function CreateRecipeForm({
     try {
       await save(pending, destination.collectionId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save the recipe.");
+      setError(err instanceof Error ? err.message : t('error.recipeSave'));
     }
   };
 
@@ -109,7 +111,7 @@ export default function CreateRecipeForm({
           initial={initial}
           formId={formId}
           onCanSubmitChange={setCanSubmit}
-          submitLabel="Save to library"
+          submitLabel={t('recipeEdit.saveToLibrary')}
           onCancel={onCancel}
           onSubmit={async (pending) => {
             const existingPhotos = new Set(recipePhotoIds(initial));
@@ -119,10 +121,10 @@ export default function CreateRecipeForm({
           }}
         />
       </fieldset>
-      {destination.kind === 'loading' && <p role="status">Loading collections…</p>}
+      {destination.kind === 'loading' && <p role="status">{t('common.loadingCollections')}</p>}
       {busy && !choosing && (
         <p role="status" className="flex items-center gap-2">
-          <SpinnerIcon className="h-5 w-5 animate-spin" /> Saving…
+          <SpinnerIcon className="h-5 w-5 animate-spin" /> {t('common.saving')}
         </p>
       )}
       {draft && choosing && (
@@ -132,10 +134,10 @@ export default function CreateRecipeForm({
         <div ref={failureRef}>
           <p role="alert" className="mt-2 text-sm text-danger">{error}</p>
           <button type="button" disabled={busy} onClick={() => void saveDirect(draft)} className={`${primaryBtn} mt-2 px-4 py-2`}>
-            Try again
+            {t('common.tryAgain')}
           </button>
           <button type="button" disabled={busy} onClick={cancelDraft} className={`${secondaryBtn} mt-2 ml-2 px-4 py-2`}>
-            Back to recipe
+            {t('common.backToRecipe')}
           </button>
         </div>
       )}

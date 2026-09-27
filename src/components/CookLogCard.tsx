@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useLocale, useT } from '../i18n';
 import { lessonInNotes } from '../lib/cookLogShape';
 import { cookLogStore } from '../lib/cookLogStore';
 import { usePhotoUrl } from '../lib/photoStore';
@@ -7,9 +8,9 @@ import type { CookLog, Recipe } from '../lib/types';
 import { addBtn, ghostBtn } from '../lib/uiClasses';
 
 /** Built from the date's parts, so no timezone can move it to another day. */
-function formatCookedOn(cookedOn: string): string {
+function formatCookedOn(cookedOn: string, locale: string): string {
   const [year, month, day] = cookedOn.split('-').map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+  return new Date(year, month - 1, day).toLocaleDateString(locale, {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
@@ -36,9 +37,11 @@ export default function CookLogCard({
   /** Shown as a link to the recipe, for lists that mix recipes. */
   recipeTitle?: string;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const [promoting, setPromoting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const date = formatCookedOn(log.cookedOn);
+  const date = formatCookedOn(log.cookedOn, locale);
   const inNotes = lessonInNotes(recipe.notes, log.lessons);
 
   const promote = async () => {
@@ -47,7 +50,7 @@ export default function CookLogCard({
     try {
       await cookLogStore.promoteLesson(recipe.id, log);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save the recipe.");
+      setError(err instanceof Error ? err.message : t('error.recipeSave'));
     } finally {
       setPromoting(false);
     }
@@ -55,7 +58,7 @@ export default function CookLogCard({
 
   const servingsLabel =
     log.servings !== undefined
-      ? `${log.servings} serving${log.servings === 1 ? '' : 's'}`
+      ? t('common.servingsCount', { count: log.servings })
       : undefined;
 
   return (
@@ -76,7 +79,7 @@ export default function CookLogCard({
               {log.rating !== undefined && (
                 <span
                   role="img"
-                  aria-label={`${log.rating} of 5 stars`}
+                  aria-label={t('cookLog.starsOfFive', { count: log.rating })}
                   className="text-amber-500"
                 >
                   {'★'.repeat(log.rating)}
@@ -89,10 +92,10 @@ export default function CookLogCard({
         </div>
         <Link
           to={`/recipe/${log.recipeId}/cooks/${log.id}/edit`}
-          aria-label={`Edit cook on ${date}`}
+          aria-label={t('cookLog.editCookOn', { date })}
           className={`${ghostBtn} shrink-0`}
         >
-          Edit
+          {t('common.edit')}
         </Link>
       </div>
 
@@ -100,10 +103,10 @@ export default function CookLogCard({
 
       {log.lessons && (
         <div className="mt-3">
-          <h3 className="text-sm font-medium text-ink-muted">Lessons</h3>
+          <h3 className="text-sm font-medium text-ink-muted">{t('cookLog.lessons')}</h3>
           <p className="mt-1 whitespace-pre-line">{log.lessons}</p>
           {inNotes ? (
-            <p className="mt-2 text-sm text-ink-subtle">In notes</p>
+            <p className="mt-2 text-sm text-ink-subtle">{t('cookLog.inNotes')}</p>
           ) : (
             <button
               type="button"
@@ -111,7 +114,7 @@ export default function CookLogCard({
               onClick={() => void promote()}
               className={`mt-2 ${addBtn} disabled:opacity-40`}
             >
-              Add to recipe notes
+              {t('cookLog.addToNotes')}
             </button>
           )}
           {error && <p role="alert" className="mt-2 text-sm text-danger">{error}</p>}

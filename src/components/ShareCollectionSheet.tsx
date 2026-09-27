@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useT } from '../i18n';
 import Sheet from './Sheet';
 import { collectionStore } from '../lib/collectionStore';
 import type { CollectionGrant } from '../lib/remote';
@@ -12,6 +13,7 @@ export default function ShareCollectionSheet({
   collection: Collection;
   onClose: () => void;
 }) {
+  const t = useT();
   const [email, setEmail] = useState('');
   const [grants, setGrants] = useState<CollectionGrant[] | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +30,7 @@ export default function ShareCollectionSheet({
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Couldn't load sharing.");
+          setError(err instanceof Error ? err.message : t('error.sharingLoad'));
           setGrants([]);
         }
       });
@@ -45,7 +47,7 @@ export default function ShareCollectionSheet({
       setEmail('');
       setGrants(await collectionStore.listGrants(collection.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't update sharing.");
+      setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
       setBusy(false);
     }
@@ -58,7 +60,7 @@ export default function ShareCollectionSheet({
       await collectionStore.revokeGrant(collection.id, sub);
       setGrants(await collectionStore.listGrants(collection.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't update sharing.");
+      setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
       setBusy(false);
     }
@@ -66,11 +68,8 @@ export default function ShareCollectionSheet({
 
   return (
     <Sheet onClose={onClose} dismissible={!busy}>
-      <h2 className="text-lg font-semibold">Share “{collection.name}”</h2>
-      <p className="mt-1 text-sm text-ink-muted">
-        Add someone who already has a Sous account. They can view these recipes
-        and photos, not edit them.
-      </p>
+      <h2 className="text-lg font-semibold">{t('share.title', { name: collection.name })}</h2>
+      <p className="mt-1 text-sm text-ink-muted">{t('share.intro')}</p>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -82,7 +81,7 @@ export default function ShareCollectionSheet({
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="Email"
+          placeholder={t('share.emailPlaceholder')}
           disabled={busy}
           className={`${inputClass} mt-3`}
         />
@@ -92,15 +91,15 @@ export default function ShareCollectionSheet({
           disabled={busy || email.trim() === ''}
           className={`${primaryBtn} mt-3 w-full py-3`}
         >
-          Share
+          {t('common.share')}
         </button>
       </form>
       <ul className="mt-4 flex flex-col gap-2">
         {grants === undefined && (
-          <li className="text-sm text-ink-muted">Loading…</li>
+          <li className="text-sm text-ink-muted">{t('common.loading')}</li>
         )}
         {grants?.length === 0 && (
-          <li className="text-sm text-ink-muted">Nobody else can see this yet.</li>
+          <li className="text-sm text-ink-muted">{t('share.nobodyYet')}</li>
         )}
         {grants?.map((grant) => (
           <li
@@ -114,7 +113,7 @@ export default function ShareCollectionSheet({
               onClick={() => void revoke(grant.sub)}
               className={`${dangerBtn} px-3 py-1.5 text-xs`}
             >
-              Remove
+              {t('common.remove')}
             </button>
           </li>
         ))}
@@ -124,7 +123,7 @@ export default function ShareCollectionSheet({
         onClick={onClose}
         className={`${secondaryBtn} mt-3 w-full py-3`}
       >
-        Done
+        {t('common.done')}
       </button>
     </Sheet>
   );

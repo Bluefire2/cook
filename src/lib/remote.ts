@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { compactCollection } from './compactCollection';
 import { compactCookLog, isUsableCookLog } from './cookLogShape';
 import { compactRecipe } from './compactRecipe';
@@ -507,7 +508,7 @@ async function grantRequest(
       ...init,
     });
   } catch {
-    return { kind: 'error', message: "Couldn't update sharing." };
+    return { kind: 'error', message: t('error.sharingUpdate') };
   }
   if (response.status === 401 || response.status === 403) {
     invalidateSession();
@@ -515,7 +516,7 @@ async function grantRequest(
     return { kind: 'signedOut' };
   }
   if (response.status === 503) {
-    return { kind: 'error', message: 'Sharing is temporarily unavailable.', status: 503 };
+    return { kind: 'error', message: t('error.sharingUnavailable'), status: 503 };
   }
   let body: unknown = null;
   try {
@@ -527,7 +528,7 @@ async function grantRequest(
     const message =
       body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
         ? (body as { error: string }).error
-        : "Couldn't update sharing.";
+        : t('error.sharingUpdate');
     return { kind: 'error', message, status: response.status };
   }
   return {

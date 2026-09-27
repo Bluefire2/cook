@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { invalidateSession } from './session';
 
 export interface AccessRequestEntry {
@@ -38,25 +39,23 @@ export interface CreatedInvite extends InviteList {
 async function throwAdminError(response: Response): Promise<never> {
   if (response.status === 401) {
     invalidateSession();
-    throw new Error('Please sign in again — your session expired.');
+    throw new Error(t('error.sessionExpired'));
   }
   if (response.status === 403) {
-    throw new Error("This account can't manage invitations.");
+    throw new Error(t('error.adminForbidden'));
   }
   if (response.status === 503) {
-    throw new Error('Invitations are temporarily unavailable.');
+    throw new Error(t('error.adminUnavailable'));
   }
   const data = (await response.json().catch(() => null)) as { error?: unknown } | null;
   if (response.status === 409 && data !== null && data.error === 'invite-cap') {
-    throw new Error(
-      'You already have 20 unused invite links. Revoke one to mint another.',
-    );
+    throw new Error(t('error.inviteCap', { max: 20 }));
   }
   const err =
     data !== null && typeof data === 'object' && 'error' in data
       ? String(data.error)
       : null;
-  throw new Error(err ?? `Request failed (${response.status}).`);
+  throw new Error(err ?? t('error.requestFailed', { status: response.status }));
 }
 
 async function parseAdminResponse(response: Response): Promise<AccessRequestLists> {
@@ -65,7 +64,7 @@ async function parseAdminResponse(response: Response): Promise<AccessRequestList
   }
   const data = (await response.json().catch(() => null)) as AccessRequestLists | null;
   if (data === null) {
-    throw new Error(`Request failed (${response.status}).`);
+    throw new Error(t('error.requestFailed', { status: response.status }));
   }
   return data;
 }
@@ -76,7 +75,7 @@ async function parseInviteListResponse(response: Response): Promise<InviteList> 
   }
   const data = (await response.json().catch(() => null)) as InviteList | null;
   if (data === null || !Array.isArray(data.invites)) {
-    throw new Error(`Request failed (${response.status}).`);
+    throw new Error(t('error.requestFailed', { status: response.status }));
   }
   return data;
 }
@@ -150,7 +149,7 @@ export async function createInvite(): Promise<CreatedInvite> {
   }
   const data = (await response.json().catch(() => null)) as CreatedInvite | null;
   if (data === null || typeof data.url !== 'string' || !Array.isArray(data.invites)) {
-    throw new Error(`Request failed (${response.status}).`);
+    throw new Error(t('error.requestFailed', { status: response.status }));
   }
   return data;
 }

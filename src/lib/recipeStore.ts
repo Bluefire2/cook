@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react';
+import { t } from '../i18n';
 import {
   beginLocalWrite,
   captureSnapshot,
@@ -47,7 +48,7 @@ async function uploadPhotoIfNeeded(
   }
   const result = await postPhoto(photoId, recipeId, updatedAt, blob);
   if (result !== 'ok') {
-    throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the photo.");
+    throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.photoSave'));
   }
   markPhotoRemote(photoId);
 }
@@ -85,10 +86,10 @@ async function copyParentPhotos(parent: Recipe): Promise<{
   const slots = parentPhotoSlots(parent);
   const loaded = await Promise.all(slots.map((slot) => loadParentPhoto(slot.id)));
   if (loaded.some((item) => item === 'signedOut')) {
-    throw new Error('Please sign in again — your session expired.');
+    throw new Error(t('error.sessionExpired'));
   }
   if (loaded.some((item) => item === 'unavailable')) {
-    throw new Error("Couldn't copy the photos. Try again.");
+    throw new Error(t('error.photosCopy'));
   }
 
   let photoId: string | undefined;
@@ -152,7 +153,7 @@ export const recipeStore = {
 
   async save(recipe: Recipe): Promise<void> {
     if (isSharedRecipe(recipe.id)) {
-      throw new Error('This shared collection is view-only.');
+      throw new Error(t('error.sharedViewOnly'));
     }
     const previous = getRecipe(recipe.id);
     const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
@@ -161,7 +162,7 @@ export const recipeStore = {
       await uploadRecipePhotos(next);
       const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
       if (result !== 'ok') {
-        throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
+        throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
       }
       await deleteRemovedPhotos(previous, next);
     } catch (err) {
@@ -234,10 +235,10 @@ export const recipeStore = {
     let nextCollection = previousCollection;
     if (collectionId !== undefined) {
       if (!previousCollection || isSharedCollection(collectionId)) {
-        throw new Error('Collection not found.');
+        throw new Error(t('error.collectionNotFound'));
       }
       if (wouldExceedRecipeIdCap([...previousCollection.recipeIds, recipe.id])) {
-        throw new Error('This collection is full.');
+        throw new Error(t('error.collectionFull'));
       }
       nextCollection = compactCollection({
         ...previousCollection,
@@ -257,7 +258,7 @@ export const recipeStore = {
       }
       const result = await pushOps(ops);
       if (result !== 'ok') {
-        throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
+        throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
       }
     } catch (err) {
       removeRecipeLocal(recipe.id);
@@ -271,7 +272,7 @@ export const recipeStore = {
 
   async remove(id: string): Promise<void> {
     if (isSharedRecipe(id)) {
-      throw new Error('This shared collection is view-only.');
+      throw new Error(t('error.sharedViewOnly'));
     }
     const previous = captureSnapshot();
     const at = Date.now();
@@ -313,21 +314,21 @@ export const recipeStore = {
       return;
     }
     if (outcome === 'signedOut') {
-      throw new Error('Please sign in again — your session expired.');
+      throw new Error(t('error.sessionExpired'));
     }
     if (outcome === 'ok') {
       if (getRecipe(id) === undefined) {
         return;
       }
-      throw new Error("Couldn't delete the recipe.");
+      throw new Error(t('error.recipeDelete'));
     }
     if (libraryEpoch() === writeEpoch) {
       restoreSnapshot(previous);
     }
     throw new Error(
       result === 'signedOut'
-        ? 'Please sign in again — your session expired.'
-        : "Couldn't delete the recipe.",
+        ? t('error.sessionExpired')
+        : t('error.recipeDelete'),
     );
   },
 };

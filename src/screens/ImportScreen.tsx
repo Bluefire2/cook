@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { t as translateNow, useT } from '../i18n';
 import CreateRecipeForm, {
   type CreateRecipeSubmitStatus,
 } from '../components/CreateRecipeForm';
@@ -15,7 +16,6 @@ import {
 import { recipeStore } from '../lib/recipeStore';
 import { backLink, inputFocus, primaryBtn, secondaryBtn } from '../lib/uiClasses';
 
-const SESSION_EXPIRED = 'Please sign in again — your session expired.';
 const IMPORT_FORM_ID = 'import-recipe-form';
 
 type BulkResult =
@@ -23,6 +23,7 @@ type BulkResult =
   | { url: string; ok: false; error: string };
 
 export default function ImportScreen() {
+  const t = useT();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const collectionId = params.get('c') ?? undefined;
@@ -61,7 +62,7 @@ export default function ImportScreen() {
   const runBulk = async (urls: string[], destinationId: string | undefined) => {
     if (inFlight.current) return;
     if (destinationId && !collectionStore.get(destinationId)) {
-      throw new Error('Collection not found. Choose another collection.');
+      throw new Error(t('import.collectionNotFoundChoose'));
     }
     inFlight.current = true;
     setBatchDestination(destinationId ?? null);
@@ -74,7 +75,7 @@ export default function ImportScreen() {
         setProgress({ current: i + 1, total: urls.length });
         try {
           if (destinationId && !collectionStore.get(destinationId)) {
-            throw new Error('Collection not found. Choose another collection.');
+            throw new Error(t('import.collectionNotFoundChoose'));
           }
           const draft = await importRecipe({ url });
           const recipe = await recipeStore.create(
@@ -83,9 +84,9 @@ export default function ImportScreen() {
           );
           results.push({ url, ok: true, id: recipe.id, title: recipe.title.trim() || url });
         } catch (e) {
-          const message = e instanceof Error ? e.message : 'Import failed.';
+          const message = e instanceof Error ? e.message : t('error.importFailed');
           results.push({ url, ok: false, error: message });
-          if (message === SESSION_EXPIRED || (destinationId && !collectionStore.get(destinationId))) {
+          if (message === translateNow('error.sessionExpired') || (destinationId && !collectionStore.get(destinationId))) {
             for (const rest of urls.slice(i + 1)) {
               results.push({ url: rest, ok: false, error: message });
             }
@@ -122,7 +123,7 @@ export default function ImportScreen() {
         try {
           await runBulk(urls, destination.collectionId);
         } catch (e) {
-          setError(e instanceof Error ? e.message : 'Import failed.');
+          setError(e instanceof Error ? e.message : t('error.importFailed'));
           setPendingUrls(urls);
         }
       }
@@ -140,7 +141,7 @@ export default function ImportScreen() {
         ),
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Import failed.');
+      setError(e instanceof Error ? e.message : t('error.importFailed'));
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -163,10 +164,10 @@ export default function ImportScreen() {
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
         <Link to={backTo} className={backLink}>
-          &larr; Library
+          &larr; {t('common.library')}
         </Link>
         <div className="mt-2 flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold">Import recipe</h1>
+          <h1 className="text-2xl font-bold">{t('import.title')}</h1>
           {summary === null && preview !== null && (
             <button
               type="submit"
@@ -179,7 +180,7 @@ export default function ImportScreen() {
               {saveStatus.saving && (
                 <SpinnerIcon className="block h-5 w-5 animate-spin" />
               )}
-              Save
+              {t('common.save')}
             </button>
           )}
         </div>
@@ -189,8 +190,8 @@ export default function ImportScreen() {
         <>
           <h2 className="text-lg font-semibold">
             {successCount === 0
-              ? "Couldn't import these recipes"
-              : `Imported ${successCount} of ${summary.length}`}
+              ? t('import.couldNotImport')
+              : t('import.importedOf', { count: successCount, total: summary.length })}
           </h2>
           <ul className="mt-3 space-y-2">
             {summary.map((row) => (
@@ -222,7 +223,7 @@ export default function ImportScreen() {
             onClick={() => navigate(backTo)}
             className={`${primaryBtn} mt-4 w-full py-3`}
           >
-            Back to library
+            {t('common.backToLibrary')}
           </button>
           {failedCount > 0 && (
             <button
@@ -230,7 +231,7 @@ export default function ImportScreen() {
               onClick={tryAgain}
               className={`${secondaryBtn} mt-2 w-full py-3`}
             >
-              Try again
+              {t('common.tryAgain')}
             </button>
           )}
         </>
@@ -247,8 +248,8 @@ export default function ImportScreen() {
             readOnly={busy || pendingUrls !== null}
             placeholder={
               bulk
-                ? 'Paste one recipe link per line…'
-                : 'Paste a recipe link, or the recipe text itself…'
+                ? t('import.placeholderBulk')
+                : t('import.placeholder')
             }
             className={`w-full rounded-xl border border-line bg-surface px-4 py-3 shadow-sm ${inputFocus}`}
           />
@@ -266,10 +267,9 @@ export default function ImportScreen() {
               className={`mt-1 h-4 w-4 shrink-0 accent-ink disabled:opacity-40 ${inputFocus}`}
             />
             <span>
-              <span className="block font-medium text-ink">Bulk import</span>
+              <span className="block font-medium text-ink">{t('import.bulk')}</span>
               <span className="mt-0.5 block text-sm text-ink-subtle">
-                Paste several recipe links. Each is saved to your library
-                without a preview.
+                {t('import.bulkHint')}
               </span>
             </span>
           </label>
@@ -278,7 +278,7 @@ export default function ImportScreen() {
               {error}
             </p>
           )}
-          {collections === undefined && <p role="status">Loading collections…</p>}
+          {collections === undefined && <p role="status">{t('common.loadingCollections')}</p>}
           <button
             type="button"
             onClick={() => void extract()}
@@ -289,10 +289,10 @@ export default function ImportScreen() {
           >
             {busy && <SpinnerIcon className="block h-5 w-5 animate-spin" />}
             {busy
-              ? 'Extracting…'
+              ? t('import.extracting')
               : bulk
-                ? 'Extract recipes'
-                : 'Extract recipe'}
+                ? t('import.extractRecipes')
+                : t('import.extractRecipe')}
           </button>
           {busy && progress && (
             <div className="mt-3">
@@ -301,8 +301,11 @@ export default function ImportScreen() {
                 aria-valuemin={0}
                 aria-valuemax={progress.total}
                 aria-valuenow={progress.current}
-                aria-valuetext={`Reading recipe ${progress.current} of ${progress.total}`}
-                aria-label="Bulk import progress"
+                aria-valuetext={t('import.readingProgress', {
+                  current: progress.current,
+                  total: progress.total,
+                })}
+                aria-label={t('import.progressLabel')}
                 className="h-2 w-full overflow-hidden rounded-full bg-line"
               >
                 <div
@@ -318,21 +321,23 @@ export default function ImportScreen() {
                 className="mt-2 text-center text-sm text-ink-subtle"
                 role="status"
               >
-                Reading recipe {progress.current} of {progress.total} — this
-                takes a few seconds.
+                {t('import.readingProgressHint', {
+                  current: progress.current,
+                  total: progress.total,
+                })}
               </p>
             </div>
           )}
           {busy && !progress && (
             <p className="mt-3 text-center text-sm text-ink-subtle" role="status">
-              Reading the recipe — this takes a few seconds.
+              {t('import.readingHint')}
             </p>
           )}
         </>
       ) : (
         <>
           <div className="rounded-2xl border border-line bg-accent-soft px-4 py-3 text-sm text-ink">
-            Anything the extraction got wrong, fix it here before saving.
+            {t('import.fixBeforeSaving')}
           </div>
 
           <CreateRecipeForm
@@ -347,8 +352,8 @@ export default function ImportScreen() {
       )}
       {pendingUrls && (
         <SaveToCollectionSheet
-          title="Import recipes to"
-          createLabel="Create and import"
+          title={t('import.saveTo')}
+          createLabel={t('import.createAndImport')}
           onSave={(id) => runBulk(pendingUrls, id)}
           onCancel={() => setPendingUrls(null)}
         />

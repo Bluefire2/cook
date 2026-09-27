@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { useLocale, useT } from '../i18n';
+import { unitLabel } from '../i18n/unitLabel';
 import ChatPanel from '../components/ChatPanel';
 import CookLogCard from '../components/CookLogCard';
 import { useCookLogs } from '../lib/cookLogStore';
@@ -11,6 +13,7 @@ import { backLink, ghostBtn, secondaryBtn } from '../lib/uiClasses';
 import { useWakeLock } from '../lib/useWakeLock';
 import { useCookState } from '../lib/useCookState';
 import type { Ingredient } from '../lib/types';
+import type { Locale } from '../i18n';
 
 /**
  * The source is whatever the user pasted on import, so it is only ever linked
@@ -28,10 +31,15 @@ function sourceLink(url: string | undefined): URL | undefined {
   }
 }
 
-function ingredientLabel(ing: Ingredient, scale: number): string {
+function ingredientLabel(
+  ing: Ingredient,
+  scale: number,
+  locale: Locale,
+  labelUnit: (token: string) => string,
+): string {
   const parts = [
-    ing.quantity !== undefined ? formatQuantity(ing.quantity * scale) : null,
-    ing.unit ?? null,
+    ing.quantity !== undefined ? formatQuantity(ing.quantity * scale, locale) : null,
+    ing.unit ? labelUnit(ing.unit) : null,
     ing.item,
   ].filter(Boolean);
   const base = parts.join(' ');
@@ -49,7 +57,46 @@ function GalleryImage({ photoId }: { photoId: string }) {
   );
 }
 
+function SourceCredit({ source }: { source: URL }) {
+  const t = useT();
+  const label = t('recipe.source', { source: source.hostname });
+  const at = label.indexOf(source.hostname);
+  const link = (
+    <a
+      href={source.href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="underline hover:text-ink"
+    >
+      {source.hostname}
+    </a>
+  );
+  if (at < 0) {
+    return (
+      <p className="mt-6 text-sm text-ink-muted">
+        <a
+          href={source.href}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="underline hover:text-ink"
+        >
+          {label}
+        </a>
+      </p>
+    );
+  }
+  return (
+    <p className="mt-6 text-sm text-ink-muted">
+      {label.slice(0, at)}
+      {link}
+      {label.slice(at + source.hostname.length)}
+    </p>
+  );
+}
+
 export default function RecipeView() {
+  const t = useT();
+  const locale = useLocale();
   const { id } = useParams<{ id: string }>();
   const recipe = useRecipe(id);
   const photoUrl = usePhotoUrl(recipe?.photoId);
@@ -84,20 +131,20 @@ export default function RecipeView() {
 
   if (recipe === undefined) {
     return (
-      <div className="p-6 text-center text-ink-muted">Loading recipe…</div>
+      <div className="p-6 text-center text-ink-muted">{t('common.loadingRecipe')}</div>
     );
   }
   if (recipe === null) {
     if (settledId !== id) {
       return (
-        <div className="p-6 text-center text-ink-muted">Looking for this recipe…</div>
+        <div className="p-6 text-center text-ink-muted">{t('recipe.lookingFor')}</div>
       );
     }
     return (
       <div className="p-6 text-center text-ink-muted">
-        Recipe not found.{' '}
+        {t('common.recipeNotFound')}{' '}
         <Link to="/" className="underline hover:text-ink">
-          Back to library
+          {t('common.backToLibrary')}
         </Link>
       </div>
     );
@@ -112,11 +159,11 @@ export default function RecipeView() {
       <header className="py-4">
         <div className="flex items-center justify-between">
           <Link to="/" className={backLink}>
-            &larr; Library
+            &larr; {t('common.library')}
           </Link>
           {!shared && (
             <Link to={`/recipe/${recipe.id}/edit`} className={ghostBtn}>
-              Edit
+              {t('common.edit')}
             </Link>
           )}
         </div>
@@ -132,19 +179,21 @@ export default function RecipeView() {
           <p className="mt-1 text-ink-muted">{recipe.description}</p>
         )}
         <p className="mt-2 text-sm text-ink-muted">
-          {recipe.prepMinutes != null && `Prep ${recipe.prepMinutes} min`}
+          {recipe.prepMinutes != null &&
+            t('recipe.prepMinutes', { count: recipe.prepMinutes })}
           {recipe.prepMinutes != null && recipe.cookMinutes != null && ' · '}
-          {recipe.cookMinutes != null && `Cook ${recipe.cookMinutes} min`}
+          {recipe.cookMinutes != null &&
+            t('recipe.cookMinutes', { count: recipe.cookMinutes })}
         </p>
       </header>
 
       <section>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Ingredients</h2>
+          <h2 className="text-lg font-semibold">{t('common.ingredients')}</h2>
           <div className="flex items-center gap-1 rounded-full border border-line bg-surface">
             <button
               type="button"
-              aria-label="Fewer servings"
+              aria-label={t('recipe.fewerServings')}
               disabled={servings <= 1}
               onClick={() => setServings(servings - 1)}
               className="h-9 w-9 rounded-full text-lg text-ink-muted hover:bg-surface-muted active:bg-surface-muted disabled:opacity-30"
@@ -152,11 +201,11 @@ export default function RecipeView() {
               −
             </button>
             <span className="min-w-16 text-center text-sm">
-              {servings} serving{servings === 1 ? '' : 's'}
+              {t('common.servingsCount', { count: servings })}
             </span>
             <button
               type="button"
-              aria-label="More servings"
+              aria-label={t('recipe.moreServings')}
               onClick={() => setServings(servings + 1)}
               className="h-9 w-9 rounded-full text-lg text-ink-muted hover:bg-surface-muted active:bg-surface-muted"
             >
@@ -198,7 +247,7 @@ export default function RecipeView() {
                         {isChecked ? '✓' : ''}
                       </span>
                       <span className={isChecked ? 'line-through' : ''}>
-                        {ingredientLabel(ing, scale)}
+                        {ingredientLabel(ing, scale, locale, (token) => unitLabel(token, t))}
                       </span>
                     </button>
                   </li>
@@ -210,7 +259,7 @@ export default function RecipeView() {
       </section>
 
       <section className="mt-6">
-        <h2 className="text-lg font-semibold">Steps</h2>
+        <h2 className="text-lg font-semibold">{t('common.steps')}</h2>
         <ol className="mt-2 flex flex-col gap-2">
           {recipe.steps.map((step, i) => {
             const isCurrent = i === currentStep;
@@ -243,13 +292,13 @@ export default function RecipeView() {
         </ol>
         {currentStep >= recipe.steps.length && (
           <div className="mt-4 text-center">
-            <p className="font-medium text-amber-600">Done — enjoy!</p>
+            <p className="font-medium text-amber-600">{t('recipe.doneEnjoy')}</p>
             {!shared && (
               <Link
                 to={`/recipe/${recipe.id}/cooks/new`}
                 className={`${secondaryBtn} mt-3 inline-block px-5 py-2`}
               >
-                Log this cook
+                {t('recipe.logThisCook')}
               </Link>
             )}
           </div>
@@ -258,7 +307,7 @@ export default function RecipeView() {
 
       {recipe.notes && (
         <section className="mt-6">
-          <h2 className="text-lg font-semibold">Notes</h2>
+          <h2 className="text-lg font-semibold">{t('common.notes')}</h2>
           <p className="mt-2 rounded-lg bg-surface px-3 py-3 whitespace-pre-line text-ink-muted shadow-sm">
             {recipe.notes}
           </p>
@@ -277,13 +326,13 @@ export default function RecipeView() {
         <section className="mt-6">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">
-              Your cooks
+              {t('recipe.yourCooks')}
               {cookLogs.length > 0 && (
                 <span className="ml-2 font-normal text-ink-subtle">{cookLogs.length}</span>
               )}
             </h2>
             <Link to={`/recipe/${recipe.id}/cooks/new`} className={ghostBtn}>
-              Log a cook
+              {t('recipe.logACook')}
             </Link>
           </div>
           {cookLogs.length > 0 && (
@@ -299,17 +348,7 @@ export default function RecipeView() {
       )}
 
       {source && (
-        <p className="mt-6 text-sm text-ink-muted">
-          From{' '}
-          <a
-            href={source.href}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="underline hover:text-ink"
-          >
-            {source.hostname}
-          </a>
-        </p>
+        <SourceCredit source={source} />
       )}
 
       {!chatOpen && (
@@ -318,7 +357,7 @@ export default function RecipeView() {
           onClick={() => setChatOpen(true)}
           className="fixed right-5 bottom-8 z-10 flex h-14 items-center gap-2 rounded-full bg-amber-500 px-5 font-medium text-white shadow-lg hover:bg-amber-600 active:bg-amber-600"
         >
-          Ask
+          {t('recipe.ask')}
         </button>
       )}
       {chatOpen && (

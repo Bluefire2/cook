@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { useT } from '../i18n';
 
 export default function Sheet({
   onClose,
@@ -20,11 +21,12 @@ export default function Sheet({
     document.addEventListener('keydown', escape, true);
     return () => document.removeEventListener('keydown', escape, true);
   }, [dismissible, onClose]);
+  const t = useT();
   return (
     <div className="fixed inset-0 z-30 flex flex-col justify-end">
       <button
         type="button"
-        aria-label="Dismiss"
+        aria-label={t('sheet.dismiss')}
         tabIndex={-1}
         disabled={!dismissible}
         onClick={onClose}
