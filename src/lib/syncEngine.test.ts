@@ -665,6 +665,54 @@ describe('pullAll', () => {
     expect(snapshot.loaded).toBe(true);
   });
 
+  it('keeps an open shared recipe in every snapshot while a successful refresh is in flight', async () => {
+    installSharedRows({
+      recipes: new Map([['open-shared', recipe('open-shared', 'Open on screen')]]),
+      collections: new Map([
+        ['shared-collection', collection('shared-collection', 'Shared', ['open-shared'])],
+      ]),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map([['open-shared', { kind: 'shared', ownerSub: 'shared-owner' }]]),
+      collectionOrigins: new Map([
+        ['shared-collection', { kind: 'shared', ownerSub: 'shared-owner' }],
+      ]),
+    });
+    const emissions: ReturnType<typeof getSnapshot>[] = [];
+    const unsubscribe = subscribe(() => {
+      emissions.push(getSnapshot());
+    });
+    const visibleDuringSharedPages: boolean[] = [];
+
+    const result = await pullAll({
+      pullPage: async () =>
+        ownedPage(ownedChanges({ recipes: [pullDoc(recipe('owned', 'Edited elsewhere'))] })),
+      pullSharedPage: async (cursor) => {
+        visibleDuringSharedPages.push(getSnapshot().recipes.has('open-shared'));
+        const shared = {
+          recipes: [
+            { ...recipe('open-shared', 'Open on screen, updated'), ownerSub: 'shared-owner' },
+          ],
+          collections: [
+            {
+              ...collection('shared-collection', 'Shared', ['open-shared']),
+              ownerSub: 'shared-owner',
+            },
+          ],
+        };
+        return cursor === null
+          ? sharedPage(shared, { hasMore: true, cursorToken: 'page-two' })
+          : sharedPage(shared);
+      },
+    });
+    unsubscribe();
+
+    expect(result.outcome).toBe('ok');
+    expect(visibleDuringSharedPages).toEqual([true, true]);
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0]?.recipes.get('open-shared')?.title).toBe('Open on screen, updated');
+    expect(emissions[0]?.recipes.get('owned')?.title).toBe('Edited elsewhere');
+  });
+
   it('publishes a stable reread once and drops the page staged before restart', async () => {
     addPendingBlob('pending-photo', new Blob(['pending']));
     const emissions: ReturnType<typeof getSnapshot>[] = [];

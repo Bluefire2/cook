@@ -154,7 +154,10 @@ separate from the session cookie. If grants or collection membership change
 between pages, the server returns `409 shared-snapshot-changed` and the
 client discards that attempt and rereads from the start, up to three times,
 then publishes owned-only state and the existing refresh error. A successful
-refresh publishes owned and shared rows atomically. After owned pull
+refresh publishes owned and shared rows atomically, so an open shared recipe
+never disappears mid-refresh; the cost is that the viewer's own updates wait
+for the shared pull (about 0.7 s for 900 shared recipes over 6 shares on the
+emulator). Keep that trade unless shared pulls get much slower. After owned pull
 completes, a non-auth shared failure publishes the completed owned-only
 snapshot and returns the existing error outcome; a shared 401/403 still
 clears the session and library.
