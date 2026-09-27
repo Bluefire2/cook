@@ -30,7 +30,8 @@ export default function ImportScreen() {
   // pull has not landed yet, and only a subscriber re-renders once it does.
   const collections = useCollections();
   const knownCollectionId =
-    collectionId && collections?.some((c) => c.id === collectionId)
+    collectionId &&
+    collections?.some((c) => c.id === collectionId && !collectionStore.isShared(c.id))
       ? collectionId
       : undefined;
   const backTo = libraryHref(knownCollectionId);

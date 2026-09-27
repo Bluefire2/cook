@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import ChatPanel from '../components/ChatPanel';
 import { usePhotoUrl } from '../lib/photoStore';
-import { useRecipe } from '../lib/recipeStore';
+import { recipeStore, useRecipe } from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
 import { sync } from '../lib/syncEngine';
 import { backLink, ghostBtn } from '../lib/uiClasses';
@@ -100,6 +100,7 @@ export default function RecipeView() {
     );
   }
 
+  const shared = recipeStore.isShared(recipe.id);
   const scale = servings / recipe.servings;
   const source = sourceLink(recipe.sourceUrl);
 
@@ -110,9 +111,11 @@ export default function RecipeView() {
           <Link to="/" className={backLink}>
             &larr; Library
           </Link>
-          <Link to={`/recipe/${recipe.id}/edit`} className={ghostBtn}>
-            Edit
-          </Link>
+          {!shared && (
+            <Link to={`/recipe/${recipe.id}/edit`} className={ghostBtn}>
+              Edit
+            </Link>
+          )}
         </div>
         {photoUrl && (
           <img
@@ -285,6 +288,7 @@ export default function RecipeView() {
       {chatOpen && (
         <ChatPanel
           recipe={recipe}
+          readOnly={shared}
           cookingState={{
             servings,
             currentStep: currentStep + 1,

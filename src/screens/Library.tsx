@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import ShareCollectionSheet from '../components/ShareCollectionSheet';
 import Sheet from '../components/Sheet';
-import { FolderIcon, PlusIcon } from '../lib/icons';
+import { FolderIcon, PlusIcon, SharedIcon } from '../lib/icons';
 import {
   collectionStore,
   libraryHref,
@@ -63,6 +64,8 @@ export default function Library() {
   const [deleteCollectionOpen, setDeleteCollectionOpen] = useState(false);
   const [collectionName, setCollectionName] = useState('');
   const [collectionError, setCollectionError] = useState<string | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [createdCollection, setCreatedCollection] = useState<{
     id: string;
     name: string;
@@ -87,12 +90,21 @@ export default function Library() {
 
   const pendingDelete = allRecipes?.find((r) => r.id === pendingDeleteId);
   const moveRecipe = allRecipes?.find((r) => r.id === moveRecipeId);
+  const namedIsShared = named ? collectionStore.isShared(named.id) : false;
   const showSwitcher = (collections?.length ?? 0) > 0;
-  const addQuery = currentId ? `?c=${encodeURIComponent(currentId)}` : '';
+  const addQuery =
+    currentId && !namedIsShared ? `?c=${encodeURIComponent(currentId)}` : '';
+  const ownedCollections =
+    collections?.filter((collection) => !collectionStore.isShared(collection.id)) ?? [];
 
   const remove = async (id: string) => {
     setPendingDeleteId(null);
-    await recipeStore.remove(id);
+    setDeleteError(null);
+    try {
+      await recipeStore.remove(id);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Couldn't delete the recipe.");
+    }
   };
 
   const closeSheets = () => {
@@ -102,6 +114,7 @@ export default function Library() {
     setCreateOpen(false);
     setRenameOpen(false);
     setDeleteCollectionOpen(false);
+    setShareOpen(false);
     setCollectionName('');
     setCollectionError(null);
     setCreatedCollection(null);
@@ -255,16 +268,28 @@ export default function Library() {
             >
               Recipes
             </Link>
-            {collections?.map((collection) => (
-              <Link
-                key={collection.id}
-                to={libraryHref(collection.id)}
-                onClick={() => setBrowseAll(false)}
-                className={chipClass(!browseAll && collection.id === currentId)}
-              >
-                {collection.name}
-              </Link>
-            ))}
+            {collections?.map((collection) => {
+              const shared = collectionStore.isShared(collection.id);
+              const sharedBy = shared ? collectionStore.sharedBy(collection.id) : undefined;
+              const sharedLabel = sharedBy
+                ? `${collection.name} (shared by ${sharedBy})`
+                : `${collection.name} (shared)`;
+              return (
+                <Link
+                  key={collection.id}
+                  to={libraryHref(collection.id)}
+                  onClick={() => setBrowseAll(false)}
+                  aria-label={shared ? sharedLabel : collection.name}
+                  title={shared ? sharedLabel : undefined}
+                  className={`${chipClass(!browseAll && collection.id === currentId)} inline-flex items-center gap-1.5`}
+                >
+                  {shared && (
+                    <SharedIcon className="block h-3.5 w-3.5 shrink-0" />
+                  )}
+                  {collection.name}
+                </Link>
+              );
+            })}
             <button
               type="button"
               onClick={() => {
@@ -276,8 +301,15 @@ export default function Library() {
             >
               New
             </button>
-            {named && (
+            {named && !namedIsShared && (
               <>
+                <button
+                  type="button"
+                  onClick={() => setShareOpen(true)}
+                  className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
+                >
+                  Share
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -300,6 +332,14 @@ export default function Library() {
             )}
           </div>
         </nav>
+      )}
+
+      {named && namedIsShared && !browseAll && (
+        <p className="-mt-1 mb-3 text-sm text-ink-muted">
+          {collectionStore.sharedBy(named.id)
+            ? `Shared with you by ${collectionStore.sharedBy(named.id)}. View only.`
+            : 'Shared with you. View only.'}
+        </p>
       )}
 
       {showSwitcher ? (
@@ -333,6 +373,10 @@ export default function Library() {
           onChange={(e) => setQuery(e.target.value)}
           className={`${inputClass} mb-4`}
         />
+      )}
+
+      {deleteError && (
+        <p className="mb-3 text-sm text-danger">{deleteError}</p>
       )}
 
       {recipes === undefined ? (
@@ -372,6 +416,7 @@ export default function Library() {
                 </div>
               </Link>
 
+              {!recipeStore.isShared(recipe.id) && (
               <button
                 type="button"
                 aria-label={`Actions for ${recipe.title}`}
@@ -384,8 +429,9 @@ export default function Library() {
               >
                 ⋯
               </button>
+              )}
 
-              {menuId === recipe.id && (
+              {menuId === recipe.id && !recipeStore.isShared(recipe.id) && (
                 <div
                   role="group"
                   aria-label={`Actions for ${recipe.title}`}
@@ -435,7 +481,7 @@ export default function Library() {
         />
       )}
 
-      {sessionStatus === 'signedIn' && (
+      {sessionStatus === 'signedIn' && !namedIsShared && (
         <button
           type="button"
           aria-label="Add recipe"
@@ -506,7 +552,7 @@ export default function Library() {
           >
             Recipes
           </button>
-          {collections?.map((collection) => (
+          {ownedCollections.map((collection) => (
             <button
               key={collection.id}
               type="button"
@@ -636,6 +682,13 @@ export default function Library() {
             Cancel
           </button>
         </Sheet>
+      )}
+
+      {shareOpen && named && !namedIsShared && (
+        <ShareCollectionSheet
+          collection={named}
+          onClose={() => setShareOpen(false)}
+        />
       )}
     </div>
   );

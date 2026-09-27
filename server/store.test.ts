@@ -1,21 +1,80 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addedCollectionRecipeIds,
   chunkByCost,
   chunkForBatch,
   applyCollectionMembershipScrubs,
   collectionDocsFromQuerySnap,
   collectionsToScrub,
+  chatCookPullFields,
+  chatOrCookPutBody,
+  collectionDeletePayload,
   compactCollectionFields,
   compactRecipeFields,
   compareMutation,
-  MAX_NAMED_COLLECTIONS,
-  namedCollectionCreateCapReason,
+  SHARED_PARENT_OWNER_SUB_FIELD,
+  sharedParentMarkerForWrite,
+  sharedParentOwnerFromCandidate,
+  findSharedParentOwner,
+  storedSharedParentOwner,
+  type SharedParentLookupIo,
+  recipeIdsWithoutTombstones,
   decodePullCursor,
   encodePullCursor,
   isUuid,
   messageIdsToClearAtBoundary,
+  emailLowerBackfill,
+  userProfileUpsertFields,
   validatePushOp,
 } from './store.ts';
+
+describe('emailLowerBackfill', () => {
+  it('returns the normalized address when emailLower is missing or stale', () => {
+    expect(emailLowerBackfill({ email: 'Mixed.Case@Example.com' })).toBe(
+      'mixed.case@example.com',
+    );
+    expect(
+      emailLowerBackfill({ email: 'New@Example.com', emailLower: 'old@example.com' }),
+    ).toBe('new@example.com');
+  });
+
+  it('skips profiles that already match or have no usable email', () => {
+    expect(
+      emailLowerBackfill({ email: 'A@Example.com', emailLower: 'a@example.com' }),
+    ).toBeNull();
+    expect(emailLowerBackfill({})).toBeNull();
+    expect(emailLowerBackfill({ email: '  ' })).toBeNull();
+    expect(emailLowerBackfill({ email: 42 })).toBeNull();
+  });
+});
+
+describe('userProfileUpsertFields', () => {
+  it('derives emailLower while preserving the original email and name', () => {
+    expect(
+      userProfileUpsertFields(
+        { email: '  Alex@Example.COM ', name: 'Alex Example' },
+        123,
+        true,
+      ),
+    ).toEqual({
+      email: '  Alex@Example.COM ',
+      emailLower: 'alex@example.com',
+      name: 'Alex Example',
+      lastSeenAt: 123,
+      createdAt: 123,
+    });
+  });
+
+  it('keeps existing merge semantics for an omitted name and createdAt', () => {
+    expect(
+      userProfileUpsertFields({ email: 'alex@example.com' }, 456, false),
+    ).toEqual({
+      email: 'alex@example.com',
+      emailLower: 'alex@example.com',
+      lastSeenAt: 456,
+    });
+  });
+});
 
 describe('compareMutation', () => {
   it('rejects stale puts', () => {
@@ -202,6 +261,41 @@ describe('validatePushOp', () => {
   });
 });
 
+describe('collectionDeletePayload', () => {
+  it('keeps the client clock and stores grantCascadeAt separately', () => {
+    expect(collectionDeletePayload('c1', 100, 80, 251)).toEqual({
+      id: 'c1',
+      updatedAt: 100,
+      deletedAt: 100,
+      serverUpdatedAt: 80,
+      grantCascadeAt: 251,
+    });
+    expect(collectionDeletePayload('c1', 100, 80)).not.toHaveProperty('grantCascadeAt');
+  });
+});
+
+describe('compactCollectionFields', () => {
+  it('omits internal grantCascadeAt from the client collection', () => {
+    expect(
+      compactCollectionFields({
+        id: 'c1',
+        name: 'Dinners',
+        recipeIds: [],
+        createdAt: 1,
+        updatedAt: 2,
+        grantCascadeAt: 251,
+        serverUpdatedAt: 80,
+      }),
+    ).toEqual({
+      id: 'c1',
+      name: 'Dinners',
+      recipeIds: [],
+      createdAt: 1,
+      updatedAt: 2,
+    });
+  });
+});
+
 describe('compactRecipeFields', () => {
   const required = {
     id: 'r1',
@@ -236,11 +330,62 @@ describe('compactRecipeFields', () => {
   });
 });
 
-describe('namedCollectionCreateCapReason', () => {
-  it('returns cap only when the live count is already at the limit', () => {
-    expect(namedCollectionCreateCapReason(MAX_NAMED_COLLECTIONS - 1)).toBeUndefined();
-    expect(namedCollectionCreateCapReason(MAX_NAMED_COLLECTIONS)).toBe('cap');
-    expect(namedCollectionCreateCapReason(MAX_NAMED_COLLECTIONS + 1)).toBe('cap');
+describe('recipeIdsWithoutTombstones', () => {
+  const liveId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const goneId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const missingId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+  it('drops tombstoned recipe ids and keeps live and missing ones', () => {
+    expect(
+      recipeIdsWithoutTombstones(
+        [liveId, goneId, missingId],
+        new Set([goneId]),
+      ),
+    ).toEqual([liveId, missingId]);
+  });
+
+  it('keeps every id not known to be tombstoned', () => {
+    expect(recipeIdsWithoutTombstones([liveId, goneId], new Set())).toEqual([
+      liveId,
+      goneId,
+    ]);
+  });
+});
+
+describe('addedCollectionRecipeIds', () => {
+  const first = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const second = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const added = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+  it('checks only ids newly added to a live collection', () => {
+    const existing = {
+      id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      name: 'Dinners',
+      recipeIds: [first, second],
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    expect(addedCollectionRecipeIds(existing, [second, first])).toEqual([]);
+    expect(addedCollectionRecipeIds(existing, [first, second, added])).toEqual([
+      added,
+    ]);
+  });
+
+  it('checks every id for a new or tombstoned collection', () => {
+    expect(addedCollectionRecipeIds(undefined, [first, added])).toEqual([
+      first,
+      added,
+    ]);
+    expect(
+      addedCollectionRecipeIds(
+        {
+          id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+          updatedAt: 3,
+          deletedAt: 3,
+        },
+        [first, added],
+      ),
+    ).toEqual([first, added]);
   });
 });
 
@@ -414,5 +559,299 @@ describe('messageIdsToClearAtBoundary', () => {
 describe('isUuid', () => {
   it('accepts lowercase uuid', () => {
     expect(isUuid('11111111-1111-4111-8111-111111111111')).toBe(true);
+  });
+});
+
+const PARENT_COLLECTION = '11111111-1111-4111-8111-111111111111';
+const PARENT_RECIPE = '22222222-2222-4222-8222-222222222222';
+const CHAT_ID = '33333333-3333-4333-8333-333333333333';
+
+function liveShare(ownerSub: string): Record<string, unknown> {
+  return { ownerSub, collectionId: PARENT_COLLECTION, updatedAt: 1 };
+}
+
+function liveCollection(recipeIds: string[]): Record<string, unknown> {
+  return {
+    id: PARENT_COLLECTION,
+    name: 'Shared',
+    recipeIds,
+    updatedAt: 1,
+  };
+}
+
+function liveRecipe(): Record<string, unknown> {
+  return {
+    id: PARENT_RECIPE,
+    title: 'Soup',
+    ownerSub: 'recipe-document-owner',
+    updatedAt: 1,
+  };
+}
+
+describe('findSharedParentOwner', () => {
+  type Share = { grantId: string; data: Record<string, unknown> };
+  const collectionIdFor = (n: number) =>
+    `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
+
+  /** Share n belongs to owner-n and lists PARENT_RECIPE only when `listsParent`. */
+  function world(
+    shares: Array<{ owner: string; listsParent: boolean; revoked?: boolean }>,
+  ) {
+    const reads = { listAll: 0, listOwner: 0, collections: 0, recipes: 0 };
+    const rows: Share[] = shares.map((share, n) => ({
+      grantId: `${share.owner}_${collectionIdFor(n)}`,
+      data: {
+        ownerSub: share.owner,
+        collectionId: collectionIdFor(n),
+        updatedAt: 1,
+        ...(share.revoked ? { deletedAt: 2 } : {}),
+      },
+    }));
+    const io: SharedParentLookupIo = {
+      listShares: async (ownerSub) => {
+        if (ownerSub === null) {
+          reads.listAll += 1;
+          return rows;
+        }
+        reads.listOwner += 1;
+        return rows.filter((row) => row.data.ownerSub === ownerSub);
+      },
+      readCollection: async (ownerSub, collectionId) => {
+        reads.collections += 1;
+        const n = shares.findIndex(
+          (share, i) => share.owner === ownerSub && collectionIdFor(i) === collectionId,
+        );
+        return n === -1
+          ? undefined
+          : {
+              id: collectionId,
+              recipeIds: shares[n].listsParent ? [PARENT_RECIPE] : [],
+              updatedAt: 1,
+            };
+      },
+      readRecipe: async () => {
+        reads.recipes += 1;
+        return liveRecipe();
+      },
+    };
+    return { io, reads };
+  }
+
+  it('reads only the share list when the viewer has no shares', async () => {
+    const { io, reads } = world([]);
+    await expect(findSharedParentOwner(PARENT_RECIPE, null, io)).resolves.toBeNull();
+    expect(reads).toEqual({ listAll: 1, listOwner: 0, collections: 0, recipes: 0 });
+  });
+
+  it('stops at the first authorizing share', async () => {
+    const { io, reads } = world([
+      { owner: 'owner-a', listsParent: true },
+      { owner: 'owner-b', listsParent: false },
+      { owner: 'owner-c', listsParent: false },
+    ]);
+    await expect(findSharedParentOwner(PARENT_RECIPE, null, io)).resolves.toBe('owner-a');
+    expect(reads).toEqual({ listAll: 1, listOwner: 0, collections: 1, recipes: 1 });
+  });
+
+  it('without a hint, a last-position match reads every collection', async () => {
+    const shares = Array.from({ length: 12 }, (_, i) => ({
+      owner: `owner-${i}`,
+      listsParent: i === 11,
+    }));
+    const { io, reads } = world(shares);
+    await expect(findSharedParentOwner(PARENT_RECIPE, null, io)).resolves.toBe('owner-11');
+    expect(reads).toEqual({ listAll: 1, listOwner: 0, collections: 12, recipes: 1 });
+  });
+
+  it('with a stored hint, reads only the hinted owner\u2019s shares among many', async () => {
+    const shares = Array.from({ length: 12 }, (_, i) => ({
+      owner: `owner-${i}`,
+      listsParent: i === 11,
+    }));
+    const { io, reads } = world(shares);
+    await expect(findSharedParentOwner(PARENT_RECIPE, 'owner-11', io)).resolves.toBe(
+      'owner-11',
+    );
+    expect(reads).toEqual({ listAll: 0, listOwner: 1, collections: 1, recipes: 1 });
+  });
+
+  it('falls back to a full scan when the hint no longer authorizes, without rechecking it', async () => {
+    const { io, reads } = world([
+      { owner: 'owner-old', listsParent: false },
+      { owner: 'owner-new', listsParent: true },
+    ]);
+    await expect(findSharedParentOwner(PARENT_RECIPE, 'owner-old', io)).resolves.toBe(
+      'owner-new',
+    );
+    expect(reads).toEqual({ listAll: 1, listOwner: 1, collections: 2, recipes: 1 });
+  });
+
+  it('denies after revoke even when the hint names that owner', async () => {
+    const { io, reads } = world([{ owner: 'owner-a', listsParent: true, revoked: true }]);
+    await expect(findSharedParentOwner(PARENT_RECIPE, 'owner-a', io)).resolves.toBeNull();
+    expect(reads.collections).toBe(0);
+    expect(reads.recipes).toBe(0);
+  });
+
+  it('cannot be steered to an owner the viewer has no share from', async () => {
+    const { io } = world([{ owner: 'owner-a', listsParent: false }]);
+    await expect(
+      findSharedParentOwner(PARENT_RECIPE, 'someone-else', io),
+    ).resolves.toBeNull();
+  });
+});
+
+describe('storedSharedParentOwner', () => {
+  it('reads only a non-empty server marker', () => {
+    expect(storedSharedParentOwner({ [SHARED_PARENT_OWNER_SUB_FIELD]: 'owner' })).toBe(
+      'owner',
+    );
+    expect(storedSharedParentOwner({ [SHARED_PARENT_OWNER_SUB_FIELD]: '' })).toBeNull();
+    expect(storedSharedParentOwner({ [SHARED_PARENT_OWNER_SUB_FIELD]: 7 })).toBeNull();
+    expect(storedSharedParentOwner(undefined)).toBeNull();
+    expect(storedSharedParentOwner(null)).toBeNull();
+  });
+});
+
+describe('shared parent provenance', () => {
+  it('returns the owner stored on the incoming share', () => {
+    expect(SHARED_PARENT_OWNER_SUB_FIELD).toBe('sharedParentOwnerSub');
+    const allowed = {
+      share: liveShare('stored-owner'),
+      grantId: 'grant-1',
+      collection: liveCollection([PARENT_RECIPE]),
+      recipe: liveRecipe(),
+    };
+    const denied = {
+      share: liveShare('other-owner'),
+      grantId: 'grant-2',
+      collection: liveCollection([]),
+      recipe: { ...liveRecipe(), ownerSub: 'other-owner' },
+    };
+    expect(sharedParentOwnerFromCandidate(PARENT_RECIPE, denied)).toBeNull();
+    expect(sharedParentOwnerFromCandidate(PARENT_RECIPE, allowed)).toBe('stored-owner');
+    expect(
+      sharedParentOwnerFromCandidate(PARENT_RECIPE, {
+        ...allowed,
+        share: { ...liveShare('stored-owner'), deletedAt: 5 },
+      }),
+    ).toBeNull();
+    expect(
+      sharedParentOwnerFromCandidate(PARENT_RECIPE, {
+        ...allowed,
+        share: liveShare(''),
+      }),
+    ).toBeNull();
+    expect(
+      sharedParentOwnerFromCandidate(PARENT_RECIPE, {
+        ...allowed,
+        recipe: { ...liveRecipe(), deletedAt: 5 },
+      }),
+    ).toBeNull();
+  });
+
+  it('stores the server-discovered owner and omits the marker for an owned parent', () => {
+    expect(sharedParentMarkerForWrite(true, 'stored-owner')).toBeNull();
+    expect(sharedParentMarkerForWrite(true, null)).toBeNull();
+    expect(sharedParentMarkerForWrite(false, 'stored-owner')).toBe('stored-owner');
+    expect(sharedParentMarkerForWrite(false, null)).toBeNull();
+    expect(sharedParentMarkerForWrite(false, '')).toBeNull();
+  });
+
+  it('ignores a hostile chat or cook payload when choosing or clearing provenance', () => {
+    const hostile = {
+      id: CHAT_ID,
+      recipeId: PARENT_RECIPE,
+      role: 'user',
+      content: 'hi',
+      createdAt: 3,
+      sharedParentOwnerSub: 'attacker',
+      uid: 'uid',
+      sub: 'sub',
+      deletedAt: 1,
+    };
+    const cleared = chatOrCookPutBody(
+      { ...hostile, sharedParentOwnerSub: null },
+      CHAT_ID,
+      3,
+      9,
+      sharedParentMarkerForWrite(false, 'stored-owner'),
+    );
+    expect(cleared.sharedParentOwnerSub).toBe('stored-owner');
+    expect(cleared.uid).toBeUndefined();
+    expect(cleared.sub).toBeUndefined();
+    expect(cleared.deletedAt).toBeUndefined();
+    expect(cleared.content).toBe('hi');
+
+    const blank = chatOrCookPutBody(
+      { ...hostile, sharedParentOwnerSub: '' },
+      CHAT_ID,
+      3,
+      9,
+      sharedParentMarkerForWrite(false, 'stored-owner'),
+    );
+    expect(blank.sharedParentOwnerSub).toBe('stored-owner');
+
+    const owned = chatOrCookPutBody(
+      hostile,
+      CHAT_ID,
+      3,
+      9,
+      sharedParentMarkerForWrite(true, 'stored-owner'),
+    );
+    expect(owned).not.toHaveProperty('sharedParentOwnerSub');
+    expect(owned.serverUpdatedAt).toBe(9);
+    expect(owned.updatedAt).toBe(3);
+
+    const cook = chatOrCookPutBody(
+      {
+        recipeId: PARENT_RECIPE,
+        servings: 2,
+        currentStep: 0,
+        checkedKeys: [],
+        recipeUpdatedAt: 1,
+        updatedAt: 4,
+        sharedParentOwnerSub: 'attacker',
+      },
+      PARENT_RECIPE,
+      4,
+      10,
+      null,
+    );
+    expect(cook).not.toHaveProperty('sharedParentOwnerSub');
+    expect(cook.id).toBe(PARENT_RECIPE);
+  });
+
+  it('exposes the stored marker as chat and cook pull metadata only', () => {
+    const wire = chatCookPullFields({
+      id: CHAT_ID,
+      recipeId: PARENT_RECIPE,
+      role: 'user',
+      content: 'hi',
+      createdAt: 3,
+      serverUpdatedAt: 9,
+      deletedAt: null,
+      sharedParentOwnerSub: 'stored-owner',
+    });
+    expect(wire.sharedParentOwnerSub).toBe('stored-owner');
+    expect(wire).not.toHaveProperty('serverUpdatedAt');
+    expect(wire).not.toHaveProperty('deletedAt');
+    expect(wire.content).toBe('hi');
+
+    expect(
+      chatCookPullFields({
+        id: CHAT_ID,
+        content: 'owned',
+        sharedParentOwnerSub: '',
+        serverUpdatedAt: 1,
+      }),
+    ).not.toHaveProperty('sharedParentOwnerSub');
+    expect(
+      chatCookPullFields({
+        id: CHAT_ID,
+        content: 'owned',
+        sharedParentOwnerSub: 4,
+      }),
+    ).not.toHaveProperty('sharedParentOwnerSub');
   });
 });
