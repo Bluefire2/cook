@@ -6,10 +6,20 @@
  * import evals (`evals/recipeImport.eval.ts`). Nothing here knows about HTTP:
  * routes map `ImportOutcome` / `PageFetchOutcome` to statuses and copy. The
  * Gemini client and model are passed in; `recipeImportDepsFromEnv` is the only
- * place that reads the environment.
+ * place that reads the environment. Translation uses the injected
+ * `translator` (`translateSegments`); a failure there never fails the import.
  */
 import { GoogleGenAI, Type, type Schema } from '@google/genai';
-import { normalizeLang } from './lang.ts';
+import { normalizeLang, sameLanguage, toSupportedLocale, type Locale } from './lang.ts';
+import { applyTranslation, recipeSegments, translationExceedsCaps } from './recipeTranslation.ts';
+import {
+  TRANSLATE_FAILED,
+  geminiTranslateDepsFromEnv,
+  translateSegments,
+  validateTranslatedSegments,
+  type TranslateInput,
+  type TranslateOutcome,
+} from './translate.ts';
 
 export interface ImportedIngredient {
   quantity?: number;
@@ -38,14 +48,47 @@ export interface ImportedRecipe {
   lang?: string;
 }
 
+/**
+ * Bound `translateSegments`: the same input and outcome, with the provider
+ * client already applied. Fakes implement this and must not call the network.
+ * A missing key or unavailable provider resolves to `{ ok: false }`; it does
+ * not throw.
+ */
+export type RecipeTranslator = (input: TranslateInput) => Promise<TranslateOutcome>;
+
 export interface RecipeImportDeps {
   /** Only `models.generateContent` is used; fakes implement exactly this. */
   ai: { models: Pick<GoogleGenAI['models'], 'generateContent'> };
   model: string;
+  translator: RecipeTranslator;
 }
 
+export const IMPORT_BAD_LANGUAGE_CODE = 'import-bad-language';
+export const IMPORT_BAD_LANGUAGE_ERROR = 'That language is not supported.';
+
+/**
+ * Absent is allowed. A present value must normalize to a supported UI
+ * language (`ua` → `uk`, `zh-CN` → `zh-Hans`). Anything else is rejected.
+ */
+export function readImportTranslateTo(
+  value: unknown,
+): { ok: true; translateTo?: Locale } | { ok: false } {
+  if (value === undefined) {
+    return { ok: true };
+  }
+  const translateTo = toSupportedLocale(value);
+  if (translateTo === undefined) {
+    return { ok: false };
+  }
+  return { ok: true, translateTo };
+}
+
+export type ImportTranslation =
+  | { kind: 'ok'; lang: string; recipe: ImportedRecipe }
+  | { kind: 'failed' };
+
 export type ImportOutcome =
-  | { kind: 'ok'; recipe: ImportedRecipe }
+  | { kind: 'ok'; recipe: ImportedRecipe; translation?: ImportTranslation }
   /** Nothing to send; Gemini is not called. */
   | { kind: 'empty_source' }
   /** The model reported that the source holds no recipe. */
@@ -501,10 +544,15 @@ export function normalizeImportedRecipe(raw: unknown): ImportedRecipe | null {
   return recipe;
 }
 
-/** Source text (pasted, or from `extractRecipeSource`) → outcome. The one Gemini call. */
+/**
+ * Source text (pasted, or from `extractRecipeSource`) → outcome.
+ * Extraction is the one Gemini call and stays faithful to the source.
+ * `translateTo`, when set, may add a translation; it never changes that call.
+ */
 export async function importFromSource(
   source: string,
   deps: RecipeImportDeps,
+  translateTo?: string,
 ): Promise<ImportOutcome> {
   if (source.trim() === '') {
     return { kind: 'empty_source' };
@@ -541,19 +589,133 @@ export async function importFromSource(
   if (recipe === null) {
     return { kind: 'unusable' };
   }
-  return { kind: 'ok', recipe };
+  return finishImport(recipe, translateTo, deps);
 }
 
 /** Page HTML → outcome: `extractRecipeSource` then `importFromSource`. */
-export function importFromHtml(html: string, deps: RecipeImportDeps): Promise<ImportOutcome> {
-  return importFromSource(extractRecipeSource(html), deps);
+export function importFromHtml(
+  html: string,
+  deps: RecipeImportDeps,
+  translateTo?: string,
+): Promise<ImportOutcome> {
+  return importFromSource(extractRecipeSource(html), deps, translateTo);
 }
 
-/** The only environment read in this module. Call it per request, not at module scope. */
+/**
+ * The only environment read in this module. Call it per request, not at module scope.
+ * The translator reads env when it is called, the same way extraction reads the key here.
+ */
 export function recipeImportDepsFromEnv(): RecipeImportDeps {
   return {
     ai: new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }),
     // `??` is wrong here: `node --env-file` turns a bare `CHAT_MODEL=` into `''`, which is not nullish.
     model: process.env.CHAT_MODEL || DEFAULT_MODEL,
+    translator: translateWithEnv,
+  };
+}
+
+/** Missing key and provider errors are translation failures, not thrown import errors. */
+async function translateWithEnv(input: TranslateInput): Promise<TranslateOutcome> {
+  const built = geminiTranslateDepsFromEnv();
+  if (!built.ok) {
+    return { ok: false, code: TRANSLATE_FAILED };
+  }
+  try {
+    return await translateSegments(input, built.deps);
+  } catch {
+    return { ok: false, code: TRANSLATE_FAILED };
+  }
+}
+
+type TranslationAttempt =
+  | { kind: 'failed' }
+  | { kind: 'ok'; detectedLang: string | null; recipe: ImportedRecipe };
+
+async function translateRecipe(
+  recipe: ImportedRecipe,
+  translateTo: string,
+  translator: RecipeTranslator,
+  sourceLang: string | undefined,
+): Promise<TranslationAttempt> {
+  const segments = recipeSegments(recipe);
+  if (translationExceedsCaps(segments)) {
+    return { kind: 'failed' };
+  }
+  const input: TranslateInput = { segments, target: translateTo };
+  if (sourceLang !== undefined) {
+    input.sourceLang = sourceLang;
+  }
+  let outcome: TranslateOutcome;
+  try {
+    outcome = await translator(input);
+  } catch {
+    return { kind: 'failed' };
+  }
+  if (!outcome.ok) {
+    return { kind: 'failed' };
+  }
+  const validated = validateTranslatedSegments(
+    segments.map((segment) => segment.id),
+    outcome.segments,
+  );
+  if (!validated.ok) {
+    return { kind: 'failed' };
+  }
+  const applied = applyTranslation(recipe, validated.segments);
+  return {
+    kind: 'ok',
+    detectedLang: normalizeLang(outcome.detectedLang) ?? null,
+    recipe: { ...applied, lang: translateTo },
+  };
+}
+
+/**
+ * `translateTo` unset: the extraction alone.
+ * Same language: skip the translator.
+ * Different: translate with the extracted source language.
+ * Missing or ambiguous (`sameLanguage` is `unknown`, including bare `zh`
+ * against `zh-Hans`): translate with no source language. A detected language
+ * that matches the target discards the translation and labels the original.
+ * Otherwise the original is labelled with the detection and the translation
+ * is returned. Provider failure, caps, and bad segments set `translation`
+ * to `{ kind: 'failed' }` and still return the original.
+ */
+async function finishImport(
+  recipe: ImportedRecipe,
+  translateTo: string | undefined,
+  deps: RecipeImportDeps,
+): Promise<ImportOutcome> {
+  if (translateTo === undefined) {
+    return { kind: 'ok', recipe };
+  }
+  const comparison = sameLanguage(recipe.lang, translateTo);
+  if (comparison === 'same') {
+    return { kind: 'ok', recipe };
+  }
+  const knownSource = comparison === 'different';
+  const attempt = await translateRecipe(
+    recipe,
+    translateTo,
+    deps.translator,
+    knownSource ? recipe.lang : undefined,
+  );
+  if (attempt.kind === 'failed') {
+    return { kind: 'ok', recipe, translation: { kind: 'failed' } };
+  }
+  if (
+    !knownSource &&
+    attempt.detectedLang !== null &&
+    sameLanguage(attempt.detectedLang, translateTo) === 'same'
+  ) {
+    return { kind: 'ok', recipe: { ...recipe, lang: attempt.detectedLang } };
+  }
+  const original =
+    !knownSource && attempt.detectedLang !== null
+      ? { ...recipe, lang: attempt.detectedLang }
+      : recipe;
+  return {
+    kind: 'ok',
+    recipe: original,
+    translation: { kind: 'ok', lang: translateTo, recipe: attempt.recipe },
   };
 }

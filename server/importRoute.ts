@@ -6,9 +6,12 @@
  */
 import type { MembershipHandlerContext } from './membership.ts';
 import {
+  IMPORT_BAD_LANGUAGE_CODE,
+  IMPORT_BAD_LANGUAGE_ERROR,
   fetchPageHtml,
   importFromHtml,
   importFromSource,
+  readImportTranslateTo,
   recipeImportDepsFromEnv,
   type ImportOutcome,
   type PageFetchOutcome,
@@ -20,6 +23,8 @@ interface ImportRequestBody {
   url?: string;
   /** Raw recipe text pasted by the user (used when no url is given). */
   text?: string;
+  /** Supported UI language. When set, the response may include a translation. */
+  translateTo?: unknown;
 }
 
 const NOTHING_TO_IMPORT = 'Provide a URL or recipe text.';
@@ -52,8 +57,23 @@ function fetchFailure(page: Exclude<PageFetchOutcome, { kind: 'ok' }>): Response
 
 function outcomeResponse(outcome: ImportOutcome, sourceUrl: string | undefined): Response {
   switch (outcome.kind) {
-    case 'ok':
-      return Response.json({ recipe: { ...outcome.recipe, sourceUrl } });
+    case 'ok': {
+      const recipe = { ...outcome.recipe, sourceUrl };
+      const translation = outcome.translation;
+      if (translation?.kind === 'ok') {
+        return Response.json({
+          recipe,
+          translation: {
+            lang: translation.lang,
+            recipe: { ...translation.recipe, sourceUrl },
+          },
+        });
+      }
+      if (translation?.kind === 'failed') {
+        return Response.json({ recipe, translationFailed: true });
+      }
+      return Response.json({ recipe });
+    }
     case 'empty_source':
       return fail('import-empty', NOTHING_TO_IMPORT, 400);
     case 'not_a_recipe':
@@ -71,6 +91,10 @@ export async function importPost(
   deps?: RecipeImportDeps,
 ): Promise<Response> {
   const body = (await req.json()) as ImportRequestBody;
+  const target = readImportTranslateTo(body.translateTo);
+  if (!target.ok) {
+    return fail(IMPORT_BAD_LANGUAGE_CODE, IMPORT_BAD_LANGUAGE_ERROR, 400);
+  }
 
   if (body.url) {
     const page = await fetchPageHtml(body.url);
@@ -78,7 +102,7 @@ export async function importPost(
       return fetchFailure(page);
     }
     return outcomeResponse(
-      await importFromHtml(page.html, deps ?? recipeImportDepsFromEnv()),
+      await importFromHtml(page.html, deps ?? recipeImportDepsFromEnv(), target.translateTo),
       body.url,
     );
   }
@@ -87,5 +111,8 @@ export async function importPost(
   if (text === '') {
     return fail('import-empty', NOTHING_TO_IMPORT, 400);
   }
-  return outcomeResponse(await importFromSource(text, deps ?? recipeImportDepsFromEnv()), undefined);
+  return outcomeResponse(
+    await importFromSource(text, deps ?? recipeImportDepsFromEnv(), target.translateTo),
+    undefined,
+  );
 }

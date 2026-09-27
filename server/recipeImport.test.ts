@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { RecipeDraft } from '../src/lib/types.ts';
 import { fakeImportDeps } from '../test/fakeGemini.ts';
 import {
@@ -7,8 +7,12 @@ import {
   importFromHtml,
   importFromSource,
   normalizeImportedRecipe,
+  readImportTranslateTo,
+  recipeImportDepsFromEnv,
   type ImportedRecipe,
+  type RecipeTranslator,
 } from './recipeImport.ts';
+import { TRANSLATE_FAILED, type TranslateInput, type TranslateOutcome } from './translate.ts';
 
 // Drift guard: the server cannot import `src/` at runtime, so ImportedRecipe
 // is declared separately. If it stops being a RecipeDraft, `tsc -b` fails here.
@@ -419,5 +423,203 @@ describe('fetchPageHtml', () => {
       kind: 'ok',
       html: '<html>soup</html>',
     });
+  });
+});
+
+const ITALIAN = { ...MINIMAL, lang: 'it' };
+
+const UKRAINIAN = {
+  title: 'UK Tomato soup',
+  servings: 4,
+  ingredientSections: [{ items: [{ item: 'UK tomatoes', quantity: 6 }] }],
+  steps: [{ text: 'UK Simmer.' }],
+  tags: ['soup'],
+  lang: 'uk',
+};
+
+function prefixTranslator(detectedLang: string | null): {
+  calls: TranslateInput[];
+  translator: RecipeTranslator;
+} {
+  const calls: TranslateInput[] = [];
+  const translator: RecipeTranslator = (input) => {
+    calls.push(input);
+    const outcome: TranslateOutcome = {
+      ok: true,
+      detectedLang,
+      segments: input.segments.map((segment) => ({
+        id: segment.id,
+        text: `UK ${segment.text}`,
+      })),
+    };
+    return Promise.resolve(outcome);
+  };
+  return { calls, translator };
+}
+
+function restoreEnv(name: 'GEMINI_API_KEY' | 'TRANSLATE_PROVIDER', value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
+
+describe('readImportTranslateTo', () => {
+  it('accepts a supported UI language, including aliases', () => {
+    expect(readImportTranslateTo(undefined)).toEqual({ ok: true });
+    expect(readImportTranslateTo('uk')).toEqual({ ok: true, translateTo: 'uk' });
+    expect(readImportTranslateTo('  ua  ')).toEqual({ ok: true, translateTo: 'uk' });
+    expect(readImportTranslateTo('zh-CN')).toEqual({ ok: true, translateTo: 'zh-Hans' });
+  });
+
+  it('rejects a language that is not a supported UI language', () => {
+    for (const value of ['fr', 'zh', '', '  ', null, 1]) {
+      expect(readImportTranslateTo(value), String(value)).toEqual({ ok: false });
+    }
+  });
+});
+
+describe('import translation', () => {
+  it('skips translation when the languages match', async () => {
+    const { calls, translator } = prefixTranslator('it');
+    const { deps } = fakeImportDeps(JSON.stringify(ITALIAN), translator);
+    await expect(importFromSource('soup', deps, 'it')).resolves.toEqual({
+      kind: 'ok',
+      recipe: ITALIAN,
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('applies translation when the languages differ', async () => {
+    const { calls, translator } = prefixTranslator('it');
+    const { deps } = fakeImportDeps(JSON.stringify(ITALIAN), translator);
+    await expect(importFromSource('soup', deps, 'uk')).resolves.toEqual({
+      kind: 'ok',
+      recipe: ITALIAN,
+      translation: { kind: 'ok', lang: 'uk', recipe: UKRAINIAN },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.target).toBe('uk');
+    expect(calls[0]?.sourceLang).toBe('it');
+  });
+
+  it('labels a missing lang and discards the translation when detection matches', async () => {
+    const { calls, translator } = prefixTranslator('uk');
+    const { deps } = fakeImportDeps(JSON.stringify(MINIMAL), translator);
+    await expect(importFromSource('soup', deps, 'uk')).resolves.toEqual({
+      kind: 'ok',
+      recipe: { ...MINIMAL, lang: 'uk' },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty('sourceLang');
+    expect(calls[0]?.target).toBe('uk');
+  });
+
+  it('labels a missing lang and returns the translation when detection differs', async () => {
+    const { calls, translator } = prefixTranslator('it');
+    const { deps } = fakeImportDeps(JSON.stringify(MINIMAL), translator);
+    await expect(importFromSource('soup', deps, 'uk')).resolves.toEqual({
+      kind: 'ok',
+      recipe: ITALIAN,
+      translation: { kind: 'ok', lang: 'uk', recipe: UKRAINIAN },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty('sourceLang');
+  });
+
+  it('discards the translation when bare zh is detected as the UI script', async () => {
+    const { calls, translator } = prefixTranslator('zh-Hans');
+    const { deps } = fakeImportDeps(JSON.stringify({ ...MINIMAL, lang: 'zh' }), translator);
+    await expect(importFromSource('soup', deps, 'zh-Hans')).resolves.toEqual({
+      kind: 'ok',
+      recipe: { ...MINIMAL, lang: 'zh-Hans' },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty('sourceLang');
+    expect(calls[0]?.target).toBe('zh-Hans');
+  });
+
+  it('returns the translation when bare zh is detected as another script', async () => {
+    const { calls, translator } = prefixTranslator('zh-Hant');
+    const { deps } = fakeImportDeps(JSON.stringify({ ...MINIMAL, lang: 'zh' }), translator);
+    const traditional = {
+      ...UKRAINIAN,
+      lang: 'zh-Hans',
+    };
+    await expect(importFromSource('soup', deps, 'zh-Hans')).resolves.toEqual({
+      kind: 'ok',
+      recipe: { ...MINIMAL, lang: 'zh-Hant' },
+      translation: { kind: 'ok', lang: 'zh-Hans', recipe: traditional },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty('sourceLang');
+  });
+
+  it('returns the original with a failure flag when translation fails', async () => {
+    const translators: RecipeTranslator[] = [
+      () => Promise.resolve({ ok: false, code: TRANSLATE_FAILED }),
+      () => Promise.reject(new Error('provider down')),
+    ];
+    for (const translator of translators) {
+      const { deps } = fakeImportDeps(JSON.stringify(ITALIAN), translator);
+      await expect(importFromSource('soup', deps, 'uk')).resolves.toEqual({
+        kind: 'ok',
+        recipe: ITALIAN,
+        translation: { kind: 'failed' },
+      });
+    }
+  });
+
+  it('forwards translateTo from importFromHtml', async () => {
+    const { calls, translator } = prefixTranslator('it');
+    const { deps, calls: modelCalls } = fakeImportDeps(JSON.stringify(ITALIAN), translator);
+    const html =
+      '<html><head><script>var tracking = 1;</script></head>' +
+      '<body><nav>Home</nav><main><p>Simmer the tomatoes.</p></main></body></html>';
+    await expect(importFromHtml(html, deps, 'uk')).resolves.toEqual({
+      kind: 'ok',
+      recipe: ITALIAN,
+      translation: { kind: 'ok', lang: 'uk', recipe: UKRAINIAN },
+    });
+    expect(modelCalls[0]?.contents).toContain('Simmer the tomatoes.');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.target).toBe('uk');
+    expect(calls[0]?.sourceLang).toBe('it');
+  });
+
+  it('keeps the import when the translation key is missing or the provider is unavailable', async () => {
+    const savedKey = process.env.GEMINI_API_KEY;
+    const savedProvider = process.env.TRANSLATE_PROVIDER;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.TRANSLATE_PROVIDER;
+      const missing = fakeImportDeps(JSON.stringify(ITALIAN));
+      const missingTranslator = recipeImportDepsFromEnv().translator;
+      await expect(
+        importFromSource('soup', { ...missing.deps, translator: missingTranslator }, 'uk'),
+      ).resolves.toEqual({
+        kind: 'ok',
+        recipe: ITALIAN,
+        translation: { kind: 'failed' },
+      });
+
+      process.env.GEMINI_API_KEY = 'test-key';
+      process.env.TRANSLATE_PROVIDER = 'nmt';
+      const unavailable = fakeImportDeps(JSON.stringify(ITALIAN));
+      const unavailableTranslator = recipeImportDepsFromEnv().translator;
+      await expect(
+        importFromSource('soup', { ...unavailable.deps, translator: unavailableTranslator }, 'uk'),
+      ).resolves.toEqual({
+        kind: 'ok',
+        recipe: ITALIAN,
+        translation: { kind: 'failed' },
+      });
+    } finally {
+      warn.mockRestore();
+      restoreEnv('GEMINI_API_KEY', savedKey);
+      restoreEnv('TRANSLATE_PROVIDER', savedProvider);
+    }
   });
 });

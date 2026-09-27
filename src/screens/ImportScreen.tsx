@@ -77,7 +77,7 @@ export default function ImportScreen() {
           if (destinationId && !collectionStore.get(destinationId)) {
             throw new Error(t('import.collectionNotFoundChoose'));
           }
-          const draft = await importRecipe({ url });
+          const draft = (await importRecipe({ url })).recipe;
           const recipe = await recipeStore.create(
             draft,
             destinationId ? { collectionId: destinationId } : undefined,
@@ -134,11 +134,13 @@ export default function ImportScreen() {
     setBusy(true);
     try {
       setPreview(
-        await importRecipe(
-          validated.mode === 'url'
-            ? { url: validated.url }
-            : { text: validated.text },
-        ),
+        (
+          await importRecipe(
+            validated.mode === 'url'
+              ? { url: validated.url }
+              : { text: validated.text },
+          )
+        ).recipe,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : t('error.importFailed'));

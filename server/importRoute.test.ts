@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeImportDeps } from '../test/fakeGemini.ts';
 import { importPost } from './importRoute.ts';
+import {
+  IMPORT_BAD_LANGUAGE_CODE,
+  IMPORT_BAD_LANGUAGE_ERROR,
+} from './recipeImport.ts';
+import * as recipeImport from './recipeImport.ts';
+import { TRANSLATE_FAILED, type TranslateInput, type TranslateOutcome } from './translate.ts';
 
 const RECIPE = {
   title: 'Tomato soup',
@@ -12,8 +18,12 @@ const RECIPE = {
 
 const PAGE = '<html><body><main><p>Simmer the tomatoes.</p></main></body></html>';
 
-async function post(body: unknown, reply: string | undefined = JSON.stringify(RECIPE)) {
-  const { deps, calls } = fakeImportDeps(reply);
+async function post(
+  body: unknown,
+  reply: string | undefined = JSON.stringify(RECIPE),
+  translator?: (input: TranslateInput) => Promise<TranslateOutcome>,
+) {
+  const { deps, calls } = fakeImportDeps(reply, translator);
   const req = new Request('http://localhost/api/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -21,6 +31,18 @@ async function post(body: unknown, reply: string | undefined = JSON.stringify(RE
   });
   const response = await importPost(req, { authorizedSub: 'sub-1' }, deps);
   return { status: response.status, body: (await response.json()) as unknown, calls };
+}
+
+function prefixTranslator(detectedLang: string | null) {
+  return (input: TranslateInput): Promise<TranslateOutcome> =>
+    Promise.resolve({
+      ok: true,
+      detectedLang,
+      segments: input.segments.map((segment) => ({
+        id: segment.id,
+        text: `UK ${segment.text}`,
+      })),
+    });
 }
 
 function serve(response: Response) {
@@ -120,6 +142,75 @@ describe('POST /api/import', () => {
     expect(await post({ text: 'soup' }, JSON.stringify({ servings: 2 }))).toMatchObject({
       status: 502,
       body: { error: 'Extraction produced an unusable recipe.', code: 'import-unusable' },
+    });
+  });
+
+  it('rejects an unsupported translateTo', async () => {
+    for (const translateTo of ['fr', 'zh', '']) {
+      const result = await post({ text: 'Tomato soup', translateTo });
+      expect(result, translateTo).toMatchObject({
+        status: 400,
+        body: { error: IMPORT_BAD_LANGUAGE_ERROR, code: IMPORT_BAD_LANGUAGE_CODE },
+      });
+      expect(result.calls).toHaveLength(0);
+    }
+  });
+
+  it('forwards translateTo and serializes the translation', async () => {
+    const source = vi.spyOn(recipeImport, 'importFromSource');
+    const html = vi.spyOn(recipeImport, 'importFromHtml');
+    const italian = { ...RECIPE, lang: 'it' };
+    const ukrainian = {
+      title: 'UK Tomato soup',
+      servings: 4,
+      ingredientSections: [{ items: [{ item: 'UK tomatoes', quantity: 6 }] }],
+      steps: [{ text: 'UK Simmer.' }],
+      tags: ['soup'],
+      lang: 'uk',
+    };
+    try {
+      const text = await post(
+        { text: 'Tomato soup', translateTo: 'ua' },
+        JSON.stringify(italian),
+        prefixTranslator('it'),
+      );
+      expect(text.status).toBe(200);
+      expect(text.body).toEqual({
+        recipe: italian,
+        translation: { lang: 'uk', recipe: ukrainian },
+      });
+      expect(source).toHaveBeenCalledWith('Tomato soup', expect.anything(), 'uk');
+
+      serve(new Response(PAGE));
+      const url = await post(
+        { url: 'https://example.com/soup', translateTo: 'uk' },
+        JSON.stringify(italian),
+        prefixTranslator('it'),
+      );
+      expect(url.status).toBe(200);
+      expect(url.body).toEqual({
+        recipe: { ...italian, sourceUrl: 'https://example.com/soup' },
+        translation: {
+          lang: 'uk',
+          recipe: { ...ukrainian, sourceUrl: 'https://example.com/soup' },
+        },
+      });
+      expect(html).toHaveBeenCalledWith(expect.any(String), expect.anything(), 'uk');
+    } finally {
+      source.mockRestore();
+      html.mockRestore();
+    }
+  });
+
+  it('serializes a translation failure without failing the import', async () => {
+    const result = await post({ text: 'Tomato soup', translateTo: 'uk' }, JSON.stringify({
+      ...RECIPE,
+      lang: 'it',
+    }), () => Promise.resolve({ ok: false, code: TRANSLATE_FAILED }));
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({
+      recipe: { ...RECIPE, lang: 'it' },
+      translationFailed: true,
     });
   });
 });

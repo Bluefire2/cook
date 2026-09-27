@@ -9,7 +9,14 @@
 import { randomUUID } from 'node:crypto';
 import { requireHeaderMember } from './membership.ts';
 import { recipePutFromExtraction } from './recipeFromExtraction.ts';
-import { importFromHtml, recipeImportDepsFromEnv, type RecipeImportDeps } from './recipeImport.ts';
+import {
+  IMPORT_BAD_LANGUAGE_CODE,
+  IMPORT_BAD_LANGUAGE_ERROR,
+  importFromHtml,
+  readImportTranslateTo,
+  recipeImportDepsFromEnv,
+  type RecipeImportDeps,
+} from './recipeImport.ts';
 import { applyPushOp } from './sync.ts';
 
 /** Buffered then measured, matching `syncPush`'s `raw.length` convention. */
@@ -22,6 +29,7 @@ const UNUSABLE = 'Extraction produced an unusable recipe.';
 interface ExtensionImportBody {
   url?: unknown;
   html?: unknown;
+  translateTo?: unknown;
 }
 
 /**
@@ -136,7 +144,16 @@ export async function extensionImport(
     return fail(req, 'import-unreadable', 'Could not read that page.', 422);
   }
 
-  const outcome = await importFromHtml(html, deps ?? recipeImportDepsFromEnv());
+  const target = readImportTranslateTo(body.translateTo);
+  if (!target.ok) {
+    return fail(req, IMPORT_BAD_LANGUAGE_CODE, IMPORT_BAD_LANGUAGE_ERROR, 400);
+  }
+
+  const outcome = await importFromHtml(
+    html,
+    deps ?? recipeImportDepsFromEnv(),
+    target.translateTo,
+  );
   switch (outcome.kind) {
     case 'ok':
       break;
@@ -150,7 +167,14 @@ export async function extensionImport(
       return fail(req, 'import-unusable', UNUSABLE, 502);
   }
 
-  const payload = recipePutFromExtraction(outcome.recipe, {
+  // A failed translation still saves the original. The extension has no preview.
+  let recipe = outcome.recipe;
+  let translated = false;
+  if (outcome.translation?.kind === 'ok') {
+    translated = true;
+    recipe = { ...outcome.translation.recipe, lang: outcome.translation.lang };
+  }
+  const payload = recipePutFromExtraction(recipe, {
     id: randomUUID(),
     now: Date.now(),
     sourceUrl: url,
@@ -173,5 +197,5 @@ export async function extensionImport(
     return fail(req, 'import-save-failed', 'Could not save the recipe.', 500);
   }
 
-  return jsonResponse(req, { id: payload.id, title: payload.title });
+  return jsonResponse(req, { id: payload.id, title: payload.title, translated });
 }

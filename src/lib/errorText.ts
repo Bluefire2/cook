@@ -13,6 +13,7 @@ const ERROR_CODES = {
   'import-no-recipe': 'error.importNoRecipe',
   'import-extract-failed': 'error.importExtractFailed',
   'import-unusable': 'error.importUnusable',
+  'import-bad-language': 'error.sttBadLanguage',
   'bad-request': 'error.badRequest',
   'stt-bad-request': 'error.badRequest',
   'stt-unavailable': 'error.sttUnavailable',

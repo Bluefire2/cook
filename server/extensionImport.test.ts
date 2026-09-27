@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { extensionImport, isExtensionOrigin } from './extensionImport.ts';
 import { fakeImportDeps } from '../test/fakeGemini.ts';
+import {
+  IMPORT_BAD_LANGUAGE_CODE,
+  IMPORT_BAD_LANGUAGE_ERROR,
+} from './recipeImport.ts';
 import * as recipeImport from './recipeImport.ts';
 import { SESSION_HEADER_NAME, signSession } from './session.ts';
+import * as sync from './sync.ts';
+import { TRANSLATE_FAILED, type TranslateInput, type TranslateOutcome } from './translate.ts';
 
 // Spied rather than replaced: the assertion that matters is that empty html
 // short-circuits *before* the import pipeline. Without this the tests pass with
@@ -14,6 +20,16 @@ vi.mock('./recipeImport.ts', async (importOriginal) => {
     importFromHtml: vi.fn(actual.importFromHtml),
   };
 });
+
+vi.mock('./sync.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./sync.ts')>();
+  return {
+    ...actual,
+    applyPushOp: vi.fn(actual.applyPushOp),
+  };
+});
+
+const realApplyPushOp = vi.mocked(sync.applyPushOp).getMockImplementation();
 
 const SESSION_ENV = {
   SESSION_SECRET: 'test-secret-for-session-hmac',
@@ -146,6 +162,109 @@ describe('extensionImport maps import outcomes', () => {
     expect(await post(page, huge)).toMatchObject({
       status: 502,
       body: { error: 'Extraction produced an unusable recipe.', code: 'import-unusable' },
+    });
+  });
+});
+
+describe('extensionImport translateTo', () => {
+  const url = 'https://example.com/soup';
+  const page = '<html><body><main><p>Simmer the tomatoes.</p></main></body></html>';
+  const italian = {
+    title: 'Tomato soup',
+    servings: 4,
+    ingredientSections: [{ items: [{ item: 'tomatoes', quantity: 6 }] }],
+    steps: [{ text: 'Simmer.' }],
+    tags: ['soup'],
+    lang: 'it',
+  };
+
+  beforeEach(() => {
+    Object.assign(process.env, SESSION_ENV);
+    vi.mocked(recipeImport.importFromHtml).mockClear();
+    vi.mocked(sync.applyPushOp).mockReset();
+    vi.mocked(sync.applyPushOp).mockResolvedValue({ applied: true });
+  });
+
+  afterEach(() => {
+    vi.mocked(sync.applyPushOp).mockReset();
+    if (realApplyPushOp) {
+      vi.mocked(sync.applyPushOp).mockImplementation(realApplyPushOp);
+    }
+  });
+
+  function prefixTranslator(): (input: TranslateInput) => Promise<TranslateOutcome> {
+    return (input) =>
+      Promise.resolve({
+        ok: true,
+        detectedLang: 'it',
+        segments: input.segments.map((segment) => ({
+          id: segment.id,
+          text: `UK ${segment.text}`,
+        })),
+      });
+  }
+
+  it('rejects an unsupported translateTo before extraction', async () => {
+    const { deps, calls } = fakeImportDeps(JSON.stringify(italian));
+    const response = await extensionImport(
+      authedRequest({ url, html: page, translateTo: 'fr' }),
+      deps,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: IMPORT_BAD_LANGUAGE_ERROR,
+      code: IMPORT_BAD_LANGUAGE_CODE,
+    });
+    expect(recipeImport.importFromHtml).not.toHaveBeenCalled();
+    expect(sync.applyPushOp).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('forwards translateTo and saves the translation', async () => {
+    const { deps } = fakeImportDeps(JSON.stringify(italian), prefixTranslator());
+    const response = await extensionImport(
+      authedRequest({ url, html: page, translateTo: 'uk' }),
+      deps,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      id: expect.any(String),
+      title: 'UK Tomato soup',
+      translated: true,
+    });
+    expect(recipeImport.importFromHtml).toHaveBeenCalledWith(page, deps, 'uk');
+    expect(sync.applyPushOp).toHaveBeenCalledWith('sub-1', {
+      kind: 'recipe.put',
+      payload: expect.objectContaining({
+        title: 'UK Tomato soup',
+        lang: 'uk',
+        sourceUrl: url,
+      }),
+    });
+  });
+
+  it('saves the original when translation fails', async () => {
+    const { deps } = fakeImportDeps(JSON.stringify(italian), () =>
+      Promise.resolve({ ok: false, code: TRANSLATE_FAILED }),
+    );
+    const response = await extensionImport(
+      authedRequest({ url, html: page, translateTo: 'uk' }),
+      deps,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      id: expect.any(String),
+      title: 'Tomato soup',
+      translated: false,
+    });
+    expect(recipeImport.importFromHtml).toHaveBeenCalledWith(page, deps, 'uk');
+    expect(sync.applyPushOp).toHaveBeenCalledWith('sub-1', {
+      kind: 'recipe.put',
+      payload: expect.objectContaining({
+        title: 'Tomato soup',
+        lang: 'it',
+        sourceUrl: url,
+      }),
     });
   });
 });
