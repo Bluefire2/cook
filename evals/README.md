@@ -30,9 +30,27 @@ runtime image.
 ## `evals/import-handwritten/`
 
 Photos of handwritten recipes, for the photo import path
-(`importFromImages`). Bound by `docs/constitutions/image-import.md`. There
-are no fixtures yet; `evals/handwrittenFixtures.ts` discovers whatever is
-here.
+(`importFromImages`). Bound by `docs/constitutions/image-import.md`.
+`evals/handwrittenFixtures.ts` discovers whatever is here.
+
+Ten single-page fixtures, added 2026-09-27 from publicly accessible photos the
+repo owner supplied as stock images. Their redistribution licences have not
+been independently verified; each `source.txt` records the original file name.
+Goldens were transcribed from the photos by hand-checked model reading and
+still need the owner's review.
+
+| Fixture | What it tests |
+| --- | --- |
+| `blueberry-muffins` | Low-resolution scan (500 px wide); yield written as "Makes 1 dozen". |
+| `broccoli-salad` | Ingredients only, no method: the importer must not invent steps. |
+| `choc-pie-tea-towel` | Handwriting printed on a tea towel, photographed at an angle with props. |
+| `hundred-good-cookies` | Two ingredient columns; card continues on the back ("over"). |
+| `lemon-tea-bread` | Loose cursive on a printed card; card continues on the back ("over"). |
+| `peanut-butter-cookies` | Two ingredient columns, ditto marks, no mixing method written. |
+| `potatoe-pancakes-platter` | Block capitals on a decorated platter; misspelled title kept as written. |
+| `split-pea-soup` | Filled-in printed card at an angle; "Serves 8" written; a correction above the line. |
+| `sweet-sour-pork` | Heavily stained card; numbered steps. |
+| `taffy-apple-salad` | Braces group ingredients with the method written beside them; a quantity range (4-6). |
 
 **Layout.** One directory per fixture:
 

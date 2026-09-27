@@ -1,0 +1,4 @@
+provenance: publicly accessible photo of a handwritten recipe, supplied by the repo owner on 2026-09-27 (original file name: Julia-Skinner-split-pea-soup-from-moms-recipe-box-version-2-grandmas-version-Large.jpeg); a printed recipe card filled in by hand, photographed at an angle on leather; the file name credits Julia Skinner. Writer and photographer unknown.
+permission: repo owner states this is a publicly accessible stock image (2026-09-27); redistribution licence not independently verified.
+# page-1.jpg re-encoded as the app does: EXIF orientation applied, <= 2048 px, JPEG quality 0.85, no metadata.
+# The original file carried iPhone EXIF including GPS; this page is re-encoded without metadata.

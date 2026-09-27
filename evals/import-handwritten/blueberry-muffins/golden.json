@@ -1,0 +1,30 @@
+{
+  "title": "Blueberry Muffins",
+  "servings": 12,
+  "cookMinutes": 25,
+  "ingredientSections": [
+    {
+      "items": [
+        { "quantity": 2, "unit": "cup", "item": "all-purpose flour", "note": "sifted" },
+        { "quantity": 3, "unit": "tsp", "item": "baking powder" },
+        { "quantity": 0.5, "unit": "tsp", "item": "salt" },
+        { "quantity": 0.25, "unit": "cup", "item": "sugar" },
+        { "quantity": 1, "item": "egg", "note": "well beaten" },
+        { "quantity": 1, "unit": "cup", "item": "milk" },
+        { "quantity": 6, "unit": "tbsp", "item": "shortening", "note": "melted" },
+        { "quantity": 1, "unit": "cup", "item": "blueberries" },
+        { "quantity": 1, "unit": "tbsp", "item": "sugar", "note": "for sprinkling" }
+      ]
+    }
+  ],
+  "steps": [
+    { "text": "Sift together the flour, baking powder, salt and 1/4 cup sugar." },
+    { "text": "Combine the egg, milk and shortening and add all at once to the flour mixture." },
+    { "text": "Stir until the dry ingredients are moist but still lumpy. Fold in the blueberries." },
+    { "text": "Fill greased muffin pans 2/3 full." },
+    { "text": "Sprinkle with 1 tbsp sugar." },
+    { "text": "Bake in a hot oven (400°F) about 25 minutes." }
+  ],
+  "tags": ["muffins", "baking", "breakfast"],
+  "notes": "Makes 1 dozen muffins."
+}

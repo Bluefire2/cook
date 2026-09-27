@@ -1,0 +1,4 @@
+provenance: publicly accessible photo of a handwritten recipe, supplied by the repo owner on 2026-09-27 (original file name: how-to-put-grandma-handwritten-recipe-on-towel-make-recipe-tea-kitchen-towel-gift-10.jpg); a handwritten recipe printed onto a tea towel, photographed at an angle with props (mug, bread roll); the file name suggests a craft tutorial. Writer and photographer unknown.
+permission: repo owner states this is a publicly accessible stock image (2026-09-27); redistribution licence not independently verified.
+# page-1.jpg re-encoded as the app does: EXIF orientation applied, <= 2048 px, JPEG quality 0.85, no metadata.
+# Not a paper card: tests a photo with background clutter.

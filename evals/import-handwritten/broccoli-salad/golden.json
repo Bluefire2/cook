@@ -1,0 +1,21 @@
+{
+  "title": "Broccoli Salad",
+  "servings": 1,
+  "ingredientSections": [
+    {
+      "items": [
+        { "item": "broccoli florets" },
+        { "item": "red grapes" },
+        { "item": "salted cashews" },
+        { "quantity": 4, "unit": "slice", "item": "bacon" },
+        { "item": "onion", "note": "a little" },
+        { "quantity": 0.25, "unit": "cup", "item": "oil" },
+        { "quantity": 0.25, "unit": "cup", "item": "vinegar" },
+        { "quantity": 0.5, "unit": "cup", "item": "sugar" }
+      ]
+    }
+  ],
+  "steps": [],
+  "tags": ["salad", "side"],
+  "notes": "The card lists ingredients only; no method and no amounts for the broccoli, grapes, or cashews are written."
+}
