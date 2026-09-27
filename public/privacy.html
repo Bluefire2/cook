@@ -61,7 +61,8 @@
       <code>sub</code> and email; it is HttpOnly and is not readable by page
       scripts. A cached copy of your profile may also be kept in this browser's
       local storage under <code>cook.session</code>, so the app can show who is
-      signed in.
+      signed in. The UI language preference is kept in this browser's local
+      storage under <code>cook.locale</code>.
     </p>
     <p>
       Your recipes, chat messages, cooking progress, cook log entries (the
@@ -69,6 +70,10 @@
       attached photos are stored in Google Cloud (Firestore and Cloud Storage) in the
       <code>europe-west1</code> region. They are loaded into this browser
       while you are signed in. There is no on-device recipe database.
+      Cached translations of your recipes are stored in Firestore under your
+      account and are deleted when their recipe is deleted. Translations of
+      recipes shared with you are not stored; they are translated again each
+      session.
     </p>
     <p>
       No password and no Google refresh token is stored — the app only ever
@@ -119,9 +124,11 @@
       Recipe text, your chat messages and any photo you send the assistant are
       passed to Google's Gemini API at request time to produce a reply. Using
       Dictate uploads a short microphone recording to Sous, which sends it to
-      Gemini to turn into text and does not store the audio. Recipe
-      import fetches the URL you paste. If you press Request access, the
-      notification email to the owner is sent through Resend and contains
+      Gemini to turn into text and does not store the audio. Recipe text is
+      sent to Gemini, or the configured translation provider, for
+      translation, including at import. Recipe import fetches the URL you
+      paste. If you press Request access, the notification email to the
+      owner is sent through Resend and contains
       your email address, display name and the time of the request; it
       includes no one-click approval link — approval only ever happens on the
       owner's own signed-in screen. Hosting is on Google Cloud.
@@ -130,9 +137,9 @@
     <h2>Retention and deletion</h2>
     <p>
       Deleting a recipe in Sous deletes its chat thread, cooking progress,
-      cook log entries (dates, ratings, notes, lessons and their photos), and
-      attached photos from your stored library. Deleting a single cook log
-      entry deletes its photos too.
+      cook log entries (dates, ratings, notes, lessons and their photos),
+      attached photos, and cached translations from your stored library.
+      Deleting a single cook log entry deletes its photos too.
     </p>
     <p>
       Access records are kept as follows. A pending access request is kept
@@ -156,9 +163,10 @@
       your membership record, any invite-link redemption recorded for your
       account, and your stored library — recipes, chat
       messages, cooking progress, cook log entries (dates, ratings, notes,
-      lessons and photos) and photos — and deleting these also removes
-      your access. Revoking Sous's access from your Google account permissions
-      page signs you out but does not by itself delete your stored recipes.
+      lessons and photos), photos, and cached translations — and deleting
+      these also removes your access. Revoking Sous's access from your
+      Google account permissions page signs you out but does not by itself
+      delete your stored recipes.
     </p>
     <p>
       Sign out to drop the session cookie when the network request succeeds. If
