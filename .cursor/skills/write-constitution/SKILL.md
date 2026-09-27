@@ -1,6 +1,6 @@
 ---
 name: write-constitution
-description: Use only when the user explicitly asks to create, write, or draft a feature constitution (for example "make a constitution for this feature", "write down the principles for X", /write-constitution). Writes docs/constitutions/<slug>.md in the standard format, adds it to the Feature constitutions index in root AGENTS.md, and runs the drift test.
+description: Use only when the user explicitly asks to create, write, or draft a feature constitution (for example "make a constitution for this feature", "write a constitution for X", /write-constitution). Writes docs/constitutions/<slug>.md in the standard format, adds it to the Feature constitutions index in root AGENTS.md, and runs the drift test.
 ---
 
 # write-constitution
@@ -9,39 +9,46 @@ Write a feature constitution and register it in the root `AGENTS.md` index.
 This skill writes constitutions. It does not amend one that already exists.
 
 Once `docs/constitutions/cook-log.md` exists, it is the worked example to
-imitate. Until then, `template.md` in this folder is the only reference. Read
-`template.md` and follow its skeleton, frontmatter rules, and amendment
-procedure.
+imitate. Until then, `.cursor/skills/write-constitution/template.md` is the
+only reference. Read that file and follow its skeleton, frontmatter rules,
+and amendment procedure.
 
 ## 1. Collect the inputs
 
 Collect the feature name and slug, its job (what it is for), and the content
 the user wants covered: decisions, trade-offs, and non-goals. Take whatever
 the user supplied, whether "job XYZ, content XYZ", a plan file, or the
-conversation. Fill gaps by reading `docs/plans/<slug>.md` and the code. Use
-AskQuestion only for what cannot be derived, at most 3 questions, typically
+conversation. Fill gaps by reading `docs/plans/<slug>.md` and the code. Ask
+the user only for what cannot be derived, at most 3 questions, typically
 which decisions are firm and which are provisional.
 
 `<slug>` is kebab-case. When `docs/plans/<slug>.md` exists, use that same slug.
 
 ## 2. Check for an existing constitution or overlap
 
-Read the Feature constitutions index in root `AGENTS.md`.
+Read the Feature constitutions index in root `AGENTS.md`, and check whether
+`docs/constitutions/<slug>.md` already exists.
 
-- If a constitution already covers this feature, stop and propose an amendment
-  following that constitution's procedure. Wait for the user to confirm.
+- If a constitution already covers this feature, or that file already exists,
+  stop. Propose the amendment (which principle, what would change, and why)
+  following that constitution's procedure, and leave the edit to normal
+  feature work. Do not change the constitution.
 - If another constitution's `scope` overlaps, cross-reference it rather than
   restating its principles.
 
 ## 3. Research the mechanisms
 
 Every **Why** must name a real mechanism or risk. For a built feature, confirm
-with grep that the named files and symbols exist. For an unbuilt feature, use
-`status: draft` and name the planned symbols as planned.
+with grep that the named files and symbols exist, and set `status: ratified`.
+For an unbuilt feature, set `status: draft` and name the planned symbols as
+planned. A built feature is one already in the code, or one whose implementing
+plan has merged. Status lives only in the frontmatter. Do not repeat it in
+the body.
 
 ## 4. Write the principles
 
-Write `docs/constitutions/<slug>.md` from `template.md`. Aim for 5–15 principles.
+Write `docs/constitutions/<slug>.md` from `.cursor/skills/write-constitution/template.md`.
+Aim for 5–15 principles; fewer is fine if every one is real.
 
 - Each **Rule** must be checkable against a diff.
 - Each **Why** gives the failure prevented or the value protected, not a
@@ -50,19 +57,17 @@ Write `docs/constitutions/<slug>.md` from `template.md`. Aim for 5–15 principl
 - Do not restate general repo rules unless the feature depends on them, and
   then link the `AGENTS.md` section.
 - Include Non-goals, Tests, the verbatim amendment procedure from `template.md`,
-  and "Amendment log: None yet."
-
-Use `status: draft` until the implementing plan has merged. Set
-`status: ratified` only after that merge.
+  and the Amendment log section, containing None yet.
 
 ## 5. Write the frontmatter
 
-Follow the frontmatter rules in `template.md`. The description follows the
+Follow the frontmatter rules in `template.md`. Unquoted, single-line values;
+`scope` items indented exactly two spaces. The description follows the
 pattern "<what the feature is>. Read before changing <concrete concepts, data,
 and surfaces>." Use nouns an agent will see in a task, such as type names,
 routes, and screens. `name` and `description` each fit on one line, and
-`description` is at most about 300 characters. `scope` lists the owned files,
-and for a shared file names the part in parentheses.
+`description` is at most 300 characters. `scope` lists the owned files, and
+for a shared file names the part in parentheses.
 
 ## 6. Register it
 

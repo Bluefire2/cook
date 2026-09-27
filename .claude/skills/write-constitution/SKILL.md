@@ -1,0 +1,1 @@
+../../../.cursor/skills/write-constitution/SKILL.md

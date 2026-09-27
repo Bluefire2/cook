@@ -7,16 +7,13 @@ The file is `docs/constitutions/<slug>.md`. `<slug>` is kebab-case and matches
 ---
 name: <Title Case Name>
 description: <What the feature is>. Read before changing <concrete concepts, data, and surfaces>.
-status: draft
+status: <draft or ratified>
 scope:
   - path/to/owned-file.ts
   - path/to/shared-file.ts (the part in scope)
 ---
 
 # <Name> constitution
-
-Status: draft. It becomes ratified when <the implementing plan> merges. At that
-point, set `status: ratified` in the frontmatter.
 
 <One paragraph: this document binds changes to `scope`; for shared files only
 the part in parentheses; breaking a principle requires an amendment in the same
@@ -74,8 +71,9 @@ None yet.
 Frontmatter rules:
 
 - `name`, `description`, `status`, and `scope` are required.
+- Unquoted, single-line values; `scope` items indented exactly two spaces.
 - `name` and `description` each fit on one line.
-- `description` is at most about 300 characters.
-- `status` is `draft` or `ratified`.
+- `description` is at most 300 characters.
+- `status` is `draft` or `ratified`. A built feature (already in the code, or its implementing plan has merged) uses `ratified`. An unbuilt feature uses `draft`.
 - `scope` has at least one `- ` item.
-- `ratified` is allowed only once the feature has merged.
+- Do not repeat `status` in the body.
