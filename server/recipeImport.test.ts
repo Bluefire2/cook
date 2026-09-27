@@ -1,3 +1,4 @@
+import { MediaResolution, type Content } from '@google/genai';
 import { describe, expect, it } from 'vitest';
 import type { RecipeDraft } from '../src/lib/types.ts';
 import { fakeImportDeps } from '../test/fakeGemini.ts';
@@ -5,6 +6,7 @@ import {
   extractRecipeSource,
   fetchPageHtml,
   importFromHtml,
+  importFromImages,
   importFromSource,
   normalizeImportedRecipe,
   type ImportedRecipe,
@@ -346,6 +348,112 @@ describe('importFromSource', () => {
   it('reports JSON with no usable title as unusable', async () => {
     const { deps } = fakeImportDeps(JSON.stringify({ ...MINIMAL, title: ' ' }));
     expect(await importFromSource('soup', deps)).toEqual({ kind: 'unusable' });
+  });
+});
+
+describe('importFromImages', () => {
+  const JPEG = { mediaType: 'image/jpeg', base64: 'AAAA' };
+
+  async function promptFor(extraText: string): Promise<string> {
+    const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
+    await importFromImages([JPEG], extraText, deps);
+    const parts = (calls[0].contents as Content[])[0].parts ?? [];
+    return parts[parts.length - 1].text ?? '';
+  }
+
+  it('returns empty_source and does not call the model with no images', async () => {
+    const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
+    expect(await importFromImages([], 'notes', deps)).toEqual({ kind: 'empty_source' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('sends each photo as an inlineData part, in order, then one prompt part', async () => {
+    const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
+    const images = [
+      { mediaType: 'image/jpeg', base64: 'AAAA' },
+      { mediaType: 'image/png', base64: 'BBBB' },
+      { mediaType: 'image/webp', base64: 'CCCC' },
+    ];
+    await importFromImages(images, '', deps);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe('test-model');
+    const contents = calls[0].contents as Content[];
+    expect(contents).toHaveLength(1);
+    expect(contents[0].role).toBe('user');
+    const parts = contents[0].parts ?? [];
+    expect(parts).toHaveLength(4);
+    images.forEach((image, i) => {
+      expect(parts[i]).toEqual({ inlineData: { mimeType: image.mediaType, data: image.base64 } });
+    });
+    expect(typeof parts[3].text).toBe('string');
+    expect(parts[3].inlineData).toBeUndefined();
+  });
+
+  it('asks for high media resolution with the shared recipe schema', async () => {
+    const photo = fakeImportDeps(JSON.stringify(MINIMAL));
+    await importFromImages([JPEG], '', photo.deps);
+    const text = fakeImportDeps(JSON.stringify(MINIMAL));
+    await importFromSource('soup', text.deps);
+
+    const config = photo.calls[0].config;
+    expect(config?.mediaResolution).toBe(MediaResolution.MEDIA_RESOLUTION_HIGH);
+    expect(config?.mediaResolution).toBe('MEDIA_RESOLUTION_HIGH');
+    expect(config?.maxOutputTokens).toBe(4096);
+    expect(config?.responseMimeType).toBe('application/json');
+    expect(config?.responseSchema).toBe(text.calls[0].config?.responseSchema);
+  });
+
+  it('keeps the text import request unchanged', async () => {
+    const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
+    await importFromSource('soup', deps);
+    expect('mediaResolution' in (calls[0].config ?? {})).toBe(false);
+    expect(typeof calls[0].contents).toBe('string');
+  });
+
+  it('tells the model to transcribe faithfully', async () => {
+    const prompt = await promptFor('');
+    for (const phrase of [
+      'in the order given',
+      'crossed out',
+      '(?)',
+      'tablespoon',
+      'teaspoon',
+      'notes',
+      'Never invent',
+      'NOT_A_RECIPE',
+    ]) {
+      expect(prompt, phrase).toContain(phrase);
+    }
+  });
+
+  it('adds the notes as context only when given', async () => {
+    const withNotes = await promptFor("  Grandma's, 1970s  ");
+    expect(withNotes).toContain('Notes from the person importing');
+    expect(withNotes).toContain("Grandma's, 1970s");
+
+    const blank = await promptFor('   ');
+    expect(blank).not.toContain('Notes from');
+    expect(blank.endsWith('If the photos contain no recipe, save a recipe with the title "NOT_A_RECIPE".')).toBe(
+      true,
+    );
+  });
+
+  it('maps the model reply like text import', async () => {
+    for (const reply of [undefined, '', 'Sure!', '42', 'null']) {
+      const { deps } = fakeImportDeps(reply);
+      expect(await importFromImages([JPEG], '', deps), String(reply)).toEqual({
+        kind: 'parse_error',
+      });
+    }
+    const cases: [unknown, unknown][] = [
+      [{ ...MINIMAL, title: 'NOT_A_RECIPE' }, { kind: 'not_a_recipe' }],
+      [{ ...MINIMAL, title: ' ' }, { kind: 'unusable' }],
+      [{ ...MINIMAL, servings: 0, photoId: 'x' }, { kind: 'ok', recipe: { ...MINIMAL, servings: 1 } }],
+    ];
+    for (const [reply, outcome] of cases) {
+      const { deps } = fakeImportDeps(JSON.stringify(reply));
+      expect(await importFromImages([JPEG], '', deps)).toEqual(outcome);
+    }
   });
 });
 
