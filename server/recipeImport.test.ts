@@ -421,6 +421,7 @@ describe('importFromImages', () => {
       'notes',
       'Never invent',
       'NOT_A_RECIPE',
+      '# after a number means pounds',
     ]) {
       expect(prompt, phrase).toContain(phrase);
     }

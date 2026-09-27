@@ -61,6 +61,11 @@ step before Gemini.
   cooking context to read an ambiguous word.
 - Operations: no new API to enable, no service-account permissions, no new
   dependency, no second vendor receiving the photos.
+- Measured (2026-09-27, `evals/ocrCompare.ts`, 3 handwritten cards × 3 runs,
+  small sample): Gemini on the photo passed 6/9 against the goldens, OCR then
+  Gemini 3/9. Median time 3.5 s against 5.7 s; mean cost about $0.013 against
+  $0.012 per import. OCR lost cursive ingredients and misread "1½ lb" as
+  0.5 lb. A photo cost about 1,000–1,100 prompt tokens, as estimated.
 
 **When to revisit:** only on numbers from `evals/ocrCompare.ts` that show
 Gemini misreading characters that a dedicated OCR model reads correctly. Even
