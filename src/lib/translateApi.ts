@@ -1,5 +1,6 @@
 import { t } from '../i18n';
 import type { Locale } from '../i18n';
+import { normalizeLang } from '../i18n/lang';
 import { serverErrorText } from './errorText';
 import { invalidateSession } from './session';
 import type { RecipeDraft } from './types';
@@ -25,23 +26,32 @@ function asDraft(value: unknown): RecipeDraft | undefined {
   };
 }
 
-/**
- * Translates a recipe that has no id yet (the import preview, after the
- * person corrects the guessed language). No `recipeId`, so the server does
- * not cache it.
- */
-export async function translateRecipe(params: {
+export type TranslationResponse = {
+  recipe: RecipeDraft;
+  /** Provider detection for this text. Missing when it was omitted or unusable. */
+  detectedLang?: string;
+};
+
+type TranslateParams = {
   recipe: RecipeDraft;
   target: Locale;
   sourceLang?: string;
+  /**
+   * Present only for the caller's own recipe. Shared recipes and the import
+   * preview omit it, so the server does not cache those translations.
+   */
+  recipeId?: string;
   signal?: AbortSignal;
-}): Promise<RecipeDraft> {
+};
+
+async function postTranslate(params: TranslateParams): Promise<TranslationResponse> {
   const response = await fetch('/api/translate', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       target: params.target,
+      ...(params.recipeId !== undefined ? { recipeId: params.recipeId } : {}),
       ...(params.sourceLang !== undefined ? { sourceLang: params.sourceLang } : {}),
       recipe: params.recipe,
     }),
@@ -53,10 +63,37 @@ export async function translateRecipe(params: {
     throw new Error(t('error.sessionExpired'));
   }
 
-  const data = (await response.json().catch(() => null)) as { recipe?: unknown } | null;
+  const data = (await response.json().catch(() => null)) as {
+    recipe?: unknown;
+    detectedLang?: unknown;
+  } | null;
   const recipe = asDraft(data?.recipe);
   if (!response.ok || recipe === undefined) {
     throw new Error(serverErrorText(data, 'error.translateFailed'));
   }
+  const detectedLang = normalizeLang(data?.detectedLang);
+  return detectedLang === undefined ? { recipe } : { recipe, detectedLang };
+}
+
+/**
+ * Translates a recipe that has no id yet (the import preview, after the
+ * person corrects the guessed language). No `recipeId`, so the server does
+ * not cache it.
+ */
+export async function translateRecipe(params: {
+  recipe: RecipeDraft;
+  target: Locale;
+  sourceLang?: string;
+  signal?: AbortSignal;
+}): Promise<RecipeDraft> {
+  const { recipe } = await postTranslate(params);
   return recipe;
+}
+
+/**
+ * `POST /api/translate` for a saved recipe. Pass `recipeId` only for the
+ * caller's own recipe; omit it for a shared recipe.
+ */
+export async function requestTranslation(params: TranslateParams): Promise<TranslationResponse> {
+  return postTranslate(params);
 }

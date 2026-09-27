@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RecipeDraft } from './types';
 import * as session from './session';
-import { translateRecipe } from './translateApi';
+import { requestTranslation, translateRecipe } from './translateApi';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -53,6 +53,29 @@ describe('translateRecipe', () => {
     const body = postedBody(fetchMock);
     expect(body).not.toHaveProperty('sourceLang');
     expect(body).not.toHaveProperty('recipeId');
+  });
+
+  it('posts recipeId and returns detectedLang for a saved recipe', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ detectedLang: 'IT', recipe: { ...recipe, title: 'Карбонара' } }), {
+          status: 200,
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await requestTranslation({
+      recipe,
+      target: 'uk',
+      sourceLang: 'it',
+      recipeId: 'recipe-1',
+    });
+    expect(result.recipe.title).toBe('Карбонара');
+    expect(result.detectedLang).toBe('it');
+    const body = postedBody(fetchMock);
+    expect(body.recipeId).toBe('recipe-1');
+    expect(body.target).toBe('uk');
+    expect(body.sourceLang).toBe('it');
   });
 
   it('invalidates the session on 401', async () => {
