@@ -47,6 +47,21 @@ const VISION_URL = 'https://eu-vision.googleapis.com/v1/images:annotate';
 
 const MAX_RUNS = 5;
 
+// Neither the Gemini SDK nor fetch times out by default; one stalled call would
+// hang the whole run with nothing printed.
+const GEMINI_TIMEOUT_MS = 90_000;
+const JUDGE_TIMEOUT_MS = 2 * GEMINI_TIMEOUT_MS;
+const VISION_TIMEOUT_MS = 30_000;
+const ADC_TIMEOUT_MS = 20_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms / 1000}s`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 type Approach = 'A' | 'B';
 
 type RunKind = ImportOutcome['kind'] | 'gemini_error' | 'vision_error';
@@ -93,7 +108,11 @@ function recordingDeps(base: RecipeImportDeps): { deps: RecipeImportDeps; usage:
     ai: {
       models: {
         generateContent: async (params) => {
-          const response = await base.ai.models.generateContent(params);
+          const response = await withTimeout(
+            base.ai.models.generateContent(params),
+            GEMINI_TIMEOUT_MS,
+            'Gemini',
+          );
           usage.push({
             prompt: response.usageMetadata?.promptTokenCount ?? 0,
             output: response.usageMetadata?.candidatesTokenCount ?? 0,
@@ -150,6 +169,7 @@ async function visionOcr(pages: readonly ImportImage[], auth: Headers): Promise<
     res = await fetch(VISION_URL, {
       method: 'POST',
       headers,
+      signal: AbortSignal.timeout(VISION_TIMEOUT_MS),
       body: JSON.stringify({
         requests: pages.map((p) => ({
           image: { content: p.base64 },
@@ -220,7 +240,7 @@ async function judged(
     stepDelta: recipe.steps.length - golden.steps.length,
   };
   try {
-    const verdict = await judgeRecipe(recipe, golden);
+    const verdict = await withTimeout(judgeRecipe(recipe, golden), JUDGE_TIMEOUT_MS, 'Judge');
     return {
       ...result,
       ...deltas,
@@ -389,22 +409,31 @@ async function main(): Promise<number> {
 
   try {
     const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
-    b.auth = await auth.getRequestHeaders(VISION_URL);
+    b.auth = await withTimeout(auth.getRequestHeaders(VISION_URL), ADC_TIMEOUT_MS, 'ADC lookup');
   } catch {
     skipB(
-      'no Application Default Credentials. Run gcloud auth application-default login, then gcloud auth application-default set-quota-project cooking-assistant-508423.',
+      'no Application Default Credentials (or the lookup timed out). Run gcloud auth application-default login, then gcloud auth application-default set-quota-project cooking-assistant-508423.',
     );
   }
 
   const base = recipeImportDepsFromEnv();
   const results: RunResult[] = [];
+  const record = (r: RunResult): void => {
+    results.push(r);
+    console.log(
+      `${r.fixture} run ${r.run} ${r.approach}: ${r.kind}, ${Math.round(r.visionMs + r.geminiMs)} ms, finish ${r.tokens.finish}, judge ${r.judge}`,
+    );
+  };
+  console.log(
+    `Running ${fixtures.length} fixture(s) x ${runs} run(s): A${b.auth !== null ? ' and B' : ''}. Each line prints as a run finishes.`,
+  );
   for (const fixture of fixtures) {
     for (let run = 1; run <= runs; run++) {
-      results.push(await runA(fixture, run, base));
+      record(await runA(fixture, run, base));
       if (b.auth !== null) {
         const result = await runB(fixture, run, base, b.auth);
         if (result.kind === 'denied') skipB(result.reason);
-        else results.push(result);
+        else record(result);
       }
     }
   }
@@ -431,4 +460,5 @@ async function main(): Promise<number> {
   return 0;
 }
 
-process.exitCode = await main();
+// exit() rather than exitCode: a timed-out request can keep a socket open.
+process.exit(await main());
