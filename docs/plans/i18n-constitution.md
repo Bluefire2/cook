@@ -21,6 +21,9 @@ It covers any change that touches:
   the translate options on `/api/import`, `src/lib/translationStore.ts`)
 - the language passed to dictation (`/api/stt`)
 - anywhere recipe text is sent to a translation provider
+- the in-context translation review (`.cursor/skills/i18n-visual-review/`,
+  and later `scripts/i18n-review/`), and any UI change that adds or changes
+  user-facing text (principle 16)
 
 ## How to change this file
 
@@ -232,12 +235,35 @@ the legal pages are the promise made to users.
 ### 15. The supported UI languages are a closed list
 
 - **The list.** `en`, `uk`, `ru`, `zh-Hans`.
-- **Adding one.** Add a catalog, parity tests, plural rules, and a
-  browser check of every screen.
+- **Adding one.** Add a catalog, parity tests, plural rules, a register and
+  glossary entry, and a full in-context translation review of every
+  manifest screen.
 - **Recipe languages.** A recipe may be in any language. Translation targets
   only UI languages.
 
 **Why.** A UI language that is only partly translated is worse than English.
+
+### 16. New UI text ships translated and reviewed in context
+
+- **Translated.** Any change that adds or changes user-facing text adds it
+  to every catalog in the same change. English-only strings "to translate
+  later" are not allowed.
+- **Reviewed in context.** The same change runs the in-context translation
+  review (`.cursor/skills/i18n-visual-review/SKILL.md`, later `npm run
+  test:i18n`) for every screen that shows the new text, in every
+  non-English language. Blockers are fixed before the change is done.
+- **Manifest.** New screens or states are added to the review manifest
+  (`screens.json`) in the same change.
+- **Register and glossary.** Catalog text follows the register and glossary
+  in [Current decisions](#current-decisions).
+
+**Why.** Parity tests only prove a key exists. A string that is correct on
+its own can be wrong next to its neighbours: a noun on a verb button,
+Russian or Ukrainian case or gender that doesn't agree with the number
+beside it, two words for the same concept, or Chinese text wrapping inside
+a button. Only a rendered page shows that. Checking each change keeps the
+work small; waiting for a periodic audit lets problems pile up in languages
+the author can't read.
 
 ## Current decisions
 
@@ -286,6 +312,16 @@ These are reversible under principle 11. Each lists what it optimizes for.
 - **Catalogs.** No i18n library: about 400 strings, four locales, typed
   catalogs, and `Intl`.
 - **Chinese.** "Mandarin" means Simplified Chinese, `zh-Hans`.
+- **Register and glossary.** Proposed: `uk` uses "ви", `ru` uses "вы", and
+  `zh-Hans` uses "你". Step 1 of the plan confirms these and adds a glossary
+  of core terms (recipe, collection, library, import, servings, step,
+  ingredient) for each language. The in-context review checks catalog text
+  against both.
+- **In-context review delivery.** A Cursor project skill first (no new
+  dependency; it reuses the browser tooling agents already have, and lets
+  the rubric and manifest settle). A standalone `npm run test:i18n`
+  (Playwright plus a Gemini vision judge) comes later, as its own
+  milestone.
 
 ## Amendments
 
