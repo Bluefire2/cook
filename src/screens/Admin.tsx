@@ -15,7 +15,7 @@ import {
   sortAccessRequestLists,
   type AdminSection,
 } from '../lib/adminLists';
-import { relativeExpiryLabel, relativeMinutesLabel } from '../lib/relativeTime';
+import { relativeAgoLabel, relativeExpiryLabel } from '../lib/relativeTime';
 import { backLink, dangerBtn, inputClass, primaryBtn, secondaryBtn } from '../lib/uiClasses';
 
 const SECTION_META: { key: AdminSection; title: string; empty: string }[] = [
@@ -282,7 +282,7 @@ export default function Admin() {
                   <div className="min-w-0 flex-1">
                     <p className="text-sm">Unused link</p>
                     <p className="mt-0.5 text-xs text-ink-muted">
-                      Created {relativeMinutesLabel(entry.createdAt)} ·{' '}
+                      Created {relativeAgoLabel(entry.createdAt)} ·{' '}
                       {relativeExpiryLabel(entry.expiresAt)}
                     </p>
                   </div>
@@ -329,7 +329,7 @@ export default function Admin() {
                             {entry.email}
                           </p>
                           <p className="mt-0.5 text-xs text-ink-muted">
-                            Requested {relativeMinutesLabel(entry.requestedAt)}
+                            Requested {relativeAgoLabel(entry.requestedAt)}
                           </p>
                         </div>
                         <div className="flex shrink-0 gap-2">
