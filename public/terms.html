@@ -59,24 +59,29 @@
       and invitation-only: access is granted by request and approval, or by
       redeeming a single-use invite link the owner created, at the
       owner's discretion, and can be removed at any time. It comes with no
-      guarantee of availability. Your recipe library lives in your account
-      and loads when you are signed in. You can share a named collection with
-      another admitted member by email. A viewer can see those recipes and
-      photos. An editor can also change the recipes' details (such as title,
-      ingredients, steps, notes, servings, cooking times, and tags), but not
-      their photos, and cannot delete them or change who has access. Sharing
-      does not create a household account.
+      guarantee of availability. Your recipe library       lives in your account
+      and loads when you are signed in. Cached translations of your recipes
+      are stored in Firestore under your account and are deleted when their
+      recipe is deleted. Translations of recipes shared with you are not
+      stored; they are translated again each session. You can share a named
+      collection with another admitted member by email. A viewer can see those
+      recipes and photos. An editor can also change the recipes' details (such
+      as title, ingredients, steps, notes, servings, cooking times, and tags),
+      but not their photos, and cannot delete them or change who has access.
+      Sharing does not create a household account.
     </p>
 
     <h2>Accuracy</h2>
     <p>
-      The assistant, dictation, and the recipe importer are AI and can be wrong
-      — including about cooking times, temperatures, substitutions, quantities
-      and food safety, and about what you said into the microphone. Use your
-      own judgement and check anything that matters. Recipes read from photos,
-      especially handwriting, can have wrong or missing amounts; check them in
-      the preview before saving. Those photos are sent to Google's Gemini API
-      to extract the recipe and are not stored.
+      The assistant, dictation, recipe translation, and the recipe importer are
+      AI and can be wrong — including about cooking times, temperatures,
+      substitutions, quantities and food safety, and about what you said into
+      the microphone. Recipe text is sent to Gemini, or the configured
+      translation provider, for translation, including at import. Recipes read
+      from photos, especially handwriting, can have wrong or missing amounts;
+      check them in the preview before saving. Those photos are sent to
+      Google's Gemini API to extract the recipe and are not stored. Use your
+      own judgement and check anything that matters.
     </p>
 
     <h2>Acceptable use</h2>
@@ -88,9 +93,11 @@
     <h2>Ending it</h2>
     <p>
       You can stop at any time: sign out, clear this site's browser data on a
-      device, or revoke Sous's access from your Google account permissions page.
-      To remove all data stored for your account, see the Privacy policy. The
-      service may also change or stop at any time.
+      device, or revoke Sous's access from your Google account permissions
+      page. The UI language preference is kept in this browser's local storage
+      under <code>cook.locale</code>. To remove all data stored for your
+      account, see the Privacy policy. The service may also change or stop at
+      any time.
     </p>
 
     <h2>Liability</h2>

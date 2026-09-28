@@ -6,10 +6,11 @@ import {
   handleSharedLeaveRequest,
   leaveGrantHttpResponse,
   revokeGrantHttpResponse,
+  shareGrantErrorResponse,
   type LeaveGrantRequestDependencies,
   type RevokeGrantRequestDependencies,
 } from './grantsHttp.ts';
-import type { RevokeGrantOutcome } from './grants.ts';
+import { MAX_LIVE_GRANTS, NO_ACCOUNT_MESSAGE, type RevokeGrantOutcome } from './grants.ts';
 
 const id = '11111111-1111-4111-8111-111111111111';
 
@@ -112,6 +113,32 @@ describe('handleRevokeGrantRequest', () => {
   });
 });
 
+describe('shareGrantErrorResponse', () => {
+  it('names the sharing refusals and keeps the English sentence', async () => {
+    const self = shareGrantErrorResponse('self');
+    expect(self.status).toBe(400);
+    await expect(self.json()).resolves.toEqual({
+      error: 'Cannot share with yourself',
+      code: 'share-self',
+    });
+
+    const missing = shareGrantErrorResponse('no-account');
+    expect(missing.status).toBe(404);
+    await expect(missing.json()).resolves.toEqual({
+      error: NO_ACCOUNT_MESSAGE,
+      code: 'share-no-account',
+    });
+
+    const full = shareGrantErrorResponse('full');
+    expect(full.status).toBe(409);
+    await expect(full.json()).resolves.toEqual({
+      error: `This collection already has ${MAX_LIVE_GRANTS} people`,
+      code: 'share-full',
+      max: MAX_LIVE_GRANTS,
+    });
+  });
+});
+
 describe('handleSharedLeaveRequest', () => {
   const url = 'http://localhost/api/shared/leave';
   const post = (body: string) => new Request(url, { method: 'POST', body });
@@ -203,9 +230,10 @@ describe('handleSharedLeaveRequest', () => {
 });
 
 describe('leaveGrantHttpResponse', () => {
-  it('treats a second leave (already tombstoned) the same as never having a grant', () => {
+  it('treats a second leave (already tombstoned) the same as never having a grant', async () => {
     const malformed = leaveGrantHttpResponse({ kind: 'badRequest' });
     expect(malformed.status).toBe(400);
+    await expect(malformed.json()).resolves.toEqual({ error: 'Bad request', code: 'bad-request' });
 
     const missing = leaveGrantHttpResponse({ kind: 'missing' });
     expect(missing.status).toBe(404);
@@ -228,11 +256,11 @@ describe('revokeGrantHttpResponse', () => {
   it('maps malformed and missing grants to generic client errors', async () => {
     const malformed = revokeGrantHttpResponse({ kind: 'badRequest' });
     expect(malformed.status).toBe(400);
-    await expect(malformed.json()).resolves.toEqual({ error: 'Bad request' });
+    await expect(malformed.json()).resolves.toEqual({ error: 'Bad request', code: 'bad-request' });
 
     const missing = revokeGrantHttpResponse({ kind: 'missing' });
     expect(missing.status).toBe(404);
-    await expect(missing.json()).resolves.toEqual({ error: 'Not found' });
+    await expect(missing.json()).resolves.toEqual({ error: 'Not found', code: 'not-found' });
   });
 
   it('maps live and already-tombstoned grants to idempotent success', async () => {

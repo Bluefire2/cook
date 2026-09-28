@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { t } from '../i18n';
 import {
   applyPullChanges,
   mergePullCursor,
@@ -108,7 +109,7 @@ function setSnapshot(partial: Partial<SyncStatusSnapshot>): void {
 /** Pure. The single source of truth for "should we toast, and with what". */
 export function decideSyncToast(result: SyncResult): SyncToastSpec | null {
   if (result.outcome === 'error') {
-    return { kind: 'error', message: "Couldn't refresh" };
+    return { kind: 'error', message: t('sync.refreshFailed') };
   }
   if (
     result.outcome === 'offline' ||
@@ -119,7 +120,7 @@ export function decideSyncToast(result: SyncResult): SyncToastSpec | null {
     return null;
   }
   if (result.applied > 0) {
-    return { kind: 'success', message: 'Updated' };
+    return { kind: 'success', message: t('sync.updated') };
   }
   return null;
 }

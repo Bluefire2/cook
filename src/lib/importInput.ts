@@ -1,3 +1,5 @@
+import { t } from '../i18n';
+
 /** Same URL check as the pre-bulk Import screen (`^https?:\/\/\\S+$`). */
 export const RECIPE_URL_RE = /^https?:\/\/\S+$/;
 
@@ -62,15 +64,15 @@ export function validateImportInput(
   }
   if (parsed.kind === 'urlList') {
     if (!bulkChecked) {
-      return { ok: false, error: BULK_REQUIRES_CHECKBOX };
+      return { ok: false, error: t('import.bulkRequiresCheckbox') };
     }
     if (parsed.urls.length > MAX_BULK_IMPORT_URLS) {
-      return { ok: false, error: BULK_CAP_ERROR };
+      return { ok: false, error: t('import.bulkCap', { max: MAX_BULK_IMPORT_URLS }) };
     }
     return { ok: true, mode: 'bulk', urls: parsed.urls };
   }
   if (bulkChecked && parsed.kind === 'text') {
-    return { ok: false, error: BULK_LINKS_ONLY };
+    return { ok: false, error: t('import.bulkLinksOnly') };
   }
   if (parsed.kind === 'singleUrl') {
     return { ok: true, mode: 'url', url: parsed.url };

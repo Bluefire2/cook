@@ -1,15 +1,19 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { isSupportedLocale, languageName, SUPPORTED_LOCALES, useLocale, useT } from '../i18n';
 import { exportLibrary, importLibrary } from '../lib/backup';
+import { relativeAgoLabel } from '../lib/relativeTime';
 import { notifyImportComplete, sync, useSyncStatus } from '../lib/syncEngine';
 import { signInHref, signOut, useSession } from '../lib/session';
 import { settings, type Theme } from '../lib/settings';
 import { applyTheme } from '../lib/theme';
-import { backLink, primaryBtn, secondaryBtn } from '../lib/uiClasses';
+import { backLink, inputClass, primaryBtn, secondaryBtn } from '../lib/uiClasses';
 
 export default function Settings() {
   const { user, status: sessionStatus } = useSession();
   const syncStatus = useSyncStatus();
+  const t = useT();
+  const locale = useLocale();
   const [theme, setTheme] = useState(settings.getTheme());
   const [status, setStatus] = useState<string | null>(null);
   const [statusKind, setStatusKind] = useState<'ok' | 'err' | null>(null);
@@ -41,16 +45,14 @@ export default function Settings() {
     }
     try {
       const { imported, skipped } = await importLibrary(file, user.sub);
-      setStatus(
-        `Imported ${imported} recipe${imported === 1 ? '' : 's'} ✓` +
-          (skipped > 0
-            ? ` — skipped ${skipped} unreadable entr${skipped === 1 ? 'y' : 'ies'}`
-            : ''),
-      );
+      const importedLine = t('settings.importedRecipes', { count: imported });
+      const skippedLine =
+        skipped > 0 ? t('settings.importSkipped', { count: skipped }) : '';
+      setStatus(skippedLine === '' ? importedLine : `${importedLine} ${skippedLine}`);
       setStatusKind(skipped > 0 ? 'err' : 'ok');
       notifyImportComplete();
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : 'Import failed.');
+      setStatus(e instanceof Error ? e.message : t('error.importFailed'));
       setStatusKind('err');
     }
   };
@@ -69,37 +71,33 @@ export default function Settings() {
   const syncedLabel = (() => {
     const at = syncStatus.lastSyncedAt;
     if (at === null) {
-      return 'Not loaded yet';
+      return t('settings.notLoaded');
     }
-    const minutes = Math.round((Date.now() - at) / 60_000);
-    if (minutes < 1) {
-      return 'Loaded just now';
-    }
-    return `Loaded ${minutes} min ago`;
+    return t('settings.loadedAgo', { time: relativeAgoLabel(at) });
   })();
 
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
         <Link to="/" className={backLink}>
-          &larr; Library
+          &larr; {t('common.library')}
         </Link>
-        <h1 className="mt-2 text-2xl font-bold">Settings</h1>
+        <h1 className="mt-2 text-2xl font-bold">{t('settings.title')}</h1>
       </header>
 
       {sessionStatus !== 'loading' && (
         <>
-          <h2 className="mt-2 text-lg font-semibold">Account</h2>
+          <h2 className="mt-2 text-lg font-semibold">{t('settings.account')}</h2>
           {sessionStatus === 'signedOut' && (
             <>
               <p className="mt-1 text-sm text-ink-muted">
-                Sign in with Google to load your recipes from your account.
+                {t('settings.signInPrompt')}
               </p>
               <a
                 href={signInHref('/settings')}
                 className={`${primaryBtn} mt-3 inline-block px-4 py-2.5`}
               >
-                Sign in with Google
+                {t('settings.signInWithGoogle')}
               </a>
             </>
           )}
@@ -114,20 +112,19 @@ export default function Settings() {
                   onClick={() => void signOut()}
                   className={`${secondaryBtn} shrink-0 px-4 py-2.5`}
                 >
-                  Sign out
+                  {t('settings.signOut')}
                 </button>
               </div>
               {user.isOwner === true && (
                 <>
                   <p className="mt-4 text-sm text-ink-muted">
-                    Review requests from people who want in — approving gives
-                    them their own empty library.
+                    {t('settings.ownerHint')}
                   </p>
                   <Link
                     to="/admin"
                     className={`${secondaryBtn} mt-2 inline-block px-4 py-2.5`}
                   >
-                    Invitations
+                    {t('admin.title')}
                   </Link>
                 </>
               )}
@@ -141,7 +138,7 @@ export default function Settings() {
                 </span>
               )}
               <p className="mt-1 text-sm text-ink-muted">
-                Offline — sign-in is unavailable until you're back online.
+                {t('settings.offline')}
               </p>
             </>
           )}
@@ -150,11 +147,11 @@ export default function Settings() {
 
       {sessionStatus === 'signedIn' && (
         <>
-          <h2 className="mt-8 text-lg font-semibold">Library</h2>
+          <h2 className="mt-8 text-lg font-semibold">{t('common.library')}</h2>
           <p className="mt-1 text-sm text-ink-muted">{syncedLabel}</p>
           {syncStatus.status === 'error' && (
             <p className="mt-1 text-sm text-danger">
-              Couldn't load your recipes. Check your connection and try again.
+              {t('settings.loadError')}
             </p>
           )}
           <div className="mt-3 flex gap-2">
@@ -164,13 +161,13 @@ export default function Settings() {
               disabled={busy || syncStatus.status === 'loading'}
               className={`${secondaryBtn} flex-1 py-2.5`}
             >
-              {busy || syncStatus.status === 'loading' ? 'Loading…' : 'Refresh'}
+              {busy || syncStatus.status === 'loading' ? t('common.loading') : t('common.refresh')}
             </button>
           </div>
         </>
       )}
 
-      <h2 className="mt-8 text-lg font-semibold">Appearance</h2>
+      <h2 className="mt-8 text-lg font-semibold">{t('settings.appearance')}</h2>
       <div className="mt-3 flex gap-2">
         {(['dark', 'light'] as const).map((option) => (
           <button
@@ -184,16 +181,37 @@ export default function Settings() {
                 : 'border border-line-strong text-ink-muted hover:bg-surface-muted active:bg-surface-muted'
             }`}
           >
-            {option === 'dark' ? 'Dark' : 'Light'}
+            {option === 'dark' ? t('settings.dark') : t('settings.light')}
           </button>
         ))}
       </div>
 
-      <h2 className="mt-8 text-lg font-semibold">Backup</h2>
+      <label htmlFor="settings-language" className="mt-8 block text-lg font-semibold">
+        {t('settings.language')}
+      </label>
+      <select
+        id="settings-language"
+        value={locale}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (isSupportedLocale(next)) {
+            settings.setLocale(next);
+          }
+        }}
+        className={`${inputClass} mt-3`}
+      >
+        {SUPPORTED_LOCALES.map((code) => (
+          <option key={code} value={code}>
+            {languageName(code, code) ?? code}
+          </option>
+        ))}
+      </select>
+
+      <h2 className="mt-8 text-lg font-semibold">{t('settings.backup')}</h2>
       <p className="mt-1 text-sm text-ink-muted">
         {sessionStatus === 'signedIn'
-          ? 'Export a file of your account library, or import a backup to add recipes to this account.'
-          : 'Sign in to export or import a backup of your account library.'}
+          ? t('settings.backupSignedIn')
+          : t('settings.backupSignedOut')}
       </p>
       <div className="mt-3 flex gap-2">
         <button
@@ -202,7 +220,7 @@ export default function Settings() {
           disabled={sessionStatus !== 'signedIn'}
           className={`${secondaryBtn} flex-1 py-2.5 disabled:opacity-40`}
         >
-          Export library
+          {t('settings.exportLibrary')}
         </button>
         <button
           type="button"
@@ -210,7 +228,7 @@ export default function Settings() {
           disabled={sessionStatus !== 'signedIn'}
           className={`${secondaryBtn} flex-1 py-2.5 disabled:opacity-40`}
         >
-          Import backup
+          {t('settings.importBackup')}
         </button>
         <input
           ref={fileInputRef}
@@ -239,7 +257,7 @@ export default function Settings() {
           rel="noreferrer"
           className={`${backLink} inline-block py-3 pr-4`}
         >
-          About
+          {t('settings.about')}
         </a>
         <a
           href="/privacy"
@@ -247,7 +265,7 @@ export default function Settings() {
           rel="noreferrer"
           className={`${backLink} inline-block py-3 pr-4`}
         >
-          Privacy
+          {t('settings.privacy')}
         </a>
         <a
           href="/terms"
@@ -255,7 +273,7 @@ export default function Settings() {
           rel="noreferrer"
           className={`${backLink} inline-block py-3`}
         >
-          Terms
+          {t('settings.terms')}
         </a>
       </footer>
     </div>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { streamChatReply } from './chatApi';
+import { recipeForChat, streamChatReply } from './chatApi';
 import * as session from './session';
 import type { Recipe } from './types';
 
@@ -29,6 +29,17 @@ function streamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe('recipeForChat', () => {
+  it('strips lang and leaves every other field', () => {
+    expect(recipeForChat({ ...RECIPE, lang: 'it', description: 'Hot.' })).toEqual({
+      ...RECIPE,
+      description: 'Hot.',
+    });
+    expect(recipeForChat(RECIPE)).toEqual(RECIPE);
+    expect(recipeForChat({ ...RECIPE, lang: 'uk' })).not.toHaveProperty('lang');
+  });
 });
 
 describe('streamChatReply', () => {

@@ -32,7 +32,7 @@ const COVER = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 const GALLERY = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 const OTHER_PHOTO = '12345678-1234-4234-8234-123456789012';
 
-function recipe(id: string): Recipe {
+function recipe(id: string, lang?: string): Recipe {
   return {
     id,
     createdAt: 1,
@@ -44,6 +44,7 @@ function recipe(id: string): Recipe {
     tags: [],
     photoId: COVER,
     galleryPhotoIds: [GALLERY],
+    ...(lang === undefined ? {} : { lang }),
   };
 }
 
@@ -57,7 +58,7 @@ const shared = (access?: 'editor' | 'viewer'): ItemOrigin => ({
   ...(access ? { access } : {}),
 });
 
-function publishShared(): void {
+function publishShared(editableLang?: string): void {
   const collections = new Map([
     [EDIT_COLLECTION, collection(EDIT_COLLECTION, [EDITABLE_ID])],
     [VIEW_COLLECTION, collection(VIEW_COLLECTION, [VIEW_ONLY_ID])],
@@ -77,7 +78,7 @@ function publishShared(): void {
     },
     {
       recipes: new Map([
-        [EDITABLE_ID, recipe(EDITABLE_ID)],
+        [EDITABLE_ID, recipe(EDITABLE_ID, editableLang)],
         [VIEW_ONLY_ID, recipe(VIEW_ONLY_ID)],
       ]),
       collections,
@@ -182,6 +183,25 @@ describe('recipeStore on a shared recipe', () => {
     ).rejects.toThrow("Couldn't save the recipe.");
     expect(getRecipe(EDITABLE_ID)?.title).toBe('Soup');
     expect(recipeAccess(EDITABLE_ID)).toBe('editor');
+  });
+
+  it('keeps lang when an editor saves and when an Ask draft omits it', async () => {
+    publishShared('it');
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    await recipeStore.save({ ...recipe(EDITABLE_ID, 'it'), title: 'Minestra' });
+    expect(pushed()[0]).toMatchObject({
+      shared: true,
+      payload: { title: 'Minestra', lang: 'it', photoId: COVER },
+    });
+    const { id: _id, createdAt: _c, updatedAt: _u, lang: _lang, ...draft } = recipe(
+      EDITABLE_ID,
+      'it',
+    );
+    await recipeStore.applyDraft(EDITABLE_ID, { ...draft, title: 'Zuppa' });
+    expect(pushed().at(-1)).toMatchObject({
+      shared: true,
+      payload: { title: 'Zuppa', lang: 'it' },
+    });
   });
 
   it('keeps photos when an editor applies an Ask draft', async () => {

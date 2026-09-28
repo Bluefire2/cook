@@ -231,6 +231,18 @@ describe('leaveSharedCollection', () => {
     });
   });
 
+  it('maps a known error code instead of the English sentence', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ error: 'Bad request', code: 'bad-request' }, 400)),
+    );
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'error',
+      message: 'That request was not valid.',
+      status: 400,
+    });
+  });
+
   it('returns a generic error when fetch throws', async () => {
     vi.stubGlobal(
       'fetch',

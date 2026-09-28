@@ -8,10 +8,13 @@
  */
 import { readBoundedText, type MembershipHandlerContext } from './membership.ts';
 import {
+  IMPORT_BAD_LANGUAGE_CODE,
+  IMPORT_BAD_LANGUAGE_ERROR,
   fetchPageHtml,
   importFromHtml,
   importFromImages,
   importFromSource,
+  readImportTranslateTo,
   recipeImportDepsFromEnv,
   type ImportImage,
   type ImportOutcome,
@@ -35,6 +38,8 @@ interface ImportRequestBody {
   url?: string;
   /** Raw recipe text pasted by the user (used when no url is given). */
   text?: string;
+  /** Supported UI language. When set, the response may include a translation. */
+  translateTo?: unknown;
   /**
    * Photos of one recipe, `{ mediaType, base64 }`, used only when `url` is
    * absent. `text` becomes extra context.
@@ -50,7 +55,7 @@ export type ImportImagesCheck =
   | { kind: 'unreadable' }
   | { kind: 'too_large' };
 
-const NOTHING_TO_IMPORT = 'Provide a URL or recipe text.';
+const NOTHING_TO_IMPORT = 'Provide a URL, recipe text, or photos.';
 const BODY_TOO_LARGE = "That's too large to import — try fewer photos.";
 const PHOTOS_NOT_A_RECIPE = "Couldn't find a recipe in those photos.";
 
@@ -114,30 +119,38 @@ export function checkImportImages(raw: unknown): ImportImagesCheck {
 function imagesFailure(check: Exclude<ImportImagesCheck, { kind: 'absent' } | { kind: 'ok' }>): Response {
   switch (check.kind) {
     case 'too_many':
-      return Response.json({ error: 'Up to 4 photos.' }, { status: 400 });
+      return fail('import-too-many-photos', 'Up to 4 photos.', 400);
     case 'bad_type':
-      return Response.json({ error: 'Photos must be JPEG, PNG, or WebP.' }, { status: 400 });
+      return fail('import-bad-photo-type', 'Photos must be JPEG, PNG, or WebP.', 400);
     case 'unreadable':
-      return Response.json({ error: "Those photos couldn't be read." }, { status: 400 });
+      return fail('import-photos-unreadable', "Those photos couldn't be read.", 400);
     case 'too_large':
-      return Response.json({ error: 'Those photos are too large.' }, { status: 413 });
+      return fail('import-photos-too-large', 'Those photos are too large.', 413);
   }
+}
+
+function fail(code: string, error: string, status: number, siteStatus?: number): Response {
+  const body: { error: string; code: string; status?: number } = { error, code };
+  if (siteStatus !== undefined) {
+    body.status = siteStatus;
+  }
+  return Response.json(body, { status });
 }
 
 function fetchFailure(page: Exclude<PageFetchOutcome, { kind: 'ok' }>): Response {
   switch (page.kind) {
     case 'invalid_url':
-      return Response.json({ error: 'That does not look like a web address.' }, { status: 422 });
+      return fail('import-bad-url', 'That does not look like a web address.', 422);
     case 'unsupported_scheme':
-      return Response.json({ error: 'Only http and https URLs are supported.' }, { status: 422 });
+      return fail('import-bad-scheme', 'Only http and https URLs are supported.', 422);
     case 'unreachable':
-      return Response.json({ error: 'Could not reach that URL.' }, { status: 422 });
+      return fail('import-unreachable', 'Could not reach that URL.', 422);
     case 'refused':
-      return Response.json(
-        {
-          error: `The site refused the request (${page.status}). Try pasting the recipe text instead.`,
-        },
-        { status: 422 },
+      return fail(
+        'import-refused',
+        `The site refused the request (${page.status}). Try pasting the recipe text instead.`,
+        422,
+        page.status,
       );
   }
 }
@@ -145,19 +158,37 @@ function fetchFailure(page: Exclude<PageFetchOutcome, { kind: 'ok' }>): Response
 function outcomeResponse(
   outcome: ImportOutcome,
   sourceUrl: string | undefined,
-  notARecipe = "Couldn't find a recipe in that content.",
+  notARecipe: { code: string; error: string } = {
+    code: 'import-no-recipe',
+    error: "Couldn't find a recipe in that content.",
+  },
 ): Response {
   switch (outcome.kind) {
-    case 'ok':
-      return Response.json({ recipe: { ...outcome.recipe, sourceUrl } });
+    case 'ok': {
+      const recipe = { ...outcome.recipe, sourceUrl };
+      const translation = outcome.translation;
+      if (translation?.kind === 'ok') {
+        return Response.json({
+          recipe,
+          translation: {
+            lang: translation.lang,
+            recipe: { ...translation.recipe, sourceUrl },
+          },
+        });
+      }
+      if (translation?.kind === 'failed') {
+        return Response.json({ recipe, translationFailed: true });
+      }
+      return Response.json({ recipe });
+    }
     case 'empty_source':
-      return Response.json({ error: NOTHING_TO_IMPORT }, { status: 400 });
+      return fail('import-empty', NOTHING_TO_IMPORT, 400);
     case 'not_a_recipe':
-      return Response.json({ error: notARecipe }, { status: 422 });
+      return fail(notARecipe.code, notARecipe.error, 422);
     case 'parse_error':
-      return Response.json({ error: 'Extraction failed — no structured result.' }, { status: 502 });
+      return fail('import-extract-failed', 'Extraction failed — no structured result.', 502);
     case 'unusable':
-      return Response.json({ error: 'Extraction produced an unusable recipe.' }, { status: 502 });
+      return fail('import-unusable', 'Extraction produced an unusable recipe.', 502);
   }
 }
 
@@ -168,18 +199,22 @@ export async function importPost(
 ): Promise<Response> {
   const raw = await readBoundedText(req, MAX_IMPORT_BODY_BYTES);
   if (raw === null) {
-    return Response.json({ error: BODY_TOO_LARGE }, { status: 413 });
+    return fail('import-body-too-large', BODY_TOO_LARGE, 413);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return Response.json({ error: 'Bad request' }, { status: 400 });
+    return fail('bad-request', 'Bad request', 400);
   }
   if (!isPlainObject(parsed)) {
-    return Response.json({ error: 'Bad request' }, { status: 400 });
+    return fail('bad-request', 'Bad request', 400);
   }
   const body = parsed as ImportRequestBody;
+  const target = readImportTranslateTo(body.translateTo);
+  if (!target.ok) {
+    return fail(IMPORT_BAD_LANGUAGE_CODE, IMPORT_BAD_LANGUAGE_ERROR, 400);
+  }
 
   if (body.url) {
     const page = await fetchPageHtml(body.url);
@@ -187,7 +222,7 @@ export async function importPost(
       return fetchFailure(page);
     }
     return outcomeResponse(
-      await importFromHtml(page.html, deps ?? recipeImportDepsFromEnv()),
+      await importFromHtml(page.html, deps ?? recipeImportDepsFromEnv(), target.translateTo),
       body.url,
     );
   }
@@ -202,13 +237,17 @@ export async function importPost(
         images,
         typeof body.text === 'string' ? body.text : '',
         deps ?? recipeImportDepsFromEnv(),
+        target.translateTo,
       );
     } catch {
       // Nothing from the error is logged: SDK errors can echo the request.
       console.error(`import images failed count=${images.length} bytes=${bytes}`);
-      return Response.json({ error: "Couldn't read those photos — try again." }, { status: 502 });
+      return fail('import-photos-failed', "Couldn't read those photos — try again.", 502);
     }
-    return outcomeResponse(outcome, undefined, PHOTOS_NOT_A_RECIPE);
+    return outcomeResponse(outcome, undefined, {
+      code: 'import-no-recipe-photos',
+      error: PHOTOS_NOT_A_RECIPE,
+    });
   }
   if (check.kind !== 'absent') {
     return imagesFailure(check);
@@ -216,7 +255,10 @@ export async function importPost(
 
   const text = body.text?.trim() ?? '';
   if (text === '') {
-    return Response.json({ error: NOTHING_TO_IMPORT }, { status: 400 });
+    return fail('import-empty', NOTHING_TO_IMPORT, 400);
   }
-  return outcomeResponse(await importFromSource(text, deps ?? recipeImportDepsFromEnv()), undefined);
+  return outcomeResponse(
+    await importFromSource(text, deps ?? recipeImportDepsFromEnv(), target.translateTo),
+    undefined,
+  );
 }

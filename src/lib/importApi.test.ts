@@ -48,11 +48,13 @@ describe('importRecipe', () => {
     expect(init).toMatchObject({ method: 'POST', credentials: 'same-origin' });
     expect(sentBody(fetchMock)).toEqual({ images, text: 'notes' });
     expect(recipe).toEqual({
-      title: 'Pie',
-      servings: 1,
-      tags: [],
-      ingredientSections: [],
-      steps: [],
+      recipe: {
+        title: 'Pie',
+        servings: 1,
+        tags: [],
+        ingredientSections: [],
+        steps: [],
+      },
     });
   });
 

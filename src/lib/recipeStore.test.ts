@@ -24,6 +24,7 @@ describe('compactRecipe', () => {
       notes: undefined,
       photoId: undefined,
       galleryPhotoIds: undefined,
+      lang: undefined,
     });
 
     expect(compacted).toEqual(required);
@@ -51,6 +52,7 @@ describe('compactRecipe', () => {
       notes: 'Salt late.',
       photoId: 'p1',
       galleryPhotoIds: ['g1', 'g2'],
+      lang: 'it',
     });
 
     expect(compacted.description).toBe('Hot.');
@@ -60,6 +62,13 @@ describe('compactRecipe', () => {
     expect(compacted.notes).toBe('Salt late.');
     expect(compacted.photoId).toBe('p1');
     expect(compacted.galleryPhotoIds).toEqual(['g1', 'g2']);
+    expect(compacted.lang).toBe('it');
+  });
+
+  it('stores lang only when normalizeLang yields a tag', () => {
+    expect(compactRecipe({ ...required, lang: 'it-IT' }).lang).toBe('it');
+    expect(compactRecipe({ ...required, lang: 'zh-CN' }).lang).toBe('zh-Hans');
+    expect(compactRecipe({ ...required, lang: 'garbage!!' })).not.toHaveProperty('lang');
   });
 
   it('omits an empty gallery and strips the cover id from it', () => {

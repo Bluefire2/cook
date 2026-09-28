@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react';
+import { t } from '../i18n';
 import {
   beginLocalWrite,
   captureSnapshot,
@@ -50,7 +51,7 @@ async function uploadPhotoIfNeeded(
   }
   const result = await postPhoto(photoId, recipeId, updatedAt, blob);
   if (result !== 'ok') {
-    throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the photo.");
+    throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.photoSave'));
   }
   markPhotoRemote(photoId);
 }
@@ -88,10 +89,10 @@ async function copyParentPhotos(parent: Recipe): Promise<{
   const slots = parentPhotoSlots(parent);
   const loaded = await Promise.all(slots.map((slot) => loadParentPhoto(slot.id)));
   if (loaded.some((item) => item === 'signedOut')) {
-    throw new Error('Please sign in again — your session expired.');
+    throw new Error(t('error.sessionExpired'));
   }
   if (loaded.some((item) => item === 'unavailable')) {
-    throw new Error("Couldn't copy the photos. Try again.");
+    throw new Error(t('error.photosCopy'));
   }
 
   let photoId: string | undefined;
@@ -159,7 +160,7 @@ async function saveShared(recipe: Recipe): Promise<void> {
   const previous = getRecipe(recipe.id);
   const origin = getRecipeOrigin(recipe.id);
   if (!previous || origin?.kind !== 'shared') {
-    throw new Error('Recipe not found.');
+    throw new Error(t('common.recipeNotFound'));
   }
   const next = compactRecipe({
     ...recipe,
@@ -167,13 +168,13 @@ async function saveShared(recipe: Recipe): Promise<void> {
     updatedAt: Date.now(),
   });
   if (!samePhotoIds(previous, next)) {
-    throw new Error("Photos on a shared recipe can't be changed.");
+    throw new Error(t('error.sharedPhotos'));
   }
   upsertRecipe(next, origin);
   try {
     const result = await pushOps([{ kind: 'recipe.put', payload: next, shared: true }]);
     if (result !== 'ok') {
-      throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
+      throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
     }
   } catch (err) {
     upsertRecipe(previous, origin);
@@ -203,7 +204,7 @@ export const recipeStore = {
   async save(recipe: Recipe): Promise<void> {
     if (isSharedRecipe(recipe.id)) {
       if (recipeAccess(recipe.id) !== 'editor') {
-        throw new Error('This shared collection is view-only.');
+        throw new Error(t('error.sharedViewOnly'));
       }
       return saveShared(recipe);
     }
@@ -214,7 +215,7 @@ export const recipeStore = {
       await uploadRecipePhotos(next);
       const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
       if (result !== 'ok') {
-        throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
+        throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
       }
       await deleteRemovedPhotos(previous, next);
     } catch (err) {
@@ -230,8 +231,11 @@ export const recipeStore = {
   /**
    * Merges a draft into the recipe with this id. Every field is named rather
    * than spread because drafts come from the `update_recipe` tool, whose schema
-   * cannot express `sourceUrl`, `photoId`, or `galleryPhotoIds` — a spread
-   * would blank them. On a shared recipe the draft never supplies photos.
+   * cannot express `sourceUrl`, `photoId`, `galleryPhotoIds`, or `lang` — a
+   * spread would blank them. `lang` is carried from the existing recipe,
+   * like `sourceUrl`. On a shared recipe the draft never supplies photos.
+   * The draft is an edit of the stored recipe, including while a translation
+   * is on screen.
    */
   async applyDraft(id: string, draft: RecipeDraft): Promise<void> {
     const existing = getRecipe(id);
@@ -255,6 +259,7 @@ export const recipeStore = {
       tags: draft.tags,
       notes: draft.notes,
       sourceUrl: draft.sourceUrl ?? existing.sourceUrl,
+      lang: draft.lang ?? existing.lang,
       photoId,
       galleryPhotoIds,
     });
@@ -262,12 +267,15 @@ export const recipeStore = {
 
   /**
    * A new recipe from an Ask proposal. Photos come from `parent`, copied onto
-   * new ids. Fields on the draft never supply a photo.
+   * new ids. Fields on the draft never supply a photo. `lang` comes from
+   * `parent` too: the proposal never carries it, including when `parent` is
+   * a shared recipe.
    */
   async createFromAsk(parent: Recipe, draft: RecipeDraft): Promise<Recipe> {
     const copied = await copyParentPhotos(parent);
     return recipeStore.create({
       ...draft,
+      lang: parent.lang,
       photoId: copied.photoId,
       galleryPhotoIds: copied.galleryPhotoIds,
     });
@@ -290,10 +298,10 @@ export const recipeStore = {
     let nextCollection = previousCollection;
     if (collectionId !== undefined) {
       if (!previousCollection || isSharedCollection(collectionId)) {
-        throw new Error('Collection not found.');
+        throw new Error(t('error.collectionNotFound'));
       }
       if (wouldExceedRecipeIdCap([...previousCollection.recipeIds, recipe.id])) {
-        throw new Error('This collection is full.');
+        throw new Error(t('error.collectionFull'));
       }
       nextCollection = compactCollection({
         ...previousCollection,
@@ -313,7 +321,7 @@ export const recipeStore = {
       }
       const result = await pushOps(ops);
       if (result !== 'ok') {
-        throw new Error(result === 'signedOut' ? 'Please sign in again — your session expired.' : "Couldn't save the recipe.");
+        throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
       }
     } catch (err) {
       removeRecipeLocal(recipe.id);
@@ -327,7 +335,7 @@ export const recipeStore = {
 
   async remove(id: string): Promise<void> {
     if (isSharedRecipe(id)) {
-      throw new Error('This shared collection is view-only.');
+      throw new Error(t('error.sharedViewOnly'));
     }
     const previous = captureSnapshot();
     const at = Date.now();
@@ -369,21 +377,21 @@ export const recipeStore = {
       return;
     }
     if (outcome === 'signedOut') {
-      throw new Error('Please sign in again — your session expired.');
+      throw new Error(t('error.sessionExpired'));
     }
     if (outcome === 'ok') {
       if (getRecipe(id) === undefined) {
         return;
       }
-      throw new Error("Couldn't delete the recipe.");
+      throw new Error(t('error.recipeDelete'));
     }
     if (libraryEpoch() === writeEpoch) {
       restoreSnapshot(previous);
     }
     throw new Error(
       result === 'signedOut'
-        ? 'Please sign in again — your session expired.'
-        : "Couldn't delete the recipe.",
+        ? t('error.sessionExpired')
+        : t('error.recipeDelete'),
     );
   },
 };

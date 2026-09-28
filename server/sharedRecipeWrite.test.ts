@@ -199,6 +199,28 @@ describe('planSharedRecipePut', () => {
     serverUpdatedAt: 99,
   };
 
+  it('keeps a normalized lang on an editor save and drops one it cannot understand', () => {
+    const kept = planSharedRecipePut({
+      ...base,
+      payload: editedPayload({ lang: 'it-IT' }),
+    });
+    expect(kept).toMatchObject({ kind: 'write', body: { lang: 'it', title: 'Better soup' } });
+
+    const hans = planSharedRecipePut({
+      ...base,
+      payload: editedPayload({ lang: 'zh-CN' }),
+    });
+    expect(hans).toMatchObject({ kind: 'write', body: { lang: 'zh-Hans' } });
+
+    const dropped = planSharedRecipePut({
+      ...base,
+      payload: editedPayload({ lang: 'garbage!!' }),
+    });
+    expect(dropped.kind).toBe('write');
+    if (dropped.kind !== 'write') return;
+    expect(dropped.body).not.toHaveProperty('lang');
+  });
+
   it('lets an editor write text to the owner row, keeping identity and photos', () => {
     const plan = planSharedRecipePut({
       ...base,

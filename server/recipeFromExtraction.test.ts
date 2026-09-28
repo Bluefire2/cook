@@ -37,6 +37,14 @@ describe('recipePutFromExtraction', () => {
     });
   });
 
+  it('carries a normalized lang onto the put payload', () => {
+    const payload = build({ ...MINIMAL, lang: 'zh-CN' });
+    expect(payload).toMatchObject({ lang: 'zh-Hans' });
+    const dropped = build({ ...MINIMAL, lang: 'garbage!!' });
+    expect(dropped).not.toHaveProperty('lang');
+    expect(validatePushOp({ kind: 'recipe.put', payload: dropped })).toMatchObject({ ok: true });
+  });
+
   it('stamps id, timestamps and sourceUrl', () => {
     expect(build(MINIMAL)).toMatchObject({
       id: ID,

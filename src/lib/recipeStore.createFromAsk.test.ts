@@ -186,4 +186,64 @@ describe('recipeStore.createFromAsk', () => {
     expect(created.galleryPhotoIds).not.toContain(GALLERY);
     expect(getPendingBlob(COVER)).toBeUndefined();
   });
+
+  it('copies lang from an owned parent', async () => {
+    const parent = { ...parentRecipe(), lang: 'it' };
+    upsertRecipe(parent);
+    vi.mocked(pushOps).mockResolvedValue('ok');
+
+    const created = await recipeStore.createFromAsk(parent, { ...draft, lang: 'fr' });
+
+    expect(created.lang).toBe('it');
+    expect(getRecipe(created.id)?.lang).toBe('it');
+    const pushed = vi.mocked(pushOps).mock.calls[0]?.[0];
+    expect(pushed?.[0]).toMatchObject({
+      kind: 'recipe.put',
+      payload: { id: created.id, lang: 'it' },
+    });
+  });
+
+  it('copies lang from a shared parent', async () => {
+    const parent = { ...parentRecipe(), lang: 'uk' };
+    installSharedRows({
+      recipes: new Map([[parent.id, parent]]),
+      collections: new Map(),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map([[parent.id, { kind: 'shared', ownerSub: 'owner-1' }]]),
+      collectionOrigins: new Map(),
+    });
+    vi.mocked(pushOps).mockResolvedValue('ok');
+
+    const created = await recipeStore.createFromAsk(parent, draft);
+
+    expect(recipeStore.isShared(parent.id)).toBe(true);
+    expect(created.lang).toBe('uk');
+    expect(recipeStore.isShared(created.id)).toBe(false);
+    expect(getRecipe(created.id)?.lang).toBe('uk');
+  });
+});
+
+describe('recipeStore.applyDraft', () => {
+  it('keeps the existing lang when the draft omits it', async () => {
+    const existing = { ...parentRecipe(), lang: 'it', sourceUrl: 'https://example.com/soup' };
+    upsertRecipe(existing);
+    vi.mocked(pushOps).mockResolvedValue('ok');
+
+    await recipeStore.applyDraft(existing.id, draft);
+
+    expect(getRecipe(existing.id)?.lang).toBe('it');
+    expect(getRecipe(existing.id)?.sourceUrl).toBe('https://example.com/soup');
+    expect(getRecipe(existing.id)?.title).toBe(draft.title);
+  });
+});
+
+describe('recipeStore.create', () => {
+  it('keeps lang when the draft has one', async () => {
+    vi.mocked(pushOps).mockResolvedValue('ok');
+
+    const created = await recipeStore.create({ ...draft, lang: 'zh-CN' });
+
+    expect(created.lang).toBe('zh-Hans');
+    expect(getRecipe(created.id)?.lang).toBe('zh-Hans');
+  });
 });

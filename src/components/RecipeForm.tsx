@@ -1,11 +1,17 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactElement, ReactNode } from 'react';
+import { languageName, useLocale, useT } from '../i18n';
+import { unitLabel } from '../i18n/unitLabel';
 import { encodeImageForStorage } from '../lib/image';
 import { photoStore, useObjectUrl, usePhotoUrl } from '../lib/photoStore';
 import { blankDraft } from '../lib/recipeDraft';
+import { defaultRecipeFormLang, detectedLangHint } from '../lib/recipeFormLang';
 import { MAX_GALLERY_PHOTOS } from '../lib/recipePhotos';
-import type { Ingredient, IngredientSection, RecipeDraft } from '../lib/types';
+import { settings } from '../lib/settings';
+import { getDetectedLang } from '../lib/translationStore';
+import type { Ingredient, IngredientSection, Recipe, RecipeDraft } from '../lib/types';
 import { COMMON_UNITS, CUSTOM_UNIT, resolveUnit, unitChoice, type UnitChoice } from '../lib/units';
+import LanguagePicker from './LanguagePicker';
 import PhotoPickerField from './PhotoPickerField';
 import {
   addBtn,
@@ -44,6 +50,11 @@ interface FormState {
   notes: string;
   sections: SectionFields[];
   steps: string[];
+  /**
+   * Recipe language. A new recipe starts as the UI language. An edit keeps
+   * the stored tag. Unknown clears it, and the key is then omitted.
+   */
+  lang?: string;
 }
 
 function numberText(value: number | undefined): string {
@@ -57,13 +68,25 @@ function toNumber(text: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function fromDraft(draft: RecipeDraft): FormState {
+/**
+ * `uiLocale` is the current UI language for a new recipe, and fills in a
+ * missing `lang` after `detectedLang`. Pass `undefined` on edit and when the
+ * field is hidden. An edit keeps the stored tag, then a detection for this
+ * version, and otherwise stays unlabelled. The UI language is not a
+ * detection. The import preview sets `lang` at save.
+ */
+export function fromDraft(
+  draft: RecipeDraft,
+  uiLocale: string | undefined,
+  detectedLang?: string,
+): FormState {
   const fallback = blankDraft();
   const sections =
     draft.ingredientSections.length > 0
       ? draft.ingredientSections
       : fallback.ingredientSections;
   const steps = draft.steps.length > 0 ? draft.steps : fallback.steps;
+  const lang = defaultRecipeFormLang(draft.lang, uiLocale, detectedLang);
 
   return {
     title: draft.title,
@@ -86,6 +109,7 @@ function fromDraft(draft: RecipeDraft): FormState {
           : [blankItem()],
     })),
     steps: steps.map((step) => step.text),
+    ...(lang !== undefined ? { lang } : {}),
   };
 }
 
@@ -123,11 +147,13 @@ function toTags(text: string): string[] {
 /**
  * Optional fields are spread in only when present, so clearing one drops the
  * key instead of storing `undefined` in a record that gets fully replaced.
- * `sourceUrl` is carried through untouched because the form has no UI for it;
- * `photoId` and `galleryPhotoIds` are passed in because they are only known
- * once picked blobs are stored.
+ * `sourceUrl` is carried through untouched because the form has no UI for it.
+ * `lang` is the recipe-language field: the UI language on a new recipe, the
+ * stored tag on edit, or omitted when Unknown is chosen. `photoId` and
+ * `galleryPhotoIds` are passed in because they are only known once picked
+ * blobs are stored.
  */
-function toDraft(
+export function toDraft(
   form: FormState,
   initial: RecipeDraft,
   photoId: string | undefined,
@@ -144,6 +170,7 @@ function toDraft(
     ...(initial.sourceUrl !== undefined
       ? { sourceUrl: initial.sourceUrl }
       : {}),
+    ...(form.lang !== undefined ? { lang: form.lang } : {}),
     servings: Math.max(1, toNumber(form.servings) ?? 1),
     ...(prepMinutes !== undefined ? { prepMinutes } : {}),
     ...(cookMinutes !== undefined ? { cookMinutes } : {}),
@@ -177,6 +204,14 @@ function unitKey(sectionIndex: number, itemIndex: number): string {
   return `${sectionIndex}-${itemIndex}`;
 }
 
+function idList(ids: readonly string[] | undefined): string {
+  return (ids ?? []).join('\0');
+}
+
+function isSavedRecipe(draft: RecipeDraft | Recipe): draft is Recipe {
+  return 'id' in draft && 'updatedAt' in draft && typeof draft.updatedAt === 'number';
+}
+
 function Field({
   label,
   children,
@@ -203,6 +238,7 @@ function PhotoField({
   onPick: (file: File) => void;
   onRemove: () => void;
 }): ReactElement {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const storedUrl = usePhotoUrl(picked ? undefined : photoId);
   const pickedUrl = useObjectUrl(picked);
@@ -210,7 +246,7 @@ function PhotoField({
 
   return (
     <div className="mt-3">
-      <span className="text-sm font-medium text-ink-muted">Main photo</span>
+      <span className="text-sm font-medium text-ink-muted">{t('form.mainPhoto')}</span>
       <input
         ref={inputRef}
         type="file"
@@ -228,7 +264,7 @@ function PhotoField({
           onClick={() => inputRef.current?.click()}
           className={`mt-2 block ${addBtn}`}
         >
-          + Photo
+          {t('form.addPhoto')}
         </button>
       ) : (
         <div className="mt-1">
@@ -243,14 +279,14 @@ function PhotoField({
               onClick={() => inputRef.current?.click()}
               className={addBtn}
             >
-              Replace
+              {t('form.replace')}
             </button>
             <button
               type="button"
               onClick={onRemove}
               className={addBtnDanger}
             >
-              Remove
+              {t('common.remove')}
             </button>
           </div>
         </div>
@@ -266,10 +302,13 @@ export default function RecipeForm({
   onCancel,
   formId,
   onCanSubmitChange,
+  onEditStateChange,
+  submitLocked,
+  hideLanguage,
   photosEditable = true,
 }: {
-  /** Starting values. Use a blank draft for create-from-scratch. */
-  initial: RecipeDraft;
+  /** Starting values. Use a blank draft for create-from-scratch. An edit passes the saved recipe so a detection can pre-fill a missing lang. */
+  initial: RecipeDraft | Recipe;
   /** Label for the primary button, e.g. 'Save' or 'Save to library'. */
   submitLabel: string;
   onSubmit: (draft: RecipeDraft) => void | Promise<void>;
@@ -280,11 +319,34 @@ export default function RecipeForm({
   /** Mirrors whether the submit button is enabled, for a header Save.
    * Pass a stable callback; this runs in a layout effect. */
   onCanSubmitChange?: (canSubmit: boolean) => void;
+  /** Import preview: edits, and whether a remount would drop picked photos. */
+  onEditStateChange?: (state: { dirty: boolean; photosPicked: boolean }) => void;
+  /** Keeps Save disabled while a preview translation is in flight. */
+  submitLocked?: boolean;
+  /**
+   * Import preview hides this field. The guessed-language line owns the
+   * language there, and save sets `lang` from that preview state.
+   */
+  hideLanguage?: boolean;
   /** False for an editor of someone else's recipe: photos stay as they are
    * and their controls are not shown. */
   photosEditable?: boolean;
 }): ReactElement {
-  const [form, setForm] = useState(() => fromDraft(initial));
+  // Captured once. A later UI-language change must not rewrite this recipe's lang.
+  // A detection only fills a missing lang. It is not a background write.
+  // The UI language is a default for a new recipe only.
+  const [detectedLang] = useState(() => {
+    if (hideLanguage || !isSavedRecipe(initial)) return undefined;
+    return getDetectedLang(initial.id, initial.updatedAt);
+  });
+  const [form, setForm] = useState(() =>
+    fromDraft(
+      initial,
+      hideLanguage || isSavedRecipe(initial) ? undefined : settings.getLocale(),
+      detectedLang,
+    ),
+  );
+  const baseline = useRef(form);
   const [photoId, setPhotoId] = useState(initial.photoId);
   const [picked, setPicked] = useState<File>();
   const [galleryPhotoIds, setGalleryPhotoIds] = useState(
@@ -299,6 +361,9 @@ export default function RecipeForm({
   const [customUnits, setCustomUnits] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  const t = useT();
+  const locale = useLocale();
+  const hintTag = detectedLangHint(form.lang, detectedLang);
 
   const patch = (fields: Partial<FormState>) =>
     setForm((prev) => ({ ...prev, ...fields }));
@@ -371,10 +436,20 @@ export default function RecipeForm({
   const showSectionChrome =
     form.sections.length > 1 || form.sections.some((s) => s.name.trim() !== '');
 
-  const canSubmit = form.title.trim() !== '' && !busy;
+  const canSubmit = form.title.trim() !== '' && !busy && submitLocked !== true;
   useLayoutEffect(() => {
     onCanSubmitChange?.(canSubmit);
   }, [canSubmit, onCanSubmitChange]);
+
+  const photosPicked = picked !== undefined || galleryPicked.length > 0;
+  const dirty =
+    JSON.stringify(form) !== JSON.stringify(baseline.current) ||
+    photoId !== initial.photoId ||
+    idList(galleryPhotoIds) !== idList(initial.galleryPhotoIds) ||
+    photosPicked;
+  useLayoutEffect(() => {
+    onEditStateChange?.({ dirty, photosPicked });
+  }, [dirty, photosPicked, onEditStateChange]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -394,7 +469,7 @@ export default function RecipeForm({
           encodedGallery.push(await encodeImageForStorage(file));
         }
       } catch {
-        setPhotoError("That photo couldn't be read — try a different one.");
+        setPhotoError(t('error.photoUnreadableTryAnother'));
         return;
       }
       let stored: string | undefined;
@@ -441,22 +516,22 @@ export default function RecipeForm({
         }
       }}
     >
-      <Field label="Title">
+      <Field label={t('form.title')}>
         <input
           type="text"
           value={form.title}
           onChange={(e) => patch({ title: e.target.value })}
-          placeholder="Weeknight ragù"
+          placeholder={t('form.titlePlaceholder')}
           className={inputClass}
         />
       </Field>
 
-      <Field label="Description">
+      <Field label={t('form.description')}>
         <textarea
           value={form.description}
           onChange={(e) => patch({ description: e.target.value })}
           rows={2}
-          placeholder="A short line about the dish"
+          placeholder={t('form.descriptionPlaceholder')}
           className={inputClass}
         />
       </Field>
@@ -481,9 +556,10 @@ export default function RecipeForm({
         </p>
       )}
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
+      {/* items-end keeps the inputs level when one label wraps (uk/ru "Cook, min"). */}
+      <div className="mt-3 grid grid-cols-3 items-end gap-2">
         <label className="block">
-          <span className="text-sm font-medium text-ink-muted">Servings</span>
+          <span className="text-sm font-medium text-ink-muted">{t('common.servings')}</span>
           <input
             type="text"
             inputMode="numeric"
@@ -493,7 +569,7 @@ export default function RecipeForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm font-medium text-ink-muted">Prep min</span>
+          <span className="text-sm font-medium text-ink-muted">{t('form.prepMin')}</span>
           <input
             type="text"
             inputMode="numeric"
@@ -503,7 +579,7 @@ export default function RecipeForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm font-medium text-ink-muted">Cook min</span>
+          <span className="text-sm font-medium text-ink-muted">{t('form.cookMin')}</span>
           <input
             type="text"
             inputMode="numeric"
@@ -514,35 +590,62 @@ export default function RecipeForm({
         </label>
       </div>
 
-      <Field label="Tags">
+      <Field label={t('form.tags')}>
         <input
           type="text"
           value={form.tags}
           onChange={(e) => patch({ tags: e.target.value })}
-          placeholder="pasta, weeknight"
+          placeholder={t('form.tagsPlaceholder')}
           className={inputClass}
         />
       </Field>
 
+      {!hideLanguage && (
+        <div>
+          <Field label={t('form.recipeLanguage')}>
+            <LanguagePicker
+              id="recipe-language"
+              value={form.lang}
+              onChange={(lang) => patch({ lang })}
+              className="mt-0"
+            />
+          </Field>
+          {hintTag !== undefined && (
+            <p className="mt-1 flex flex-wrap items-baseline gap-x-2 text-sm text-ink-muted">
+              <span>{t('form.looksLikeLanguage', { language: languageName(hintTag, locale) ?? hintTag })}</span>
+              <button
+                type="button"
+                onClick={() => patch({ lang: hintTag })}
+                className="underline hover:text-ink"
+              >
+                {t('form.useDetectedLanguage', {
+                  language: languageName(hintTag, locale) ?? hintTag,
+                })}
+              </button>
+            </p>
+          )}
+        </div>
+      )}
+
       <section className="mt-6">
-        <h2 className="text-lg font-semibold">Ingredients</h2>
+        <h2 className="text-lg font-semibold">{t('common.ingredients')}</h2>
         {form.sections.map((section, si) => (
           <div key={si} className="mt-3">
             {showSectionChrome && (
               <div className="flex items-center gap-1.5">
                 <input
                   type="text"
-                  aria-label={`Section ${si + 1} name`}
+                  aria-label={t('form.sectionName', { n: si + 1 })}
                   value={section.name}
                   onChange={(e) =>
                     patchSection(si, (s) => ({ ...s, name: e.target.value }))
                   }
-                  placeholder="Section name"
+                  placeholder={t('form.sectionNamePlaceholder')}
                   className={`flex-1 ${inputClass}`}
                 />
                 <button
                   type="button"
-                  aria-label={`Remove section ${si + 1}`}
+                  aria-label={t('form.removeSection', { n: si + 1 })}
                   onClick={() => {
                     patchSections((sections) =>
                       sections.filter((_, i) => i !== si),
@@ -574,7 +677,7 @@ export default function RecipeForm({
                       <input
                         type="text"
                         inputMode="decimal"
-                        aria-label="Quantity"
+                        aria-label={t('form.quantity')}
                         value={item.quantity}
                         onChange={(e) =>
                           patchItem(si, ii, { quantity: e.target.value })
@@ -583,7 +686,7 @@ export default function RecipeForm({
                         className={`w-14 ${cellClass}`}
                       />
                       <select
-                        aria-label="Unit"
+                        aria-label={t('form.unit')}
                         value={choice}
                         onChange={(e) => {
                           const next = e.target.value as UnitChoice;
@@ -607,19 +710,19 @@ export default function RecipeForm({
                         <option value="">—</option>
                         {COMMON_UNITS.map((u) => (
                           <option key={u} value={u}>
-                            {u}
+                            {unitLabel(u, t)}
                           </option>
                         ))}
-                        <option value={CUSTOM_UNIT}>Custom…</option>
+                        <option value={CUSTOM_UNIT}>{t('form.custom')}</option>
                       </select>
                       <input
                         type="text"
-                        aria-label="Ingredient"
+                        aria-label={t('form.ingredient')}
                         value={item.item}
                         onChange={(e) =>
                           patchItem(si, ii, { item: e.target.value })
                         }
-                        placeholder="flour"
+                        placeholder={t('form.ingredientPlaceholder')}
                         className={`flex-1 ${cellClass}`}
                       />
                     </div>
@@ -627,8 +730,8 @@ export default function RecipeForm({
                       <div className="mt-1.5 flex gap-1.5">
                         <input
                           type="text"
-                          aria-label="Custom unit"
-                          placeholder="unit"
+                          aria-label={t('form.customUnit')}
+                          placeholder={t('form.unitPlaceholder')}
                           value={item.unit}
                           onChange={(e) => {
                             // Raw value, untrimmed — trimming per keystroke
@@ -651,17 +754,17 @@ export default function RecipeForm({
                     <div className="mt-1.5 flex items-center gap-1.5">
                       <input
                         type="text"
-                        aria-label="Ingredient note"
+                        aria-label={t('form.ingredientNote')}
                         value={item.note}
                         onChange={(e) =>
                           patchItem(si, ii, { note: e.target.value })
                         }
-                        placeholder="note, e.g. finely chopped"
+                        placeholder={t('form.notePlaceholder')}
                         className={`flex-1 text-sm ${cellClass}`}
                       />
                       <button
                         type="button"
-                        aria-label="Move ingredient up"
+                        aria-label={t('form.moveIngredientUp')}
                         disabled={ii === 0}
                         onClick={() => moveItem(si, ii, ii - 1)}
                         className={iconBtn}
@@ -670,7 +773,7 @@ export default function RecipeForm({
                       </button>
                       <button
                         type="button"
-                        aria-label="Move ingredient down"
+                        aria-label={t('form.moveIngredientDown')}
                         disabled={ii === section.items.length - 1}
                         onClick={() => moveItem(si, ii, ii + 1)}
                         className={iconBtn}
@@ -679,7 +782,7 @@ export default function RecipeForm({
                       </button>
                       <button
                         type="button"
-                        aria-label="Remove ingredient"
+                        aria-label={t('form.removeIngredient')}
                         onClick={() => {
                           patchSection(si, (s) => ({
                             ...s,
@@ -708,7 +811,7 @@ export default function RecipeForm({
               }
               className={`mt-2 block ${addBtn}`}
             >
-              + Ingredient
+              {t('form.addIngredient')}
             </button>
           </div>
         ))}
@@ -723,12 +826,12 @@ export default function RecipeForm({
           }
           className={`mt-2 block ${addBtn}`}
         >
-          + Section
+          {t('form.addSection')}
         </button>
       </section>
 
       <section className="mt-6">
-        <h2 className="text-lg font-semibold">Steps</h2>
+        <h2 className="text-lg font-semibold">{t('common.steps')}</h2>
         <ol className="mt-2 flex flex-col gap-2">
           {form.steps.map((text, i) => (
             <li
@@ -742,7 +845,7 @@ export default function RecipeForm({
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    aria-label={`Move step ${i + 1} up`}
+                    aria-label={t('form.moveStepUp', { n: i + 1 })}
                     disabled={i === 0}
                     onClick={() => patchSteps((steps) => moved(steps, i, i - 1))}
                     className={iconBtn}
@@ -751,7 +854,7 @@ export default function RecipeForm({
                   </button>
                   <button
                     type="button"
-                    aria-label={`Move step ${i + 1} down`}
+                    aria-label={t('form.moveStepDown', { n: i + 1 })}
                     disabled={i === form.steps.length - 1}
                     onClick={() => patchSteps((steps) => moved(steps, i, i + 1))}
                     className={iconBtn}
@@ -760,7 +863,7 @@ export default function RecipeForm({
                   </button>
                   <button
                     type="button"
-                    aria-label={`Remove step ${i + 1}`}
+                    aria-label={t('form.removeStep', { n: i + 1 })}
                     onClick={() =>
                       patchSteps((steps) => steps.filter((_, j) => j !== i))
                     }
@@ -771,7 +874,7 @@ export default function RecipeForm({
                 </div>
               </div>
               <textarea
-                aria-label={`Step ${i + 1}`}
+                aria-label={t('form.step', { n: i + 1 })}
                 value={text}
                 onChange={(e) =>
                   patchSteps((steps) =>
@@ -779,7 +882,7 @@ export default function RecipeForm({
                   )
                 }
                 rows={2}
-                placeholder="What to do"
+                placeholder={t('form.stepPlaceholder')}
                 className={`mt-1 w-full ${cellClass}`}
               />
             </li>
@@ -790,26 +893,26 @@ export default function RecipeForm({
           onClick={() => patchSteps((steps) => [...steps, ''])}
           className={`mt-2 block ${addBtn}`}
         >
-          + Step
+          {t('form.addStep')}
         </button>
       </section>
 
-      <Field label="Notes">
+      <Field label={t('common.notes')}>
         <textarea
           value={form.notes}
           onChange={(e) => patch({ notes: e.target.value })}
           rows={3}
-          placeholder="Anything worth remembering next time"
+          placeholder={t('form.notesPlaceholder')}
           className={inputClass}
         />
       </Field>
 
       {photosEditable && (
         <PhotoPickerField
-          label="Gallery"
-          hint="Extra photos shown at the end of the recipe."
+          label={t('form.gallery')}
+          hint={t('form.galleryHint')}
           max={MAX_GALLERY_PHOTOS}
-          removeLabel="Remove gallery photo"
+          removeLabel={t('form.removeGalleryPhoto')}
           photoIds={galleryPhotoIds}
           picked={galleryPicked}
           onPick={(files) => {
@@ -834,7 +937,7 @@ export default function RecipeForm({
           onClick={onCancel}
           className={`${secondaryBtn} flex-1 py-3`}
         >
-          Cancel
+          {t('common.cancel')}
         </button>
         <button
           type="submit"

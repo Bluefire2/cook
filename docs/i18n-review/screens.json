@@ -1,0 +1,242 @@
+[
+  {
+    "id": "library-empty",
+    "route": "/",
+    "setup": "Signed in on the Recipes list with no recipes in the account, so the empty-library sentence is showing. Do not type a search to fake this. If the account already has recipes, do not delete them; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "library-populated",
+    "route": "/",
+    "setup": "Signed in on the Recipes list (/) or an own named collection (/?c=<id>) that already shows at least one recipe card. Prefer / when it has cards. Do not create a recipe. If nothing is listed, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "settings",
+    "route": "/settings",
+    "setup": "Settings while signed in, with the language picker visible under Appearance. Do not export, import a backup, refresh in order to force a toast, or sign out.",
+    "needsData": false
+  },
+  {
+    "id": "admin",
+    "route": "/admin",
+    "setup": "The admin page as an owner sees it: pending, approved, declined, and invites. Do not approve, decline, mint, copy in a way that creates an invite, or revoke. If this session is not an owner, capture the error line the page already shows; do not change membership.",
+    "needsData": false
+  },
+  {
+    "id": "library-add-sheet",
+    "route": "/",
+    "setup": "Signed in on the Recipes list, open Add a recipe. The sheet shows Import from a link, text, or photos, and Write one from scratch. Do not leave the sheet and do not create a recipe. If this session is signed out, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "import-idle",
+    "route": "/import",
+    "setup": "Import with an empty textarea, the bulk-import checkbox off, no photo attached, and no preview. The Add photos button is visible. Open /import with no ?c= query. Do not extract.",
+    "needsData": false
+  },
+  {
+    "id": "import-photos",
+    "route": "/import",
+    "setup": "Import with bulk off and one photo attached, so the thumbnail, its remove control, and the notes placeholder are showing. Do not extract. Adding a photo does not call Gemini and writes nothing.",
+    "needsData": false
+  },
+  {
+    "id": "import-bulk",
+    "route": "/import",
+    "setup": "Import with the bulk-import checkbox on, so the bulk placeholder and hint are visible. Do not paste links and do not extract. Bulk extract saves recipes and has no preview.",
+    "needsData": false
+  },
+  {
+    "id": "import-preview",
+    "route": "/import",
+    "setup": "From /import with bulk off and no ?c= query, extract one recipe (a single https URL, or pasted recipe text) and stop when the \"Fix it here before saving\" banner and the form are showing. Do not press Save. Extraction calls Gemini and writes nothing. The guessed-language line, translate checkbox, failure notice, and pasted-text hint are separate entries.",
+    "needsData": false
+  },
+  {
+    "id": "import-preview-guessed-language",
+    "route": "/import",
+    "setup": "From /import with bulk off and no ?c= query, extract one recipe whose language the import can guess (a single https URL). Stop when the guessed-language line (\"Looks like … Change it if that's wrong.\") and its language select are showing above the form. Do not press Save. Extraction calls Gemini and writes nothing.",
+    "needsData": false
+  },
+  {
+    "id": "import-preview-translate-on",
+    "route": "/import",
+    "setup": "Import preview for a recipe whose language differs from the UI language, with the \"Translate into …\" checkbox checked. The form shows the translated text. Do not press Save. If the extracted language matches the UI language, change the guess to another language and leave the checkbox checked. Extraction calls Gemini and writes nothing.",
+    "needsData": false
+  },
+  {
+    "id": "import-preview-translate-failed",
+    "route": "/import",
+    "setup": "Import preview when translation failed: the notice \"Couldn't translate this recipe. You can save the original.\" is showing, the translate checkbox is absent, and the form shows the original. Do not press Save. If this session cannot produce a failed translation, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "import-preview-pasted-hint",
+    "route": "/import",
+    "setup": "From /import with bulk off, paste recipe text (not a URL) in a language that differs from the UI language and extract. The translate checkbox is checked and its hint \"The original text won't be kept.\" is showing, with notice styling on the guessed-language line. Do not press Save. Extraction calls Gemini and writes nothing.",
+    "needsData": false
+  },
+  {
+    "id": "import-bulk-translate",
+    "route": "/import",
+    "setup": "Import with the bulk-import checkbox on, so the batch \"Translate into …\" checkbox is visible and checked. Do not paste links and do not extract. Bulk extract saves recipes.",
+    "needsData": false
+  },
+  {
+    "id": "recipe-view-translate-labelled",
+    "route": "/recipe/:id",
+    "setup": "An owned recipe whose language label differs from the UI language, so the meta line (prep/cook, or the line alone when the recipe has no times) shows the idle chip \"{language} · Translate\". Do not tap the chip. If every owned recipe is unlabelled or already in the UI language, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-translate-unlabelled",
+    "route": "/recipe/:id",
+    "setup": "An owned recipe with no language label, so the meta line shows a muted \"Translate\" chip. Do not tap it. If every owned recipe has a language label, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-translate-loading",
+    "route": "/recipe/:id",
+    "setup": "The translate chip in its loading state (spinner) on an owned recipe. Tapping the chip writes a production cache doc. Mark skipped: needs opt-in unless the run includes translated states. With opt-in, tap once on one named recipe and capture the spinner.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-translate-translated",
+    "route": "/recipe/:id",
+    "setup": "The recipe body showing a translation, with the chip \"Translated from {language} · Original\". Tapping the chip writes a production cache doc. Mark skipped: needs opt-in unless the run includes translated states. With opt-in, tap once on one named recipe.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-translate-error",
+    "route": "/recipe/:id",
+    "setup": "The translate chip in its error state, \"Couldn't translate · Retry\". Reaching it taps the chip, which writes a production cache doc. Mark skipped: needs opt-in unless the run includes translated states.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-translate-already",
+    "route": "/recipe/:id",
+    "setup": "After a translate tap, the response's detected language matches the UI language: the body stays the original, the chip is hidden, and the notice \"This recipe is already in {language}.\" is showing. Tapping the chip writes a production cache doc. Mark skipped: needs opt-in unless the run includes translated states. If no recipe's text is already in the UI language while its label differs or is missing, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view",
+    "route": "/recipe/:id",
+    "setup": "An owned recipe as it loads: title, ingredients, and steps. The translate chip may sit on the prep/cook line. Do not change servings, check ingredients, or advance steps. Do not tap the translate chip. Recipe content is not judged. If there is no owned recipe, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-cook",
+    "route": "/recipe/:id",
+    "setup": "Cook mode is the same /recipe/:id screen when stored cook progress is already visible (a checked ingredient, a current step other than the first, or the done line). There is no separate cook-mode toggle. Use whatever progress the recipe already has. Do not toggle checkmarks, steps, or servings; cook state syncs. Do not tap the translate chip. If no owned recipe already has that progress, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-your-cooks",
+    "route": "/recipe/:id",
+    "setup": "On an owned recipe, scroll to the \"Your cooks\" section (heading plus Log a cook; cards if this recipe already has logs). This is the RecipeView cook-log state. The section is absent on a shared recipe. Do not log a cook. Do not tap the translate chip. If there is no owned recipe, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-edit",
+    "route": "/recipe/:id/edit",
+    "setup": "The edit form for an owned recipe (heading Edit recipe), including the Recipe language field. Do not change fields and do not save. A viewer share has no Edit link; that route shows Recipe not found. An editor share has an edit form and is a separate entry. If there is no owned recipe, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-edit-lang-hint",
+    "route": "/recipe/:id/edit",
+    "setup": "The edit form when the stored recipe language disagrees with a detected language for this version. The Recipe language field keeps the stored value and shows a one-line \"Looks like {language}\" hint with a control to use the detected tag. Do not change the field and do not save. If no owned recipe has that disagreement, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-new",
+    "route": "/recipe/new",
+    "setup": "The blank new-recipe form (heading New recipe), opened with no ?c= query. Do not fill it in and do not save. Saving with no collection chosen opens Save to collection; that sheet is a separate manifest entry.",
+    "needsData": false
+  },
+  {
+    "id": "recipe-chat",
+    "route": "/recipe/:id",
+    "setup": "On an owned recipe, tap Ask and leave the chat panel open. Do not send a message, dictate, attach a photo, or save a variant. Do not tap the translate chip. If a thread is already on screen, include it and do not add to it. If there is no owned recipe, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "share-collection-sheet",
+    "route": "/?c=:collectionId",
+    "setup": "Open one of your own named collections (not a shared-with-you folder) and tap Share. The sheet explains viewers and editors, and the email row has a role menu (Viewer / Editor). Opening the sheet only reads the grant list. Prefer a collection whose sheet says \"Nobody else can see this yet.\" Do not type an email, and do not add, change a role, or remove a person. If every own collection already lists grantees, redact those emails before judging, or mark skipped: shows another member's data. If you have no own named collection, mark skipped: needs data. Do not create one.",
+    "needsData": true
+  },
+  {
+    "id": "save-to-collection-sheet",
+    "route": "/import",
+    "setup": "After the import preview is showing (import-preview: /import, bulk off, no ?c=), press Save. The Save to collection sheet opens and nothing is written until a destination is chosen. Capture the sheet, then Cancel. Do not pick Recipes, pick a collection, or create one. Do not reach this sheet from bulk import.",
+    "needsData": false
+  },
+  {
+    "id": "sync-toast",
+    "route": "/settings",
+    "setup": "SyncToast is a short-lived pill on any page, not its own route. It appears only when a refresh fails or when a refresh applies remote changes. A Refresh in Settings that changes nothing stays silent and does not write library data. Do not sign out, go offline on purpose, or create data to force it. If the pill is not already visible, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "library-shared-banner",
+    "route": "/?c=:collectionId",
+    "setup": "Select a collection shared with you so the Library banner is visible: who shared it, then either \"You can edit these recipes.\" or \"View only.\", and a Leave control. Capture a viewer collection and, if one exists, an editor collection; they are the same banner with a different access sentence. The review never creates a share and never taps Leave. If the account has no incoming share, mark skipped: needs data. The banner and folder label can show the owner's email; redact that before the image goes to the judging model, or mark skipped: shows another member's data.",
+    "needsData": true
+  },
+  {
+    "id": "library-leave-sheet",
+    "route": "/?c=:collectionId",
+    "setup": "From a collection shared with you, tap Leave so the confirmation sheet is open (title, the sentence about losing access, Leave collection, Cancel). Do not confirm. The review never creates a share. If the account has no incoming share, mark skipped: needs data. The title names the collection; redact another member's collection name before judging, or mark skipped: shows another member's data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-edit-shared-editor",
+    "route": "/recipe/:id/edit",
+    "setup": "The edit form for a recipe in a collection shared with you as an editor. The Recipe language field is visible, including a \"Looks like …\" hint when one applies, and the photo controls are absent. Do not change fields and do not save. A viewer share has no Edit link. If there is no editor share, mark skipped: needs data. Recipe content is another member's data: redact it before judging, or mark skipped: shows another member's data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-shared",
+    "route": "/recipe/:id",
+    "setup": "Open a recipe from a viewer share (no Edit link). The translate chip works the same as on an owned recipe. Do not change servings, checks, or steps. Do not tap the translate chip. If there is no viewer share, mark skipped: needs data. Recipe content is another member's data: redact it before judging, or mark skipped: shows another member's data. The review never creates a share.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-chat-shared",
+    "route": "/recipe/:id",
+    "setup": "On a viewer share, open Ask. The panel shows \"Save as a new recipe\" on an existing proposal card (there is no Apply, and no photo button). Do not send a message and do not press Save as a new recipe. Do not tap the translate chip. If the account has no viewer share, or the shared chat has no proposal yet, mark skipped: needs data. Do not write a chat message to create one. Redact the other member's recipe content before judging, or mark skipped: shows another member's data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-chat-shared-editor",
+    "route": "/recipe/:id",
+    "setup": "On an editor share, open Ask. An existing proposal card shows Apply and Save as a new recipe, and no photo button. Do not send a message, do not apply, and do not press Save as a new recipe. Do not tap the translate chip. If the account has no editor share, or the chat has no proposal yet, mark skipped: needs data. Do not write a chat message to create one. Redact the other member's recipe content before judging, or mark skipped: shows another member's data.",
+    "needsData": true
+  },
+  {
+    "id": "cooks-empty",
+    "route": "/cooks",
+    "setup": "The cook journal when the account has no cook logs, so the empty sentence is showing. If logs already exist, do not delete them; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "cooks-populated",
+    "route": "/cooks",
+    "setup": "The cook journal listing at least one existing cook. Do not create or delete a log. If there are none, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "cook-log-new",
+    "route": "/recipe/:id/cooks/new",
+    "setup": "The Log a cook form for an owned recipe. Opening it does not write. Do not save, upload a photo, or leave a rating that you then save. If there is no owned recipe, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "cook-log-edit-delete",
+    "route": "/recipe/:id/cooks/:logId/edit",
+    "setup": "Open an existing cook log's edit form and open the delete dialog (\"Delete this cook?\"). Do not confirm delete and do not save. Dismiss the dialog when the capture is done. If there is no cook log, mark skipped: needs data.",
+    "needsData": true
+  }
+]

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useT } from '../i18n';
 import PhotoPickerField from '../components/PhotoPickerField';
 import Sheet from '../components/Sheet';
 import {
@@ -24,9 +25,6 @@ import {
 } from '../lib/uiClasses';
 import { useCookState } from '../lib/useCookState';
 
-const PHOTO_UNREADABLE = "That photo couldn't be read — it may not be a real image.";
-const SERVINGS_INVALID = `Servings must be a number above 0, up to ${MAX_COOK_LOG_SERVINGS}.`;
-
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="mt-3 block">
@@ -43,10 +41,11 @@ function StarRating({
   value: number | undefined;
   onChange: (next: number | undefined) => void;
 }) {
+  const t = useT();
   return (
     <div className="mt-3">
       <span id="cook-rating-label" className="text-sm font-medium text-ink-muted">
-        Rating
+        {t('cookLog.rating')}
       </span>
       <div role="group" aria-labelledby="cook-rating-label" className="mt-1 flex gap-1">
         {[1, 2, 3, 4, 5].map((n) => {
@@ -55,7 +54,7 @@ function StarRating({
             <button
               key={n}
               type="button"
-              aria-label={`${n} star${n === 1 ? '' : 's'}`}
+              aria-label={t('cookLog.stars', { count: n })}
               aria-pressed={value === n}
               onClick={() => onChange(value === n ? undefined : n)}
               className={`flex h-11 w-11 items-center justify-center rounded-full text-2xl hover:bg-surface-muted active:bg-surface-muted ${
@@ -93,6 +92,7 @@ function CookLogForm({
   initialServings: number;
   onRemovingChange: (removing: boolean) => void;
 }) {
+  const t = useT();
   const navigate = useNavigate();
   const recipeHref = `/recipe/${recipe.id}`;
   const [cookedOn, setCookedOn] = useState(() => log?.cookedOn ?? todayCookedOn());
@@ -117,7 +117,7 @@ function CookLogForm({
     if (!canSubmit) return;
     const servings = parseServings(servingsText);
     if (servings === 'invalid') {
-      setError(SERVINGS_INVALID);
+      setError(t('cookLog.servingsInvalid', { max: MAX_COOK_LOG_SERVINGS }));
       return;
     }
     setBusy(true);
@@ -131,7 +131,7 @@ function CookLogForm({
           encoded.push(await encodeImageForStorage(file));
         }
       } catch {
-        setError(PHOTO_UNREADABLE);
+        setError(t('error.photoUnreadable'));
         return;
       }
       const added: string[] = [];
@@ -162,7 +162,7 @@ function CookLogForm({
         // The entry kept pointing at its old photos, so these new ids are
         // already unreachable.
         for (const id of added) await photoStore.remove(id);
-        setError(err instanceof Error ? err.message : "Couldn't save the cook log.");
+        setError(err instanceof Error ? err.message : t('error.cookLogSave'));
         return;
       }
       navigate(recipeHref, { replace: true });
@@ -181,7 +181,7 @@ function CookLogForm({
       navigate(recipeHref, { replace: true });
     } catch (err) {
       onRemovingChange(false);
-      setDeleteError(err instanceof Error ? err.message : "Couldn't delete the cook log.");
+      setDeleteError(err instanceof Error ? err.message : t('error.cookLogDelete'));
       setDeleteBusy(false);
     }
   };
@@ -198,7 +198,7 @@ function CookLogForm({
         }}
       >
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Date">
+          <Field label={t('cookLog.date')}>
             <input
               type="date"
               required
@@ -207,7 +207,7 @@ function CookLogForm({
               className={inputClass}
             />
           </Field>
-          <Field label="Servings">
+          <Field label={t('common.servings')}>
             <input
               type="text"
               inputMode="decimal"
@@ -220,30 +220,30 @@ function CookLogForm({
 
         <StarRating value={rating} onChange={setRating} />
 
-        <Field label="Notes">
+        <Field label={t('common.notes')}>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={3}
             maxLength={MAX_COOK_LOG_TEXT}
-            placeholder="How it went, what you swapped or changed"
+            placeholder={t('cookLog.notesPlaceholder')}
             className={inputClass}
           />
         </Field>
 
-        <Field label="Lessons">
+        <Field label={t('cookLog.lessons')}>
           <textarea
             value={lessons}
             onChange={(e) => setLessons(e.target.value)}
             rows={3}
             maxLength={MAX_COOK_LOG_TEXT}
-            placeholder="What to do differently next time"
+            placeholder={t('cookLog.lessonsPlaceholder')}
             className={inputClass}
           />
         </Field>
 
         <PhotoPickerField
-          label="Photos"
+          label={t('cookLog.photos')}
           max={MAX_COOK_LOG_PHOTOS}
           photoIds={photoIds}
           picked={picked}
@@ -270,14 +270,14 @@ function CookLogForm({
             onClick={() => navigate(recipeHref)}
             className={`${secondaryBtn} flex-1 py-3`}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             type="submit"
             disabled={!canSubmit}
             className={`${primaryBtn} flex-1 py-3`}
           >
-            {busy ? 'Saving…' : 'Save'}
+            {busy ? t('common.saving') : t('common.save')}
           </button>
         </div>
 
@@ -291,16 +291,16 @@ function CookLogForm({
             }}
             className="mt-3 w-full py-2.5 text-sm text-danger hover:text-ink disabled:opacity-40"
           >
-            Delete cook
+            {t('cookLog.deleteCook')}
           </button>
         )}
       </form>
 
       {confirmingDelete && (
         <Sheet onClose={() => setConfirmingDelete(false)} dismissible={!deleteBusy}>
-          <h2 className="text-lg font-semibold">Delete this cook?</h2>
+          <h2 className="text-lg font-semibold">{t('cookLog.deleteTitle')}</h2>
           <p className="mt-1 text-sm text-ink-muted">
-            Its notes and photos are deleted too. There is no undo.
+            {t('cookLog.deleteBody')}
           </p>
           {deleteError && <p role="alert" className="mt-2 text-sm text-danger">{deleteError}</p>}
           <button
@@ -309,7 +309,7 @@ function CookLogForm({
             onClick={() => void confirmDelete()}
             className={`${dangerBtn} mt-3 w-full py-3 disabled:opacity-40`}
           >
-            Delete
+            {t('common.delete')}
           </button>
           <button
             type="button"
@@ -317,7 +317,7 @@ function CookLogForm({
             onClick={() => setConfirmingDelete(false)}
             className={`${secondaryBtn} mt-2 w-full py-3`}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
         </Sheet>
       )}
@@ -326,6 +326,7 @@ function CookLogForm({
 }
 
 export default function CookLogEdit() {
+  const t = useT();
   const { id, logId } = useParams<{ id: string; logId: string }>();
   const recipe = useRecipe(id);
   const log = useCookLog(logId);
@@ -337,14 +338,14 @@ export default function CookLogEdit() {
   if (log && log !== lastLog) setLastLog(log);
 
   if (recipe === undefined || log === undefined) {
-    return <div className="p-6 text-center text-ink-muted">Loading recipe…</div>;
+    return <div className="p-6 text-center text-ink-muted">{t('common.loadingRecipe')}</div>;
   }
   if (recipe === null) {
     return (
       <div className="p-6 text-center text-ink-muted">
-        Recipe not found.{' '}
+        {t('common.recipeNotFound')}{' '}
         <Link to="/" className="underline hover:text-ink">
-          Back to library
+          {t('common.backToLibrary')}
         </Link>
       </div>
     );
@@ -353,9 +354,9 @@ export default function CookLogEdit() {
   if (recipeStore.isShared(recipe.id)) {
     return (
       <div className="p-6 text-center text-ink-muted">
-        Cook logs are only for your own recipes.{' '}
+        {t('error.cookLogSharedRecipe')}{' '}
         <Link to={`/recipe/${recipe.id}`} className="underline hover:text-ink">
-          Back to recipe
+          {t('common.backToRecipe')}
         </Link>
       </div>
     );
@@ -366,9 +367,9 @@ export default function CookLogEdit() {
   if (entry === null || (entry !== undefined && entry.recipeId !== recipe.id)) {
     return (
       <div className="p-6 text-center text-ink-muted">
-        Cook not found.{' '}
+        {t('cookLog.notFound')}{' '}
         <Link to={`/recipe/${recipe.id}`} className="underline hover:text-ink">
-          Back to recipe
+          {t('common.backToRecipe')}
         </Link>
       </div>
     );
@@ -378,9 +379,9 @@ export default function CookLogEdit() {
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
         <Link to={`/recipe/${recipe.id}`} className={backLink}>
-          &larr; Recipe
+          &larr; {t('common.recipe')}
         </Link>
-        <h1 className="mt-2 text-2xl font-bold">{isNew ? 'Log a cook' : 'Edit cook'}</h1>
+        <h1 className="mt-2 text-2xl font-bold">{isNew ? t('recipe.logACook') : t('cookLog.editCook')}</h1>
         <p className="mt-1 text-ink-muted">{recipe.title}</p>
       </header>
       <CookLogForm

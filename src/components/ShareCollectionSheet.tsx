@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useT } from '../i18n';
 import Sheet from './Sheet';
 import { collectionStore } from '../lib/collectionStore';
 import type { CollectionGrant, GrantRole } from '../lib/remote';
@@ -18,6 +19,7 @@ export default function ShareCollectionSheet({
   collection: Collection;
   onClose: () => void;
 }) {
+  const t = useT();
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<GrantRole>('viewer');
   const [grants, setGrants] = useState<CollectionGrant[] | undefined>(undefined);
@@ -35,7 +37,7 @@ export default function ShareCollectionSheet({
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Couldn't load sharing.");
+          setError(err instanceof Error ? err.message : t('error.sharingLoad'));
           setGrants([]);
         }
       });
@@ -53,7 +55,7 @@ export default function ShareCollectionSheet({
       setRole('viewer');
       setGrants(await collectionStore.listGrants(collection.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't update sharing.");
+      setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
       setBusy(false);
     }
@@ -66,7 +68,7 @@ export default function ShareCollectionSheet({
       await collectionStore.setGrantRole(collection.id, sub, next);
       setGrants(await collectionStore.listGrants(collection.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't update sharing.");
+      setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
       setBusy(false);
     }
@@ -79,7 +81,7 @@ export default function ShareCollectionSheet({
       await collectionStore.revokeGrant(collection.id, sub);
       setGrants(await collectionStore.listGrants(collection.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't update sharing.");
+      setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
       setBusy(false);
     }
@@ -87,12 +89,8 @@ export default function ShareCollectionSheet({
 
   return (
     <Sheet onClose={onClose} dismissible={!busy}>
-      <h2 className="text-lg font-semibold">Share “{collection.name}”</h2>
-      <p className="mt-1 text-sm text-ink-muted">
-        Add someone who already has a Sous account. Viewers can see these
-        recipes and photos. Editors can also edit the recipes, except their
-        photos. Nobody but you can delete them or change who has access.
-      </p>
+      <h2 className="text-lg font-semibold">{t('share.title', { name: collection.name })}</h2>
+      <p className="mt-1 text-sm text-ink-muted">{t('share.intro')}</p>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -105,7 +103,7 @@ export default function ShareCollectionSheet({
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="Email"
+            placeholder={t('share.emailPlaceholder')}
             disabled={busy}
             className={`${inputClass} min-w-0 flex-1`}
           />
@@ -117,15 +115,15 @@ export default function ShareCollectionSheet({
           disabled={busy || email.trim() === ''}
           className={`${primaryBtn} mt-3 w-full py-3`}
         >
-          Share
+          {t('common.share')}
         </button>
       </form>
       <ul className="mt-4 flex flex-col gap-2">
         {grants === undefined && (
-          <li className="text-sm text-ink-muted">Loading…</li>
+          <li className="text-sm text-ink-muted">{t('common.loading')}</li>
         )}
         {grants?.length === 0 && (
-          <li className="text-sm text-ink-muted">Nobody else can see this yet.</li>
+          <li className="text-sm text-ink-muted">{t('share.nobodyYet')}</li>
         )}
         {grants?.map((grant) => (
           <li
@@ -137,7 +135,7 @@ export default function ShareCollectionSheet({
               value={grant.role ?? 'viewer'}
               onChange={(next) => void changeRole(grant.sub, next)}
               disabled={busy}
-              label={`Role for ${grant.email}`}
+              label={t('share.roleFor', { email: grant.email })}
             />
             <button
               type="button"
@@ -145,7 +143,7 @@ export default function ShareCollectionSheet({
               onClick={() => void revoke(grant.sub)}
               className={`${dangerBtn} px-3 py-1.5 text-xs`}
             >
-              Remove
+              {t('common.remove')}
             </button>
           </li>
         ))}
@@ -155,7 +153,7 @@ export default function ShareCollectionSheet({
         onClick={onClose}
         className={`${secondaryBtn} mt-3 w-full py-3`}
       >
-        Done
+        {t('common.done')}
       </button>
     </Sheet>
   );
@@ -165,23 +163,24 @@ function RoleSelect({
   value,
   onChange,
   disabled,
-  label = 'Role',
+  label,
 }: {
   value: GrantRole;
   onChange: (role: GrantRole) => void;
   disabled: boolean;
   label?: string;
 }) {
+  const t = useT();
   return (
     <select
-      aria-label={label}
+      aria-label={label ?? t('share.role')}
       value={value}
       disabled={disabled}
       onChange={(e) => onChange(e.target.value === 'editor' ? 'editor' : 'viewer')}
       className={`${cellClass} shrink-0 bg-surface text-sm`}
     >
-      <option value="viewer">Viewer</option>
-      <option value="editor">Editor</option>
+      <option value="viewer">{t('share.viewer')}</option>
+      <option value="editor">{t('share.editor')}</option>
     </select>
   );
 }

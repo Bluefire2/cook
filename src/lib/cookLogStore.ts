@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react';
+import { t } from '../i18n';
 import {
   dropPhoto,
   getCookLog,
@@ -25,12 +26,8 @@ import type { PushOp } from './pushOps';
 
 export type CookLogInput = Omit<CookLog, 'id' | 'createdAt' | 'updatedAt'>;
 
-const SIGNED_OUT = 'Please sign in again — your session expired.';
-const RECIPE_GONE = 'This recipe is no longer in your library.';
-const SHARED_RECIPE = 'Cook logs are only for your own recipes.';
-
 function pushError(result: RemoteResult | 'unavailable', fallback: string): Error {
-  return new Error(result === 'signedOut' ? SIGNED_OUT : fallback);
+  return new Error(result === 'signedOut' ? t('error.sessionExpired') : fallback);
 }
 
 async function uploadCookLogPhotos(log: CookLog): Promise<void> {
@@ -41,7 +38,7 @@ async function uploadCookLogPhotos(log: CookLog): Promise<void> {
     }
     const result = await postPhoto(photoId, log.recipeId, log.updatedAt, blob);
     if (result !== 'ok') {
-      throw pushError(result, "Couldn't save the photo.");
+      throw pushError(result, t('error.photoSave'));
     }
     markPhotoRemote(photoId);
   }
@@ -72,20 +69,20 @@ async function deleteRemovedPhotos(previous: CookLog | undefined, next: CookLog)
  */
 async function putCookLog(next: CookLog, previous: CookLog | undefined): Promise<void> {
   if (!getRecipe(next.recipeId)) {
-    throw new Error(RECIPE_GONE);
+    throw new Error(t('error.recipeGone'));
   }
   if (isSharedRecipe(next.recipeId)) {
-    throw new Error(SHARED_RECIPE);
+    throw new Error(t('error.cookLogSharedRecipe'));
   }
   if (!isUsableCookLog(next)) {
-    throw new Error("Couldn't save the cook log.");
+    throw new Error(t('error.cookLogSave'));
   }
   upsertCookLog(next);
   try {
     await uploadCookLogPhotos(next);
     const result = await pushOps([{ kind: 'cookLog.put', payload: next }]);
     if (result !== 'ok') {
-      throw pushError(result, "Couldn't save the cook log.");
+      throw pushError(result, t('error.cookLogSave'));
     }
   } catch (err) {
     if (previous) {
@@ -132,7 +129,7 @@ export const cookLogStore = {
       if (previous) {
         upsertCookLog(previous);
       }
-      throw pushError(result, "Couldn't delete the cook log.");
+      throw pushError(result, t('error.cookLogDelete'));
     }
     for (const photoId of photoIds) {
       dropPhoto(photoId);
@@ -143,7 +140,7 @@ export const cookLogStore = {
   async promoteLesson(recipeId: string, log: CookLog): Promise<void> {
     const recipe = getRecipe(recipeId);
     if (!recipe) {
-      throw new Error(RECIPE_GONE);
+      throw new Error(t('error.recipeGone'));
     }
     if (lessonInNotes(recipe.notes, log.lessons)) {
       return;

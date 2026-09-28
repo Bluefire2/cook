@@ -41,6 +41,7 @@ import { inviteLandingGet } from '../server/invites.ts';
 import { withMembership } from '../server/membership.ts';
 import { photosGet, photosPost } from '../server/photos.ts';
 import { sttPost } from '../server/stt.ts';
+import { translatePost } from '../server/translateRoute.ts';
 import {
   collectionGrantsGet,
   collectionGrantsPost,
@@ -62,6 +63,7 @@ const apiRoutes: ApiRoute[] = [
   { method: 'POST', path: '/api/chat', handler: withMembership(chatPost) },
   { method: 'POST', path: '/api/import', handler: withMembership(importPost) },
   { method: 'POST', path: '/api/stt', handler: sttPost },
+  { method: 'POST', path: '/api/translate', handler: translatePost },
   { method: 'POST', path: '/api/access-request', handler: accessRequestPost },
   { method: 'GET', path: '/api/admin/requests', handler: adminRequestsGet },
   { method: 'POST', path: '/api/admin/decision', handler: adminDecisionPost },

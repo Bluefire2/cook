@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { useT } from '../i18n';
 import CookLogCard from '../components/CookLogCard';
 import { useCookLogs } from '../lib/cookLogStore';
 import { useRecipes } from '../lib/recipeStore';
@@ -8,6 +9,7 @@ import { useSyncStatus } from '../lib/syncEngine';
 import { backLink } from '../lib/uiClasses';
 
 export default function CookJournal() {
+  const t = useT();
   const logs = useCookLogs();
   const recipes = useRecipes();
   const { status: sessionStatus } = useSession();
@@ -20,12 +22,12 @@ export default function CookJournal() {
 
   const emptyCopy = () => {
     if (sessionStatus === 'signedOut') {
-      return 'Sign in from Settings to load your cooks.';
+      return t('cooks.emptySignedOut');
     }
     if (syncStatus.status === 'error') {
-      return "Couldn't load your cooks. Try Refresh in Settings.";
+      return t('cooks.emptyError');
     }
-    return 'No cooks logged yet. Open a recipe and tap Log a cook.';
+    return t('cooks.empty');
   };
 
   const entries =
@@ -40,13 +42,13 @@ export default function CookJournal() {
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
         <Link to="/" className={backLink}>
-          &larr; Library
+          &larr; {t('common.library')}
         </Link>
-        <h1 className="mt-2 text-2xl font-bold">Cooks</h1>
+        <h1 className="mt-2 text-2xl font-bold">{t('library.cooks')}</h1>
       </header>
 
       {entries === undefined ? (
-        <p className="py-12 text-center text-ink-muted">Loading cooks…</p>
+        <p className="py-12 text-center text-ink-muted">{t('cooks.loading')}</p>
       ) : entries.length === 0 ? (
         <p className="py-12 text-center text-ink-muted">{emptyCopy()}</p>
       ) : (

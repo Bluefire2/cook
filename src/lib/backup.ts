@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { isUsableRecipe } from './recipeShape';
 import type { CookStateRow } from './useCookState';
 import type { ChatMessage, Collection, CookLog, Recipe } from './types';
@@ -230,8 +231,8 @@ function sanitizeDanglingDependents(
 function importPushError(result: Exclude<RemoteResult, 'ok'>): Error {
   return new Error(
     result === 'signedOut'
-      ? 'Please sign in again — your session expired.'
-      : "Couldn't import the backup.",
+      ? t('error.sessionExpired')
+      : t('error.backupImport'),
   );
 }
 
@@ -242,7 +243,7 @@ export async function importLibrary(
 ): Promise<{ imported: number; skipped: number }> {
   const backup = JSON.parse(await file.text()) as BackupFile;
   if (backup.app !== 'cook' || !Array.isArray(backup.recipes)) {
-    throw new Error("That file doesn't look like a Sous backup.");
+    throw new Error(t('error.backupNotSous'));
   }
 
   const recipes = backup.recipes.filter(isUsableRecipe).map(compactRecipe);
@@ -356,7 +357,7 @@ export async function importLibrary(
         photo.blob,
       );
       if (uploaded !== 'ok') {
-        throw new Error("Couldn't upload a photo from the backup.");
+        throw new Error(t('error.backupPhotoUpload'));
       }
       markPhotoRemote(photoId);
     }

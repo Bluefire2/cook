@@ -132,6 +132,7 @@ function recordingDeps(
   const counter = { calls: 0 };
   const deps: RecipeImportDeps = {
     model: base.model,
+    translator: base.translator,
     ai: {
       models: {
         generateContent: async (params) => {

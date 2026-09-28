@@ -14,6 +14,26 @@
     <title>Sous</title>
     <script>
       (function () {
+        var supported = ['en', 'uk', 'ru', 'zh-Hans'];
+        var locale = null;
+        try {
+          locale = localStorage.getItem('cook.locale');
+        } catch (e) {}
+        if (supported.indexOf(locale) === -1) {
+          locale = 'en';
+          var browser = String((navigator && navigator.language) || '').toLowerCase();
+          var primary = browser.split('-')[0];
+          if (primary === 'zh') {
+            if (!/-(hant|tw|hk|mo)(-|$)/.test(browser)) {
+              locale = 'zh-Hans';
+            }
+          } else if (supported.indexOf(primary) !== -1) {
+            locale = primary;
+          }
+        }
+        document.documentElement.lang = locale;
+      })();
+      (function () {
         var theme = 'dark';
         try {
           if (localStorage.getItem('cook.theme') === 'light') {

@@ -68,8 +68,11 @@ UI (screens, components)
 library data. Screens must not `fetch`. Do not add fields to `Recipe`,
 `ChatMessage`, or `CookStateRow` — `compactRecipe` strips unknown keys, and
 `src/lib/recipeStore.test.ts` asserts the exact key set. That test is a
-schema lock; do not "fix" it by expanding the allow-list. Collections are a
-separate store kind. Grants live under
+schema lock; do not "fix" it by expanding the allow-list. Sharing avoided a
+`Recipe` field (`docs/plans/shared-recipes.md`, D3); optional `Recipe.lang`
+is the first deliberate exception since `galleryPhotoIds`
+(`docs/constitutions/i18n.md`), and code must work when `lang` is missing.
+Collections are a separate store kind. Grants live under
 `collections/{id}/grants/{viewerSub}` plus a reverse
 `incomingShares/{viewerSub}` index; they are REST, not LWW push. Shared
 rows stay in the owner's tree and carry origin metadata beside `Recipe`.
@@ -315,6 +318,7 @@ plus a matching index line here. `scripts/constitutions.test.ts` checks that
 this index matches each file's frontmatter.
 
 - **Cook log** (`docs/constitutions/cook-log.md`): Dated records of cooking a recipe (rating, servings, notes, lessons, photos), the /cooks journal, and promoting a lesson into recipe notes. Read before changing CookLog data, its sync ops or cascade, its photos, its backup handling, or those screens.
+- **i18n** (`docs/constitutions/i18n.md`): UI language (the src/i18n catalogs, t(), plurals, cook.locale), the Recipe.lang label and normalizeLang, recipe translation at import and on the recipe screen, dictation language, and the in-context translation review. Read before adding or changing any user-facing text, touching Recipe.lang or a language tag, sending recipe text to a translation provider, or changing the language passed to /api/stt.
 - **Image import** (`docs/constitutions/image-import.md`): Importing one recipe from 1–4 photos of notes. Gemini reads the photos and they are not stored. Read before changing importFromImages, the images field, the photo picker, handwritten evals, or the photo sentences in privacy and terms.
 
 ## Plans (source of truth for unfinished work)
@@ -343,6 +347,8 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/image-import.md` | Built on `cursor/image-import-38e9`, not deployed. Import one recipe from 1–4 photos (handwritten notes) via `images` on `POST /api/import`; Gemini reads them; never stored. Bound by `docs/constitutions/image-import.md`. |
 | `docs/plans/image-import-evals-and-retry.md` | Built, not deployed. Handwritten evals split into dev/holdout with `evals/AGENTS.md` rules and `ocrCompare --thinking`. The photo retry and runaway-unit check were measured and reverted (dev approach A 14/15 → 12/15; holdout stayed 15/15). |
 | `docs/plans/cook-log.md` | Built on `cursor/cook-log-5615` (constitution `docs/constitutions/cook-log.md`). Not deployed. |
+| `docs/plans/i18n.md` | Built and verified on `cursor/i18n-implement-5489` (PR #42; constitution `docs/constitutions/i18n.md`). Not deployed. UI language with `src/i18n/` catalogs, `Recipe.lang`, translation at import and on the recipe screen, dictation language. |
+| `docs/plans/i18n-follow-ups.md` | Open. Post-deploy owner steps (Cloud Run translate p95, dictation clips, `lang` backfill `--write`), unrun checks, and review nits left after PR #42. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
@@ -373,11 +379,39 @@ Chat streaming must not grow `Content-Length` or `Content-Encoding` on
 step 2, with a `sous_session` cookie instead of `x-app-password`, is the
 guard — run it against Cloud Run after a production deploy, not only locally.
 
+## UI text and languages
+
+Any change touching UI copy, `Recipe.lang`, translation, import translation,
+or dictation language must follow `docs/constitutions/i18n.md`.
+
+**UI text rule.** Any change that adds or changes user-facing text must put
+it in the `src/i18n/` catalogs for every supported language (`en`, `uk`,
+`ru`, `zh-Hans`), with no hardcoded strings in screens, components, or
+client `lib/` messages. `src/i18n/en.ts` defines the key set; the other
+catalogs are typed `Messages`, so a missing key fails `tsc`, and the parity
+test in `src/i18n/messages.test.ts` checks plural forms and placeholders.
+Sentences are single catalog strings with named `{params}`, never joined
+fragments; relative times go through `src/lib/relativeTime.ts`.
+
+Any UI change that adds or changes user-facing text must add it to
+every catalog in `src/i18n/` (see `docs/constitutions/i18n.md`), in
+the same change. New screens or states are added to
+`docs/i18n-review/screens.json` in the same change. Once a task's
+implementation is complete and you think its PR may be ready to
+merge, and before opening the PR, run the in-context translation
+review in `docs/i18n-review/README.md` for every screen that shows
+text the task added or changed, in every non-English language. Fix
+the blockers, re-review those screens, and attach the report to the
+PR. Do not run the review after each individual change; it is a
+pre-PR check, not part of the iteration loop. Cursor agents can use
+the `.cursor/skills/i18n-visual-review` skill.
+
 ## Product copy
 
 `/about` is a short public page that says what the app is for. `/privacy`
 and `/terms` describe Firestore + GCS and that there is no on-device recipe
-database. Theme preference and `cook.session` stay in localStorage. Do not
+database. Theme preference, the UI language (`cook.locale`), and
+`cook.session` stay in localStorage. Do not
 describe IndexedDB, offline edits, or a local library. The Chrome extension
 sends rendered page HTML, possibly from a page behind a login, to the server
 and on to Gemini; `/privacy` and `/terms` must describe that before the

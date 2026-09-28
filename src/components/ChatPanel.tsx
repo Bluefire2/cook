@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useLocale, useT } from '../i18n';
+import { unitLabel } from '../i18n/unitLabel';
 import { chatStore, useChatMessages } from '../lib/chatStore';
 import { photoStore, useObjectUrl, usePhotoUrl } from '../lib/photoStore';
 import { recipeStore } from '../lib/recipeStore';
@@ -28,23 +30,31 @@ import {
   secondaryBtn,
 } from '../lib/uiClasses';
 
-function ingredientLine(ing: Ingredient): string {
+function ingredientLine(
+  ing: Ingredient,
+  locale: ReturnType<typeof useLocale>,
+  labelUnit: (token: string) => string,
+): string {
   const parts = [
-    ing.quantity !== undefined ? formatQuantity(ing.quantity) : null,
-    ing.unit ?? null,
+    ing.quantity !== undefined ? formatQuantity(ing.quantity, locale) : null,
+    ing.unit ? labelUnit(ing.unit) : null,
     ing.item,
   ].filter(Boolean);
   const base = parts.join(' ');
   return ing.note ? `${base} (${ing.note})` : base;
 }
 
-function recipeLines(r: Recipe | RecipeDraft): {
+function recipeLines(
+  r: Recipe | RecipeDraft,
+  locale: ReturnType<typeof useLocale>,
+  labelUnit: (token: string) => string,
+): {
   ingredients: string[];
   steps: string[];
 } {
   return {
     ingredients: r.ingredientSections.flatMap((s) =>
-      s.items.map(ingredientLine),
+      s.items.map((item) => ingredientLine(item, locale, labelUnit)),
     ),
     steps: r.steps.map((s) => s.text),
   };
@@ -62,7 +72,9 @@ function ProposalCard({
   allowApply: boolean;
 }) {
   const navigate = useNavigate();
-  const [applied, setApplied] = useState<string | null>(null);
+  const t = useT();
+  const locale = useLocale();
+  const [applied, setApplied] = useState<'chat.appliedToRecipe' | 'chat.savedAsNew' | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -70,9 +82,9 @@ function ProposalCard({
     setSaveError(null);
     try {
       await recipeStore.applyDraft(recipe.id, proposal);
-      setApplied('Applied to this recipe ✓');
+      setApplied('chat.appliedToRecipe');
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Couldn't save the recipe.");
+      setSaveError(err instanceof Error ? err.message : t('error.recipeSave'));
     }
   };
 
@@ -84,11 +96,11 @@ function ProposalCard({
     setSaveError(null);
     try {
       const created = await recipeStore.createFromAsk(recipe, proposal);
-      setApplied('Saved as a new recipe ✓');
+      setApplied('chat.savedAsNew');
       onNavigateAway();
       navigate(`/recipe/${created.id}`);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Couldn't save the recipe.");
+      setSaveError(err instanceof Error ? err.message : t('error.recipeSave'));
       setSaving(false);
     }
   };
@@ -97,13 +109,14 @@ function ProposalCard({
   if (applied) {
     return (
       <div className="mt-2 rounded-xl border border-line bg-surface p-3">
-        <p className="text-sm font-medium text-success">{applied}</p>
+        <p className="text-sm font-medium text-success">{t(applied)}</p>
       </div>
     );
   }
 
-  const before = recipeLines(recipe);
-  const after = recipeLines(proposal);
+  const labelUnit = (token: string) => unitLabel(token, t);
+  const before = recipeLines(recipe, locale, labelUnit);
+  const after = recipeLines(proposal, locale, labelUnit);
   const removedIngredients = before.ingredients.filter(
     (l) => !after.ingredients.includes(l),
   );
@@ -116,11 +129,13 @@ function ProposalCard({
   return (
     <div className="mt-2 rounded-xl border border-line bg-surface p-3">
       <p className="text-sm font-semibold">
-        Proposed change{proposal.title !== recipe.title && `: ${proposal.title}`}
+        {proposal.title !== recipe.title
+          ? t('chat.proposedChangeTitled', { title: proposal.title })
+          : t('chat.proposedChange')}
       </p>
       {proposal.servings !== recipe.servings && (
         <p className="mt-1 text-sm text-ink-muted">
-          Serves {recipe.servings} → {proposal.servings}
+          {t('chat.serves', { from: recipe.servings, to: proposal.servings })}
         </p>
       )}
       <div className="mt-1.5 flex flex-col gap-0.5 text-sm">
@@ -137,7 +152,7 @@ function ProposalCard({
           <p key={`as-${l}`} className="text-success">+ {l}</p>
         ))}
         {removedIngredients.length + addedIngredients.length + removedSteps.length + addedSteps.length === 0 && (
-          <p className="text-ink-muted">Metadata-only change.</p>
+          <p className="text-ink-muted">{t('chat.metadataOnly')}</p>
         )}
       </div>
       <div className="mt-2.5 flex gap-2">
@@ -148,7 +163,7 @@ function ProposalCard({
             disabled={saving}
             className={`${primaryBtn} flex-1 py-2 text-sm disabled:opacity-40`}
           >
-            Apply
+            {t('chat.apply')}
           </button>
         )}
         <button
@@ -157,7 +172,11 @@ function ProposalCard({
           disabled={saving}
           className={`${secondaryBtn} flex-1 py-2 text-sm disabled:opacity-40`}
         >
-          {saving ? 'Saving…' : allowApply ? 'Save as variant' : 'Save as a new recipe'}
+          {saving
+            ? t('common.saving')
+            : allowApply
+              ? t('chat.saveAsVariant')
+              : t('chat.saveAsNewRecipe')}
         </button>
       </div>
       {saveError && <p className="mt-2 text-sm text-danger">{saveError}</p>}
@@ -166,13 +185,14 @@ function ProposalCard({
 }
 
 function PhotoThumb({ photoId }: { photoId: string }) {
+  const t = useT();
   const url = usePhotoUrl(photoId);
   return (
     <div className="h-20 w-20 overflow-hidden rounded-lg bg-surface-muted">
       {url && (
         <img
           src={url}
-          alt="Attached photo"
+          alt={t('chat.attachedPhoto')}
           className="h-full w-full object-cover"
         />
       )}
@@ -181,13 +201,14 @@ function PhotoThumb({ photoId }: { photoId: string }) {
 }
 
 function PendingPhotoThumb({ blob }: { blob: Blob }) {
+  const t = useT();
   const url = useObjectUrl(blob);
   return (
     <div className="h-20 w-20 overflow-hidden rounded-lg bg-surface-muted">
       {url && (
         <img
           src={url}
-          alt="Attached photo"
+          alt={t('chat.attachedPhoto')}
           className="h-full w-full object-cover"
         />
       )}
@@ -257,6 +278,7 @@ export default function ChatPanel({
   allowApply?: boolean;
 }) {
   const messages = useChatMessages(recipe.id);
+  const t = useT();
   const [draft, setDraft] = useState('');
   const [pendingPhotos, setPendingPhotos] = useState<
     { key: string; blob: Blob }[]
@@ -335,7 +357,7 @@ export default function ChatPanel({
         { key: crypto.randomUUID(), blob: stored },
       ]);
     } catch {
-      setError("That photo couldn't be read — it may not be a real image.");
+      setError(t('error.photoUnreadable'));
     }
   };
 
@@ -361,7 +383,7 @@ export default function ChatPanel({
       await chatStore.clearForRecipe(recipe.id);
       setConfirmClear(false);
     } catch {
-      setError('The thread could not be cleared — try again.');
+      setError(t('chat.threadClearFailed'));
     } finally {
       setClearing(false);
     }
@@ -399,7 +421,7 @@ export default function ChatPanel({
         return;
       }
       setError(
-        err instanceof Error ? err.message : 'Dictation failed — try again.',
+        err instanceof Error ? err.message : t('error.dictationFailed'),
       );
     } finally {
       if (sttAbort.current === controller) {
@@ -441,12 +463,12 @@ export default function ChatPanel({
       const name = err instanceof DOMException ? err.name : '';
       if (name === 'NotAllowedError' || name === 'SecurityError') {
         setError(
-          'Microphone access was blocked — allow it for this site and try again.',
+          t('chat.micBlocked'),
         );
       } else if (name === 'NotFoundError') {
-        setError('No microphone was found.');
+        setError(t('chat.noMic'));
       } else {
-        setError('Dictation failed — try again.');
+        setError(t('error.dictationFailed'));
       }
     }
   };
@@ -468,7 +490,7 @@ export default function ChatPanel({
       );
     } catch {
       setStreamingText(null);
-      setError("That photo couldn't be read — it may not be a real image.");
+      setError(t('error.photoUnreadable'));
       discardPending();
       return;
     }
@@ -481,7 +503,7 @@ export default function ChatPanel({
     } catch {
       await Promise.all(storedIds.map((id) => photoStore.remove(id)));
       setStreamingText(null);
-      setError('That photo could not be saved — try again.');
+      setError(t('chat.photoSaveFailed'));
       return;
     }
 
@@ -496,7 +518,7 @@ export default function ChatPanel({
     } catch {
       await Promise.all(storedIds.map((id) => photoStore.remove(id)));
       setStreamingText(null);
-      setError('That message could not be saved — try again.');
+      setError(t('chat.messageSaveFailed'));
       return;
     }
 
@@ -526,12 +548,12 @@ export default function ChatPanel({
       });
       const assistantContent =
         reply.text.trim() ||
-        (reply.proposedRecipe ? 'Here is my proposed change:' : '');
+        (reply.proposedRecipe ? t('chat.proposalIntro') : '');
       await chatStore.append({
         recipeId: recipe.id,
         role: 'assistant',
         content: reply.truncated
-          ? `${assistantContent}\n\n⚠️ The reply was cut off before it finished.`
+          ? `${assistantContent}\n\n${t('chat.replyCutOff')}`
           : assistantContent,
         proposedRecipe: reply.proposedRecipe,
       });
@@ -549,7 +571,7 @@ export default function ChatPanel({
         }
       } else {
         const message =
-          e instanceof Error ? e.message : 'Something went wrong.';
+          e instanceof Error ? e.message : t('common.somethingWentWrong');
         await chatStore.append({
           recipeId: recipe.id,
           role: 'assistant',
@@ -567,14 +589,14 @@ export default function ChatPanel({
     <div className="fixed inset-0 z-20 flex flex-col justify-end">
       <button
         type="button"
-        aria-label="Close chat"
+        aria-label={t('chat.closeChat')}
         tabIndex={-1}
         onClick={onClose}
         className="flex-1 bg-black/40"
       />
       <div className="flex h-[75dvh] flex-col rounded-t-3xl bg-surface shadow-2xl md:mx-auto md:w-full md:max-w-xl">
         <header className="flex items-center justify-between border-b border-line px-4 py-3">
-          <h2 className="font-semibold">Assistant</h2>
+          <h2 className="font-semibold">{t('chat.assistant')}</h2>
           <div className="flex items-center gap-1">
             {(messages ?? []).length > 0 && (
               <button
@@ -585,7 +607,7 @@ export default function ChatPanel({
                 disabled={busy}
                 className={confirmClear ? addBtnDanger : ghostBtn}
               >
-                {confirmClear ? 'Clear all?' : 'Clear'}
+                {confirmClear ? t('chat.clearAll') : t('chat.clear')}
               </button>
             )}
             <button
@@ -593,7 +615,7 @@ export default function ChatPanel({
               onClick={onClose}
               className={ghostBtn}
             >
-              Close
+              {t('common.close')}
             </button>
           </div>
         </header>
@@ -623,8 +645,7 @@ export default function ChatPanel({
             )}
             {(messages ?? []).length === 0 && streamingText === null && (
               <p className="py-8 text-center text-sm text-ink-subtle">
-                Ask anything about this recipe — substitutions, technique,
-                timing — or send a photo of how it's going.
+                {t('chat.emptyHint')}
               </p>
             )}
           </div>
@@ -637,7 +658,7 @@ export default function ChatPanel({
                 <PendingPhotoThumb blob={p.blob} />
                 <button
                   type="button"
-                  aria-label="Remove photo"
+                  aria-label={t('common.removePhoto')}
                   onClick={() => removePending(p.key)}
                   className="absolute -top-1.5 -right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-ink text-xs text-page hover:opacity-80 active:opacity-80"
                 >
@@ -663,7 +684,7 @@ export default function ChatPanel({
           {!readOnly && (
           <button
             type="button"
-            aria-label="Attach photo"
+            aria-label={t('chat.attachPhoto')}
             onClick={() => fileInputRef.current?.click()}
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-muted hover:bg-line-strong active:bg-line-strong"
           >
@@ -675,10 +696,10 @@ export default function ChatPanel({
               type="button"
               aria-label={
                 transcribing
-                  ? 'Transcribing'
+                  ? t('chat.transcribing')
                   : listening
-                    ? 'Stop dictation'
-                    : 'Dictate'
+                    ? t('chat.stopDictation')
+                    : t('chat.dictate')
               }
               aria-pressed={listening}
               aria-busy={transcribing}
@@ -710,7 +731,7 @@ export default function ChatPanel({
               }
             }}
             rows={1}
-            placeholder="Ask the assistant…"
+            placeholder={t('chat.placeholder')}
             className={`max-h-32 flex-1 resize-none rounded-2xl border border-line bg-page px-3.5 py-2 ${inputFocus}`}
           />
           <button
@@ -719,7 +740,7 @@ export default function ChatPanel({
             disabled={busy || transcribing}
             className={`${primaryBtn} h-10 px-4`}
           >
-            Send
+            {t('chat.send')}
           </button>
         </div>
       </div>

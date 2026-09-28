@@ -1,8 +1,29 @@
+import { t } from '../i18n';
+import { serverErrorText } from './errorText';
 import type { EncodedImage } from './image';
 import { invalidateSession } from './session';
 import type { RecipeDraft } from './types';
 
 export type ExtractedRecipe = RecipeDraft;
+
+/**
+ * `translation` is the translated draft for the import preview.
+ * Callers save `recipe` unless the preview is showing the translation.
+ */
+export interface ImportRecipeResult {
+  recipe: ExtractedRecipe;
+  translation?: { lang: string; recipe: ExtractedRecipe };
+  translationFailed?: true;
+}
+
+function drafted(recipe: ExtractedRecipe): ExtractedRecipe {
+  return {
+    ...recipe,
+    tags: recipe.tags ?? [],
+    ingredientSections: recipe.ingredientSections ?? [],
+    steps: recipe.steps ?? [],
+  };
+}
 
 export const MAX_IMPORT_PHOTOS = 4;
 export const IMPORT_PHOTO_LIMIT_ERROR = 'Up to 4 photos.';
@@ -44,8 +65,9 @@ export function checkImportPhotoBytes(
 export async function importRecipe(params: {
   url?: string;
   text?: string;
+  translateTo?: string;
   images?: EncodedImage[];
-}): Promise<ExtractedRecipe> {
+}): Promise<ImportRecipeResult> {
   const response = await fetch('/api/import', {
     method: 'POST',
     credentials: 'same-origin',
@@ -57,19 +79,35 @@ export async function importRecipe(params: {
 
   if (response.status === 401) {
     invalidateSession();
-    throw new Error('Please sign in again — your session expired.');
+    throw new Error(t('error.sessionExpired'));
   }
   const data = (await response.json().catch(() => null)) as
-    | { recipe?: ExtractedRecipe; error?: string }
+    | {
+        recipe?: ExtractedRecipe;
+        translation?: { lang?: unknown; recipe?: ExtractedRecipe };
+        translationFailed?: unknown;
+        error?: string;
+        code?: string;
+        status?: number;
+      }
     | null;
   if (!response.ok || !data?.recipe) {
-    throw new Error(data?.error ?? `Import failed (${response.status}).`);
+    throw new Error(
+      serverErrorText(data, 'error.importFailedStatus', { status: response.status }),
+    );
   }
 
-  return {
-    ...data.recipe,
-    tags: data.recipe.tags ?? [],
-    ingredientSections: data.recipe.ingredientSections ?? [],
-    steps: data.recipe.steps ?? [],
-  };
+  const result: ImportRecipeResult = { recipe: drafted(data.recipe) };
+  if (data.translationFailed === true) {
+    result.translationFailed = true;
+  }
+  const translation = data.translation;
+  if (
+    translation !== undefined &&
+    typeof translation.lang === 'string' &&
+    translation.recipe !== undefined
+  ) {
+    result.translation = { lang: translation.lang, recipe: drafted(translation.recipe) };
+  }
+  return result;
 }

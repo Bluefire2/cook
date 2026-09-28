@@ -9,6 +9,8 @@ import {
   SHARED_PARENT_OWNER_SUB_FIELD,
   type PushRejectReason,
 } from './pushReasons.ts';
+import { normalizeLang } from './lang.ts';
+import { TRANSLATIONS_COLLECTION, translationCacheDocIds } from './recipeTranslation.ts';
 import { canViewRecipe } from './shareAuth.ts';
 
 export { SHARED_PARENT_OWNER_SUB_FIELD };
@@ -239,6 +241,10 @@ export function compactRecipeFields(recipe: Record<string, unknown>): Record<str
     if (recipe[key] !== undefined) {
       next[key] = recipe[key];
     }
+  }
+  const lang = normalizeLang(recipe.lang);
+  if (lang !== undefined) {
+    next.lang = lang;
   }
   const galleryPhotoIds = compactGalleryPhotoIds(
     recipe.galleryPhotoIds,
@@ -1191,6 +1197,12 @@ export async function cascadeRecipeDelete(
       const serverUpdatedAt = Date.now();
       tx.set(recipeRef, tombstonePayload(recipeId, at, serverUpdatedAt), { merge: false });
     }
+    // Derived cache, not a sync doc. Delete on every branch after the one
+    // read: tombstone applied, stale reject, and missing doc. A missing
+    // cache doc is a no-op. Firestore rejects any read after these writes.
+    for (const docId of translationCacheDocIds(recipeId)) {
+      tx.delete(userRef(uid).collection(TRANSLATIONS_COLLECTION).doc(docId));
+    }
   });
 
   const photoIds = new Set<string>();
@@ -1373,6 +1385,9 @@ function jsonSize(value: unknown): number {
   return JSON.stringify(value).length;
 }
 
+/** Raw `lang` longer than this is rejected. A shorter value is normalized or dropped. */
+export const MAX_RECIPE_LANG_CHARS = 32;
+
 function validateRecipePut(payload: unknown): payload is Record<string, unknown> {
   if (!isPlainObject(payload)) {
     return false;
@@ -1407,6 +1422,11 @@ function validateRecipePut(payload: unknown): payload is Record<string, unknown>
       if (!isUuid(pid)) {
         return false;
       }
+    }
+  }
+  if (payload.lang !== undefined) {
+    if (typeof payload.lang !== 'string' || payload.lang.length > MAX_RECIPE_LANG_CHARS) {
+      return false;
     }
   }
   if (jsonSize(payload) >= 200_000) {
