@@ -7,8 +7,10 @@ import {
 } from './compactCollection';
 import { moveRecipe, wouldExceedRecipeIdCap } from './collectionMembership';
 import {
+  beginLocalWrite,
   collectionAccess,
   countOwnedNamedCollections,
+  endLocalWrite,
   getCollectionOrigin,
   getCollection,
   getSnapshot,
@@ -29,9 +31,10 @@ import {
   setCollectionGrantRole,
   type CollectionGrant,
   type GrantRole,
+  type LeaveSharedResult,
   type RemoteResult,
 } from './remote';
-import { sync } from './syncEngine';
+import { pullAfterLocalWrite } from './syncEngine';
 import type { Collection } from './types';
 
 function rejectShared(id: string): void {
@@ -217,14 +220,33 @@ export const collectionStore = {
     if (origin?.kind !== 'shared') {
       throw new Error('This collection is not shared with you.');
     }
-    const result = await leaveSharedCollection(origin.ownerSub, id);
+    // A pull that started before this tombstone can otherwise publish the
+    // collection back onto the screen after we return. Hold the library
+    // the same way recipe delete does, then read the server instead of
+    // trusting that a concurrent pull already saw the tombstone.
+    const writeEpoch = beginLocalWrite();
+    let result: LeaveSharedResult;
+    try {
+      result = await leaveSharedCollection(origin.ownerSub, id);
+    } finally {
+      endLocalWrite();
+    }
     if (result.kind === 'signedOut') {
       throw new Error('Please sign in again — your session expired.');
     }
     if (result.kind === 'error') {
       throw new Error(result.message);
     }
-    await sync();
+    // Leave succeeded (or the grant was already gone). Drop it locally right
+    // away so the screen doesn't flash it back before the pull below lands.
+    removeCollectionLocal(id);
+    const outcome = await pullAfterLocalWrite(writeEpoch);
+    if (outcome === 'signedOut') {
+      throw new Error('Please sign in again — your session expired.');
+    }
+    if (outcome !== 'ok') {
+      throw new Error("Couldn't refresh after leaving.");
+    }
   },
 
   async moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {
@@ -269,7 +291,6 @@ export const collectionStore = {
       throw err;
     }
   },
-
 };
 
 export function useCollections(): Collection[] | undefined {

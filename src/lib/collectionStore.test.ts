@@ -4,7 +4,9 @@ import { collectionPushErrorMessage, collectionStore } from './collectionStore';
 import {
   clearLibrary,
   countOwnedNamedCollections,
+  getCollection,
   listCollections,
+  removeCollectionLocal,
   upsertCollection,
 } from './libraryMemory';
 import { recipeStore } from './recipeStore';
@@ -16,7 +18,7 @@ import {
   pushOps,
   revokeCollectionGrant,
 } from './remote';
-import { sync } from './syncEngine';
+import { pullAfterLocalWrite } from './syncEngine';
 import type { CollectionGrant } from './remote';
 import type { Collection } from './types';
 
@@ -29,7 +31,7 @@ vi.mock('./remote', () => ({
 }));
 
 vi.mock('./syncEngine', () => ({
-  sync: vi.fn(),
+  pullAfterLocalWrite: vi.fn(),
 }));
 
 function collection(id: string, name: string): Collection {
@@ -49,7 +51,7 @@ afterEach(() => {
   vi.mocked(listCollectionGrants).mockReset();
   vi.mocked(pushOps).mockReset();
   vi.mocked(revokeCollectionGrant).mockReset();
-  vi.mocked(sync).mockReset();
+  vi.mocked(pullAfterLocalWrite).mockReset();
 });
 
 describe('collectionPushErrorMessage', () => {
@@ -188,6 +190,16 @@ describe('collectionStore grant mutations', () => {
 });
 
 describe('collectionStore.leave', () => {
+  function installShared() {
+    installSharedRows({
+      recipes: new Map(),
+      collections: new Map([['shared', collection('shared', 'Theirs')]]),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map(),
+      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
+    });
+  }
+
   it('refuses to leave an owned collection', async () => {
     upsertCollection(collection('owned', 'Mine'));
 
@@ -195,7 +207,7 @@ describe('collectionStore.leave', () => {
       'This collection is not shared with you.',
     );
     expect(leaveSharedCollection).not.toHaveBeenCalled();
-    expect(sync).not.toHaveBeenCalled();
+    expect(pullAfterLocalWrite).not.toHaveBeenCalled();
   });
 
   it('refuses to leave an unknown collection id', async () => {
@@ -205,47 +217,69 @@ describe('collectionStore.leave', () => {
     expect(leaveSharedCollection).not.toHaveBeenCalled();
   });
 
-  it('leaves a shared collection by its owner sub, then refreshes', async () => {
-    installSharedRows({
-      recipes: new Map(),
-      collections: new Map([['shared', collection('shared', 'Theirs')]]),
-      remotePhotoIds: new Set(),
-      recipeOrigins: new Map(),
-      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
-    });
+  it('leaves a shared collection by its owner sub, drops it locally, then rereads the server', async () => {
+    installShared();
     vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'ok' });
+    vi.mocked(pullAfterLocalWrite).mockResolvedValue('ok');
 
     await expect(collectionStore.leave('shared')).resolves.toBeUndefined();
 
     expect(leaveSharedCollection).toHaveBeenCalledTimes(1);
     expect(leaveSharedCollection).toHaveBeenCalledWith('alice', 'shared');
-    expect(sync).toHaveBeenCalledTimes(1);
+    expect(getCollection('shared')).toBeUndefined();
+    expect(pullAfterLocalWrite).toHaveBeenCalledTimes(1);
+    expect(pullAfterLocalWrite).toHaveBeenCalledWith(expect.any(Number));
   });
 
-  it('surfaces a signed-out result without refreshing', async () => {
-    installSharedRows({
-      recipes: new Map(),
-      collections: new Map([['shared', collection('shared', 'Theirs')]]),
-      remotePhotoIds: new Set(),
-      recipeOrigins: new Map(),
-      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
+  it('discards a pull that overlapped the leave and keeps the tombstone the follow-up pull read', async () => {
+    installShared();
+    vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'ok' });
+    vi.mocked(pullAfterLocalWrite).mockImplementation(async () => {
+      // Simulate a pull that started before the leave and would have
+      // repainted the collection, followed by the fresh pull that reads
+      // the tombstone instead — the same discard-and-reread contract
+      // `pullAfterLocalWrite` gives recipe delete.
+      upsertCollection(collection('shared', 'Theirs'));
+      removeCollectionLocal('shared');
+      return 'ok';
     });
+
+    await expect(collectionStore.leave('shared')).resolves.toBeUndefined();
+    expect(getCollection('shared')).toBeUndefined();
+  });
+
+  it('throws so the sheet stays open when the follow-up pull fails', async () => {
+    installShared();
+    vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'ok' });
+    vi.mocked(pullAfterLocalWrite).mockResolvedValue('error');
+
+    await expect(collectionStore.leave('shared')).rejects.toThrow(
+      "Couldn't refresh after leaving.",
+    );
+  });
+
+  it('treats a signed-out follow-up pull as a sign-in error', async () => {
+    installShared();
+    vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'ok' });
+    vi.mocked(pullAfterLocalWrite).mockResolvedValue('signedOut');
+
+    await expect(collectionStore.leave('shared')).rejects.toThrow(
+      'Please sign in again — your session expired.',
+    );
+  });
+
+  it('surfaces a signed-out leave result without pulling', async () => {
+    installShared();
     vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'signedOut' });
 
     await expect(collectionStore.leave('shared')).rejects.toThrow(
       'Please sign in again — your session expired.',
     );
-    expect(sync).not.toHaveBeenCalled();
+    expect(pullAfterLocalWrite).not.toHaveBeenCalled();
   });
 
-  it('surfaces a server error without refreshing', async () => {
-    installSharedRows({
-      recipes: new Map(),
-      collections: new Map([['shared', collection('shared', 'Theirs')]]),
-      remotePhotoIds: new Set(),
-      recipeOrigins: new Map(),
-      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
-    });
+  it('surfaces a server error without pulling', async () => {
+    installShared();
     vi.mocked(leaveSharedCollection).mockResolvedValue({
       kind: 'error',
       message: "Couldn't leave the collection.",
@@ -254,6 +288,6 @@ describe('collectionStore.leave', () => {
     await expect(collectionStore.leave('shared')).rejects.toThrow(
       "Couldn't leave the collection.",
     );
-    expect(sync).not.toHaveBeenCalled();
+    expect(pullAfterLocalWrite).not.toHaveBeenCalled();
   });
 });
