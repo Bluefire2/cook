@@ -161,6 +161,8 @@ describe('translateSegments', () => {
     const contents = calls[0].contents;
     expect(contents).toContain('Do not convert units.');
     expect(contents).toContain('Keep numbers, units, and temperatures exactly as written.');
+    expect(contents).toContain('Keep "(?)" uncertainty markers exactly as written, including in notes.');
+    expect(contents).toContain('Do not resolve a tablespoon-versus-teaspoon doubt. Leave it in notes.');
     expect(contents).toContain('Keep dish names recognisable.');
     expect(contents).toContain('Return exactly the ids given');
     expect(contents).toContain(translationPrompt({ target: 'uk', sourceLang: 'it', mode: 'translate' }));

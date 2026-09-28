@@ -120,6 +120,8 @@ export function translationPrompt(input: {
     `Translate each segment of this cooking text into ${targetName}.`,
     'Keep numbers, units, and temperatures exactly as written.',
     'Do not convert units.',
+    'Keep "(?)" uncertainty markers exactly as written, including in notes.',
+    'Do not resolve a tablespoon-versus-teaspoon doubt. Leave it in notes.',
     'Keep dish names recognisable.',
     'Return exactly the ids given, once each, in the same order.',
     'Return detectedLang as a BCP 47 language tag for the source text.',
