@@ -72,7 +72,57 @@ in-context review.
 4. **`zh-Hans` import hint register.** "如果不对，请你改一下。" reads a
    little stiff; "如果不对，可以修改。" is more natural. Optional.
 
-## 4. Behaviour found during verification (outside the review rubric)
+## 4. Typed message parameters
+
+**Problem.** Missing catalog keys fail `tsc`, but parameter names do not.
+`t('import.looksLike', { langauge: name })` compiles, and the page shows a
+literal `{language}`. `src/i18n/messages.test.ts` only checks that every
+locale uses the same placeholders as English; it cannot see call sites.
+Compile-time parameter checking is the main advantage the i18n libraries
+reviewed on 2026-09-28 (Paraglide JS, i18next with `as const` resources)
+have over this code. It needs about 20 lines of types, not a library. See
+the constitution's Current decisions, "Catalogs: no i18n library".
+
+**Change** (`src/i18n/en.ts`, `src/i18n/index.ts`; no catalog text
+changes):
+1. Derive each key's parameter names from the English template. `en` is
+   already `as const satisfies …`, so a template-literal type can extract
+   them. For a plural key, read the names from its `other` form, and always
+   include `count: number`:
+
+   ```ts
+   type Placeholders<S extends string> =
+     S extends `${string}{${infer Name}}${infer Rest}` ? Name | Placeholders<Rest> : never;
+   ```
+
+2. Type the parameters per key: `ParamsFor<K>` is `undefined` when there are
+   no placeholders, and otherwise
+   `{ [N in Placeholders<…>]: N extends 'count' ? number : string | number }`.
+3. Give `translate`, `t`, and `useT` a generic signature:
+   `<K extends MessageKey>(key: K, ...params: ParamsFor<K> extends undefined ? [] : [ParamsFor<K>])`.
+   Then a key with placeholders requires them, and a key without them takes
+   none.
+4. Fix any call sites `tsc` reports. The 2026-09-28 pass found no wrong
+   names, so expect few or none.
+5. Some call sites build the key at runtime and pass a key union, for
+   example `unitLabel` (`unit.${token}`) and `serverErrorText` in
+   `src/lib/errorText.ts` (a code → key map with computed parameters). Keep
+   them compiling with a narrow, documented escape: an internal untyped
+   `translateDynamic`, or a per-map parameter type. Don't loosen the
+   public `t`.
+
+**Check.**
+- Add a type-level test (for example `expectTypeOf` in Vitest, or
+  `// @ts-expect-error` lines in a `*.test-d.ts` file):
+  - a misspelled parameter fails;
+  - a missing required parameter fails;
+  - a plural key without `count` fails;
+  - a key without placeholders rejects extra parameters.
+- `npm run build` and `npm test` pass.
+- There is no runtime change, so no in-context review is needed. It changes
+  no user-facing text (principle 16).
+
+## 5. Behaviour found during verification (outside the review rubric)
 
 These are product or quality questions, not catalog bugs. Decide before
 changing anything.
@@ -104,7 +154,7 @@ changing anything.
 6. **Bulk mode with one link** falls back to the single-recipe preview.
    Existing behaviour, noted only because it surprised the reviewer.
 
-## 5. In-context review procedure
+## 6. In-context review procedure
 
 1. **Test data (open question for the owner).** Principle 16 says the
    review writes nothing. About a dozen manifest states (share sheet,
