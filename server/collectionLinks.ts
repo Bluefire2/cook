@@ -219,16 +219,27 @@ export async function orchestrateCollectionLinkRedeem(
         viewerSub: redeemer.sub,
         email: redeemer.email.trim().toLowerCase(),
         role: link.role,
+        // A link never changes an existing grant: an editor link does not
+        // upgrade a viewer, a viewer link does not downgrade an editor. Unlike
+        // add-by-email, which applies the owner's chosen role.
+        onExisting: 'keepRole',
       },
       { now: () => now, runTransaction: (work) => work(grantTx) },
     );
-    if (outcome.kind === 'collectionMissing') {
-      return { kind: 'dead' };
+    switch (outcome.kind) {
+      case 'collectionMissing':
+        return { kind: 'dead' };
+      case 'cap':
+        return { kind: 'cap' };
+      case 'idempotent':
+        return { kind: 'idempotent' };
+      case 'write':
+        return { kind: 'write' };
+      default: {
+        const unreachable: never = outcome;
+        throw new Error(`unexpected grant outcome ${JSON.stringify(unreachable)}`);
+      }
     }
-    if (outcome.kind === 'cap') {
-      return { kind: 'cap' };
-    }
-    return { kind: outcome.kind };
   });
 }
 

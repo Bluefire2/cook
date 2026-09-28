@@ -256,6 +256,17 @@ describe('orchestrateCollectionLinkRedeem', () => {
     expect(store.writes).toHaveLength(0);
   });
 
+  it('keeps an existing grant role: a viewer link does not downgrade an editor', async () => {
+    const store = fakeRedeemStore({
+      link: liveLink({ role: 'viewer' }),
+      grants: [{ id: member.sub, data: { ...liveGrantDoc(member.sub, 'editor') } }],
+    });
+    expect(await orchestrateCollectionLinkRedeem(member, store.deps)).toEqual({
+      kind: 'idempotent',
+    });
+    expect(store.writes).toHaveLength(0);
+  });
+
   it.each([
     ['unknown', null],
     ['expired', liveLink({ expiresAt: now })],
