@@ -372,6 +372,7 @@ export const en = {
   'error.sharedPhotos': "Photos on a shared recipe can't be changed.",
   'error.notSharedWithYou': 'This collection is not shared with you.',
   'error.leaveRefresh': "Couldn't refresh after leaving.",
+  'error.leaveCollection': "Couldn't leave the collection.",
   'error.collectionNotFound': 'Collection not found.',
   'error.collectionFull': 'This collection is full.',
   'error.collectionSave': "Couldn't save the collection.",

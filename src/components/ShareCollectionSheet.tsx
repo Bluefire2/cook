@@ -55,7 +55,7 @@ export default function ShareCollectionSheet({
       setRole('viewer');
       setGrants(await collectionStore.listGrants(collection.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't update sharing.");
+      setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
       setBusy(false);
     }

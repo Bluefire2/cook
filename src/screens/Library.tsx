@@ -207,7 +207,7 @@ export default function Library() {
       navigate('/');
     } catch (err) {
       setCollectionError(
-        err instanceof Error ? err.message : "Couldn't leave the collection.",
+        err instanceof Error ? err.message : t('error.leaveCollection'),
       );
     } finally {
       setLeaveBusy(false);

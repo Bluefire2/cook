@@ -369,6 +369,7 @@ export const uk: Messages = {
   'error.sharedPhotos': 'Фото спільного рецепта змінити не можна.',
   'error.notSharedWithYou': 'Цією колекцією з вами не поділилися.',
   'error.leaveRefresh': 'Не вдалося оновити після виходу.',
+  'error.leaveCollection': 'Не вдалося вийти з колекції.',
   'error.collectionNotFound': 'Колекцію не знайдено.',
   'error.collectionFull': 'Ця колекція заповнена.',
   'error.collectionSave': 'Не вдалося зберегти колекцію.',

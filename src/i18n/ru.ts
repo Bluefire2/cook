@@ -367,6 +367,7 @@ export const ru: Messages = {
   'error.sharedPhotos': 'Фото общего рецепта изменить нельзя.',
   'error.notSharedWithYou': 'Этой коллекцией с вами не поделились.',
   'error.leaveRefresh': 'Не удалось обновить после выхода.',
+  'error.leaveCollection': 'Не удалось выйти из коллекции.',
   'error.collectionNotFound': 'Коллекция не найдена.',
   'error.collectionFull': 'Эта коллекция заполнена.',
   'error.collectionSave': 'Не удалось сохранить коллекцию.',

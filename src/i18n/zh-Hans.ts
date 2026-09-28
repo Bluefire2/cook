@@ -341,6 +341,7 @@ export const zhHans: Messages = {
   'error.sharedPhotos': '无法更改分享食谱的照片。',
   'error.notSharedWithYou': '这个合集没有分享给你。',
   'error.leaveRefresh': '退出后无法刷新。',
+  'error.leaveCollection': '无法退出合集。',
   'error.collectionNotFound': '找不到合集。',
   'error.collectionFull': '这个合集已经满了。',
   'error.collectionSave': '无法保存合集。',
