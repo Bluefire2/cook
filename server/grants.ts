@@ -1173,6 +1173,16 @@ export type GrantAddDependencies = {
   ) => Promise<GrantAddOutcome>;
 };
 
+/**
+ * What a grant add does to a person who already has a live grant.
+ * `applyRole`: the owner picked a role for that person (add by email), so it
+ * is written, in this transaction, the same pair write as a role change.
+ * `keepRole`: the existing role stands and nothing is written, so a
+ * grant path the owner did not aim at this person never upgrades or
+ * downgrades them.
+ */
+export type GrantAddOnExisting = 'applyRole' | 'keepRole';
+
 export async function orchestrateGrantAdd(
   input: {
     ownerSub: string;
@@ -1181,6 +1191,7 @@ export async function orchestrateGrantAdd(
     viewerSub: string;
     email: string;
     role: ShareRole;
+    onExisting: GrantAddOnExisting;
   },
   deps: GrantAddDependencies,
 ): Promise<GrantAddOutcome> {
@@ -1212,7 +1223,25 @@ export async function orchestrateGrantAdd(
       return { kind: 'cap' };
     }
     if (next.kind === 'idempotent') {
-      return { kind: 'idempotent', doc: next.doc };
+      if (input.onExisting === 'keepRole') {
+        return { kind: 'idempotent', doc: next.doc };
+      }
+      const changed = changeGrantRoleTransition({
+        existing: next.doc,
+        role: input.role,
+        now,
+      });
+      if (changed.kind !== 'write') {
+        return { kind: 'idempotent', doc: next.doc };
+      }
+      tx.writePair(
+        changed.doc,
+        incomingSharePayload(input.ownerSub, input.collectionId, changed.doc.updatedAt, {
+          ownerEmail: input.ownerEmail,
+          role: changed.doc.role,
+        }),
+      );
+      return { kind: 'write', doc: changed.doc };
     }
     tx.writePair(
       next.doc,
@@ -1232,6 +1261,7 @@ export async function commitCollectionGrant(input: {
   viewerSub: string;
   email: string;
   role: ShareRole;
+  onExisting: GrantAddOnExisting;
 }): Promise<GrantAddOutcome> {
   const db = getStoreFirestore();
   const grantCollection = grantColRef(input.ownerSub, input.collectionId);

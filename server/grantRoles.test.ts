@@ -4,9 +4,11 @@ import {
   addGrantTransition,
   changeGrantRoleTransition,
   incomingSharePayload,
+  orchestrateGrantAdd,
   orchestrateGrantRoleChange,
   parseGrantDoc,
   parseIncomingShareDoc,
+  type GrantAddOnExisting,
   type GrantRoleOutcome,
   type GrantRoleTransaction,
   type IncomingShareDoc,
@@ -143,6 +145,83 @@ describe('grant roles', () => {
 
     await expect(change('a/b', 'editor', 8)).resolves.toEqual({ kind: 'badRequest' });
     await expect(change('someone-else', 'editor', 8)).resolves.toEqual({ kind: 'missing' });
+  });
+});
+
+describe('grant add for someone already granted', () => {
+  function run(stored: 'viewer' | 'editor', requested: 'viewer' | 'editor', onExisting: GrantAddOnExisting) {
+    const grants = new Map<string, Record<string, unknown>>([
+      [viewerSub, { ...liveDoc, role: stored }],
+    ]);
+    const shares = new Map<string, IncomingShareDoc>([
+      [viewerSub, { ownerSub: 'owner', collectionId, ownerEmail: 'owner@example.com', role: stored, updatedAt: 2 }],
+    ]);
+    const writes: string[] = [];
+    const outcome = orchestrateGrantAdd(
+      {
+        ownerSub: 'owner',
+        ownerEmail: 'owner@example.com',
+        collectionId,
+        viewerSub,
+        email: liveDoc.email,
+        role: requested,
+        onExisting,
+      },
+      {
+        now: () => 9,
+        runTransaction: async (work) =>
+          work({
+            readCollection: async () => ({ id: collectionId, name: 'Dinners', recipeIds: [], updatedAt: 1 }),
+            readForwardGrants: async () =>
+              [...grants].map(([id, data]) => ({ id, data })),
+            writePair: (grant, share) => {
+              writes.push(grant.role);
+              grants.set(grant.viewerSub, grant);
+              shares.set(grant.viewerSub, share);
+            },
+          }),
+      },
+    );
+    return { outcome, grants, shares, writes };
+  }
+
+  it('applyRole (add by email) writes the requested role on both documents', async () => {
+    const up = run('viewer', 'editor', 'applyRole');
+    await expect(up.outcome).resolves.toMatchObject({
+      kind: 'write',
+      doc: { role: 'editor', createdAt: 1, updatedAt: 9 },
+    });
+    expect(parseGrantDoc(up.grants.get(viewerSub), viewerSub)).toMatchObject({ role: 'editor' });
+    expect(up.shares.get(viewerSub)).toEqual({
+      ownerSub: 'owner',
+      collectionId,
+      ownerEmail: 'owner@example.com',
+      role: 'editor',
+      updatedAt: 9,
+    });
+
+    const down = run('editor', 'viewer', 'applyRole');
+    await expect(down.outcome).resolves.toMatchObject({ kind: 'write', doc: { role: 'viewer' } });
+    expect(down.shares.get(viewerSub)).toMatchObject({ role: 'viewer' });
+
+    const same = run('editor', 'editor', 'applyRole');
+    await expect(same.outcome).resolves.toMatchObject({ kind: 'idempotent', doc: { role: 'editor' } });
+    expect(same.writes).toEqual([]);
+  });
+
+  it('keepRole never upgrades or downgrades an existing grant', async () => {
+    for (const [stored, requested] of [
+      ['viewer', 'editor'],
+      ['editor', 'viewer'],
+    ] as const) {
+      const kept = run(stored, requested, 'keepRole');
+      await expect(kept.outcome).resolves.toMatchObject({
+        kind: 'idempotent',
+        doc: { role: stored },
+      });
+      expect(kept.writes).toEqual([]);
+      expect(kept.shares.get(viewerSub)).toMatchObject({ role: stored });
+    }
   });
 });
 

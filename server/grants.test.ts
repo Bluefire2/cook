@@ -1502,6 +1502,7 @@ describe('collection delete grant cascade', () => {
         viewerSub,
         email: 'viewer-1@example.com',
         role: 'editor',
+        onExisting: 'applyRole',
       },
       {
         now: () => 3_000,
@@ -1675,6 +1676,7 @@ describe('collection delete grant cascade', () => {
         viewerSub,
         email: 'viewer-1@example.com',
         role: 'viewer',
+        onExisting: 'applyRole',
       },
       {
         now: () => 3_000,

@@ -218,6 +218,8 @@ export async function collectionGrantsPost(req: Request): Promise<Response> {
       viewerSub: target.sub,
       email: target.email.trim().toLowerCase(),
       role,
+      // The owner chose this role for this person; an existing grant takes it.
+      onExisting: 'applyRole',
     });
     if (outcome.kind === 'collectionMissing') {
       return notFound();
