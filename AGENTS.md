@@ -166,11 +166,14 @@ Each grant has `role: 'viewer' | 'editor'`, copied onto its
 `incomingShares` row; a missing or unknown role reads as viewer (no
 backfill). The owner changes it with `POST /api/collections/:id/grants/role`
 `{ sub, role }` (404 for anyone else, 400 for a bad role); the 20-grant cap
-counts both roles. An editor saves with `recipe.put` plus op-level
+counts both roles. Add by email to someone already granted applies the
+chosen role (`orchestrateGrantAdd` `onExisting: 'applyRole'`); a grant path
+that must not change an existing role passes `'keepRole'`. An editor saves with `recipe.put` plus op-level
 `shared: true`. The server resolves owner and role from the session's shares
 inside the writing transaction (share → collection → listed live recipe,
 stronger role wins), writes the owner's row with the owner's `id`,
-`createdAt`, and photo ids, and rejects (`invalid`) a viewer, an unadmitted
+`createdAt`, and photo ids, clamps `updatedAt` to server time before the LWW
+compare (and stores the clamped value), and rejects (`invalid`) a viewer, an unadmitted
 owner, or any photo-id change. The flag only narrows: without it a put is an
 ordinary own-tree write. Only the owner deletes; `recipe.delete` from a
 session with no own row that reaches the id through a share is `invalid`.

@@ -682,8 +682,12 @@ unchanged for viewers. Owner-confirmed decisions:
   anything else unknown ⇒ 400). `POST …/grants/role` `{ sub, role }` changes a
   live grant's role, owner of the collection only: 404 for everyone else and
   for a missing or revoked grant, 400 for a bad role or sub, same role is a
-  no-op 200. Grant add of an already-live grant stays idempotent (D20) and
-  keeps the existing role; the row switch is how a role changes. Responses
+  no-op 200. Add by email to someone with a live grant applies the requested
+  role in the same transaction (same pair write as a role change; no write
+  when unchanged) and returns the resulting role; otherwise it stays
+  idempotent (D20). `orchestrateGrantAdd` takes a required `onExisting`:
+  `applyRole` for add by email, `keepRole` for grant paths the owner did not
+  aim at that person, which must never upgrade or downgrade them. Responses
   include `role`. Cookie auth only.
 - **Editor write.** An editor may `recipe.put` a recipe listed in a live
   collection shared with them as editor. The client sends op-level
@@ -692,7 +696,12 @@ unchanged for viewers. Owner-confirmed decisions:
   `recipeIds` lists the id → live recipe, same chain as shared chat). The
   stronger role wins across collections. The write lands on the owner's
   `users/{owner}/recipes/{id}` with the owner's `id`, `createdAt`, and photo
-  ids; `updatedAt` is the editor's clock under the normal LWW compare. A
+  ids; `updatedAt` is the editor's clock clamped to server time
+  (`min(client, server)`), compared and stored under the normal LWW rule, so a
+  far-future stamp cannot lock the owner out. An editor may change every
+  recipe field except photos (title, description, ingredients, steps, notes,
+  servings, times, tags; the edit form has no source-URL field, but a put may
+  carry one). A
   viewer, a missing share, an unadmitted owner, or any change to `photoId` /
   `galleryPhotoIds` (add, remove, swap, reorder) is rejected `invalid`, so an
   editor's bytes never reach the owner's bucket. No collection membership,
@@ -719,4 +728,5 @@ Deviations recorded at implementation:
   it still creates a row in the viewer's own tree (never the owner's).
 - **`access` on `ItemOrigin`**, not on a separate collection type.
 - **Share-sheet intro copy** changed from "view … not edit" to describe both
-  roles.
+  roles: editors edit the recipes except their photos; only the owner deletes
+  or changes access.

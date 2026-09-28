@@ -90,8 +90,8 @@ export default function ShareCollectionSheet({
       <h2 className="text-lg font-semibold">Share “{collection.name}”</h2>
       <p className="mt-1 text-sm text-ink-muted">
         Add someone who already has a Sous account. Viewers can see these
-        recipes and photos. Editors can also edit the recipes, but not their
-        photos.
+        recipes and photos. Editors can also edit the recipes, except their
+        photos. Nobody but you can delete them or change who has access.
       </p>
       <form
         onSubmit={(event) => {
