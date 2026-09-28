@@ -130,7 +130,7 @@ describe('POST /api/import', () => {
       const result = await post(body);
       expect(result).toMatchObject({
         status: 400,
-        body: { error: 'Provide a URL or recipe text.', code: 'import-empty' },
+        body: { error: 'Provide a URL, recipe text, or photos.', code: 'import-empty' },
       });
       expect(result.calls).toHaveLength(0);
     }
@@ -141,7 +141,7 @@ describe('POST /api/import', () => {
     const result = await post({ url: 'https://example.com/soup' });
     expect(result).toMatchObject({
       status: 400,
-      body: { error: 'Provide a URL or recipe text.', code: 'import-empty' },
+      body: { error: 'Provide a URL, recipe text, or photos.', code: 'import-empty' },
     });
     expect(result.calls).toHaveLength(0);
   });
@@ -308,7 +308,7 @@ describe('POST /api/import with photos', () => {
 
     expect(await post({ images: [] })).toMatchObject({
       status: 400,
-      body: { error: 'Provide a URL or recipe text.' },
+      body: { error: 'Provide a URL, recipe text, or photos.' },
     });
   });
 

@@ -80,7 +80,7 @@ export const en = {
   'library.closeMenu': 'Close menu',
   'library.addRecipe': 'Add recipe',
   'library.addRecipeTitle': 'Add a recipe',
-  'library.importFromLink': 'Import from a link or text',
+  'library.importFromLink': 'Import from a link, text, or photos',
   'library.writeFromScratch': 'Write one from scratch',
   'library.deleteRecipeTitle': 'Delete “{title}”?',
   'library.deleteRecipeBody':
@@ -397,7 +397,7 @@ export const en = {
   'error.importUnreachable': 'Could not reach that URL.',
   'error.importRefused':
     'The site refused the request ({status}). Try pasting the recipe text instead.',
-  'error.importEmpty': 'Provide a URL or recipe text.',
+  'error.importEmpty': 'Provide a URL, recipe text, or photos.',
   'error.importNoRecipe': "Couldn't find a recipe in that content.",
   'error.importExtractFailed': 'Extraction failed — no structured result.',
   'error.importUnusable': 'Extraction produced an unusable recipe.',

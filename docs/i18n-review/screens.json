@@ -24,6 +24,12 @@
     "needsData": false
   },
   {
+    "id": "library-add-sheet",
+    "route": "/",
+    "setup": "Signed in on the Recipes list, open Add a recipe. The sheet shows Import from a link, text, or photos, and Write one from scratch. Do not leave the sheet and do not create a recipe. If this session is signed out, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
     "id": "import-idle",
     "route": "/import",
     "setup": "Import with an empty textarea, the bulk-import checkbox off, no photo attached, and no preview. The Add photos button is visible. Open /import with no ?c= query. Do not extract.",

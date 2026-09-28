@@ -63,7 +63,7 @@ export const uk: Messages = {
   'library.closeMenu': 'Закрити меню',
   'library.addRecipe': 'Додати рецепт',
   'library.addRecipeTitle': 'Додати рецепт',
-  'library.importFromLink': 'Імпортувати з посилання або тексту',
+  'library.importFromLink': 'Імпортувати з посилання, тексту або фото',
   'library.writeFromScratch': 'Написати з нуля',
   'library.deleteRecipeTitle': 'Видалити «{title}»?',
   'library.deleteRecipeBody':
@@ -395,7 +395,7 @@ export const uk: Messages = {
   'error.importUnreachable': 'Не вдалося відкрити цю адресу.',
   'error.importRefused':
     'Сайт відхилив запит ({status}). Спробуйте натомість вставити текст рецепта.',
-  'error.importEmpty': 'Вкажіть адресу або текст рецепта.',
+  'error.importEmpty': 'Вкажіть адресу, текст рецепта або фото.',
   'error.importNoRecipe': 'У цьому вмісті не знайдено рецепт.',
   'error.importExtractFailed': 'Не вдалося розібрати рецепт — немає структурованого результату.',
   'error.importUnusable': 'Розібраний рецепт непридатний.',

@@ -55,7 +55,7 @@ export type ImportImagesCheck =
   | { kind: 'unreadable' }
   | { kind: 'too_large' };
 
-const NOTHING_TO_IMPORT = 'Provide a URL or recipe text.';
+const NOTHING_TO_IMPORT = 'Provide a URL, recipe text, or photos.';
 const BODY_TOO_LARGE = "That's too large to import — try fewer photos.";
 const PHOTOS_NOT_A_RECIPE = "Couldn't find a recipe in those photos.";
 

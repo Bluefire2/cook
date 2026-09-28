@@ -62,7 +62,7 @@ export const ru: Messages = {
   'library.closeMenu': 'Закрыть меню',
   'library.addRecipe': 'Добавить рецепт',
   'library.addRecipeTitle': 'Добавить рецепт',
-  'library.importFromLink': 'Импортировать по ссылке или из текста',
+  'library.importFromLink': 'Импортировать по ссылке, из текста или с фото',
   'library.writeFromScratch': 'Написать с нуля',
   'library.deleteRecipeTitle': 'Удалить «{title}»?',
   'library.deleteRecipeBody':
@@ -393,7 +393,7 @@ export const ru: Messages = {
   'error.importUnreachable': 'Не удалось открыть этот адрес.',
   'error.importRefused':
     'Сайт отклонил запрос ({status}). Попробуйте вместо этого вставить текст рецепта.',
-  'error.importEmpty': 'Укажите адрес или текст рецепта.',
+  'error.importEmpty': 'Укажите адрес, текст рецепта или фото.',
   'error.importNoRecipe': 'В этом содержимом не найден рецепт.',
   'error.importExtractFailed': 'Не удалось разобрать рецепт — нет структурированного результата.',
   'error.importUnusable': 'Разобранный рецепт непригоден.',

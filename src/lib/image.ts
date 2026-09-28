@@ -70,7 +70,7 @@ export async function encodeImageForImport(blob: Blob): Promise<EncodedImage> {
     if (!dataUrl.startsWith(prefix)) throw new Error('not a JPEG data URL');
     return { mediaType: 'image/jpeg', base64: dataUrl.slice(prefix.length) };
   } catch {
-    throw new Error('That image could not be encoded.');
+    throw new Error(t('error.imageEncode'));
   }
 }
 
