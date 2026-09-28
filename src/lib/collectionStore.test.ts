@@ -217,38 +217,28 @@ describe('collectionStore.leave', () => {
     expect(leaveSharedCollection).not.toHaveBeenCalled();
   });
 
-  it('leaves a shared collection by its owner sub, drops it locally, then rereads the server', async () => {
+  it('leaves a shared collection by its owner sub and rereads the server', async () => {
     installShared();
     vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'ok' });
-    vi.mocked(pullAfterLocalWrite).mockResolvedValue('ok');
-
-    await expect(collectionStore.leave('shared')).resolves.toBeUndefined();
-
-    expect(leaveSharedCollection).toHaveBeenCalledTimes(1);
-    expect(leaveSharedCollection).toHaveBeenCalledWith('alice', 'shared');
-    expect(getCollection('shared')).toBeUndefined();
-    expect(pullAfterLocalWrite).toHaveBeenCalledTimes(1);
-    expect(pullAfterLocalWrite).toHaveBeenCalledWith(expect.any(Number));
-  });
-
-  it('discards a pull that overlapped the leave and keeps the tombstone the follow-up pull read', async () => {
-    installShared();
-    vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'ok' });
+    let presentBeforePull: boolean | undefined;
     vi.mocked(pullAfterLocalWrite).mockImplementation(async () => {
-      // Simulate a pull that started before the leave and would have
-      // repainted the collection, followed by the fresh pull that reads
-      // the tombstone instead — the same discard-and-reread contract
-      // `pullAfterLocalWrite` gives recipe delete.
-      upsertCollection(collection('shared', 'Theirs'));
+      // The collection stays until the pull publishes state without it.
+      presentBeforePull = getCollection('shared') !== undefined;
       removeCollectionLocal('shared');
       return 'ok';
     });
 
     await expect(collectionStore.leave('shared')).resolves.toBeUndefined();
+
+    expect(leaveSharedCollection).toHaveBeenCalledTimes(1);
+    expect(leaveSharedCollection).toHaveBeenCalledWith('alice', 'shared');
+    expect(presentBeforePull).toBe(true);
     expect(getCollection('shared')).toBeUndefined();
+    expect(pullAfterLocalWrite).toHaveBeenCalledTimes(1);
+    expect(pullAfterLocalWrite).toHaveBeenCalledWith(expect.any(Number));
   });
 
-  it('throws so the sheet stays open when the follow-up pull fails', async () => {
+  it('throws and keeps the collection when the follow-up pull fails', async () => {
     installShared();
     vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'ok' });
     vi.mocked(pullAfterLocalWrite).mockResolvedValue('error');
@@ -256,6 +246,7 @@ describe('collectionStore.leave', () => {
     await expect(collectionStore.leave('shared')).rejects.toThrow(
       "Couldn't refresh after leaving.",
     );
+    expect(getCollection('shared')).toBeDefined();
   });
 
   it('treats a signed-out follow-up pull as a sign-in error', async () => {

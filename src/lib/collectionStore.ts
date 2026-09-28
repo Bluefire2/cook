@@ -237,9 +237,11 @@ export const collectionStore = {
     if (result.kind === 'error') {
       throw new Error(result.message);
     }
-    // Leave succeeded (or the grant was already gone). Drop it locally right
-    // away so the screen doesn't flash it back before the pull below lands.
-    removeCollectionLocal(id);
+    // Leave succeeded (or the grant was already gone). Do not drop the
+    // collection locally first: that would unmount the Leave sheet, so a failed
+    // refresh could not show its error. The epoch hold above keeps an
+    // overlapping pull from repainting, and a successful pull publishes state
+    // without the collection and its recipes.
     const outcome = await pullAfterLocalWrite(writeEpoch);
     if (outcome === 'signedOut') {
       throw new Error('Please sign in again — your session expired.');
