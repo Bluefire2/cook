@@ -115,8 +115,10 @@ export type SharedRecipePutPlan =
  * Decision for a recipe put a non-owner makes. Only an editor may write, and
  * only text: photo ids must match the stored recipe, because a new id would
  * point the owner's recipe at bytes in the editor's own bucket path. The row
- * keeps the owner's id and `createdAt`; `updatedAt` is the editor's clock,
- * under the same last-write-wins rule as the owner's own devices.
+ * keeps the owner's id and `createdAt`. `updatedAt` is the editor's clock
+ * clamped to server time, then compared and stored under the same
+ * last-write-wins rule as the owner's own devices: a far-future stamp from a
+ * non-owner cannot lock the owner out of their own recipe.
  */
 export function planSharedRecipePut(input: {
   recipeId: string;
@@ -133,9 +135,10 @@ export function planSharedRecipePut(input: {
   if (!recipePhotoIdsUnchanged(access.recipe, input.payload)) {
     return { kind: 'reject', result: { applied: false, reason: 'invalid' } };
   }
+  const updatedAt = Math.min(input.clientUpdatedAt, input.serverUpdatedAt);
   const cmp = compareMutation(
     readStoredMutationState(access.recipe),
-    input.clientUpdatedAt,
+    updatedAt,
     'put',
   );
   if (!cmp.allow) {
@@ -159,7 +162,7 @@ export function planSharedRecipePut(input: {
         galleryPhotoIds: access.recipe.galleryPhotoIds,
       }),
       id: input.recipeId,
-      updatedAt: input.clientUpdatedAt,
+      updatedAt,
       serverUpdatedAt: input.serverUpdatedAt,
     },
   };

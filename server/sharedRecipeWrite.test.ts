@@ -9,6 +9,7 @@ import {
   type SharedRecipeAccessIo,
   type SharedRecipePutTransaction,
 } from './sharedRecipeWrite.ts';
+import { compareMutation, readStoredMutationState } from './store.ts';
 import {
   parseShareRole,
   requestedShareRole,
@@ -246,6 +247,14 @@ describe('planSharedRecipePut', () => {
         result: { applied: false, reason: 'invalid' },
       });
     }
+  });
+
+  it('stores a far-future editor stamp as server time, so a later owner save still wins', () => {
+    const plan = planSharedRecipePut({ ...base, clientUpdatedAt: 9_999_999_999_999 });
+    expect(plan).toMatchObject({ kind: 'write', body: { updatedAt: 99, serverUpdatedAt: 99 } });
+    if (plan.kind !== 'write') return;
+    const ownerLater = compareMutation(readStoredMutationState(plan.body), 100, 'put');
+    expect(ownerLater).toEqual({ allow: true, undeleting: false });
   });
 
   it('keeps last-write-wins against the owner row', () => {
