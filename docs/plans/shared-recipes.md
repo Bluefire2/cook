@@ -730,3 +730,62 @@ Deviations recorded at implementation:
 - **Share-sheet intro copy** changed from "view … not edit" to describe both
   roles: editors edit the recipes except their photos; only the owner deletes
   or changes access.
+
+## Collection links
+
+A second way to create the same grant: the owner mints a link instead of
+typing an email. Not an app invite (`invite-links.md`); a collection link
+never admits anyone to Sous. Owner-confirmed decisions:
+
+- **Mint.** `{origin}/c/<token>` from the share sheet, role chosen at mint
+  (viewer default, or editor). `collectionLinks/{sha256(token)}` stores
+  owner, owner email, collection, role, `status`, `createdAt`, `expiresAt`;
+  the raw token is in the mint response only. Multi-use until revoked or 7
+  days. At most 20 live links per collection (409 after). Mint, list, and
+  revoke are `/api/collections/:id/links` (`GET`, `POST { role? }`,
+  `POST …/revoke { id }`), cookie session, collection owner only, 404 for
+  anyone else. Revoke keeps the document with `status: 'revoked'`.
+- **Visit.** `GET /c/<token>` is server HTML like `/invite/<token>`. A live
+  link sets the `sous_collection_link` hop cookie (`v: 'clink'`, link id
+  only, 10 minutes, `Path=/c`) and 303s to `/c/join`, so the token leaves
+  the address bar at once and is never on a rendered page, in a Referer,
+  or in the OAuth transaction. `/c/*` responses send
+  `Referrer-Policy: no-referrer`, `Cache-Control: no-store`, and deny
+  framing.
+- **Admission.** `GET /c/join`: signed out ⇒ Sign in with Google, then back
+  to `/c/join`; the hop cookie survives the Google round trip by itself.
+  A non-member finishing consent gets the existing invitation-only 403 from
+  the callback; no member and no grant are written and the link stays valid.
+  A signed-in non-member gets the same page. Membership unknown is 503.
+- **Redeem is an explicit POST.** An admitted member or owner sees the
+  collection name, the sharer's email, the role, and that the sharer will
+  see their email, then presses Join. `POST /c/join` checks `Origin`, that
+  the posted link id matches the hop cookie, `requireMember`, and that the
+  collection owner is still admitted, then runs `orchestrateGrantAdd` inside
+  the transaction that re-reads the link: the same forward grant +
+  `incomingShares` pair as add-by-email, with the link's role, but with
+  `onExisting: 'keepRole'`. Unlike add-by-email (which applies the chosen
+  role), an already-granted redeemer is idempotent and keeps their role: an
+  editor link never upgrades a viewer and a viewer link never downgrades an
+  editor. The owner's row switch changes roles. At the 20-grant cap nothing is written and a "collection is full"
+  page shows; the link stays valid. The collection owner opening their own
+  link is sent home with no self-grant.
+- **Dead links.** Unknown, revoked, expired, a deleted collection, or an
+  unadmitted owner render one generic 404 page. The response never says
+  which.
+- **No** email, Resend, new Google scope, or new env var. The OAuth callback
+  is unchanged.
+
+Deviations recorded at implementation:
+
+- **No redeem in the OAuth callback.** Redeeming on the callback would let a
+  third-party page chain a top-level `/c/<token>` visit and a silent Google
+  sign-in into a join the member never chose, and joining reveals their email
+  to the link's owner. The callback only signs in; the join is the POST.
+- **The hop cookie is not copied into the oauth transaction.** It rides the
+  round trip on its own `Path=/c` cookie and is cleared on a successful join,
+  the owner's own visit, or a dead link.
+- **Collection delete does not revoke links.** A dead collection already
+  fails generically; an undelete within 7 days revives its unexpired links.
+- **A revoked viewer can rejoin** with a link that is still live; revoke the
+  link too.
