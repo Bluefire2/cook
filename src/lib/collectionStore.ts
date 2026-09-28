@@ -8,7 +8,10 @@ import {
 } from './compactCollection';
 import { moveRecipe, wouldExceedRecipeIdCap } from './collectionMembership';
 import {
+  beginLocalWrite,
+  collectionAccess,
   countOwnedNamedCollections,
+  endLocalWrite,
   getCollectionOrigin,
   getCollection,
   getSnapshot,
@@ -18,15 +21,21 @@ import {
   removeCollectionLocal,
   subscribe,
   upsertCollection,
+  type LibraryAccess,
 } from './libraryMemory';
 import {
   addCollectionGrant,
+  leaveSharedCollection,
   listCollectionGrants,
   pushOps,
   revokeCollectionGrant,
+  setCollectionGrantRole,
   type CollectionGrant,
+  type GrantRole,
+  type LeaveSharedResult,
   type RemoteResult,
 } from './remote';
+import { pullAfterLocalWrite } from './syncEngine';
 import type { Collection } from './types';
 
 function rejectShared(id: string): void {
@@ -75,9 +84,14 @@ export const collectionStore = {
     return listCollections();
   },
 
-  /** True for a collection that arrived through an incoming share (view-only). */
+  /** True for a collection that arrived through an incoming share. */
   isShared(id: string): boolean {
     return isSharedCollection(id);
+  },
+
+  /** `editor` when a shared collection's recipes may be edited here. */
+  access(id: string): LibraryAccess | undefined {
+    return collectionAccess(id);
   },
 
   /** Email of whoever shared this collection with you, when known. */
@@ -160,9 +174,13 @@ export const collectionStore = {
     return result.grants ?? [];
   },
 
-  async addGrant(id: string, email: string): Promise<CollectionGrant> {
+  async addGrant(
+    id: string,
+    email: string,
+    role: GrantRole = 'viewer',
+  ): Promise<CollectionGrant> {
     rejectShared(id);
-    const result = await addCollectionGrant(id, email);
+    const result = await addCollectionGrant(id, email, role);
     if (result.kind === 'signedOut') {
       throw new Error(t('error.sessionExpired'));
     }
@@ -175,6 +193,17 @@ export const collectionStore = {
     return result.grant;
   },
 
+  async setGrantRole(id: string, sub: string, role: GrantRole): Promise<void> {
+    rejectShared(id);
+    const result = await setCollectionGrantRole(id, sub, role);
+    if (result.kind === 'signedOut') {
+      throw new Error(t('error.sessionExpired'));
+    }
+    if (result.kind === 'error') {
+      throw new Error(result.message);
+    }
+  },
+
   async revokeGrant(id: string, sub: string): Promise<void> {
     rejectShared(id);
     const result = await revokeCollectionGrant(id, sub);
@@ -183,6 +212,43 @@ export const collectionStore = {
     }
     if (result.kind === 'error') {
       throw new Error(result.message);
+    }
+  },
+
+  /** Only for a collection shared with you. Owned collections have no Leave control. */
+  async leave(id: string): Promise<void> {
+    const origin = getCollectionOrigin(id);
+    if (origin?.kind !== 'shared') {
+      throw new Error(t('error.notSharedWithYou'));
+    }
+    // A pull that started before this tombstone can otherwise publish the
+    // collection back onto the screen after we return. Hold the library
+    // the same way recipe delete does, then read the server instead of
+    // trusting that a concurrent pull already saw the tombstone.
+    const writeEpoch = beginLocalWrite();
+    let result: LeaveSharedResult;
+    try {
+      result = await leaveSharedCollection(origin.ownerSub, id);
+    } finally {
+      endLocalWrite();
+    }
+    if (result.kind === 'signedOut') {
+      throw new Error(t('error.sessionExpired'));
+    }
+    if (result.kind === 'error') {
+      throw new Error(result.message);
+    }
+    // Leave succeeded (or the grant was already gone). Do not drop the
+    // collection locally first: that would unmount the Leave sheet, so a failed
+    // refresh could not show its error. The epoch hold above keeps an
+    // overlapping pull from repainting, and a successful pull publishes state
+    // without the collection and its recipes.
+    const outcome = await pullAfterLocalWrite(writeEpoch);
+    if (outcome === 'signedOut') {
+      throw new Error(t('error.sessionExpired'));
+    }
+    if (outcome !== 'ok') {
+      throw new Error(t('error.leaveRefresh'));
     }
   },
 
@@ -228,7 +294,6 @@ export const collectionStore = {
       throw err;
     }
   },
-
 };
 
 export function useCollections(): Collection[] | undefined {

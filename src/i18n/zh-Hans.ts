@@ -43,8 +43,16 @@ export const zhHans: Messages = {
   'library.sharedLabel': '{name}（已分享）',
   'library.new': '新建',
   'library.rename': '重命名',
-  'library.sharedWithYouBy': '{email} 分享给你。只能查看。',
-  'library.sharedWithYou': '分享给你。只能查看。',
+  'library.sharedWithYouBy': '{email} 分享给你。',
+  'library.sharedWithYou': '分享给你。',
+  'library.youCanEdit': '你可以编辑这些食谱。',
+  'library.viewOnly': '只能查看。',
+  'library.leave': '退出',
+  'library.leaveTitle': '退出「{name}」？',
+  'library.leaveBody':
+    '你将失去这个合集的访问权限。所有者和其余被分享的人仍保留他们的访问权限。',
+  'library.leaving': '正在退出…',
+  'library.leaveCollection': '退出合集',
   'library.searchAll': '搜索全部食谱…',
   'library.searchIn': '在{name}中搜索…',
   'library.search': '搜索食谱…',
@@ -278,8 +286,13 @@ export const zhHans: Messages = {
   'saveSheet.collections': '合集',
 
   'share.title': '分享「{name}」',
-  'share.intro': '添加一个已经有 Sous 账号的人。对方可以查看这些食谱和照片，但不能编辑。',
+  'share.intro':
+    '添加一个已经有 Sous 账号的人。查看者可以看到这些食谱和照片。编辑者还可以修改食谱，但不能改照片。只有你可以删除它们，或更改谁能访问。',
   'share.emailPlaceholder': '邮箱',
+  'share.role': '角色',
+  'share.roleFor': '{email} 的角色',
+  'share.viewer': '查看者',
+  'share.editor': '编辑者',
   'share.nobodyYet': '目前还没有其他人能看到。',
 
   'sheet.dismiss': '关闭',
@@ -325,6 +338,9 @@ export const zhHans: Messages = {
 
   'error.sessionExpired': '请重新登录——你的会话已过期。',
   'error.sharedViewOnly': '这个分享的合集只能查看。',
+  'error.sharedPhotos': '无法更改分享食谱的照片。',
+  'error.notSharedWithYou': '这个合集没有分享给你。',
+  'error.leaveRefresh': '退出后无法刷新。',
   'error.collectionNotFound': '找不到合集。',
   'error.collectionFull': '这个合集已经满了。',
   'error.collectionSave': '无法保存合集。',

@@ -45,8 +45,16 @@ export const ru: Messages = {
   'library.sharedLabel': '{name} (общая)',
   'library.new': 'Новая',
   'library.rename': 'Переименовать',
-  'library.sharedWithYouBy': 'С вами поделился {email}. Только просмотр.',
-  'library.sharedWithYou': 'С вами поделились. Только просмотр.',
+  'library.sharedWithYouBy': 'С вами поделился {email}.',
+  'library.sharedWithYou': 'С вами поделились.',
+  'library.youCanEdit': 'Вы можете редактировать эти рецепты.',
+  'library.viewOnly': 'Только просмотр.',
+  'library.leave': 'Выйти',
+  'library.leaveTitle': 'Выйти из «{name}»?',
+  'library.leaveBody':
+    'Вы потеряете доступ к этой коллекции. Владелец и все, с кем ею поделились, сохранят свой.',
+  'library.leaving': 'Выход…',
+  'library.leaveCollection': 'Выйти из коллекции',
   'library.searchAll': 'Поиск по всем рецептам…',
   'library.searchIn': 'Поиск в «{name}»…',
   'library.search': 'Поиск рецептов…',
@@ -300,8 +308,12 @@ export const ru: Messages = {
 
   'share.title': 'Поделиться «{name}»',
   'share.intro':
-    'Добавьте человека, у которого уже есть аккаунт Sous. Он сможет просматривать эти рецепты и фото, но не редактировать их.',
+    'Добавьте человека, у которого уже есть аккаунт Sous. Зрители видят эти рецепты и фото. Редакторы могут также править рецепты, кроме фото. Удалить их или изменить доступ можете только вы.',
   'share.emailPlaceholder': 'Электронная почта',
+  'share.role': 'Роль',
+  'share.roleFor': 'Роль для {email}',
+  'share.viewer': 'Зритель',
+  'share.editor': 'Редактор',
   'share.nobodyYet': 'Пока это видите только вы.',
 
   'sheet.dismiss': 'Закрыть',
@@ -352,6 +364,9 @@ export const ru: Messages = {
 
   'error.sessionExpired': 'Войдите ещё раз — ваш сеанс истёк.',
   'error.sharedViewOnly': 'Эта общая коллекция доступна только для просмотра.',
+  'error.sharedPhotos': 'Фото общего рецепта изменить нельзя.',
+  'error.notSharedWithYou': 'Этой коллекцией с вами не поделились.',
+  'error.leaveRefresh': 'Не удалось обновить после выхода.',
   'error.collectionNotFound': 'Коллекция не найдена.',
   'error.collectionFull': 'Эта коллекция заполнена.',
   'error.collectionSave': 'Не удалось сохранить коллекцию.',

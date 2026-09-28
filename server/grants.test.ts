@@ -347,6 +347,7 @@ describe('parseGrantDoc', () => {
       viewerSub,
       email: 'alex@example.com',
       collectionId,
+      role: 'viewer' as const,
       createdAt: 1,
       updatedAt: 2,
       active: true,
@@ -416,6 +417,7 @@ describe('addGrantTransition', () => {
       viewerSub,
       email: 'alex@example.com',
       collectionId,
+      role: 'viewer' as const,
       createdAt: 1,
       updatedAt: 2,
       active: true as const,
@@ -426,6 +428,7 @@ describe('addGrantTransition', () => {
         viewerSub,
         email: live.email,
         collectionId,
+        role: 'viewer',
         now: 10,
         liveCount: 1,
       }).kind,
@@ -436,6 +439,7 @@ describe('addGrantTransition', () => {
         viewerSub,
         email: live.email,
         collectionId,
+        role: 'viewer',
         now: 10,
         liveCount: MAX_LIVE_GRANTS,
       }).kind,
@@ -446,6 +450,7 @@ describe('addGrantTransition', () => {
         viewerSub,
         email: live.email,
         collectionId,
+        role: 'viewer',
         now: 10,
         liveCount: 0,
       }),
@@ -455,6 +460,7 @@ describe('addGrantTransition', () => {
         viewerSub,
         email: live.email,
         collectionId,
+        role: 'viewer' as const,
         createdAt: 10,
         updatedAt: 10,
         active: true,
@@ -478,6 +484,7 @@ describe('revokeGrantTransition', () => {
         viewerSub,
         email: 'a@b.c',
         collectionId,
+        role: 'viewer' as const,
         createdAt: 1,
         updatedAt: 2,
         active: true,
@@ -595,6 +602,7 @@ describe('orchestrateGrantRevoke', () => {
       viewerSub,
       email: 'viewer@example.com',
       collectionId,
+      role: 'viewer' as const,
       createdAt: 1,
       updatedAt: 2,
       active: true,
@@ -620,6 +628,90 @@ describe('orchestrateGrantRevoke', () => {
         tombstone: { viewerSub, updatedAt: 9, deletedAt: 9, active: false },
       },
     ]);
+  });
+});
+
+describe('leave reuses the revoke transition and cannot resurrect a grant', () => {
+  it('owner revoke then viewer leave: the second call finds it already gone', async () => {
+    const calls: string[] = [];
+    const writes: Array<{ viewerSub: string; tombstone: GrantTombstone }> = [];
+    let stored: LiveGrant | GrantTombstone | null = {
+      viewerSub,
+      email: 'viewer@example.com',
+      collectionId,
+      role: 'viewer',
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+    };
+    const deps: RevokeGrantDependencies = {
+      runTransaction: async (work) => {
+        calls.push('transaction');
+        return work({
+          readForwardGrant: async (requestedViewerSub) => {
+            calls.push(`read:${requestedViewerSub}`);
+            return stored;
+          },
+          writePair: async (requestedViewerSub, tombstone) => {
+            calls.push(`write:${requestedViewerSub}`);
+            writes.push({ viewerSub: requestedViewerSub, tombstone });
+            stored = tombstone;
+          },
+        });
+      },
+    };
+
+    // Owner revoke (calls orchestrateGrantRevoke exactly as `collectionGrantsRevokePost` does).
+    const revoked = await orchestrateGrantRevoke(viewerSub, 9, deps);
+    expect(revoked).toEqual({
+      kind: 'write',
+      doc: { viewerSub, updatedAt: 9, deletedAt: 9, active: false },
+    });
+
+    // Viewer leave (calls the identical function; `sharedLeavePost` reuses it).
+    const left = await orchestrateGrantRevoke(viewerSub, 20, deps);
+    expect(left).toEqual({
+      kind: 'already',
+      doc: { viewerSub, updatedAt: 9, deletedAt: 9, active: false },
+    });
+    expect(writes).toHaveLength(1);
+    expect(calls.filter((c) => c === 'transaction')).toHaveLength(2);
+  });
+
+  it('viewer leave then owner revoke: the second call finds it already gone', async () => {
+    let stored: LiveGrant | GrantTombstone | null = {
+      viewerSub,
+      email: 'viewer@example.com',
+      collectionId,
+      role: 'viewer',
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+    };
+    const writes: Array<{ viewerSub: string; tombstone: GrantTombstone }> = [];
+    const deps: RevokeGrantDependencies = {
+      runTransaction: async (work) =>
+        work({
+          readForwardGrant: async () => stored,
+          writePair: async (requestedViewerSub, tombstone) => {
+            writes.push({ viewerSub: requestedViewerSub, tombstone });
+            stored = tombstone;
+          },
+        }),
+    };
+
+    const left = await orchestrateGrantRevoke(viewerSub, 9, deps);
+    expect(left).toEqual({
+      kind: 'write',
+      doc: { viewerSub, updatedAt: 9, deletedAt: 9, active: false },
+    });
+
+    const revoked = await orchestrateGrantRevoke(viewerSub, 20, deps);
+    expect(revoked).toEqual({
+      kind: 'already',
+      doc: { viewerSub, updatedAt: 9, deletedAt: 9, active: false },
+    });
+    expect(writes).toHaveLength(1);
   });
 });
 
@@ -724,6 +816,7 @@ describe('grantCascadeRevoke', () => {
     viewerSub,
     email: 'a@b.c',
     collectionId,
+    role: 'viewer' as const,
     createdAt: 1,
     updatedAt: 50,
     active: true,
@@ -791,6 +884,7 @@ describe('cascadeGrantPairTransition', () => {
         viewerSub,
         email: 'a@b.c',
         collectionId,
+        role: 'viewer' as const,
         createdAt: 1,
         updatedAt: 50,
         active: true,
@@ -811,6 +905,7 @@ describe('cascadeGrantPairTransition', () => {
           viewerSub,
           email: 'a@b.c',
           collectionId,
+          role: 'viewer' as const,
           createdAt: 1,
           updatedAt: cascadeAt + 1,
           active: true,
@@ -1125,6 +1220,7 @@ describe('collection delete grant cascade', () => {
       viewerSub: viewer,
       email: `${viewer}@example.com`,
       collectionId,
+      role: 'viewer' as const,
       createdAt: 1,
       updatedAt,
       active: true,
@@ -1489,6 +1585,8 @@ describe('collection delete grant cascade', () => {
         collectionId,
         viewerSub,
         email: 'viewer-1@example.com',
+        role: 'editor',
+        onExisting: 'applyRole',
       },
       {
         now: () => 3_000,
@@ -1500,6 +1598,7 @@ describe('collection delete grant cascade', () => {
     expect(added.kind).toBe('write');
     expect(mem.grants.get(viewerSub)).toMatchObject({
       active: true,
+      role: 'editor',
       updatedAt: 3_000,
     });
     expect(mem.grants.get(viewerSub)).not.toHaveProperty('deletedAt');
@@ -1507,6 +1606,7 @@ describe('collection delete grant cascade', () => {
       ownerSub,
       collectionId,
       ownerEmail: 'owner@example.com',
+      role: 'editor',
       updatedAt: 3_000,
     });
     expect(mem.shares.get(viewerSub)).not.toHaveProperty('deletedAt');
@@ -1659,6 +1759,8 @@ describe('collection delete grant cascade', () => {
         collectionId,
         viewerSub,
         email: 'viewer-1@example.com',
+        role: 'viewer',
+        onExisting: 'applyRole',
       },
       {
         now: () => 3_000,

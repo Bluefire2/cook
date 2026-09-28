@@ -2,8 +2,14 @@ import { useEffect, useState } from 'react';
 import { useT } from '../i18n';
 import Sheet from './Sheet';
 import { collectionStore } from '../lib/collectionStore';
-import type { CollectionGrant } from '../lib/remote';
-import { dangerBtn, inputClass, primaryBtn, secondaryBtn } from '../lib/uiClasses';
+import type { CollectionGrant, GrantRole } from '../lib/remote';
+import {
+  cellClass,
+  dangerBtn,
+  inputClass,
+  primaryBtn,
+  secondaryBtn,
+} from '../lib/uiClasses';
 import type { Collection } from '../lib/types';
 
 export default function ShareCollectionSheet({
@@ -15,6 +21,7 @@ export default function ShareCollectionSheet({
 }) {
   const t = useT();
   const [email, setEmail] = useState('');
+  const [role, setRole] = useState<GrantRole>('viewer');
   const [grants, setGrants] = useState<CollectionGrant[] | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -43,8 +50,22 @@ export default function ShareCollectionSheet({
     setError(null);
     setBusy(true);
     try {
-      await collectionStore.addGrant(collection.id, email);
+      await collectionStore.addGrant(collection.id, email, role);
       setEmail('');
+      setRole('viewer');
+      setGrants(await collectionStore.listGrants(collection.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't update sharing.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeRole = async (sub: string, next: GrantRole) => {
+    setError(null);
+    setBusy(true);
+    try {
+      await collectionStore.setGrantRole(collection.id, sub, next);
       setGrants(await collectionStore.listGrants(collection.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
@@ -76,15 +97,18 @@ export default function ShareCollectionSheet({
           void add();
         }}
       >
-        <input
-          autoFocus
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder={t('share.emailPlaceholder')}
-          disabled={busy}
-          className={`${inputClass} mt-3`}
-        />
+        <div className="mt-3 flex gap-2">
+          <input
+            autoFocus
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder={t('share.emailPlaceholder')}
+            disabled={busy}
+            className={`${inputClass} min-w-0 flex-1`}
+          />
+          <RoleSelect value={role} onChange={setRole} disabled={busy} />
+        </div>
         {error && <p className="mt-2 text-sm text-danger">{error}</p>}
         <button
           type="submit"
@@ -106,7 +130,13 @@ export default function ShareCollectionSheet({
             key={grant.sub}
             className="flex items-center justify-between gap-2 text-sm"
           >
-            <span className="min-w-0 truncate">{grant.email}</span>
+            <span className="min-w-0 flex-1 truncate">{grant.email}</span>
+            <RoleSelect
+              value={grant.role ?? 'viewer'}
+              onChange={(next) => void changeRole(grant.sub, next)}
+              disabled={busy}
+              label={t('share.roleFor', { email: grant.email })}
+            />
             <button
               type="button"
               disabled={busy}
@@ -126,5 +156,31 @@ export default function ShareCollectionSheet({
         {t('common.done')}
       </button>
     </Sheet>
+  );
+}
+
+function RoleSelect({
+  value,
+  onChange,
+  disabled,
+  label,
+}: {
+  value: GrantRole;
+  onChange: (role: GrantRole) => void;
+  disabled: boolean;
+  label?: string;
+}) {
+  const t = useT();
+  return (
+    <select
+      aria-label={label ?? t('share.role')}
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value === 'editor' ? 'editor' : 'viewer')}
+      className={`${cellClass} shrink-0 bg-surface text-sm`}
+    >
+      <option value="viewer">{t('share.viewer')}</option>
+      <option value="editor">{t('share.editor')}</option>
+    </select>
   );
 }

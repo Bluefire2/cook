@@ -1,5 +1,14 @@
 export type PushOp =
-  | { kind: 'recipe.put'; payload: import('./types').Recipe }
+  | {
+      kind: 'recipe.put';
+      payload: import('./types').Recipe;
+      /**
+       * Someone else's recipe, saved by an editor. The server finds the owner
+       * and role from the session's shares and never creates the row in this
+       * account's tree.
+       */
+      shared?: true;
+    }
   | { kind: 'recipe.delete'; payload: { id: string; updatedAt: number } }
   | { kind: 'chat.put'; payload: import('./types').ChatMessage }
   | { kind: 'chat.clearForRecipe'; payload: { recipeId: string; at: number } }

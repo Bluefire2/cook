@@ -18,6 +18,7 @@ import {
   markLoaded,
   replaceFromPull,
   replaceFromPullWithShared,
+  withSharedRecipeAccess,
   type ItemOrigin,
 } from './libraryMemory';
 import type { ChatMessage, Collection, CookLog, Recipe } from './types';
@@ -220,6 +221,7 @@ export async function pullAll(
             ...(typeof raw.ownerEmail === 'string' && raw.ownerEmail !== ''
               ? { ownerEmail: raw.ownerEmail }
               : {}),
+            access: raw.role === 'editor' ? 'editor' : 'viewer',
           });
         }
       }
@@ -260,7 +262,11 @@ export async function pullAll(
       recipes: sharedRecipes,
       collections: sharedCollections,
       remotePhotoIds: sharedPhotos,
-      recipeOrigins,
+      recipeOrigins: withSharedRecipeAccess(
+        recipeOrigins,
+        sharedCollections,
+        collectionOrigins,
+      ),
       collectionOrigins,
     },
   );

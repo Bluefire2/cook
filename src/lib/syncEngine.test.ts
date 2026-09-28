@@ -6,9 +6,11 @@ import {
   clearLibrary,
   endLocalWrite,
   getSnapshot,
+  originAccess,
   removeRecipeLocal,
   replaceFromPull,
   subscribe,
+  type ItemOrigin,
 } from './libraryMemory';
 import { installSharedRows } from './testLibrary';
 import {
@@ -757,10 +759,12 @@ describe('pullAll', () => {
     expect(snapshot.recipeOrigins.get('shared-one')).toEqual({
       kind: 'shared',
       ownerSub: 'shared-owner',
+      access: 'viewer',
     });
     expect(snapshot.recipeOrigins.get('shared-two')).toEqual({
       kind: 'shared',
       ownerSub: 'shared-owner',
+      access: 'viewer',
     });
     expect(snapshot.collections.get('collection-collision')?.name).toBe('Owned collection');
     expect(snapshot.collectionOrigins.get('collection-collision')).toEqual({ kind: 'own' });
@@ -768,6 +772,7 @@ describe('pullAll', () => {
     expect(snapshot.collectionOrigins.get('shared-collection')).toEqual({
       kind: 'shared',
       ownerSub: 'shared-owner',
+      access: 'viewer',
     });
     expect([...snapshot.remotePhotoIds]).toEqual([
       'owned-photo',
@@ -805,17 +810,52 @@ describe('pullAll', () => {
       kind: 'shared',
       ownerSub: 'owner-a',
       ownerEmail: 'olivia@example.com',
+      access: 'viewer',
     });
     expect(snapshot.collectionOrigins.get('dinners-b')).toEqual({
       kind: 'shared',
       ownerSub: 'owner-b',
       ownerEmail: 'bruno@example.com',
+      access: 'viewer',
     });
     expect(snapshot.collectionOrigins.get('dinners-c')).toEqual({
       kind: 'shared',
       ownerSub: 'owner-c',
+      access: 'viewer',
     });
     expect(snapshot.collections.get('dinners-a')).not.toHaveProperty('ownerEmail');
+  });
+
+  it('publishes each shared role, and the stronger one for a recipe in two collections', async () => {
+    const result = await pullAll({
+      pullPage: async () => ownedPage(ownedChanges()),
+      pullSharedPage: async () =>
+        sharedPage({
+          collections: [
+            { ...collection('edit', 'Edit', ['both', 'edit-only']), ownerSub: 'o', role: 'editor' },
+            { ...collection('view', 'View', ['both', 'view-only']), ownerSub: 'o', role: 'viewer' },
+            { ...collection('legacy', 'Legacy', ['legacy-only']), ownerSub: 'o' },
+          ],
+          recipes: ['both', 'edit-only', 'view-only', 'legacy-only'].map((id) => ({
+            ...recipe(id, id),
+            ownerSub: 'o',
+          })),
+        }),
+    });
+
+    const snapshot = getSnapshot();
+    expect(result.outcome).toBe('ok');
+    const access = (map: ReadonlyMap<string, ItemOrigin>, id: string) =>
+      originAccess(map.get(id));
+    expect(access(snapshot.collectionOrigins, 'edit')).toBe('editor');
+    expect(access(snapshot.collectionOrigins, 'view')).toBe('viewer');
+    expect(access(snapshot.collectionOrigins, 'legacy')).toBe('viewer');
+    expect(access(snapshot.recipeOrigins, 'both')).toBe('editor');
+    expect(access(snapshot.recipeOrigins, 'edit-only')).toBe('editor');
+    expect(access(snapshot.recipeOrigins, 'view-only')).toBe('viewer');
+    expect(access(snapshot.recipeOrigins, 'legacy-only')).toBe('viewer');
+    expect(snapshot.recipes.get('both')).not.toHaveProperty('access');
+    expect(snapshot.collections.get('edit')).not.toHaveProperty('role');
   });
 
   it('keeps an open shared recipe in every snapshot while a successful refresh is in flight', async () => {

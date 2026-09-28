@@ -64,6 +64,8 @@ export default function Library() {
   const [createOpen, setCreateOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteCollectionOpen, setDeleteCollectionOpen] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [leaveBusy, setLeaveBusy] = useState(false);
   const [collectionName, setCollectionName] = useState('');
   const [collectionError, setCollectionError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
@@ -116,6 +118,7 @@ export default function Library() {
     setCreateOpen(false);
     setRenameOpen(false);
     setDeleteCollectionOpen(false);
+    setLeaveOpen(false);
     setShareOpen(false);
     setCollectionName('');
     setCollectionError(null);
@@ -192,6 +195,25 @@ export default function Library() {
     }
   };
 
+  const submitLeave = async () => {
+    if (!currentId) {
+      return;
+    }
+    setCollectionError(null);
+    setLeaveBusy(true);
+    try {
+      await collectionStore.leave(currentId);
+      closeSheets();
+      navigate('/');
+    } catch (err) {
+      setCollectionError(
+        err instanceof Error ? err.message : "Couldn't leave the collection.",
+      );
+    } finally {
+      setLeaveBusy(false);
+    }
+  };
+
   useEffect(() => {
     setBrowseAll(false);
   }, [currentId]);
@@ -216,7 +238,8 @@ export default function Library() {
         moveRecipeId !== null ||
         createOpen ||
         renameOpen ||
-        deleteCollectionOpen
+        deleteCollectionOpen ||
+        leaveOpen
       ) {
         event.preventDefault();
         closeSheets();
@@ -232,6 +255,7 @@ export default function Library() {
     createOpen,
     renameOpen,
     deleteCollectionOpen,
+    leaveOpen,
   ]);
 
   const emptyCopy = () => {
@@ -342,11 +366,26 @@ export default function Library() {
       )}
 
       {named && namedIsShared && !browseAll && (
-        <p className="-mt-1 mb-3 text-sm text-ink-muted">
-          {collectionStore.sharedBy(named.id)
-            ? t('library.sharedWithYouBy', { email: collectionStore.sharedBy(named.id) ?? '' })
-            : t('library.sharedWithYou')}
-        </p>
+        <div className="-mt-1 mb-3 flex items-center justify-between gap-2 text-sm text-ink-muted">
+          <span>
+            {collectionStore.sharedBy(named.id)
+              ? t('library.sharedWithYouBy', { email: collectionStore.sharedBy(named.id) ?? '' })
+              : t('library.sharedWithYou')}{' '}
+            {collectionStore.access(named.id) === 'editor'
+              ? t('library.youCanEdit')
+              : t('library.viewOnly')}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setCollectionError(null);
+              setLeaveOpen(true);
+            }}
+            className="shrink-0 text-sm text-danger hover:underline"
+          >
+            {t('library.leave')}
+          </button>
+        </div>
       )}
 
       {showSwitcher ? (
@@ -680,6 +719,31 @@ export default function Library() {
             className={`${dangerBtn} mt-3 w-full py-3`}
           >
             {t('library.deleteCollection')}
+          </button>
+          <button
+            type="button"
+            onClick={() => closeSheets()}
+            className={`${secondaryBtn} mt-2 w-full py-3`}
+          >
+            {t('common.cancel')}
+          </button>
+        </Sheet>
+      )}
+
+      {leaveOpen && named && namedIsShared && (
+        <Sheet onClose={() => closeSheets()}>
+          <h2 className="text-lg font-semibold">{t('library.leaveTitle', { name: named.name })}</h2>
+          <p className="mt-1 text-sm text-ink-muted">{t('library.leaveBody')}</p>
+          {collectionError && (
+            <p className="mt-2 text-sm text-danger">{collectionError}</p>
+          )}
+          <button
+            type="button"
+            onClick={() => void submitLeave()}
+            disabled={leaveBusy}
+            className={`${dangerBtn} mt-3 w-full py-3`}
+          >
+            {leaveBusy ? t('library.leaving') : t('library.leaveCollection')}
           </button>
           <button
             type="button"

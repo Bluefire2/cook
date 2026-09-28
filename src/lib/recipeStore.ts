@@ -17,10 +17,13 @@ import {
   subscribe,
   upsertRecipe,
   getCollection,
+  getRecipeOrigin,
   isSharedCollection,
   isSharedRecipe,
   listCollections,
+  recipeAccess,
   upsertCollection,
+  type LibraryAccess,
 } from './libraryMemory';
 import { fetchPhotoBlobOutcome, postPhoto, pushOps } from './remote';
 import { photoStore } from './photoStore';
@@ -137,6 +140,48 @@ async function deleteRemovedPhotos(
   }
 }
 
+function samePhotoIds(a: Recipe, b: Recipe): boolean {
+  const left = recipePhotoIds(a);
+  const right = recipePhotoIds(b);
+  return (
+    a.photoId === b.photoId &&
+    left.length === right.length &&
+    left.every((id, i) => id === right[i])
+  );
+}
+
+/**
+ * An editor's save of someone else's recipe. Text only: the server refuses a
+ * photo change from anyone but the owner, so it is refused here before any
+ * upload, and nothing is uploaded or deleted. The row keeps its shared
+ * origin; the next pull brings back whatever the owner's tree holds.
+ */
+async function saveShared(recipe: Recipe): Promise<void> {
+  const previous = getRecipe(recipe.id);
+  const origin = getRecipeOrigin(recipe.id);
+  if (!previous || origin?.kind !== 'shared') {
+    throw new Error(t('common.recipeNotFound'));
+  }
+  const next = compactRecipe({
+    ...recipe,
+    createdAt: previous.createdAt,
+    updatedAt: Date.now(),
+  });
+  if (!samePhotoIds(previous, next)) {
+    throw new Error(t('error.sharedPhotos'));
+  }
+  upsertRecipe(next, origin);
+  try {
+    const result = await pushOps([{ kind: 'recipe.put', payload: next, shared: true }]);
+    if (result !== 'ok') {
+      throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
+    }
+  } catch (err) {
+    upsertRecipe(previous, origin);
+    throw err;
+  }
+}
+
 export const recipeStore = {
   list(): Recipe[] {
     return listRecipes();
@@ -146,14 +191,22 @@ export const recipeStore = {
     return getRecipe(id);
   },
 
-  /** True for a recipe that arrived through an incoming share (view-only). */
+  /** True for a recipe that arrived through an incoming share. */
   isShared(id: string): boolean {
     return isSharedRecipe(id);
   },
 
+  /** `editor` when a shared recipe may be edited here (text only, not photos). */
+  access(id: string): LibraryAccess | undefined {
+    return recipeAccess(id);
+  },
+
   async save(recipe: Recipe): Promise<void> {
     if (isSharedRecipe(recipe.id)) {
-      throw new Error(t('error.sharedViewOnly'));
+      if (recipeAccess(recipe.id) !== 'editor') {
+        throw new Error(t('error.sharedViewOnly'));
+      }
+      return saveShared(recipe);
     }
     const previous = getRecipe(recipe.id);
     const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
@@ -180,13 +233,18 @@ export const recipeStore = {
    * than spread because drafts come from the `update_recipe` tool, whose schema
    * cannot express `sourceUrl`, `photoId`, `galleryPhotoIds`, or `lang` — a
    * spread would blank them. `lang` is carried from the existing recipe,
-   * like `sourceUrl`.
+   * like `sourceUrl`. On a shared recipe the draft never supplies photos.
+   * The draft is an edit of the stored recipe, including while a translation
+   * is on screen.
    */
   async applyDraft(id: string, draft: RecipeDraft): Promise<void> {
     const existing = getRecipe(id);
     if (!existing) throw new Error(`No recipe with id ${id}.`);
-    const photoId = draft.photoId ?? existing.photoId;
-    const galleryPhotoIds = draft.galleryPhotoIds ?? existing.galleryPhotoIds;
+    const shared = isSharedRecipe(id);
+    const photoId = shared ? existing.photoId : (draft.photoId ?? existing.photoId);
+    const galleryPhotoIds = shared
+      ? existing.galleryPhotoIds
+      : (draft.galleryPhotoIds ?? existing.galleryPhotoIds);
     await recipeStore.save({
       id: existing.id,
       createdAt: existing.createdAt,

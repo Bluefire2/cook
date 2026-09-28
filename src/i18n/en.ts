@@ -63,8 +63,16 @@ export const en = {
   'library.sharedLabel': '{name} (shared)',
   'library.new': 'New',
   'library.rename': 'Rename',
-  'library.sharedWithYouBy': 'Shared with you by {email}. View only.',
-  'library.sharedWithYou': 'Shared with you. View only.',
+  'library.sharedWithYouBy': 'Shared with you by {email}.',
+  'library.sharedWithYou': 'Shared with you.',
+  'library.youCanEdit': 'You can edit these recipes.',
+  'library.viewOnly': 'View only.',
+  'library.leave': 'Leave',
+  'library.leaveTitle': 'Leave “{name}”?',
+  'library.leaveBody':
+    'You will lose access to this collection. The owner and anyone else it is shared with keep theirs.',
+  'library.leaving': 'Leaving…',
+  'library.leaveCollection': 'Leave collection',
   'library.searchAll': 'Search all recipes…',
   'library.searchIn': 'Search in {name}…',
   'library.search': 'Search recipes…',
@@ -309,8 +317,12 @@ export const en = {
 
   'share.title': 'Share “{name}”',
   'share.intro':
-    'Add someone who already has a Sous account. They can view these recipes and photos, not edit them.',
+    'Add someone who already has a Sous account. Viewers can see these recipes and photos. Editors can also edit the recipes, except their photos. Nobody but you can delete them or change who has access.',
   'share.emailPlaceholder': 'Email',
+  'share.role': 'Role',
+  'share.roleFor': 'Role for {email}',
+  'share.viewer': 'Viewer',
+  'share.editor': 'Editor',
   'share.nobodyYet': 'Nobody else can see this yet.',
 
   'sheet.dismiss': 'Dismiss',
@@ -357,6 +369,9 @@ export const en = {
 
   'error.sessionExpired': 'Please sign in again — your session expired.',
   'error.sharedViewOnly': 'This shared collection is view-only.',
+  'error.sharedPhotos': "Photos on a shared recipe can't be changed.",
+  'error.notSharedWithYou': 'This collection is not shared with you.',
+  'error.leaveRefresh': "Couldn't refresh after leaving.",
   'error.collectionNotFound': 'Collection not found.',
   'error.collectionFull': 'This collection is full.',
   'error.collectionSave': "Couldn't save the collection.",

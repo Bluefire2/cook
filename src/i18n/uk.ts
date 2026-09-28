@@ -45,8 +45,16 @@ export const uk: Messages = {
   'library.sharedLabel': '{name} (спільна)',
   'library.new': 'Нова',
   'library.rename': 'Перейменувати',
-  'library.sharedWithYouBy': 'З вами поділився {email}. Лише перегляд.',
-  'library.sharedWithYou': 'З вами поділилися. Лише перегляд.',
+  'library.sharedWithYouBy': 'З вами поділився {email}.',
+  'library.sharedWithYou': 'З вами поділилися.',
+  'library.youCanEdit': 'Ви можете редагувати ці рецепти.',
+  'library.viewOnly': 'Лише перегляд.',
+  'library.leave': 'Вийти',
+  'library.leaveTitle': 'Вийти з «{name}»?',
+  'library.leaveBody':
+    'Ви втратите доступ до цієї колекції. Власник і всі, з ким нею поділилися, збережуть свій.',
+  'library.leaving': 'Вихід…',
+  'library.leaveCollection': 'Вийти з колекції',
   'library.searchAll': 'Пошук у всіх рецептах…',
   'library.searchIn': 'Пошук у «{name}»…',
   'library.search': 'Пошук рецептів…',
@@ -302,8 +310,12 @@ export const uk: Messages = {
 
   'share.title': 'Поділитися «{name}»',
   'share.intro':
-    'Додайте людину, яка вже має обліковий запис Sous. Вона зможе переглядати ці рецепти й фото, але не редагувати їх.',
+    'Додайте людину, яка вже має обліковий запис Sous. Глядачі можуть бачити ці рецепти й фото. Редактори можуть також редагувати рецепти, крім фото. Видалити їх або змінити доступ можете лише ви.',
   'share.emailPlaceholder': 'Електронна пошта',
+  'share.role': 'Роль',
+  'share.roleFor': 'Роль для {email}',
+  'share.viewer': 'Глядач',
+  'share.editor': 'Редактор',
   'share.nobodyYet': 'Поки що це бачите лише ви.',
 
   'sheet.dismiss': 'Закрити',
@@ -354,6 +366,9 @@ export const uk: Messages = {
 
   'error.sessionExpired': 'Увійдіть ще раз — ваш сеанс закінчився.',
   'error.sharedViewOnly': 'Ця спільна колекція доступна лише для перегляду.',
+  'error.sharedPhotos': 'Фото спільного рецепта змінити не можна.',
+  'error.notSharedWithYou': 'Цією колекцією з вами не поділилися.',
+  'error.leaveRefresh': 'Не вдалося оновити після виходу.',
   'error.collectionNotFound': 'Колекцію не знайдено.',
   'error.collectionFull': 'Ця колекція заповнена.',
   'error.collectionSave': 'Не вдалося зберегти колекцію.',

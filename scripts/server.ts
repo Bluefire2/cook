@@ -46,6 +46,8 @@ import {
   collectionGrantsGet,
   collectionGrantsPost,
   collectionGrantsRevokePost,
+  collectionGrantsRolePost,
+  sharedLeavePost,
 } from '../server/grantsHttp.ts';
 import { syncPull, syncPush, syncSharedPull } from '../server/sync.ts';
 
@@ -75,6 +77,7 @@ const apiRoutes: ApiRoute[] = [
   { method: 'GET', path: '/api/sync/pull', handler: syncPull },
   { method: 'GET', path: '/api/sync/shared', handler: syncSharedPull },
   { method: 'POST', path: '/api/sync/push', handler: syncPush },
+  { method: 'POST', path: '/api/shared/leave', handler: sharedLeavePost },
   { method: 'POST', path: '/api/extension/import', handler: extensionImport },
   { method: 'OPTIONS', path: '/api/extension/import', handler: extensionImportOptions },
 ];
@@ -267,6 +270,13 @@ function matchApiRoute(pathname: string, method: string): ApiHandler | 'wrongMet
   if (revokeMatch) {
     if (method === 'POST') {
       return collectionGrantsRevokePost;
+    }
+    return 'wrongMethod';
+  }
+  const roleMatch = pathname.match(/^\/api\/collections\/[^/]+\/grants\/role$/);
+  if (roleMatch) {
+    if (method === 'POST') {
+      return collectionGrantsRolePost;
     }
     return 'wrongMethod';
   }

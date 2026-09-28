@@ -84,7 +84,10 @@ function EditRecipe({ id }: { id: string }) {
       <div className="p-6 text-center text-ink-muted">{t('common.loadingRecipe')}</div>
     );
   }
-  if (recipe === null || recipeStore.isShared(id)) {
+  // A shared recipe is editable only by an editor; for a viewer this route
+  // looks exactly like a missing recipe.
+  const shared = recipeStore.isShared(id);
+  if (recipe === null || (shared && recipeStore.access(id) !== 'editor')) {
     return (
       <div className="p-6 text-center text-ink-muted">
         {t('common.recipeNotFound')}{' '}
@@ -133,6 +136,7 @@ function EditRecipe({ id }: { id: string }) {
         onCancel={() => navigate(`/recipe/${recipe.id}`)}
         formId={EDIT_FORM_ID}
         onCanSubmitChange={onCanSubmitChange}
+        photosEditable={!shared}
       />
     </Screen>
   );

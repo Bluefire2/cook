@@ -140,7 +140,7 @@
   {
     "id": "recipe-edit",
     "route": "/recipe/:id/edit",
-    "setup": "The edit form for an owned recipe (heading Edit recipe), including the Recipe language field. Do not change fields and do not save. A shared recipe has no Edit link; this route shows Recipe not found. If there is no owned recipe, mark skipped: needs data.",
+    "setup": "The edit form for an owned recipe (heading Edit recipe), including the Recipe language field. Do not change fields and do not save. A viewer share has no Edit link; that route shows Recipe not found. An editor share has an edit form and is a separate entry. If there is no owned recipe, mark skipped: needs data.",
     "needsData": true
   },
   {
@@ -164,7 +164,7 @@
   {
     "id": "share-collection-sheet",
     "route": "/?c=:collectionId",
-    "setup": "Open one of your own named collections (not a shared-with-you folder) and tap Share. Opening the sheet only reads the grant list. Prefer a collection whose sheet says \"Nobody else can see this yet.\" Do not type an email, and do not add or remove a person. If every own collection already lists grantees, redact those emails before judging, or mark skipped: shows another member's data. If you have no own named collection, mark skipped: needs data. Do not create one.",
+    "setup": "Open one of your own named collections (not a shared-with-you folder) and tap Share. The sheet explains viewers and editors, and the email row has a role menu (Viewer / Editor). Opening the sheet only reads the grant list. Prefer a collection whose sheet says \"Nobody else can see this yet.\" Do not type an email, and do not add, change a role, or remove a person. If every own collection already lists grantees, redact those emails before judging, or mark skipped: shows another member's data. If you have no own named collection, mark skipped: needs data. Do not create one.",
     "needsData": true
   },
   {
@@ -182,19 +182,37 @@
   {
     "id": "library-shared-banner",
     "route": "/?c=:collectionId",
-    "setup": "Select a collection shared with you so the Library banner \"Shared with you…\" is visible. The review never creates a share. If the account has no incoming share, mark skipped: needs data. The banner and folder label can show the owner's email; redact that before the image goes to the judging model, or mark skipped: shows another member's data.",
+    "setup": "Select a collection shared with you so the Library banner is visible: who shared it, then either \"You can edit these recipes.\" or \"View only.\", and a Leave control. Capture a viewer collection and, if one exists, an editor collection; they are the same banner with a different access sentence. The review never creates a share and never taps Leave. If the account has no incoming share, mark skipped: needs data. The banner and folder label can show the owner's email; redact that before the image goes to the judging model, or mark skipped: shows another member's data.",
+    "needsData": true
+  },
+  {
+    "id": "library-leave-sheet",
+    "route": "/?c=:collectionId",
+    "setup": "From a collection shared with you, tap Leave so the confirmation sheet is open (title, the sentence about losing access, Leave collection, Cancel). Do not confirm. The review never creates a share. If the account has no incoming share, mark skipped: needs data. The title names the collection; redact another member's collection name before judging, or mark skipped: shows another member's data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-edit-shared-editor",
+    "route": "/recipe/:id/edit",
+    "setup": "The edit form for a recipe in a collection shared with you as an editor. The Recipe language field is visible, including a \"Looks like …\" hint when one applies, and the photo controls are absent. Do not change fields and do not save. A viewer share has no Edit link. If there is no editor share, mark skipped: needs data. Recipe content is another member's data: redact it before judging, or mark skipped: shows another member's data.",
     "needsData": true
   },
   {
     "id": "recipe-view-shared",
     "route": "/recipe/:id",
-    "setup": "Open a recipe from an incoming share (no Edit link). The translate chip works the same as on an owned recipe. Do not change servings, checks, or steps. Do not tap the translate chip. If there is no shared recipe, mark skipped: needs data. Recipe content is another member's data: redact it before judging, or mark skipped: shows another member's data. The review never creates a share.",
+    "setup": "Open a recipe from a viewer share (no Edit link). The translate chip works the same as on an owned recipe. Do not change servings, checks, or steps. Do not tap the translate chip. If there is no viewer share, mark skipped: needs data. Recipe content is another member's data: redact it before judging, or mark skipped: shows another member's data. The review never creates a share.",
     "needsData": true
   },
   {
     "id": "recipe-chat-shared",
     "route": "/recipe/:id",
-    "setup": "On a shared recipe, open Ask. The read-only panel shows \"Save as a new recipe\" on an existing proposal card (there is no Apply, and no photo button). Do not send a message and do not press Save as a new recipe. Do not tap the translate chip. If the account has no shared recipe, or the shared chat has no proposal yet, mark skipped: needs data. Do not write a chat message to create one. Redact the other member's recipe content before judging, or mark skipped: shows another member's data.",
+    "setup": "On a viewer share, open Ask. The panel shows \"Save as a new recipe\" on an existing proposal card (there is no Apply, and no photo button). Do not send a message and do not press Save as a new recipe. Do not tap the translate chip. If the account has no viewer share, or the shared chat has no proposal yet, mark skipped: needs data. Do not write a chat message to create one. Redact the other member's recipe content before judging, or mark skipped: shows another member's data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-chat-shared-editor",
+    "route": "/recipe/:id",
+    "setup": "On an editor share, open Ask. An existing proposal card shows Apply and Save as a new recipe, and no photo button. Do not send a message, do not apply, and do not press Save as a new recipe. Do not tap the translate chip. If the account has no editor share, or the chat has no proposal yet, mark skipped: needs data. Do not write a chat message to create one. Redact the other member's recipe content before judging, or mark skipped: shows another member's data.",
     "needsData": true
   },
   {

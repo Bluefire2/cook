@@ -305,6 +305,7 @@ export default function RecipeForm({
   onEditStateChange,
   submitLocked,
   hideLanguage,
+  photosEditable = true,
 }: {
   /** Starting values. Use a blank draft for create-from-scratch. An edit passes the saved recipe so a detection can pre-fill a missing lang. */
   initial: RecipeDraft | Recipe;
@@ -327,6 +328,9 @@ export default function RecipeForm({
    * language there, and save sets `lang` from that preview state.
    */
   hideLanguage?: boolean;
+  /** False for an editor of someone else's recipe: photos stay as they are
+   * and their controls are not shown. */
+  photosEditable?: boolean;
 }): ReactElement {
   // Captured once. A later UI-language change must not rewrite this recipe's lang.
   // A detection only fills a missing lang. It is not a background write.
@@ -532,18 +536,20 @@ export default function RecipeForm({
         />
       </Field>
 
-      <PhotoField
-        photoId={photoId}
-        picked={picked}
-        onPick={(file) => {
-          setPhotoError(null);
-          setPicked(file);
-        }}
-        onRemove={() => {
-          setPicked(undefined);
-          setPhotoId(undefined);
-        }}
-      />
+      {photosEditable && (
+        <PhotoField
+          photoId={photoId}
+          picked={picked}
+          onPick={(file) => {
+            setPhotoError(null);
+            setPicked(file);
+          }}
+          onRemove={() => {
+            setPicked(undefined);
+            setPhotoId(undefined);
+          }}
+        />
+      )}
       {photoError && (
         <p className="mt-2 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
           {photoError}
@@ -900,27 +906,29 @@ export default function RecipeForm({
         />
       </Field>
 
-      <PhotoPickerField
-        label={t('form.gallery')}
-        hint={t('form.galleryHint')}
-        max={MAX_GALLERY_PHOTOS}
-        removeLabel={t('form.removeGalleryPhoto')}
-        photoIds={galleryPhotoIds}
-        picked={galleryPicked}
-        onPick={(files) => {
-          setPhotoError(null);
-          setGalleryPicked((prev) => {
-            const room = MAX_GALLERY_PHOTOS - galleryPhotoIds.length - prev.length;
-            return room <= 0 ? prev : [...prev, ...files.slice(0, room)];
-          });
-        }}
-        onRemoveStored={(id) =>
-          setGalleryPhotoIds((prev) => prev.filter((item) => item !== id))
-        }
-        onRemovePicked={(index) =>
-          setGalleryPicked((prev) => prev.filter((_, i) => i !== index))
-        }
-      />
+      {photosEditable && (
+        <PhotoPickerField
+          label={t('form.gallery')}
+          hint={t('form.galleryHint')}
+          max={MAX_GALLERY_PHOTOS}
+          removeLabel={t('form.removeGalleryPhoto')}
+          photoIds={galleryPhotoIds}
+          picked={galleryPicked}
+          onPick={(files) => {
+            setPhotoError(null);
+            setGalleryPicked((prev) => {
+              const room = MAX_GALLERY_PHOTOS - galleryPhotoIds.length - prev.length;
+              return room <= 0 ? prev : [...prev, ...files.slice(0, room)];
+            });
+          }}
+          onRemoveStored={(id) =>
+            setGalleryPhotoIds((prev) => prev.filter((item) => item !== id))
+          }
+          onRemovePicked={(index) =>
+            setGalleryPicked((prev) => prev.filter((_, i) => i !== index))
+          }
+        />
+      )}
 
       <div className="mt-6 flex gap-2">
         <button

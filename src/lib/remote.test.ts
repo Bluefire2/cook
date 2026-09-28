@@ -4,6 +4,7 @@ import {
   fetchPhotoBlob,
   fetchPhotoBlobOutcome,
   firstPushRejection,
+  leaveSharedCollection,
   normalizeChatChange,
   normalizeCookChange,
   pullSharedPage,
@@ -173,6 +174,74 @@ describe('pushOps', () => {
   it('returns signedOut on 401', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })));
     expect(await pushOps([op])).toBe('signedOut');
+  });
+});
+
+describe('leaveSharedCollection', () => {
+  const ownerSub = 'owner-sub';
+  const collectionId = 'collection-id';
+
+  it('treats a 404 (already gone) as success', async () => {
+    const fetchMock = vi.fn(async () => new Response('', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'ok',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/shared/leave',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ ownerSub, collectionId }),
+      }),
+    );
+  });
+
+  it('reports ok for a successful leave', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ ok: true })));
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'ok',
+    });
+  });
+
+  it('signs the client out on 401/403', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })));
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'signedOut',
+    });
+  });
+
+  it('reports unavailable on 503 without signing out', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 503 })));
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'error',
+      message: 'Sharing is temporarily unavailable.',
+      status: 503,
+    });
+  });
+
+  it('surfaces the server message on another error status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ error: 'Bad request' }, 400)),
+    );
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'error',
+      message: 'Bad request',
+      status: 400,
+    });
+  });
+
+  it('returns a generic error when fetch throws', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    );
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'error',
+      message: "Couldn't leave the collection.",
+    });
   });
 });
 
