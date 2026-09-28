@@ -25,6 +25,7 @@ import {
   readBoundedText,
   requireMember,
   storeUnavailable,
+  type RequireMemberResult,
 } from './membership.ts';
 import { requestedShareRole, type ShareRole } from './shareAuth.ts';
 import {
@@ -463,5 +464,83 @@ export async function collectionGrantsRolePost(req: Request): Promise<Response> 
   return handleGrantRoleRequest(req, {
     requireOwnedLiveCollection,
     changeRole: changeGrantRoleInFirestore,
+  });
+}
+
+export type LeaveGrantRequestDependencies = {
+  requireMember: (req: Request) => Promise<RequireMemberResult>;
+  leave: (
+    ownerSub: string,
+    collectionId: string,
+    viewerSub: string,
+  ) => Promise<RevokeGrantOutcome>;
+};
+
+/**
+ * Unlike owner revoke, a second leave call must also 404: the grantee has
+ * nothing left to leave once the grant is already gone, live or tombstoned.
+ * An editor leaves through this same endpoint; there is no separate "viewer
+ * leave" route.
+ */
+export function leaveGrantHttpResponse(outcome: RevokeGrantOutcome): Response {
+  if (outcome.kind === 'badRequest') {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+  if (outcome.kind === 'missing' || outcome.kind === 'already') {
+    return notFound();
+  }
+  return jsonResponse({ ok: true });
+}
+
+/** Auth runs before the body is read, so unauthenticated callers never see body validation. */
+export async function handleSharedLeaveRequest(
+  req: Request,
+  dependencies: LeaveGrantRequestDependencies,
+): Promise<Response> {
+  const access = await dependencies.requireMember(req);
+  if (access.kind === 'denied') {
+    return membershipUnauthorized();
+  }
+  if (access.kind === 'unknown') {
+    return membershipUnavailable();
+  }
+
+  const raw = await readBoundedText(req, BODY_LIMIT);
+  if (raw === null) {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+  let body: unknown;
+  try {
+    body = raw === '' ? {} : JSON.parse(raw);
+  } catch {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+  const ownerSub =
+    body && typeof body === 'object'
+      ? (body as { ownerSub?: unknown }).ownerSub
+      : undefined;
+  const collectionId =
+    body && typeof body === 'object'
+      ? (body as { collectionId?: unknown }).collectionId
+      : undefined;
+  if (!isSafeFirestoreDocumentId(ownerSub) || !isUuid(collectionId)) {
+    return jsonResponse({ error: 'Bad request' }, 400);
+  }
+
+  try {
+    // The grantee is always the session sub; ownerSub/collectionId from the
+    // body only locate the grant document, never identity (see D5).
+    const outcome = await dependencies.leave(ownerSub, collectionId, access.sub);
+    return leaveGrantHttpResponse(outcome);
+  } catch (err) {
+    console.error('sharedLeavePost store error:', err);
+    return storeUnavailable();
+  }
+}
+
+export async function sharedLeavePost(req: Request): Promise<Response> {
+  return handleSharedLeaveRequest(req, {
+    requireMember,
+    leave: revokeGrantInFirestore,
   });
 }

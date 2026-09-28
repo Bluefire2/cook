@@ -7,8 +7,10 @@ import {
 } from './compactCollection';
 import { moveRecipe, wouldExceedRecipeIdCap } from './collectionMembership';
 import {
+  beginLocalWrite,
   collectionAccess,
   countOwnedNamedCollections,
+  endLocalWrite,
   getCollectionOrigin,
   getCollection,
   getSnapshot,
@@ -22,14 +24,17 @@ import {
 } from './libraryMemory';
 import {
   addCollectionGrant,
+  leaveSharedCollection,
   listCollectionGrants,
   pushOps,
   revokeCollectionGrant,
   setCollectionGrantRole,
   type CollectionGrant,
   type GrantRole,
+  type LeaveSharedResult,
   type RemoteResult,
 } from './remote';
+import { pullAfterLocalWrite } from './syncEngine';
 import type { Collection } from './types';
 
 function rejectShared(id: string): void {
@@ -209,6 +214,43 @@ export const collectionStore = {
     }
   },
 
+  /** Only for a collection shared with you. Owned collections have no Leave control. */
+  async leave(id: string): Promise<void> {
+    const origin = getCollectionOrigin(id);
+    if (origin?.kind !== 'shared') {
+      throw new Error('This collection is not shared with you.');
+    }
+    // A pull that started before this tombstone can otherwise publish the
+    // collection back onto the screen after we return. Hold the library
+    // the same way recipe delete does, then read the server instead of
+    // trusting that a concurrent pull already saw the tombstone.
+    const writeEpoch = beginLocalWrite();
+    let result: LeaveSharedResult;
+    try {
+      result = await leaveSharedCollection(origin.ownerSub, id);
+    } finally {
+      endLocalWrite();
+    }
+    if (result.kind === 'signedOut') {
+      throw new Error('Please sign in again — your session expired.');
+    }
+    if (result.kind === 'error') {
+      throw new Error(result.message);
+    }
+    // Leave succeeded (or the grant was already gone). Do not drop the
+    // collection locally first: that would unmount the Leave sheet, so a failed
+    // refresh could not show its error. The epoch hold above keeps an
+    // overlapping pull from repainting, and a successful pull publishes state
+    // without the collection and its recipes.
+    const outcome = await pullAfterLocalWrite(writeEpoch);
+    if (outcome === 'signedOut') {
+      throw new Error('Please sign in again — your session expired.');
+    }
+    if (outcome !== 'ok') {
+      throw new Error("Couldn't refresh after leaving.");
+    }
+  },
+
   async moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {
     if (isSharedRecipe(recipeId) || (dest !== 'default' && isSharedCollection(dest))) {
       throw new Error('This shared collection is view-only.');
@@ -251,7 +293,6 @@ export const collectionStore = {
       throw err;
     }
   },
-
 };
 
 export function useCollections(): Collection[] | undefined {
