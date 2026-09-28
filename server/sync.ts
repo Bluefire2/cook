@@ -7,6 +7,11 @@ import {
 } from './grants.ts';
 import { drainGcsDeletes } from './photos.ts';
 import {
+  putSharedRecipe,
+  readSharedRecipeAccess,
+  sharedRecipeDeleteAllowed,
+} from './sharedRecipeWrite.ts';
+import {
   membershipUnauthorized,
   membershipUnavailable,
   requireMember,
@@ -170,9 +175,15 @@ export type PushResult = {
   current?: Record<string, unknown>;
 };
 
+/**
+ * `shared` is the client saying "this is someone else's recipe; never create
+ * it in my tree". It only narrows the write: owner and role are still found
+ * from the session's incoming shares, and without it a put is an ordinary
+ * write to the session's own tree.
+ */
 export async function applyPushOp(
   uid: string,
-  op: { kind: string; payload: unknown },
+  op: { kind: string; payload: unknown; shared?: boolean },
 ): Promise<{ applied: boolean; reason?: PushRejectReason; current?: Record<string, unknown> }> {
   if (!isKnownPushKind(op.kind)) {
     return { applied: false, reason: 'unknown' };
@@ -189,10 +200,21 @@ export async function applyPushOp(
       const id = body.id as string;
       const updatedAt = body.updatedAt as number;
       const compact = compactRecipeFields(body);
+      if (op.shared === true) {
+        return putSharedRecipe(uid, id, compact, updatedAt, sharingOwnerAdmitted);
+      }
       return putDoc(uid, 'recipes', id, compact, updatedAt);
     }
     case 'recipe.delete': {
       const body = payload as { id: string; updatedAt: number };
+      // Only the owner deletes. With no row of its own, a session that
+      // reaches this id through a share gets a refusal, not a stray
+      // tombstone in its own tree.
+      const ownDocExists = (await readDocData(uid, 'recipes', body.id)) !== undefined;
+      const access = ownDocExists ? null : await readSharedRecipeAccess(uid, body.id);
+      if (!sharedRecipeDeleteAllowed(ownDocExists, access)) {
+        return { applied: false, reason: 'invalid' };
+      }
       await cascadeRecipeDelete(uid, body.id, body.updatedAt);
       return { applied: true };
     }
@@ -323,7 +345,11 @@ export async function syncPush(req: Request): Promise<Response> {
     }
     const kind = record.kind;
     const payload = record.payload;
-    const outcome = await applyPushOp(uid, { kind: kind as string, payload });
+    const outcome = await applyPushOp(uid, {
+      kind: kind as string,
+      payload,
+      shared: record.shared === true,
+    });
     results.push({
       index,
       applied: outcome.applied,

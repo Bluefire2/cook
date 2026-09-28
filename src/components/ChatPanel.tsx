@@ -67,8 +67,13 @@ function ProposalCard({
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const apply = async () => {
-    await recipeStore.applyDraft(recipe.id, proposal);
-    setApplied('Applied to this recipe ✓');
+    setSaveError(null);
+    try {
+      await recipeStore.applyDraft(recipe.id, proposal);
+      setApplied('Applied to this recipe ✓');
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Couldn't save the recipe.");
+    }
   };
 
   const saveAsVariant = async () => {
@@ -241,11 +246,15 @@ export default function ChatPanel({
   cookingState,
   onClose,
   readOnly = false,
+  allowApply = !readOnly,
 }: {
   recipe: Recipe;
   cookingState: CookingState;
   onClose: () => void;
+  /** A shared recipe: no photo attachments, and no Apply unless `allowApply`. */
   readOnly?: boolean;
+  /** An editor of a shared recipe may Apply; the store keeps its photos as they are. */
+  allowApply?: boolean;
 }) {
   const messages = useChatMessages(recipe.id);
   const [draft, setDraft] = useState('');
@@ -597,7 +606,7 @@ export default function ChatPanel({
                 message={m}
                 recipe={recipe}
                 onNavigateAway={onClose}
-                allowApply={!readOnly}
+                allowApply={allowApply}
               />
             ))}
             {streamingText !== null && (

@@ -488,7 +488,15 @@ export async function pullSharedPage(
   };
 }
 
-export type CollectionGrant = { sub: string; email: string; createdAt: number };
+export type GrantRole = 'viewer' | 'editor';
+
+export type CollectionGrant = {
+  sub: string;
+  email: string;
+  /** Older servers omit it; that means viewer. */
+  role?: GrantRole;
+  createdAt: number;
+};
 
 export type GrantHttpResult =
   | { kind: 'ok'; grants?: CollectionGrant[]; grant?: CollectionGrant }
@@ -546,12 +554,28 @@ export async function listCollectionGrants(
 export async function addCollectionGrant(
   collectionId: string,
   email: string,
+  role: GrantRole,
 ): Promise<GrantHttpResult> {
   return grantRequest(`/api/collections/${encodeURIComponent(collectionId)}/grants`, {
     method: 'POST',
     headers: jsonHeaders(),
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, role }),
   });
+}
+
+export async function setCollectionGrantRole(
+  collectionId: string,
+  sub: string,
+  role: GrantRole,
+): Promise<GrantHttpResult> {
+  return grantRequest(
+    `/api/collections/${encodeURIComponent(collectionId)}/grants/role`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ sub, role }),
+    },
+  );
 }
 
 export async function revokeCollectionGrant(

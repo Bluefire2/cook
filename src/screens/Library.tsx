@@ -342,8 +342,11 @@ export default function Library() {
       {named && namedIsShared && !browseAll && (
         <p className="-mt-1 mb-3 text-sm text-ink-muted">
           {collectionStore.sharedBy(named.id)
-            ? `Shared with you by ${collectionStore.sharedBy(named.id)}. View only.`
-            : 'Shared with you. View only.'}
+            ? `Shared with you by ${collectionStore.sharedBy(named.id)}.`
+            : 'Shared with you.'}{' '}
+          {collectionStore.access(named.id) === 'editor'
+            ? 'You can edit these recipes.'
+            : 'View only.'}
         </p>
       )}
 

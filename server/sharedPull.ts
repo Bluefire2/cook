@@ -5,7 +5,7 @@ import {
   type LiveIncomingShare,
   type SharedAuthorizationScopeEntry,
 } from './grants.ts';
-import { canViewCollection, canViewRecipe } from './shareAuth.ts';
+import { canViewCollection, canViewRecipe, parseShareRole } from './shareAuth.ts';
 import {
   compactCollectionFields,
   compactRecipeFields,
@@ -376,6 +376,7 @@ async function readSharedPageBody(
             ...compactCollectionFields({ ...collection, id: share.collectionId }),
             ownerSub: share.ownerSub,
             ...(share.ownerEmail ? { ownerEmail: share.ownerEmail } : {}),
+            role: parseShareRole(share.role),
           },
         ],
         recipes,

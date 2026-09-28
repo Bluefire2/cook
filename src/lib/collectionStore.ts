@@ -7,6 +7,7 @@ import {
 } from './compactCollection';
 import { moveRecipe, wouldExceedRecipeIdCap } from './collectionMembership';
 import {
+  collectionAccess,
   countOwnedNamedCollections,
   getCollectionOrigin,
   getCollection,
@@ -17,13 +18,16 @@ import {
   removeCollectionLocal,
   subscribe,
   upsertCollection,
+  type LibraryAccess,
 } from './libraryMemory';
 import {
   addCollectionGrant,
   listCollectionGrants,
   pushOps,
   revokeCollectionGrant,
+  setCollectionGrantRole,
   type CollectionGrant,
+  type GrantRole,
   type RemoteResult,
 } from './remote';
 import type { Collection } from './types';
@@ -77,6 +81,11 @@ export const collectionStore = {
   /** True for a collection that arrived through an incoming share (view-only). */
   isShared(id: string): boolean {
     return isSharedCollection(id);
+  },
+
+  /** `editor` when a shared collection's recipes may be edited here. */
+  access(id: string): LibraryAccess | undefined {
+    return collectionAccess(id);
   },
 
   /** Email of whoever shared this collection with you, when known. */
@@ -159,9 +168,13 @@ export const collectionStore = {
     return result.grants ?? [];
   },
 
-  async addGrant(id: string, email: string): Promise<CollectionGrant> {
+  async addGrant(
+    id: string,
+    email: string,
+    role: GrantRole = 'viewer',
+  ): Promise<CollectionGrant> {
     rejectShared(id);
-    const result = await addCollectionGrant(id, email);
+    const result = await addCollectionGrant(id, email, role);
     if (result.kind === 'signedOut') {
       throw new Error('Please sign in again — your session expired.');
     }
@@ -172,6 +185,17 @@ export const collectionStore = {
       throw new Error("Couldn't update sharing.");
     }
     return result.grant;
+  },
+
+  async setGrantRole(id: string, sub: string, role: GrantRole): Promise<void> {
+    rejectShared(id);
+    const result = await setCollectionGrantRole(id, sub, role);
+    if (result.kind === 'signedOut') {
+      throw new Error('Please sign in again — your session expired.');
+    }
+    if (result.kind === 'error') {
+      throw new Error(result.message);
+    }
   },
 
   async revokeGrant(id: string, sub: string): Promise<void> {

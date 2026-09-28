@@ -104,6 +104,7 @@ export default function RecipeView() {
   }
 
   const shared = recipeStore.isShared(recipe.id);
+  const canEdit = !shared || recipeStore.access(recipe.id) === 'editor';
   const scale = servings / recipe.servings;
   const source = sourceLink(recipe.sourceUrl);
 
@@ -114,7 +115,7 @@ export default function RecipeView() {
           <Link to="/" className={backLink}>
             &larr; Library
           </Link>
-          {!shared && (
+          {canEdit && (
             <Link to={`/recipe/${recipe.id}/edit`} className={ghostBtn}>
               Edit
             </Link>
@@ -325,6 +326,7 @@ export default function RecipeView() {
         <ChatPanel
           recipe={recipe}
           readOnly={shared}
+          allowApply={canEdit}
           cookingState={{
             servings,
             currentStep: currentStep + 1,

@@ -69,7 +69,7 @@ library data. Screens must not `fetch`. Do not add fields to `Recipe`,
 `ChatMessage`, or `CookStateRow` — `compactRecipe` strips unknown keys, and
 `src/lib/recipeStore.test.ts` asserts the exact key set. That test is a
 schema lock; do not "fix" it by expanding the allow-list. Collections are a
-separate store kind. View-only grants live under
+separate store kind. Grants live under
 `collections/{id}/grants/{viewerSub}` plus a reverse
 `incomingShares/{viewerSub}` index; they are REST, not LWW push. Shared
 rows stay in the owner's tree and carry origin metadata beside `Recipe`.
@@ -146,8 +146,8 @@ inside the IIFE — that wedges sync after a signed-out run.
 
 ## Sharing
 
-Named collections can be shared view-only with existing admitted members; the
-default collection remains private. Shared refresh is a **full positional
+Named collections can be shared with existing admitted members as viewer or
+editor; the default collection remains private. Shared refresh is a **full positional
 reread** of live incoming grants and current collection contents, not an
 `updatedAt` delta. The continuation cursor is HMAC-signed with a domain
 separate from the session cookie. If grants or collection membership change
@@ -161,6 +161,25 @@ emulator). Keep that trade unless shared pulls get much slower. After owned pull
 completes, a non-auth shared failure publishes the completed owned-only
 snapshot and returns the existing error outcome; a shared 401/403 still
 clears the session and library.
+
+Each grant has `role: 'viewer' | 'editor'`, copied onto its
+`incomingShares` row; a missing or unknown role reads as viewer (no
+backfill). The owner changes it with `POST /api/collections/:id/grants/role`
+`{ sub, role }` (404 for anyone else, 400 for a bad role); the 20-grant cap
+counts both roles. Add by email to someone already granted applies the
+chosen role (`orchestrateGrantAdd` `onExisting: 'applyRole'`); a grant path
+that must not change an existing role passes `'keepRole'`. An editor saves with `recipe.put` plus op-level
+`shared: true`. The server resolves owner and role from the session's shares
+inside the writing transaction (share → collection → listed live recipe,
+stronger role wins), writes the owner's row with the owner's `id`,
+`createdAt`, and photo ids, clamps `updatedAt` to server time before the LWW
+compare (and stores the clamped value), and rejects (`invalid`) a viewer, an unadmitted
+owner, or any photo-id change. The flag only narrows: without it a put is an
+ordinary own-tree write. Only the owner deletes; `recipe.delete` from a
+session with no own row that reaches the id through a share is `invalid`.
+Client role is in-memory `access` on the shared origin, never a `Recipe`
+field. Editors get Edit and Ask Apply (photos always kept), no photo, delete,
+move, or cook-log controls.
 
 Collection delete tombstones live grants in the same transaction. Forward
 grants carry an internal `active` flag, and the cascade time is

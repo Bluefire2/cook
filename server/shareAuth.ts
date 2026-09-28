@@ -1,5 +1,28 @@
 import { isLiveDoc } from './store.ts';
 
+/**
+ * A grantee's role on one shared collection. The collection owner is not a
+ * grant and has no role here. A stored value that is missing or unknown reads
+ * as `viewer`, so every grant written before roles existed stays view-only.
+ */
+export type ShareRole = 'viewer' | 'editor';
+
+export function parseShareRole(raw: unknown): ShareRole {
+  return raw === 'editor' ? 'editor' : 'viewer';
+}
+
+/** A request body role: omitted means viewer, anything else unknown is invalid. */
+export function requestedShareRole(raw: unknown): ShareRole | null {
+  if (raw === undefined) {
+    return 'viewer';
+  }
+  return raw === 'viewer' || raw === 'editor' ? raw : null;
+}
+
+export function strongerShareRole(a: ShareRole, b: ShareRole): ShareRole {
+  return a === 'editor' || b === 'editor' ? 'editor' : 'viewer';
+}
+
 export type IncomingShare = {
   ownerSub: string;
   collectionId: string;
