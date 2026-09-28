@@ -69,6 +69,25 @@ describe('buildLanguagePickerOptions', () => {
     expect(options.all.filter((option) => option.value === 'it')).toHaveLength(1);
   });
 
+  it('adds the code when two languages share a display name', () => {
+    const options = buildLanguagePickerOptions('en', undefined, (tag) =>
+      tag === 'ak' || tag === 'tw' ? 'Akan' : names(tag),
+    );
+    const akan = options.all.filter((option) => option.label.startsWith('Akan'));
+    expect(akan).toEqual([
+      { value: 'ak', label: 'Akan (ak)' },
+      { value: 'tw', label: 'Akan (tw)' },
+    ]);
+    expect(options.all.find((option) => option.value === 'fr')?.label).toBe('French');
+  });
+
+  it('shows every real display name once', () => {
+    for (const locale of SUPPORTED_LOCALES) {
+      const labels = buildLanguagePickerOptions(locale, undefined).all.map((option) => option.label);
+      expect(new Set(labels).size, locale).toBe(labels.length);
+    }
+  });
+
   it('sorts real display names in the UI language and drops unnamed codes', () => {
     const options = buildLanguagePickerOptions('en', undefined);
     const labels = options.all.map((option) => option.label);

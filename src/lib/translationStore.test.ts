@@ -114,7 +114,8 @@ describe('translateRecipe', () => {
     const body = postedBody(fetchMock);
     expect(body.recipeId).toBe(source.id);
     expect(body.target).toBe('uk');
-    expect(body.sourceLang).toBe('it');
+    // The stored label is not sent as a hint; detection comes from the text.
+    expect(body).not.toHaveProperty('sourceLang');
     expect(getDetectedLang(source.id, source.updatedAt)).toBe('it');
     expect(getRecipe(source.id)?.title).toBe('Carbonara');
     expect(getRecipe(source.id)?.lang).toBe('it');

@@ -171,13 +171,14 @@ export function displayRecipe(recipe: Recipe, target: Locale): Recipe {
 
 async function fetchTranslation(recipe: Recipe, target: Locale): Promise<Recipe> {
   const key = cacheKey(recipe.id, target, recipe.updatedAt);
-  const sourceLang = effectiveRecipeLang(recipe);
   const shared = recipeStore.isShared(recipe.id);
+  // No `sourceLang`: the detection must come from the text alone. Given the
+  // stored label as a hint, the model tends to echo it back when the text is
+  // already in the target language, and "already in {language}" never fires.
   const result = await requestTranslation({
     recipe,
     target,
     ...(shared ? {} : { recipeId: recipe.id }),
-    ...(sourceLang !== undefined ? { sourceLang } : {}),
   });
   const display = toDisplayRecipe(recipe, result.recipe);
   cache.set(key, display);

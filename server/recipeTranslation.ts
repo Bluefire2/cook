@@ -35,8 +35,9 @@ export const TRANSLATE_RATE_WINDOW_MS = 60 * 60 * 1000;
 /**
  * Bump when the prompt or provider changes so cached translations miss.
  * Included in `translationSourceHash`.
+ * 2: detectedLang is judged from the text, not the caller's hint.
  */
-export const TRANSLATION_VERSION = 1;
+export const TRANSLATION_VERSION = 2;
 
 /** Firestore collection under `users/{uid}`, outside sync. */
 export const TRANSLATIONS_COLLECTION = 'translations';

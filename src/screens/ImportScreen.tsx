@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { languageName, t as translateNow, useLocale, useT } from '../i18n';
+import { t as translateNow, useLocale, useT } from '../i18n';
 import ImportPreview from '../components/ImportPreview';
 import { type CreateRecipeSubmitStatus } from '../components/CreateRecipeForm';
 import SaveToCollectionSheet from '../components/SaveToCollectionSheet';
@@ -442,9 +442,7 @@ export default function ImportScreen() {
                 className={`mt-1 h-4 w-4 shrink-0 accent-ink disabled:opacity-40 ${inputFocus}`}
               />
               <span className="block font-medium text-ink">
-                {t('import.translateInto', {
-                  language: languageName(locale, locale) ?? locale,
-                })}
+                {t('import.translateInto')}
               </span>
             </label>
           )}

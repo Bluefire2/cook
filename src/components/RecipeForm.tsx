@@ -556,7 +556,8 @@ export default function RecipeForm({
         </p>
       )}
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
+      {/* items-end keeps the inputs level when one label wraps (uk/ru "Cook, min"). */}
+      <div className="mt-3 grid grid-cols-3 items-end gap-2">
         <label className="block">
           <span className="text-sm font-medium text-ink-muted">{t('common.servings')}</span>
           <input

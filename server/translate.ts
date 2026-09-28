@@ -124,10 +124,14 @@ export function translationPrompt(input: {
     'Do not resolve a tablespoon-versus-teaspoon doubt. Leave it in notes.',
     'Keep dish names recognisable.',
     'Return exactly the ids given, once each, in the same order.',
-    'Return detectedLang as a BCP 47 language tag for the source text.',
+    'Return detectedLang as a BCP 47 language tag for the language the source text is actually written in, judged from the text alone.',
   ];
   if (input.sourceLang !== undefined) {
-    lines.push(`The source language may be ${input.sourceLang}. Trust the text if it disagrees.`);
+    // A hint only. Live tests showed the model echoing a hint into
+    // detectedLang when the text was already in the target language.
+    lines.push(
+      `A caller hint says the source may be ${input.sourceLang}. It can be wrong: use it only to help translate, never as detectedLang unless the text confirms it.`,
+    );
   }
   return lines.join('\n');
 }

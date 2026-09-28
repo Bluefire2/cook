@@ -207,7 +207,6 @@ export default function ImportPreview({
     }
   };
 
-  const uiLanguage = languageName(locale, locale) ?? locale;
   const guessedName = sourceLang !== undefined ? languageName(sourceLang, locale) : undefined;
   const guessLine =
     sourceLang !== undefined
@@ -246,7 +245,7 @@ export default function ImportPreview({
           />
           <span>
             <span className="block font-medium text-ink">
-              {t('import.translateInto', { language: uiLanguage })}
+              {t('import.translateInto')}
             </span>
             {rules.showPastedHint && (
               <span className="mt-0.5 block text-sm text-ink-subtle">

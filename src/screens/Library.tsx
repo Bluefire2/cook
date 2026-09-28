@@ -368,12 +368,17 @@ export default function Library() {
       {named && namedIsShared && !browseAll && (
         <div className="-mt-1 mb-3 flex items-center justify-between gap-2 text-sm text-ink-muted">
           <span>
-            {collectionStore.sharedBy(named.id)
-              ? t('library.sharedWithYouBy', { email: collectionStore.sharedBy(named.id) ?? '' })
-              : t('library.sharedWithYou')}{' '}
-            {collectionStore.access(named.id) === 'editor'
-              ? t('library.youCanEdit')
-              : t('library.viewOnly')}
+            {/* One catalog sentence per case: joining two with a space breaks Chinese punctuation. */}
+            {(() => {
+              const email = collectionStore.sharedBy(named.id);
+              const editor = collectionStore.access(named.id) === 'editor';
+              if (email) {
+                return editor
+                  ? t('library.sharedBannerByEdit', { email })
+                  : t('library.sharedBannerByView', { email });
+              }
+              return editor ? t('library.sharedBannerEdit') : t('library.sharedBannerView');
+            })()}
           </span>
           <button
             type="button"

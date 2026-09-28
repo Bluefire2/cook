@@ -227,7 +227,6 @@ export default function RecipeView() {
     viewingTranslation: displayRecipe !== recipe,
     pending: phase,
   });
-  const uiLanguage = languageName(locale, locale) ?? locale;
   const sourceLanguage =
     effective !== undefined
       ? (languageName(effective, locale) ?? effective)
@@ -323,7 +322,7 @@ export default function RecipeView() {
             {recipe.cookMinutes != null && (
               <span>{t('recipe.cookMinutes', { count: recipe.cookMinutes })}</span>
             )}
-            {hasTime && mode !== 'hidden' && <span aria-hidden="true">·</span>}
+            {/* No "·" before the chip: it is a button, and a separator left at a line end when it wraps. */}
             {mode !== 'hidden' && (
               <TranslateChip
                 mode={mode}
@@ -339,7 +338,7 @@ export default function RecipeView() {
             className="mt-3 rounded-2xl border border-line bg-accent-soft px-4 py-3 text-sm text-ink"
             role="status"
           >
-            {t('recipe.alreadyInLanguage', { language: uiLanguage })}
+            {t('recipe.alreadyInLanguage')}
           </p>
         )}
       </header>

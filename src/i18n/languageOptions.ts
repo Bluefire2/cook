@@ -35,11 +35,22 @@ export function buildLanguagePickerOptions(
     return option === undefined ? [] : [option];
   });
 
-  const all = [...ISO_639_1_CODES, 'zh-Hant']
-    .flatMap((tag) => {
-      const option = named(tag);
-      return option === undefined ? [] : [option];
-    })
+  const allNamed = [...ISO_639_1_CODES, 'zh-Hant'].flatMap((tag) => {
+    const option = named(tag);
+    return option === undefined ? [] : [option];
+  });
+  // Intl gives some codes the same name (`ak` and `tw` are both "Akan"); the
+  // code tells them apart.
+  const labelCount = new Map<string, number>();
+  for (const option of allNamed) {
+    labelCount.set(option.label, (labelCount.get(option.label) ?? 0) + 1);
+  }
+  const all = allNamed
+    .map((option) =>
+      (labelCount.get(option.label) ?? 0) > 1
+        ? { value: option.value, label: `${option.label} (${option.value})` }
+        : option,
+    )
     .sort((a, b) => a.label.localeCompare(b.label, uiLocale));
 
   const known = new Set([...app, ...all].map((option) => option.value));
