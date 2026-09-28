@@ -1,0 +1,25 @@
+{
+  "title": "Taffy Apple Salad",
+  "servings": 1,
+  "ingredientSections": [
+    {
+      "items": [
+        { "quantity": 8, "unit": "oz", "item": "crushed pineapple" },
+        { "quantity": 0.5, "unit": "cup", "item": "sugar" },
+        { "quantity": 1, "item": "egg" },
+        { "quantity": 1, "unit": "tbsp", "item": "flour" },
+        { "quantity": 2, "unit": "tbsp", "item": "cider vinegar" },
+        { "item": "Granny Smith apples", "note": "4-6" },
+        { "quantity": 1, "unit": "cup", "item": "dry roasted peanuts" },
+        { "quantity": 8, "unit": "oz", "item": "Cool Whip" }
+      ]
+    }
+  ],
+  "steps": [
+    { "text": "Mix the pineapple, sugar, egg, flour and cider vinegar in a pan over medium heat and bring to a boil, stirring until thick." },
+    { "text": "Chill 4-6 hours." },
+    { "text": "Just before serving, add the chopped peanuts and Cool Whip." }
+  ],
+  "tags": ["salad", "dessert", "apples"],
+  "notes": "A favorite recipe from Betsy Morris. The card does not say when to add the apples."
+}

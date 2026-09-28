@@ -26,7 +26,13 @@
   {
     "id": "import-idle",
     "route": "/import",
-    "setup": "Import with an empty textarea, the bulk-import checkbox off, and no preview. Open /import with no ?c= query. Do not extract.",
+    "setup": "Import with an empty textarea, the bulk-import checkbox off, no photo attached, and no preview. The Add photos button is visible. Open /import with no ?c= query. Do not extract.",
+    "needsData": false
+  },
+  {
+    "id": "import-photos",
+    "route": "/import",
+    "setup": "Import with bulk off and one photo attached, so the thumbnail, its remove control, and the notes placeholder are showing. Do not extract. Adding a photo does not call Gemini and writes nothing.",
     "needsData": false
   },
   {

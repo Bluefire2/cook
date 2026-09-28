@@ -1,15 +1,18 @@
 /**
- * Recipe import: page HTML or pasted text in, a saveable recipe draft out.
+ * Recipe import: page HTML, pasted text, or photos in, a saveable recipe draft out.
  *
  * The one pipeline behind `POST /api/import` (`server/importRoute.ts`),
  * `POST /api/extension/import` (`server/extensionImport.ts`) and the live
- * import evals (`evals/recipeImport.eval.ts`). Nothing here knows about HTTP:
- * routes map `ImportOutcome` / `PageFetchOutcome` to statuses and copy. The
- * Gemini client and model are passed in; `recipeImportDepsFromEnv` is the only
- * place that reads the environment. Translation uses the injected
+ * import evals (`evals/recipeImport.eval.ts`). Callers enter through
+ * `importFromHtml`, `importFromSource`, or `importFromImages`. Nothing here
+ * knows about HTTP: routes map `ImportOutcome` / `PageFetchOutcome` to statuses
+ * and copy. The Gemini client and model are passed in; `recipeImportDepsFromEnv`
+ * is the only place that reads the environment. Translation uses the injected
  * `translator` (`translateSegments`); a failure there never fails the import.
+ *
+ * Photo import is bound by `docs/constitutions/image-import.md`.
  */
-import { GoogleGenAI, Type, type Schema } from '@google/genai';
+import { GoogleGenAI, MediaResolution, Type, type Schema } from '@google/genai';
 import { normalizeLang, sameLanguage, toSupportedLocale, type Locale } from './lang.ts';
 import { applyTranslation, recipeSegments, translationExceedsCaps } from './recipeTranslation.ts';
 import {
@@ -55,6 +58,16 @@ export interface ImportedRecipe {
  * not throw.
  */
 export type RecipeTranslator = (input: TranslateInput) => Promise<TranslateOutcome>;
+
+/**
+ * One photo: raw base64 with no data-URL prefix, the same shape as
+ * `ChatRequestImage`. `importFromImages` trusts it, so callers validate first
+ * (`checkImportImages` in `server/importRoute.ts`).
+ */
+export interface ImportImage {
+  mediaType: string;
+  base64: string;
+}
 
 export interface RecipeImportDeps {
   /** Only `models.generateContent` is used; fakes implement exactly this. */
@@ -170,6 +183,12 @@ const RECIPE_SCHEMA: Schema = {
     },
   },
   required: ['title', 'servings', 'ingredientSections', 'steps', 'tags'],
+};
+
+const RECIPE_OUTPUT_CONFIG = {
+  maxOutputTokens: 4096,
+  responseMimeType: 'application/json',
+  responseSchema: RECIPE_SCHEMA,
 };
 
 interface HtmlTag {
@@ -566,16 +585,73 @@ export async function importFromSource(
       'faithful to the original but trim fluff. If the source contains ' +
       'no recipe, save a recipe with the title "NOT_A_RECIPE".\n\n' +
       `Source material:\n${source}`,
+    config: { ...RECIPE_OUTPUT_CONFIG },
+  });
+
+  return finishIfExtracted(outcomeFromModelText(result.text), translateTo, deps);
+}
+
+function imageImportPrompt(extraText: string): string {
+  const prompt = [
+    'The photos are the pages of one recipe, often handwritten. Extract the recipe and save it.',
+    'Read the pages in the order given: the first photo is page 1.',
+    'Transcribe what is written. Skip anything that is crossed out.',
+    "If you are unsure how a word reads, write your best reading followed by (?). If you are unsure of an amount, keep your best reading as the quantity and add (?) to that ingredient's note.",
+    'If you cannot tell whether an amount is a tablespoon or a teaspoon (for example a T that could be a t), use your best reading and say so in notes.',
+    'Never invent quantities, ingredients, or steps that are not written. If an amount is missing or unreadable, leave the quantity out.',
+    'Convert fractions to decimals for quantities.',
+    'If no title is written, use a short plain name for the dish. Give a description or prep and cook times only if they are written. If servings are not written, use 1.',
+    'If the photos contain no recipe, save a recipe with the title "NOT_A_RECIPE".',
+  ].join('\n');
+  const notes = extraText.trim();
+  if (notes === '') return prompt;
+  return (
+    `${prompt}\n\nNotes from the person importing these photos (context only; the photos are the source):\n` +
+    notes.slice(0, MAX_SOURCE_CHARS)
+  );
+}
+
+/**
+ * Photos of one recipe, in page order, plus optional notes → outcome.
+ * The one Gemini call extracts. `translateTo`, when set, may add a translation
+ * and never changes that call.
+ */
+export async function importFromImages(
+  images: readonly ImportImage[],
+  extraText: string,
+  deps: RecipeImportDeps,
+  translateTo?: string,
+): Promise<ImportOutcome> {
+  if (images.length === 0) {
+    return { kind: 'empty_source' };
+  }
+
+  const result = await deps.ai.models.generateContent({
+    model: deps.model,
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          ...images.map((image) => ({
+            inlineData: { mimeType: image.mediaType, data: image.base64 },
+          })),
+          { text: imageImportPrompt(extraText) },
+        ],
+      },
+    ],
     config: {
-      maxOutputTokens: 4096,
-      responseMimeType: 'application/json',
-      responseSchema: RECIPE_SCHEMA,
+      ...RECIPE_OUTPUT_CONFIG,
+      mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH,
     },
   });
 
+  return finishIfExtracted(outcomeFromModelText(result.text), translateTo, deps);
+}
+
+function outcomeFromModelText(text: string | undefined): ImportOutcome {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(result.text ?? '');
+    parsed = JSON.parse(text ?? '');
   } catch {
     return { kind: 'parse_error' };
   }
@@ -589,7 +665,16 @@ export async function importFromSource(
   if (recipe === null) {
     return { kind: 'unusable' };
   }
-  return finishImport(recipe, translateTo, deps);
+  return { kind: 'ok', recipe };
+}
+
+function finishIfExtracted(
+  outcome: ImportOutcome,
+  translateTo: string | undefined,
+  deps: RecipeImportDeps,
+): Promise<ImportOutcome> {
+  if (outcome.kind !== 'ok') return Promise.resolve(outcome);
+  return finishImport(outcome.recipe, translateTo, deps);
 }
 
 /** Page HTML → outcome: `extractRecipeSource` then `importFromSource`. */

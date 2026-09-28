@@ -1,0 +1,31 @@
+{
+  "title": "100 Good Cookies",
+  "servings": 100,
+  "ingredientSections": [
+    {
+      "items": [
+        { "quantity": 1, "unit": "cup", "item": "white sugar" },
+        { "quantity": 1, "unit": "cup", "item": "brown sugar" },
+        { "quantity": 1, "unit": "cup", "item": "margarine" },
+        { "quantity": 1, "unit": "cup", "item": "cooking oil" },
+        { "quantity": 1, "item": "egg" },
+        { "quantity": 1, "unit": "tsp", "item": "vanilla" },
+        { "quantity": 1, "unit": "tsp", "item": "cream of tartar" },
+        { "quantity": 1, "unit": "tsp", "item": "baking soda" },
+        { "quantity": 1, "unit": "cup", "item": "quick oatmeal" },
+        { "quantity": 1, "unit": "cup", "item": "coconut" },
+        { "quantity": 1, "unit": "cup", "item": "Rice Krispies" },
+        { "quantity": 1, "unit": "cup", "item": "chopped walnuts" },
+        { "quantity": 3.5, "unit": "cup", "item": "flour" },
+        { "quantity": 1, "unit": "package", "item": "mini chocolate chips", "note": "12 oz" }
+      ]
+    }
+  ],
+  "steps": [
+    { "text": "Mix in the order given." },
+    { "text": "Drop by teaspoonfuls onto a cookie sheet." },
+    { "text": "Bake at 350° for 8-10 minutes." }
+  ],
+  "tags": ["cookies", "baking"],
+  "notes": "The card is marked \"(over)\"; the back is not in the photo. The only yield is the title's \"100\"."
+}

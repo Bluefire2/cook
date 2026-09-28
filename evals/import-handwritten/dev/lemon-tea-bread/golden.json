@@ -1,0 +1,22 @@
+{
+  "title": "Lemon Tea Bread",
+  "servings": 1,
+  "ingredientSections": [
+    {
+      "items": [
+        { "quantity": 0.5, "unit": "cup", "item": "butter or margarine", "note": "softened" },
+        { "quantity": 2, "item": "eggs", "note": "beaten" },
+        { "quantity": 0.5, "unit": "tsp", "item": "salt" },
+        { "quantity": 1.5, "unit": "cup", "item": "all-purpose flour" },
+        { "quantity": 1, "unit": "tsp", "item": "baking powder" },
+        { "quantity": 1, "unit": "cup", "item": "sugar" },
+        { "item": "grated lemon rind", "note": "from 1 lemon" },
+        { "item": "lemon juice", "note": "from 1 lemon" },
+        { "item": "glaze", "note": "recipe follows" }
+      ]
+    }
+  ],
+  "steps": [{ "text": "Combine the first 8 ingredients; spoon into…" }],
+  "tags": ["bread", "baking", "lemon"],
+  "notes": "Serves 1 loaf. The card is marked \"(over)\": the rest of the method and the glaze recipe are on the back, which is not in the photo."
+}

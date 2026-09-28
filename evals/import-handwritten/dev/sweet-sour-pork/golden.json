@@ -1,0 +1,30 @@
+{
+  "title": "Sweet Sour Pork",
+  "servings": 1,
+  "ingredientSections": [
+    {
+      "items": [
+        { "quantity": 1.5, "unit": "lb", "item": "lean pork shoulder or spare ribs", "note": "cut in 2\" x 1/2\" pieces" },
+        { "quantity": 1, "unit": "can", "item": "pineapple chunks", "note": "No. 2 can" },
+        { "quantity": 0.25, "unit": "cup", "item": "brown sugar" },
+        { "quantity": 2, "unit": "tbsp", "item": "cornstarch" },
+        { "quantity": 0.25, "unit": "cup", "item": "vinegar" },
+        { "quantity": 3, "unit": "tbsp", "item": "shoyu (soy sauce)" },
+        { "quantity": 0.5, "unit": "tsp", "item": "salt" },
+        { "quantity": 1, "item": "green pepper or celery", "note": "small" },
+        { "quantity": 0.25, "unit": "cup", "item": "onion", "note": "thinly sliced" }
+      ]
+    }
+  ],
+  "steps": [
+    { "text": "Brown the pork in oil. Drain excess fat." },
+    { "text": "Add 1/2 cup water and simmer 1 hour." },
+    { "text": "Drain the pineapple, saving the juice." },
+    { "text": "Combine the sugar, cornstarch, pineapple juice, vinegar, soy sauce and salt." },
+    { "text": "Add to the pork and stir while cooking until it thickens." },
+    { "text": "Add the pineapple, pepper and onion and cook 3 minutes." },
+    { "text": "Serve." }
+  ],
+  "tags": ["pork", "main", "sweet and sour"],
+  "notes": "Oil and water appear only in the method."
+}

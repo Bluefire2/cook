@@ -7,12 +7,19 @@ export interface EncodedImage {
 
 const JPEG_QUALITY = 0.8;
 
+export const IMPORT_MAX_EDGE_PX = 2048;
+export const IMPORT_JPEG_QUALITY = 0.85;
+
 /**
  * `from-image` because iPhone photos record their rotation in EXIF rather than
  * in the pixels, and drawing to a canvas would otherwise bake in the sideways
  * one with no orientation tag left to correct it.
  */
-async function downscale(blob: Blob, maxDim: number): Promise<HTMLCanvasElement> {
+async function downscale(
+  blob: Blob,
+  maxDim: number,
+  background?: string,
+): Promise<HTMLCanvasElement> {
   const bitmap = await createImageBitmap(blob, {
     imageOrientation: 'from-image',
   });
@@ -23,7 +30,12 @@ async function downscale(blob: Blob, maxDim: number): Promise<HTMLCanvasElement>
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
-  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, width, height);
+  const context = canvas.getContext('2d')!;
+  if (background) {
+    context.fillStyle = background;
+    context.fillRect(0, 0, width, height);
+  }
+  context.drawImage(bitmap, 0, 0, width, height);
   bitmap.close();
   return canvas;
 }
@@ -42,6 +54,24 @@ export async function encodeImageForChat(
     mediaType: 'image/jpeg',
     base64: dataUrl.slice(dataUrl.indexOf(',') + 1),
   };
+}
+
+/**
+ * Photos for recipe import: long edge 2048 px, which is enough for handwriting.
+ * Gemini's HIGH media resolution bills a photo the same at any size, so larger
+ * only costs upload and server memory. White behind transparent PNGs, because
+ * JPEG turns transparency black.
+ */
+export async function encodeImageForImport(blob: Blob): Promise<EncodedImage> {
+  const prefix = 'data:image/jpeg;base64,';
+  try {
+    const canvas = await downscale(blob, IMPORT_MAX_EDGE_PX, '#fff');
+    const dataUrl = canvas.toDataURL('image/jpeg', IMPORT_JPEG_QUALITY);
+    if (!dataUrl.startsWith(prefix)) throw new Error('not a JPEG data URL');
+    return { mediaType: 'image/jpeg', base64: dataUrl.slice(prefix.length) };
+  } catch {
+    throw new Error('That image could not be encoded.');
+  }
 }
 
 /**

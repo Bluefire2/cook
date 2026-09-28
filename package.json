@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:import": "vitest run --config vitest.eval.config.ts"
+    "test:import": "vitest run --config vitest.eval.config.ts",
+    "eval:ocr-compare": "node --env-file=.env.local evals/ocrCompare.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.1.0",
