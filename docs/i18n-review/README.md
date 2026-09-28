@@ -138,9 +138,11 @@ cook state, or photos.
   But if the account has incoming shares, or collections shared with
   grantees, some states show another member's data: a shared recipe's
   content, the owner's email in the shared-with-you banner and folder
-  label, or grantee emails in `ShareCollectionSheet`. Such a state is
-  captured only if the reviewer redacts that data (for example by cropping
-  or blurring) before the image goes to the judging model. Otherwise it is
+  label, or grantee emails in `ShareCollectionSheet`. `/admin` signed in as
+  an owner shows other people's names and emails in every list. Such a
+  state is captured only if the reviewer redacts that data (for example by
+  cropping or blurring, or by removing names and emails from extracted page
+  text) before it goes to the judging model. Otherwise it is
   marked "skipped: shows another member's data". Prefer a collection with
   no grantees for the sheet ("Nobody else can see this yet."). The report
   lists every state that was skipped or redacted for this reason.
