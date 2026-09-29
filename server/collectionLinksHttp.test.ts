@@ -419,12 +419,24 @@ describe('owner API /api/collections/:id/links', () => {
       deps,
     );
     expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ code: 'bad-request', error: 'Bad request' });
     const capped = apiDeps({ mint: vi.fn(async () => ({ kind: 'cap' }) as const) });
     const cap = await handleCollectionLinksPost(
       new Request(base, { method: 'POST', body: '{}' }),
       capped.deps,
     );
     expect(cap.status).toBe(409);
+    expect(await cap.json()).toEqual({
+      code: 'link-cap',
+      error: 'This collection already has 20 live links. Revoke one first.',
+      max: 20,
+    });
+  });
+
+  it('404s carry the not-found code', async () => {
+    const { deps } = apiDeps({ requireOwnedLiveCollection: async () => ({ kind: 'missing' }) });
+    const response = await handleCollectionLinksGet(new Request(base), deps);
+    expect(await response.json()).toEqual({ code: 'not-found', error: 'Not found' });
   });
 
   it('revoke needs a sha256 id and answers 404 for a link that is not this collection’s', async () => {

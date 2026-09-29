@@ -11,6 +11,7 @@ import {
   collectionLinkTokenFromPath,
   hashCollectionLinkToken,
   isCollectionLinkId,
+  MAX_LIVE_COLLECTION_LINKS,
   listCollectionLinks,
   mintCollectionLink,
   readCollectionLink,
@@ -22,7 +23,7 @@ import {
 } from './collectionLinks.ts';
 import { isSecureOrigin, publicOrigin } from './env.ts';
 import { sharingOwnerAdmitted } from './grants.ts';
-import { accessResponse, requireOwnedLiveCollection } from './grantsHttp.ts';
+import { accessResponse, errorJson, requireOwnedLiveCollection } from './grantsHttp.ts';
 import {
   readBoundedText,
   storeUnavailable,
@@ -57,8 +58,23 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+// Errors carry a stable `code` for the client catalog; `error` is the English
+// fallback for older clients.
+function badRequest(): Response {
+  return errorJson('bad-request', 'Bad request', 400);
+}
+
 function notFound(): Response {
-  return jsonResponse({ error: 'Not found' }, 404);
+  return errorJson('not-found', 'Not found', 404);
+}
+
+export function linkCapResponse(): Response {
+  return errorJson(
+    'link-cap',
+    `This collection already has ${MAX_LIVE_COLLECTION_LINKS} live links. Revoke one first.`,
+    409,
+    MAX_LIVE_COLLECTION_LINKS,
+  );
 }
 
 export function collectionIdFromLinksPath(pathname: string): string | null {
@@ -113,7 +129,7 @@ async function ownerGate(
 ): Promise<{ kind: 'ok'; sub: string; email: string; collectionId: string } | Response> {
   const collectionId = collectionIdFromLinksPath(new URL(req.url).pathname);
   if (collectionId === null) {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
   const access = await deps.requireOwnedLiveCollection(req, collectionId);
   const early = accessResponse(access);
@@ -153,7 +169,7 @@ export async function handleCollectionLinksPost(
   const body = await readJsonBody(req);
   const role = body === null ? null : requestedShareRole(body.role);
   if (role === null) {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
   try {
     const now = deps.now();
@@ -165,10 +181,7 @@ export async function handleCollectionLinksPost(
       return notFound();
     }
     if (minted.kind === 'cap') {
-      return jsonResponse(
-        { error: 'This collection already has 20 live links. Revoke one first.' },
-        409,
-      );
+      return linkCapResponse();
     }
     const links = await deps.list(gate.sub, gate.collectionId, now);
     // The only time the raw token leaves the server. Never log this body.
@@ -189,7 +202,7 @@ export async function handleCollectionLinksRevokePost(
   }
   const body = await readJsonBody(req);
   if (body === null || !isCollectionLinkId(body.id)) {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
   try {
     const now = deps.now();

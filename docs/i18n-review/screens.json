@@ -198,6 +198,18 @@
     "needsData": true
   },
   {
+    "id": "share-collection-sheet-links",
+    "route": "/?c=:collectionId",
+    "setup": "In the Share sheet of one of your own named collections, scroll to \"Share by link\": heading, the sentence about joining until you revoke the link or 7 days pass, the role menu (Viewer / Editor) for people who join by link, the Copy link button, and the live-link list. Opening the sheet only reads the link list. With no live links the list says \"No live links.\"; if the collection already has live links, each row shows Viewer link or Editor link, an \"expires in …\" line, and Revoke, so capture that too. Do not press Copy link (it creates a link) and do not press Revoke. Same grantee-email rule as share-collection-sheet: redact emails in the people list above, or mark skipped: shows another member's data. If you have no own named collection, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "share-collection-sheet-link-minted",
+    "route": "/?c=:collectionId",
+    "setup": "The shown-once link: after Copy link, the sheet shows the new URL in a read-only field with \"Copy this now. It will not be shown again.\" (or \"Copied. It will not be shown again.\" when the clipboard write worked) and a Copy / Copied button, and the new row appears in the live-link list. Reaching it writes a collection link to production, so capture it only when the person who starts the run opts in for that run (for example \"include minted link\"): press Copy link once, on one own named collection with no grantees, capture, then press Revoke on that row, and list the link created and revoked in the report. Without the opt-in, mark skipped: needs opt-in. Never paste or share the URL.",
+    "needsData": true
+  },
+  {
     "id": "save-to-collection-sheet",
     "route": "/import",
     "setup": "After the import preview is showing (import-preview: /import, bulk off, not under /collections/…/import), press Save. The Save to collection sheet opens and nothing is written until a destination is chosen. Capture the sheet, then Cancel. Do not pick Recipes, pick a collection, or create one. Do not reach this sheet from bulk import.",

@@ -47,7 +47,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function errorJson(code: string, error: string, status: number, max?: number): Response {
+export function errorJson(code: string, error: string, status: number, max?: number): Response {
   const body: { error: string; code: string; max?: number } = { error, code };
   if (max !== undefined) {
     body.max = max;

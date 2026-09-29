@@ -31,6 +31,7 @@ const ERROR_CODES = {
   'share-self': 'error.shareSelf',
   'share-no-account': 'error.shareNoAccount',
   'share-full': 'error.shareFull',
+  'link-cap': 'error.linkCap',
   self: 'error.adminSelf',
   'unknown-request': 'error.adminUnknownRequest',
   'unknown-invite': 'error.adminUnknownInvite',
@@ -81,6 +82,11 @@ function paramsFor(code: ErrorCode, body: Record<string, unknown>): TranslatePar
   if (code === 'share-full') {
     const max = numericField(body, 'max');
     return max === undefined ? null : { max };
+  }
+  if (code === 'link-cap') {
+    // A plural message: `count` selects the form.
+    const max = numericField(body, 'max');
+    return max === undefined ? null : { count: max };
   }
   if (code === 'invite-cap' || code === 'member-invite-limit') {
     const fallback = code === 'invite-cap' ? INVITE_CAP_MAX_FALLBACK : MEMBER_INVITE_LIMIT_FALLBACK;

@@ -775,6 +775,11 @@ never admits anyone to Sous. Owner-confirmed decisions:
   which.
 - **No** email, Resend, new Google scope, or new env var. The OAuth callback
   is unchanged.
+- **Language.** The share sheet's link block is in the `src/i18n/` catalogs
+  (`share.link*`, `error.linkCap`). Owner-API errors carry a `code`
+  (`bad-request`, `not-found`, `link-cap` with `max`) beside the English
+  `error`. The `/c/*` pages are server-rendered access HTML and stay English
+  (`docs/constitutions/i18n.md`, principle 9).
 
 Deviations recorded at implementation:
 

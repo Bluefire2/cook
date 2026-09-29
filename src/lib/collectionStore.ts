@@ -67,7 +67,7 @@ function linkResult(
   result: CollectionLinkHttpResult,
 ): { links: CollectionLink[]; url?: string } {
   if (result.kind === 'signedOut') {
-    throw new Error('Please sign in again — your session expired.');
+    throw new Error(t('error.sessionExpired'));
   }
   if (result.kind === 'error') {
     throw new Error(result.message);
@@ -282,7 +282,7 @@ export const collectionStore = {
     rejectShared(id);
     const { links, url } = linkResult(await createCollectionLink(id, role));
     if (url === undefined) {
-      throw new Error("Couldn't update sharing.");
+      throw new Error(t('error.sharingUpdate'));
     }
     return { url, links };
   },

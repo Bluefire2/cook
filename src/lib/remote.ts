@@ -715,7 +715,7 @@ async function linkRequest(path: string, init?: RequestInit): Promise<Collection
   }
   const parsed = parseCollectionLinksBody(result.body);
   if (parsed === null) {
-    return { kind: 'error', message: "Couldn't update sharing." };
+    return { kind: 'error', message: t('error.sharingUpdate') };
   }
   return { kind: 'ok', ...parsed };
 }
