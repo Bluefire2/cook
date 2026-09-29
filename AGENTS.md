@@ -100,7 +100,9 @@ No refresh tokens, no extra Google APIs, no Auth.js.
   admitted member who is not an owner can mint one such link from Settings
   (`POST /api/invites`) and can admit up to 5 people that way; creating
   another replaces their previous unused link, and they do not see `/admin`.
-  A signed-in person can also mint from the library header: an owner uses the admin mint (POST /api/admin/invites), and a member uses POST /api/invites.
+  A signed-in person can also mint from the library header: an owner uses
+  the admin mint (`POST /api/admin/invites`), and a member confirms in a
+  sheet before minting (`POST /api/invites`).
   Removing a member revokes their unused links, and redeem refuses a link
   whose minter is no longer admitted. The invite landing page runs that
   same check before the join page; redeem still decides inside its
