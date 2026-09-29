@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useT } from '../i18n';
 import LibraryInviteToast, {
@@ -10,14 +10,13 @@ import { createInvite } from '../lib/adminApi';
 import { createMemberInvite } from '../lib/inviteApi';
 import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
 import { FolderIcon, PlusIcon, SettingsIcon, SharedIcon } from '../lib/icons';
-import {
-  collectionStore,
-  importHref,
-  libraryHref,
-  newRecipeHref,
-  useCollections,
-} from '../lib/collectionStore';
+import { importHref, libraryHref, newRecipeHref } from '../lib/collectionHref';
+import { collectionStore, useCollections } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
+import {
+  readPersistedLibraryView,
+  writePersistedLibraryView,
+} from '../lib/librarySearchMemory';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
 import { visibleLibraryRecipes } from '../lib/visibleLibraryRecipes';
@@ -62,8 +61,16 @@ export default function Library() {
       : undefined;
   const currentId = named?.id;
 
-  const [query, setQuery] = useState('');
-  const [browseAll, setBrowseAll] = useState(false);
+  // The collection the URL shows now. A save that finishes after the user has
+  // moved on must not touch the sheets or the route of the collection they are on.
+  const shownCollectionId = useRef(collectionId);
+  const [query, setQuery] = useState(() => readPersistedLibraryView().query);
+  const [browseAll, setBrowseAll] = useState(
+    () => readPersistedLibraryView().browseAll,
+  );
+  useEffect(() => {
+    writePersistedLibraryView({ query, browseAll });
+  }, [query, browseAll]);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -185,11 +192,14 @@ export default function Library() {
     if (!currentId) {
       return;
     }
+    const startedOn = shownCollectionId.current;
     setCollectionError(null);
     try {
       await collectionStore.rename(currentId, collectionName);
+      if (shownCollectionId.current !== startedOn) return;
       closeSheets();
     } catch (err) {
+      if (shownCollectionId.current !== startedOn) return;
       setCollectionError(err instanceof Error ? err.message : t('error.collectionSave'));
     }
   };
@@ -198,12 +208,15 @@ export default function Library() {
     if (!currentId) {
       return;
     }
+    const startedOn = shownCollectionId.current;
     setCollectionError(null);
     try {
       await collectionStore.remove(currentId);
+      if (shownCollectionId.current !== startedOn) return;
       closeSheets();
       navigate('/');
     } catch (err) {
+      if (shownCollectionId.current !== startedOn) return;
       setCollectionError(
         err instanceof Error ? err.message : t('error.collectionDelete'),
       );
@@ -214,13 +227,16 @@ export default function Library() {
     if (!currentId) {
       return;
     }
+    const startedOn = shownCollectionId.current;
     setCollectionError(null);
     setLeaveBusy(true);
     try {
       await collectionStore.leave(currentId);
+      if (shownCollectionId.current !== startedOn) return;
       closeSheets();
       navigate('/');
     } catch (err) {
+      if (shownCollectionId.current !== startedOn) return;
       setCollectionError(
         err instanceof Error ? err.message : t('error.leaveCollection'),
       );
@@ -347,9 +363,16 @@ export default function Library() {
     showInviteToast('success', t('library.inviteCopied'));
   };
 
-  useEffect(() => {
+  // Library stays mounted across collection routes, so per-collection state
+  // (open sheets, the typed name, scope) must not leak into the next one.
+  useLayoutEffect(() => {
+    if (shownCollectionId.current === collectionId) return;
+    shownCollectionId.current = collectionId;
     setBrowseAll(false);
-  }, [currentId]);
+    setMenuId(null);
+    setDeleteError(null);
+    closeSheets();
+  }, [collectionId]);
 
   useEffect(() => {
     if (!menuId) return;
