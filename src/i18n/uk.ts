@@ -92,6 +92,9 @@ export const uk: Messages = {
   'settings.signOut': 'Вийти',
   'settings.ownerHint':
     'Перегляньте запити людей, які хочуть приєднатися: після схвалення вони отримають власну порожню бібліотеку.',
+  'settings.inviteTitle': 'Запросити когось',
+  'settings.inviteIntro':
+    'Посилання впускає перший обліковий запис Google, який увійде за ним. Воно спрацьовує один раз і діє 7 днів. Нове посилання замінює ваше попереднє невикористане. URL показується лише під час створення — скопіюйте його зараз.',
   'settings.offline': 'Немає з’єднання — вхід недоступний, доки ви не повернетеся онлайн.',
   'settings.notLoaded': 'Ще не завантажено',
   'settings.loadedAgo': 'Завантажено {time}',
@@ -139,6 +142,7 @@ export const uk: Messages = {
   'admin.noInvites': 'Невикористаних посилань немає.',
   'admin.unusedLink': 'Невикористане посилання',
   'admin.createdAgo': 'Створено {time}',
+  'admin.createdBy': 'Створено обліковим записом {email}',
   'admin.revokeInvite': 'Відкликати це посилання-запрошення',
   'admin.revoking': 'Відкликання…',
   'admin.revoke': 'Відкликати',
@@ -406,6 +410,7 @@ export const uk: Messages = {
   'error.adminUnavailable': 'Запрошення тимчасово недоступні.',
   'error.inviteCap':
     'У вас уже є {max} невикористаних посилань-запрошень. Відкличте одне, щоб створити нове.',
+  'error.memberInviteCap': 'Невикористаних посилань-запрошень уже забагато. Спробуйте пізніше.',
   'error.importBadUrl': 'Це не схоже на веб-адресу.',
   'error.importBadScheme': 'Підтримуються лише адреси http і https.',
   'error.importUnreachable': 'Не вдалося відкрити цю адресу.',

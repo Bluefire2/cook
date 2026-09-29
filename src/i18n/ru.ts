@@ -90,6 +90,9 @@ export const ru: Messages = {
   'settings.signOut': 'Выйти',
   'settings.ownerHint':
     'Просмотрите запросы людей, которые хотят присоединиться: после одобрения они получат собственную пустую библиотеку.',
+  'settings.inviteTitle': 'Пригласить кого-нибудь',
+  'settings.inviteIntro':
+    'Ссылка впускает первый аккаунт Google, который войдёт по ней. Она срабатывает один раз и действует 7 дней. Новая ссылка заменяет вашу предыдущую неиспользованную. URL показывается только при создании — скопируйте его сейчас.',
   'settings.offline': 'Нет соединения — вход недоступен, пока вы не вернётесь в сеть.',
   'settings.notLoaded': 'Ещё не загружено',
   'settings.loadedAgo': 'Загружено {time}',
@@ -137,6 +140,7 @@ export const ru: Messages = {
   'admin.noInvites': 'Неиспользованных ссылок нет.',
   'admin.unusedLink': 'Неиспользованная ссылка',
   'admin.createdAgo': 'Создана {time}',
+  'admin.createdBy': 'Создано аккаунтом {email}',
   'admin.revokeInvite': 'Отозвать эту ссылку-приглашение',
   'admin.revoking': 'Отзыв…',
   'admin.revoke': 'Отозвать',
@@ -404,6 +408,7 @@ export const ru: Messages = {
   'error.adminUnavailable': 'Приглашения временно недоступны.',
   'error.inviteCap':
     'У вас уже есть {max} неиспользованных ссылок-приглашений. Отзовите одну, чтобы создать новую.',
+  'error.memberInviteCap': 'Неиспользованных ссылок-приглашений уже слишком много. Попробуйте позже.',
   'error.importBadUrl': 'Это не похоже на веб-адрес.',
   'error.importBadScheme': 'Поддерживаются только адреса http и https.',
   'error.importUnreachable': 'Не удалось открыть этот адрес.',

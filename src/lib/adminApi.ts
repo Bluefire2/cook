@@ -27,6 +27,7 @@ export interface InviteEntry {
   id: string;
   createdAt: number;
   expiresAt: number;
+  creatorEmail?: string;
 }
 
 export interface InviteList {

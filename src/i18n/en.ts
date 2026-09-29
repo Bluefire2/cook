@@ -107,6 +107,9 @@ export const en = {
   'settings.signOut': 'Sign out',
   'settings.ownerHint':
     'Review requests from people who want in — approving gives them their own empty library.',
+  'settings.inviteTitle': 'Invite someone',
+  'settings.inviteIntro':
+    'A link admits the first Google account that signs in with it. It works once and expires after 7 days. Creating a new link replaces your previous unused one. The URL is shown only when you create it — copy it now.',
   'settings.offline': "Offline — sign-in is unavailable until you're back online.",
   'settings.notLoaded': 'Not loaded yet',
   'settings.loadedAgo': 'Loaded {time}',
@@ -148,6 +151,7 @@ export const en = {
   'admin.noInvites': 'No unused invite links.',
   'admin.unusedLink': 'Unused link',
   'admin.createdAgo': 'Created {time}',
+  'admin.createdBy': 'Created by {email}',
   'admin.revokeInvite': 'Revoke this invite link',
   'admin.revoking': 'Revoking…',
   'admin.revoke': 'Revoke',
@@ -408,6 +412,7 @@ export const en = {
   'error.adminForbidden': "This account can't manage invitations.",
   'error.adminUnavailable': 'Invitations are temporarily unavailable.',
   'error.inviteCap': 'You already have {max} unused invite links. Revoke one to mint another.',
+  'error.memberInviteCap': 'There are already too many unused invite links. Try again later.',
   'error.importBadUrl': 'That does not look like a web address.',
   'error.importBadScheme': 'Only http and https URLs are supported.',
   'error.importUnreachable': 'Could not reach that URL.',
