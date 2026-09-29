@@ -145,6 +145,7 @@ describe('GET /c/<token>', () => {
     const dead = await handleCollectionLinkLanding(new Request(`${ORIGIN}/c/${token}`), deps);
     for (const response of [malformed, dead]) {
       expect(response.status).toBe(404);
+      expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
       expect(await response.text()).toBe(collectionLinkDeadPageHtml());
     }
   });
@@ -157,6 +158,7 @@ describe('GET /c/<token>', () => {
     });
     const response = await handleCollectionLinkLanding(new Request(`${ORIGIN}/c/${token}`), deps);
     expect(response.status).toBe(503);
+    expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
   });
 });
 
@@ -211,6 +213,31 @@ describe('GET /c/join', () => {
     expect(body).not.toContain(token);
     expect(response.headers.get('X-Frame-Options')).toBe('DENY');
     expect(redeem).not.toHaveBeenCalled();
+  });
+
+  it('confirm page is same-origin, not no-referrer, so its Join POST carries a real Origin', async () => {
+    const { deps } = pageDeps();
+    const response = await handleCollectionLinkJoinGet(joinGet(hopCookie()), deps);
+    expect(response.headers.get('Referrer-Policy')).toBe('same-origin');
+    expect(response.headers.get('Referrer-Policy')).not.toBe('no-referrer');
+  });
+
+  it('every /c/join page (sign-in, invitation-only, dead, unavailable) is same-origin', async () => {
+    const cases: Partial<CollectionLinkPageDependencies>[] = [
+      { identity: async () => ({ kind: 'signedOut' }) },
+      { identity: async () => ({ kind: 'denied', sub: 's', email: 's@example.com' }) },
+      { resolve: async () => null },
+      { identity: async () => ({ kind: 'unknown' }) },
+    ];
+    for (const overrides of cases) {
+      const { deps } = pageDeps(overrides);
+      const response = await handleCollectionLinkJoinGet(joinGet(hopCookie()), deps);
+      expect(response.headers.get('Referrer-Policy')).toBe('same-origin');
+    }
+    const { deps } = pageDeps({ redeem: vi.fn(async () => ({ kind: 'cap' }) as const) });
+    const full = await handleCollectionLinkJoinPost(joinPost({ cookie: hopCookie() }), deps);
+    expect(full.status).toBe(409);
+    expect(full.headers.get('Referrer-Policy')).toBe('same-origin');
   });
 
   it('the owner opening their own link goes home without a confirm', async () => {
@@ -280,6 +307,40 @@ describe('POST /c/join', () => {
     expect(redeem).not.toHaveBeenCalled();
   });
 
+  it('a Join POST with Origin: null is refused before anything is read', async () => {
+    const identity = vi.fn(async (): Promise<VisitorIdentity> => ({
+      kind: 'ok',
+      sub: 'member-sub',
+      email: 'member@example.com',
+      isOwner: false,
+    }));
+    const { deps, redeem } = pageDeps({ identity });
+    const response = await handleCollectionLinkJoinPost(
+      joinPost({ cookie: hopCookie(), origin: 'null' }),
+      deps,
+    );
+    expect(response.status).toBe(404);
+    expect(identity).not.toHaveBeenCalled();
+    expect(redeem).not.toHaveBeenCalled();
+  });
+
+  it('a Join POST with no Origin needs Sec-Fetch-Site same-origin', async () => {
+    const refused = pageDeps();
+    const bare = await handleCollectionLinkJoinPost(
+      joinPost({ cookie: hopCookie(), origin: null }),
+      refused.deps,
+    );
+    expect(bare.status).toBe(404);
+    expect(refused.redeem).not.toHaveBeenCalled();
+
+    const allowed = pageDeps();
+    const request = joinPost({ cookie: hopCookie(), origin: null });
+    request.headers.set('sec-fetch-site', 'same-origin');
+    const ok = await handleCollectionLinkJoinPost(request, allowed.deps);
+    expect(ok.status).toBe(303);
+    expect(allowed.redeem).toHaveBeenCalledTimes(1);
+  });
+
   it('a posted link that does not match the hop cookie redeems nothing', async () => {
     const { deps, redeem } = pageDeps();
     const response = await handleCollectionLinkJoinPost(
@@ -326,14 +387,38 @@ describe('POST /c/join', () => {
 });
 
 describe('sameOriginPost', () => {
-  it('accepts our origin, rejects others and cross-site fetch metadata', () => {
-    const req = (headers: Record<string, string>) =>
-      new Request(`${ORIGIN}/c/join`, { method: 'POST', headers });
+  const req = (headers: Record<string, string>) =>
+    new Request(`${ORIGIN}/c/join`, { method: 'POST', headers });
+
+  it('with Origin, accepts only exactly our origin (never null)', () => {
     expect(sameOriginPost(req({ origin: ORIGIN }), ORIGIN)).toBe(true);
     expect(sameOriginPost(req({ origin: 'null' }), ORIGIN)).toBe(false);
     expect(sameOriginPost(req({ origin: 'https://evil.example' }), ORIGIN)).toBe(false);
+    expect(sameOriginPost(req({ origin: `${ORIGIN}.evil.example` }), ORIGIN)).toBe(false);
+  });
+
+  it('Origin wins over Sec-Fetch-Site when both are present', () => {
+    expect(
+      sameOriginPost(req({ origin: 'null', 'sec-fetch-site': 'same-origin' }), ORIGIN),
+    ).toBe(false);
+    expect(
+      sameOriginPost(req({ origin: 'https://evil.example', 'sec-fetch-site': 'same-origin' }), ORIGIN),
+    ).toBe(false);
+    expect(sameOriginPost(req({ origin: ORIGIN, 'sec-fetch-site': 'same-origin' }), ORIGIN)).toBe(
+      true,
+    );
+  });
+
+  it('without Origin, needs Sec-Fetch-Site same-origin or none', () => {
+    expect(sameOriginPost(req({ 'sec-fetch-site': 'same-origin' }), ORIGIN)).toBe(true);
+    expect(sameOriginPost(req({ 'sec-fetch-site': 'none' }), ORIGIN)).toBe(true);
+    expect(sameOriginPost(req({ 'sec-fetch-site': 'same-site' }), ORIGIN)).toBe(false);
     expect(sameOriginPost(req({ 'sec-fetch-site': 'cross-site' }), ORIGIN)).toBe(false);
-    expect(sameOriginPost(req({}), ORIGIN)).toBe(true);
+    expect(sameOriginPost(req({ 'sec-fetch-site': 'bogus' }), ORIGIN)).toBe(false);
+  });
+
+  it('with neither header, refuses', () => {
+    expect(sameOriginPost(req({}), ORIGIN)).toBe(false);
   });
 });
 
@@ -379,12 +464,47 @@ describe('owner API /api/collections/:id/links', () => {
       deps,
     );
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { url: string; links: unknown[] };
+    const body = (await response.json()) as { url: string; id: string; links: unknown[] };
     expect(body.url).toBe(`${ORIGIN}/c/${token}`);
+    expect(body.id).toBe(linkId);
+    expect(body.id).not.toContain(token);
+    expect(body).not.toHaveProperty('partial');
     expect(mint).toHaveBeenCalledWith(
       { ownerSub, ownerEmail: 'owner@example.com', collectionId, role: 'editor' },
       now,
     );
+  });
+
+  it('a list failure after a successful mint still returns the URL, with partial rows', async () => {
+    const { deps } = apiDeps({
+      list: async () => {
+        throw new Error('firestore blip');
+      },
+    });
+    const response = await handleCollectionLinksPost(
+      new Request(base, { method: 'POST', body: JSON.stringify({ role: 'editor' }) }),
+      deps,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      url: `${ORIGIN}/c/${token}`,
+      id: linkId,
+      links: [{ id: linkId, role: 'editor', createdAt: now, expiresAt: now + COLLECTION_LINK_TTL_MS }],
+      partial: true,
+    });
+  });
+
+  it('a mint store failure is 503 and nothing was minted', async () => {
+    const { deps } = apiDeps({
+      mint: vi.fn(async () => {
+        throw new Error('firestore down');
+      }),
+    });
+    const response = await handleCollectionLinksPost(
+      new Request(base, { method: 'POST', body: '{}' }),
+      deps,
+    );
+    expect(response.status).toBe(503);
   });
 
   it('list never includes a URL or token', async () => {

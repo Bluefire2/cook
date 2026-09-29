@@ -7,6 +7,7 @@ import {
   unavailablePageHtml,
 } from './access.ts';
 import {
+  COLLECTION_LINK_TTL_MS,
   collectionLinkIsLive,
   collectionLinkTokenFromPath,
   hashCollectionLinkToken,
@@ -39,7 +40,7 @@ import {
   signCollectionLinkTx,
   verifyCollectionLinkTx,
 } from './session.ts';
-import { requestedShareRole } from './shareAuth.ts';
+import { requestedShareRole, type ShareRole } from './shareAuth.ts';
 import { isLiveDoc, isUuid, readDocData } from './store.ts';
 
 const BODY_LIMIT = 2_000;
@@ -171,24 +172,69 @@ export async function handleCollectionLinksPost(
   if (role === null) {
     return badRequest();
   }
+  // Resolved before the write: once a link exists, nothing below may fail and
+  // lose the only copy of its URL.
+  let origin: string;
   try {
-    const now = deps.now();
-    const minted = await deps.mint(
+    origin = deps.origin();
+  } catch (err) {
+    console.error('collectionLinksPost origin error:', err);
+    return storeUnavailable();
+  }
+  const now = deps.now();
+  let minted: Awaited<ReturnType<typeof mintCollectionLink>>;
+  try {
+    minted = await deps.mint(
       { ownerSub: gate.sub, ownerEmail: gate.email, collectionId: gate.collectionId, role },
       now,
     );
-    if (minted.kind === 'collectionMissing') {
-      return notFound();
-    }
-    if (minted.kind === 'cap') {
-      return linkCapResponse();
-    }
-    const links = await deps.list(gate.sub, gate.collectionId, now);
-    // The only time the raw token leaves the server. Never log this body.
-    return jsonResponse({ url: collectionLinkUrl(deps.origin(), minted.token), links });
   } catch (err) {
     console.error('collectionLinksPost store error:', err);
     return storeUnavailable();
+  }
+  if (minted.kind === 'collectionMissing') {
+    return notFound();
+  }
+  if (minted.kind === 'cap') {
+    return linkCapResponse();
+  }
+  return mintedLinkResponse({
+    origin,
+    token: minted.token,
+    id: minted.id,
+    role,
+    now,
+    list: () => deps.list(gate.sub, gate.collectionId, now),
+  });
+}
+
+/**
+ * 200 with the one-time `url` and the link's sha256 `id`, always. If the list
+ * read fails after the write, `links` holds just the new row and `partial`
+ * tells the client to refetch; a 503 here would lose the URL while the link
+ * still counts toward the cap.
+ */
+export async function mintedLinkResponse(input: {
+  origin: string;
+  token: string;
+  id: string;
+  role: ShareRole;
+  now: number;
+  list: () => Promise<CollectionLinkEntry[]>;
+}): Promise<Response> {
+  const url = collectionLinkUrl(input.origin, input.token);
+  // The only time the raw token leaves the server. Never log this body.
+  try {
+    return jsonResponse({ url, id: input.id, links: await input.list() });
+  } catch (err) {
+    console.error('collectionLinksPost list after mint failed:', err);
+    const row: CollectionLinkEntry = {
+      id: input.id,
+      role: input.role,
+      createdAt: input.now,
+      expiresAt: input.now + COLLECTION_LINK_TTL_MS,
+    };
+    return jsonResponse({ url, id: input.id, links: [row], partial: true });
   }
 }
 
@@ -278,13 +324,29 @@ const livePageDependencies: CollectionLinkPageDependencies = {
   redeem: redeemCollectionLink,
 };
 
+/**
+ * `no-referrer` only where the token is in the URL (the `/c/<token>` landing
+ * and its error pages). `/c/join` pages must not use it: a document with
+ * `no-referrer` sends its form POSTs with `Origin: null`, which
+ * `sameOriginPost` refuses, so Join could never succeed. `same-origin` keeps
+ * the (token-free) `/c/join` URL off cross-origin requests.
+ */
+export type LinkPageReferrerPolicy = 'no-referrer' | 'same-origin';
+const LANDING_REFERRER: LinkPageReferrerPolicy = 'no-referrer';
+const JOIN_REFERRER: LinkPageReferrerPolicy = 'same-origin';
+
 function pageResponse(
   status: number,
-  options: { body?: string; location?: string; cookies?: string[] } = {},
+  options: {
+    body?: string;
+    location?: string;
+    cookies?: string[];
+    referrer?: LinkPageReferrerPolicy;
+  } = {},
 ): Response {
   const headers = new Headers({
     'Cache-Control': 'no-store',
-    'Referrer-Policy': 'no-referrer',
+    'Referrer-Policy': options.referrer ?? JOIN_REFERRER,
     'X-Frame-Options': 'DENY',
     'Content-Security-Policy': "frame-ancestors 'none'",
   });
@@ -300,15 +362,19 @@ function pageResponse(
   return new Response(options.body ?? null, { status, headers });
 }
 
-function deadPage(deps: CollectionLinkPageDependencies): Response {
+function deadPage(
+  deps: CollectionLinkPageDependencies,
+  referrer: LinkPageReferrerPolicy = JOIN_REFERRER,
+): Response {
   return pageResponse(404, {
     body: collectionLinkDeadPageHtml(),
     cookies: [clearedCollectionLinkCookie({ secure: deps.secure() })],
+    referrer,
   });
 }
 
-function unavailable(): Response {
-  return pageResponse(503, { body: unavailablePageHtml() });
+function unavailable(referrer: LinkPageReferrerPolicy = JOIN_REFERRER): Response {
+  return pageResponse(503, { body: unavailablePageHtml(), referrer });
 }
 
 /** The same 403 the OAuth callback shows a non-member. Writes nothing. */
@@ -334,28 +400,29 @@ export async function handleCollectionLinkLanding(
 ): Promise<Response> {
   const token = collectionLinkTokenFromPath(new URL(req.url).pathname);
   if (token === null) {
-    return deadPage(deps);
+    return deadPage(deps, LANDING_REFERRER);
   }
   const now = deps.now();
   const id = hashCollectionLinkToken(token);
   try {
     if ((await deps.resolve(id, now)) === null) {
-      return deadPage(deps);
+      return deadPage(deps, LANDING_REFERRER);
     }
   } catch (err) {
     console.error('collectionLinkLanding store error:', err);
-    return unavailable();
+    return unavailable(LANDING_REFERRER);
   }
   let hop: string;
   try {
     hop = signCollectionLinkTx({ id }, now);
   } catch (err) {
     console.error('signCollectionLinkTx failed:', err);
-    return unavailable();
+    return unavailable(LANDING_REFERRER);
   }
   return pageResponse(303, {
     location: '/c/join',
     cookies: [collectionLinkCookie(hop, { secure: deps.secure() })],
+    referrer: LANDING_REFERRER,
   });
 }
 
@@ -436,16 +503,25 @@ export async function handleCollectionLinkJoinGet(
 }
 
 /**
- * A browser attaches `Origin` to a form POST. When it is present it must be
- * ours; `SameSite=Lax` already keeps the session and hop cookies off a
- * cross-site POST, so this is a second lock, not the only one.
+ * CSRF check for the Join POST. `SameSite=Lax` already keeps the session and
+ * hop cookies off a cross-site POST, so this is a second lock, not the only
+ * one, and it fails closed:
+ *
+ * - `Origin` present: it must be exactly ours. `Origin: null` (sandboxed
+ *   frames, `no-referrer` documents, opaque redirects) is refused.
+ * - `Origin` absent: `Sec-Fetch-Site` must say `same-origin` (or `none`, a
+ *   user-initiated request).
+ * - Neither header: refused. Every browser that supports `SameSite` sends
+ *   `Origin` on a form POST, so a request with neither comes from a very old
+ *   browser or a non-browser client; such a member can be added by email.
  */
 export function sameOriginPost(req: Request, origin: string): boolean {
   const header = req.headers.get('origin');
-  if (header === null) {
-    return req.headers.get('sec-fetch-site') !== 'cross-site';
+  if (header !== null) {
+    return header === origin;
   }
-  return header === origin;
+  const site = req.headers.get('sec-fetch-site');
+  return site === 'same-origin' || site === 'none';
 }
 
 /** POST /c/join. The only state-changing step. */
