@@ -8,7 +8,7 @@
   {
     "id": "library-populated",
     "route": "/",
-    "setup": "Signed in on the Recipes list (/) or an own named collection (/?c=<id>) that already shows at least one recipe card. Prefer / when it has cards. Do not create a recipe. If nothing is listed, mark skipped: needs data. A signed-in header shows Invite before Cooks. Do not click Invite.",
+    "setup": "Signed in on the Recipes list (/) or an own named collection (/collections/<id>) that already shows at least one recipe card. Prefer / when it has cards. Do not create a recipe. If nothing is listed, mark skipped: needs data. A signed-in header shows Invite before Cooks. Do not click Invite.",
     "needsData": true
   },
   {
@@ -193,7 +193,7 @@
   },
   {
     "id": "share-collection-sheet",
-    "route": "/?c=:collectionId",
+    "route": "/collections/:collectionId",
     "setup": "Open one of your own named collections (not a shared-with-you folder) and tap Share. The sheet explains viewers and editors, and the email row has a role menu (Viewer / Editor). Opening the sheet only reads the grant list. Prefer a collection whose sheet says \"Nobody else can see this yet.\" Do not type an email, and do not add, change a role, or remove a person. If every own collection already lists grantees, redact those emails before judging, or mark skipped: shows another member's data. If you have no own named collection, mark skipped: needs data. Do not create one.",
     "needsData": true
   },
@@ -211,13 +211,13 @@
   },
   {
     "id": "library-shared-banner",
-    "route": "/?c=:collectionId",
+    "route": "/collections/:collectionId",
     "setup": "Select a collection shared with you so the Library banner is visible: who shared it, then either \"You can edit these recipes.\" or \"View only.\", and a Leave control. Capture a viewer collection and, if one exists, an editor collection; they are the same banner with a different access sentence. The review never creates a share and never taps Leave. If the account has no incoming share, mark skipped: needs data. The banner and folder label can show the owner's email; redact that before the image goes to the judging model, or mark skipped: shows another member's data.",
     "needsData": true
   },
   {
     "id": "library-leave-sheet",
-    "route": "/?c=:collectionId",
+    "route": "/collections/:collectionId",
     "setup": "From a collection shared with you, tap Leave so the confirmation sheet is open (title, the sentence about losing access, Leave collection, Cancel). Do not confirm. The review never creates a share. If the account has no incoming share, mark skipped: needs data. The title names the collection; redact another member's collection name before judging, or mark skipped: shows another member's data.",
     "needsData": true
   },

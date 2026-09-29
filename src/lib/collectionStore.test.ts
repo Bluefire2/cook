@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MAX_NAMED_COLLECTIONS } from './compactCollection';
-import { collectionPushErrorMessage, collectionStore } from './collectionStore';
+import {
+  collectionPushErrorMessage,
+  collectionStore,
+  libraryHref,
+} from './collectionStore';
 import {
   clearLibrary,
   countOwnedNamedCollections,
@@ -52,6 +56,17 @@ afterEach(() => {
   vi.mocked(pushOps).mockReset();
   vi.mocked(revokeCollectionGrant).mockReset();
   vi.mocked(pullAfterLocalWrite).mockReset();
+});
+
+describe('libraryHref', () => {
+  it('returns / when the id is missing or empty', () => {
+    expect(libraryHref(undefined)).toBe('/');
+    expect(libraryHref('')).toBe('/');
+  });
+
+  it('encodes the id into a collection path', () => {
+    expect(libraryHref('a/b')).toBe('/collections/a%2Fb');
+  });
 });
 
 describe('collectionPushErrorMessage', () => {

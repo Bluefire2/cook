@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useT } from '../i18n';
 import LibraryInviteToast, {
   type LibraryInviteNotice,
@@ -52,9 +52,9 @@ export default function Library() {
   const collections = useCollections();
   const { status: sessionStatus, user } = useSession();
   const syncStatus = useSyncStatus();
-  const [params] = useSearchParams();
+  const { collectionId } = useParams();
   const navigate = useNavigate();
-  const requestedId = params.get('c');
+  const requestedId = collectionId;
   const named =
     requestedId && collections
       ? collections.find((c) => c.id === requestedId)

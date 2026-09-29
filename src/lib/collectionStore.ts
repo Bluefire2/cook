@@ -310,5 +310,5 @@ export function libraryHref(collectionId: string | undefined): string {
   if (collectionId === undefined || collectionId === '') {
     return '/';
   }
-  return `/?c=${encodeURIComponent(collectionId)}`;
+  return `/collections/${encodeURIComponent(collectionId)}`;
 }
