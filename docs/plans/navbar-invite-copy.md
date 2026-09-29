@@ -40,13 +40,17 @@ exists.
    `disabled:opacity-40` (`ghostBtn` has no disabled style). A later click
    may mint again; do not lock the button after success. A member’s next
    mint still replaces their previous unused link.
-7. API failures toast `error.message` from the helpers (`error.sessionExpired`,
-   `error.adminUnavailable`, `error.adminForbidden`, `error.inviteCap`,
-   `error.memberInviteCap`, `error.memberInviteLimit`, `error.requestFailed`,
-   and the same for any other code those helpers already map). A non-`Error`
-   throw toasts `common.somethingWentWrong`. A rejected `fetch` is an
-   `Error`; toast its message and do not add a catalog key for it. No new
-   error codes, no server changes, no inline error paragraph.
+7. API failures other than a quota refusal toast `error.message` from the
+   helpers (`error.sessionExpired`, `error.adminUnavailable`,
+   `error.adminForbidden`, `error.requestFailed`, and the same for any other
+   code those helpers already map). A non-`Error` throw toasts
+   `common.somethingWentWrong`. A rejected `fetch` is an `Error`; toast its
+   message and do not add a catalog key for it. No new error codes, no
+   server changes.
+   A quota refusal (`member-invite-limit`, `member-invite-cap`, or
+   `invite-cap`) does not toast and does not reveal a URL. The same catalog
+   sentence stays under the header until a later mint succeeds. Nothing was
+   created, and a member's current unused link is left in place.
 8. If mint succeeds and `writeText` rejects: do not show the success toast.
    Toast `library.inviteCopyFailed` (error color) and reveal that URL in a
    readonly input plus Copy, matching Settings `MemberInvite`: label

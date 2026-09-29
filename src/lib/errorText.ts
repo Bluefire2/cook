@@ -119,3 +119,17 @@ export function serverErrorText(
   }
   return t(fallbackKey, fallbackParams);
 }
+
+/** Same text as `serverErrorText`, with `code` copied onto the Error when the body has one. */
+export function serverError(
+  body: unknown,
+  fallbackKey: MessageKey,
+  fallbackParams?: TranslateParams,
+): Error {
+  const err = new Error(serverErrorText(body, fallbackKey, fallbackParams));
+  const record = asRecord(body);
+  if (record !== null && typeof record.code === 'string' && record.code !== '') {
+    return Object.assign(err, { code: record.code });
+  }
+  return err;
+}

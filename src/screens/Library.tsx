@@ -8,7 +8,7 @@ import ShareCollectionSheet from '../components/ShareCollectionSheet';
 import Sheet from '../components/Sheet';
 import { createInvite } from '../lib/adminApi';
 import { createMemberInvite } from '../lib/inviteApi';
-import { inviteMintClient } from '../lib/inviteMint';
+import { inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
 import { FolderIcon, PlusIcon, SharedIcon } from '../lib/icons';
 import {
   collectionStore,
@@ -80,6 +80,7 @@ export default function Library() {
   const [revealedUrl, setRevealedUrl] = useState<string | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [inviteNotice, setInviteNotice] = useState<LibraryInviteNotice | null>(null);
+  const [inviteQuota, setInviteQuota] = useState<{ id: number; message: string } | null>(null);
   const inviteMountedRef = useRef(true);
   const [createdCollection, setCreatedCollection] = useState<{
     id: string;
@@ -252,6 +253,7 @@ export default function Library() {
       if (!inviteMountedRef.current) {
         return;
       }
+      setInviteQuota(null);
       try {
         await navigator.clipboard.writeText(url);
       } catch {
@@ -273,10 +275,13 @@ export default function Library() {
       if (!inviteMountedRef.current) {
         return;
       }
-      showInviteToast(
-        'error',
-        err instanceof Error ? err.message : t('common.somethingWentWrong'),
-      );
+      const message = err instanceof Error ? err.message : t('common.somethingWentWrong');
+      if (isInviteQuotaError(err)) {
+        setInviteQuota((prev) => ({ id: (prev?.id ?? 0) + 1, message }));
+        return;
+      }
+      setInviteQuota(null);
+      showInviteToast('error', message);
     } finally {
       if (inviteMountedRef.current) {
         setInvitePending(false);
@@ -390,6 +395,12 @@ export default function Library() {
           </Link>
         </div>
       </header>
+
+      {inviteQuota !== null && (
+        <p key={inviteQuota.id} className="mb-3 text-sm text-danger" role="alert">
+          {inviteQuota.message}
+        </p>
+      )}
 
       {revealedUrl !== null && (
         <div className="mb-3 rounded-2xl border border-line bg-surface p-4 shadow-sm">

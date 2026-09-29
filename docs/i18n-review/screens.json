@@ -24,6 +24,12 @@
     "needsData": true
   },
   {
+    "id": "library-invite-quota",
+    "route": "/",
+    "setup": "Signed in, after Invite, when minting is refused because that person has already invited 5 people, or because unused links already fill the shared cap. The refusal sentence stays under the header (it is not only a toast). Reaching it needs an account already at that limit, or a stubbed 409. Do not mint a real invite to force it. If that state is not available, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
     "id": "settings",
     "route": "/settings",
     "setup": "Settings while signed in, with the language picker visible under Appearance. Do not export, import a backup, refresh in order to force a toast, or sign out.",
