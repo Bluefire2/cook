@@ -39,6 +39,9 @@ export const uk: Messages = {
   'time.expiresIn': 'закінчується {in}',
 
   'library.cooks': 'Приготування',
+  'library.inviteLink': 'Запросити',
+  'library.inviteCopied': 'Посилання-запрошення скопійовано',
+  'library.inviteCopyFailed': 'Посилання-запрошення створено, але його не вдалося скопіювати',
   'library.collectionsNav': 'Колекції',
   'library.recipes': 'Рецепти',
   'library.sharedByLabel': '{name} (від {email})',

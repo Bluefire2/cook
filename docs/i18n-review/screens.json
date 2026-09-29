@@ -2,13 +2,25 @@
   {
     "id": "library-empty",
     "route": "/",
-    "setup": "Signed in on the Recipes list with no recipes in the account, so the empty-library sentence is showing. Do not type a search to fake this. If the account already has recipes, do not delete them; mark skipped: needs data.",
+    "setup": "Signed in on the Recipes list with no recipes in the account, so the empty-library sentence is showing. Do not type a search to fake this. If the account already has recipes, do not delete them; mark skipped: needs data. A signed-in header shows Invite before Cooks. Do not click Invite.",
     "needsData": true
   },
   {
     "id": "library-populated",
     "route": "/",
-    "setup": "Signed in on the Recipes list (/) or an own named collection (/?c=<id>) that already shows at least one recipe card. Prefer / when it has cards. Do not create a recipe. If nothing is listed, mark skipped: needs data.",
+    "setup": "Signed in on the Recipes list (/) or an own named collection (/?c=<id>) that already shows at least one recipe card. Prefer / when it has cards. Do not create a recipe. If nothing is listed, mark skipped: needs data. A signed-in header shows Invite before Cooks. Do not click Invite.",
+    "needsData": true
+  },
+  {
+    "id": "library-invite-copied",
+    "route": "/",
+    "setup": "Signed in, after Invite, the “Invite link copied” toast is showing. Clicking Invite writes an invite (owner: POST /api/admin/invites; member: POST /api/invites, which replaces that member’s previous unused link). If the review must not write, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "library-invite-copy-failed",
+    "route": "/",
+    "setup": "Signed in, after Invite, clipboard write failed, so the created-but-not-copied toast, the readonly URL, and Copy are showing. Reaching it writes an invite. If the clipboard accepts the write, mark skipped: needs data. Do not mint again to force it.",
     "needsData": true
   },
   {
