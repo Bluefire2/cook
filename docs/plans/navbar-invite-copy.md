@@ -12,10 +12,31 @@ Nothing in the locked decisions is impossible in this tree. `Library` is
 the home navbar (`/` and `/?c=`). `createInvite` and `createMemberInvite`
 already return `{ url }` (admin also returns `invites`; ignore that array
 here). Screens already must not `fetch`; both helpers live in `src/lib/`.
-`navigator.clipboard.writeText` after the mint `await` can reject when the
-click’s user activation has ended. That is the clipboard-failure path
-below, not a reason to switch to `ClipboardItem` or to copy before the URL
-exists.
+When `ClipboardItem` exists, the click that mints calls
+`navigator.clipboard.write` synchronously, before any `await`, with a
+`ClipboardItem` whose `text/plain` body is the mint promise. `writeText`
+after that `await` is only the fallback once the mint has succeeded, and
+the revealed-URL Copy button still uses `writeText` because that URL is
+already known and the click is a fresh gesture.
+
+## Review fixes
+
+This slice replaces the old one-tap-for-everyone decision and the decision
+that `writeText` after `await` was not a reason to use `ClipboardItem`.
+
+- A member confirms in the existing `Sheet` before the header mint. An
+  owner still mints in one tap. Settings `MemberInvite` and `/admin` stay
+  as they are.
+- The minting click uses `ClipboardItem` inside the gesture when it
+  exists. `writeText` is the fallback after a successful mint.
+- Docs: wrap the library-header sentence in `AGENTS.md`, and move the
+  handoff sentence to after “in one transaction.”
+- `screens.json`: add `library-invite-confirm`. Prefer zero new catalog
+  keys.
+
+No server changes, no new env, no mail, no production deploy. Quota
+behavior, the fallback URL panel, mounted-ref guards, the toast, and the
+header wrap stay.
 
 ## Decisions
 
@@ -26,20 +47,74 @@ exists.
 2. Render it only when `useSession().user` is non-null (signed in, and
    offline with a cached user). Hide it when `user` is null (signed out, or
    still loading). Do not also require `status === 'signedIn'`.
-3. Click mints, then copies. It does not navigate.
+3. A member does not mint from the header. When
+   `inviteMintClient(user) === 'member'`, the header Invite button only
+   opens the existing `Sheet` (`src/components/Sheet.tsx`). The body
+   reuses `settings.inviteIntro` (new link replaces the previous unused
+   one, the 5-person limit, once, 7 days, copy it now). Do not add a
+   near-duplicate intro string. Title reuses `settings.inviteTitle`.
+   Primary action reuses `admin.createLink`. Cancel reuses `common.cancel`.
+   Create is the only control that starts the mint. Cancel, backdrop
+   dismiss, and Escape close the sheet and mint nothing. While a mint is
+   in flight, keep the sheet open: Create is disabled and labeled
+   `admin.creating`, Cancel is disabled, and the sheet is not dismissible,
+   so backdrop and Escape do not close it mid-request. When the mint
+   settles, close the sheet. Owners
+   (`inviteMintClient(user) === 'admin'`) keep the one-tap flow: header
+   Invite calls mint immediately and does not open the sheet. Do not
+   change Settings `MemberInvite` or `/admin`. Classes match the create
+   collection sheet: `h2` `text-lg font-semibold`, body `p` `mt-1 text-sm
+   text-ink-muted`, primary `${primaryBtn} mt-3 w-full py-3`, cancel
+   `${secondaryBtn} mt-2 w-full py-3`.
 4. `user.isOwner === true` calls `createInvite()` (`POST /api/admin/invites`).
    Any other `isOwner` (`false` or missing) calls `createMemberInvite()`
    (`POST /api/invites`). Owners are 403 on the member route. Use only
    `created.url`. A stale cached `isOwner` can pick the wrong helper; the
    server still refuses, and the toast shows that `Error`. Do not refresh
    the session first and do not add a third client.
-5. Happy path: `navigator.clipboard.writeText(url)`, then a success toast
-   whose text is `library.inviteCopied`. Do not toast `admin.copied`.
-6. Visible label is `library.inviteLink` (`Invite`). While the POST is in
-   flight, disable the button and show `admin.creating`. Add
-   `disabled:opacity-40` (`ghostBtn` has no disabled style). A later click
-   may mint again; do not lock the button after success. A member’s next
-   mint still replaces their previous unused link.
+5. The click that mints (owner header Invite, or member Create) builds the
+   mint promise and does not `await` it before copying. `urlPromise`
+   resolves to the URL string (`created.url`). Choose the strategy with
+   `copyStrategy({ hasClipboardItem })` in `src/lib/inviteMint.ts`,
+   returning `'clipboard-item' | 'write-text'`. Pass
+   `typeof ClipboardItem !== 'undefined'`. The helper is pure. Test it in
+   `src/lib/inviteMint.test.ts`. Do not unit-test the browser.
+   When the strategy is `'clipboard-item'`, that same click handler calls
+   `navigator.clipboard.write` synchronously, before any `await`:
+
+   ```ts
+   navigator.clipboard.write([
+     new ClipboardItem({
+       'text/plain': urlPromise.then((u) => new Blob([u], { type: 'text/plain' })),
+     }),
+   ])
+   ```
+
+   Do not call `write` after an `await`. Calling `createInvite` or
+   `createMemberInvite` returns a promise in that same turn; do not
+   `await` it first. When the strategy is `'write-text'`, do not call
+   `write`.
+   Await `urlPromise` separately and handle its rejection first. A mint
+   failure must not surface only as a clipboard rejection. Catch the
+   `write` promise in that failure path so it is not an unhandled
+   rejection and does not show `library.inviteCopyFailed`. Quota codes
+   stay Decision 7 (persistent `role="alert"`, no toast, no URL, nothing
+   created). Other mint errors still toast. Keep `inviteMountedRef`
+   guards. A mint error leaves an already revealed URL in place.
+   If `write` rejects after a successful mint, or the strategy is
+   `'write-text'`, try `writeText(url)`. If that also fails, Decision 8.
+   If the copy fulfills, clear any revealed URL and toast
+   `library.inviteCopied`. Do not toast `admin.copied`. Do not call
+   `writeText` when `write` already fulfilled.
+6. Header label stays `library.inviteLink`, and `admin.creating` while
+   `invitePending`. Keep `disabled:opacity-40` and the cluster
+   `flex-wrap justify-end`. Disable the header button while the confirm
+   sheet is open or `invitePending`, so a second tap does not stack
+   sheets. Member `onClick` only opens the sheet. Owner `onClick` starts
+   mint and the `ClipboardItem` write immediately. Do not lock the button
+   after success: an owner’s later tap mints again, and a member’s later
+   tap opens the sheet again. A member’s next successful mint still
+   replaces their previous unused link.
 7. API failures other than a quota refusal toast `error.message` from the
    helpers (`error.sessionExpired`, `error.adminUnavailable`,
    `error.adminForbidden`, `error.requestFailed`, and the same for any other
@@ -51,18 +126,24 @@ exists.
    `invite-cap`) does not toast and does not reveal a URL. The same catalog
    sentence stays under the header until a later mint succeeds. Nothing was
    created, and a member's current unused link is left in place.
-8. If mint succeeds and `writeText` rejects: do not show the success toast.
-   Toast `library.inviteCopyFailed` (error color) and reveal that URL in a
+8. The first copy attempt is Decision 5 (`clipboard.write` with a
+   `ClipboardItem`, or `writeText` when `ClipboardItem` is absent).
+   `writeText(url)` is the fallback after a successful mint when `write`
+   rejects. If that fallback `writeText` rejects, or `writeText` was the
+   first attempt and it rejects: do not show the success toast. Toast
+   `library.inviteCopyFailed` (error color) and reveal that URL in a
    readonly input plus Copy, matching Settings `MemberInvite`: label
    `admin.newInviteLink`, input `readOnly` with `onFocus` select, button
    `admin.copy` / `admin.copied`. Keep the panel until a `writeText` of
    that URL fulfills or `Library` unmounts. A fulfilled fallback copy
    closes the panel in the same update and then shows `library.inviteCopied`.
    The toast is the confirmation; do not delay unmount to paint `Copied`.
-   A rejected fallback copy leaves the panel and `admin.copy`. Do not clear
-   the panel when the toast fades, when an API error happens on a later
-   click, or when the person switches collection (`/?c=` stays on
-   `Library`). A later click that mints a new URL replaces the revealed
+   A rejected fallback copy leaves the panel and `admin.copy`.
+   `copyRevealedUrl` still uses `writeText` only, on the revealed URL,
+   because that URL is already known and the click is a fresh gesture.
+   Do not clear the panel when the toast fades, when an API error happens
+   on a later click, or when the person switches collection (`/?c=` stays
+   on `Library`). A later click that mints a new URL replaces the revealed
    value; a later click that throws leaves the previous URL up.
 9. Toast visuals match `SyncToast`: fixed top pill, `aria-live="polite"`,
    `aria-atomic="true"`, success `bg-ink text-page`, error `bg-danger-fill
@@ -74,23 +155,35 @@ exists.
    sync is `top-[max(0.75rem,env(safe-area-inset-top))]`; this toast uses
    `top-[calc(max(0.75rem,env(safe-area-inset-top))+2.75rem)]` and `z-30`.
 10. New strings go in `en`, `uk`, `ru`, and `zh-Hans` together. `en` is the
-    key set. No hardcoded screen strings. Add two `screens.json` states
-    (`needsData: true`). Note on `library-populated` and `library-empty`
-    that a signed-in header shows Invite and that the review must not click
-    it. Do not run the in-context review.
+    key set. No hardcoded screen strings. The three keys in Copy are
+    already in the catalogs. This slice prefers zero new keys: the sheet
+    reuses `settings.inviteTitle`, `settings.inviteIntro`,
+    `admin.createLink`, `admin.creating`, and `common.cancel`. Add a key
+    only if a string is unavoidable. Add `library-invite-confirm` to
+    `screens.json` (`needsData: true`). Update the setup notes on
+    `library-invite-copied` and `library-invite-copy-failed` so a member
+    reaches them via Create link in the sheet and an owner via the header
+    button. Leave the `library-empty` and `library-populated` notes that
+    say not to click Invite. Do not run the in-context review.
 11. `Library` calls the existing lib functions only. It does not `fetch`.
 12. One pure helper for which client to call, with a unit test. No DOM
     test, Firestore emulator, or fake IndexedDB. No production deploy.
-13. Docs: one sentence on the Auth bullet in `AGENTS.md`, and one sentence
-    in the Invite links section of `docs/handoff-invitation-only.md`. Do
-    not edit the plans table, privacy, terms, or invite server rules.
+13. The Auth bullet in `AGENTS.md` and the Invite links section of
+    `docs/handoff-invitation-only.md` already mention the library header.
+    This slice only fixes those two sentences (step 6): wrap the
+    `AGENTS.md` sentence at about 76 columns, backtick both routes, and
+    say a member confirms in a sheet; in the handoff, move that sentence
+    to just after “in one transaction.” and state that a member confirms
+    and an owner still mints in one tap. Do not edit the plans table,
+    privacy, terms, or invite server rules.
 14. Do not edit `docs/plans/member-invite-links.md`.
 
 ## Copy
 
 New keys, inserted next to `library.cooks` in each catalog. No placeholders.
 `src/i18n/messages.test.ts` rejects a non-English value equal to the English
-string, so use these translations.
+string, so use these translations. Steps 1–3 added these keys. This slice
+adds none unless a string is unavoidable.
 
 | Key | `en` | `uk` | `ru` | `zh-Hans` |
 | --- | --- | --- | --- | --- |
@@ -99,11 +192,20 @@ string, so use these translations.
 | `library.inviteCopyFailed` | Invite link created, but it could not be copied | Посилання-запрошення створено, але його не вдалося скопіювати | Ссылка-приглашение создана, но её не удалось скопировать | 邀请链接已创建，但无法复制 |
 
 Reused, not new: `admin.creating`, `admin.copy`, `admin.copied`,
-`admin.newInviteLink`, `common.somethingWentWrong`.
+`admin.newInviteLink`, `common.somethingWentWrong`, `settings.inviteTitle`,
+`settings.inviteIntro`, `admin.createLink`, `common.cancel`.
 
 ## Steps
 
+Steps 1–3 are done on this branch (mint client, header, toast, quota
+panel, fallback URL, catalogs, and the first docs sentences). Do not redo
+them. The one-tap handler and the `writeText`-after-`await` path in step 2
+are superseded by steps 4–6. Run “Verification (review fixes)”, not the
+earlier Verification section.
+
 ### 1. [core] Which mint client
+
+Done.
 
 Files: `src/lib/inviteMint.ts`, `src/lib/inviteMint.test.ts`.
 
@@ -112,6 +214,8 @@ Return `'admin'` only when `isOwner === true`; otherwise `'member'`. The
 function does not `fetch`. Test `true`, `false`, and omitted `isOwner`.
 
 ### 2. [ui] Header, toast, failure panel, catalogs, manifest
+
+Done.
 
 Files: `src/screens/Library.tsx`, `src/components/LibraryInviteToast.tsx`,
 `src/i18n/en.ts`, `src/i18n/uk.ts`, `src/i18n/ru.ts`, `src/i18n/zh-Hans.ts`,
@@ -186,6 +290,8 @@ Do not run the visual review.
 
 ### 3. [core] Docs
 
+Done.
+
 Files: `AGENTS.md`, `docs/handoff-invitation-only.md`.
 
 In the Auth two-tier bullet, immediately after the sentence that ends
@@ -199,6 +305,165 @@ admitted member who is not an owner can mint one from Settings”, add:
 `A signed-in person can also mint from the library header: an owner uses the admin mint, and a member uses POST /api/invites.`
 
 Do not change the plans table, privacy, terms, server invite rules, or
+`docs/plans/member-invite-links.md`.
+
+### 4. [core] `copyStrategy`
+
+Files: `src/lib/inviteMint.ts`, `src/lib/inviteMint.test.ts`.
+
+Export:
+
+```ts
+export function copyStrategy(input: {
+  hasClipboardItem: boolean;
+}): 'clipboard-item' | 'write-text' {
+  return input.hasClipboardItem ? 'clipboard-item' : 'write-text';
+}
+```
+
+The function does not read `navigator` and does not `fetch`. In
+`src/lib/inviteMint.test.ts`, assert `true` → `'clipboard-item'` and
+`false` → `'write-text'`. Do not unit-test `clipboard.write` or
+`writeText`.
+
+### 5. [ui] Confirm sheet, `ClipboardItem` mint, manifest
+
+Files: `src/screens/Library.tsx`, `docs/i18n-review/screens.json`.
+Catalogs only if a new string is unavoidable (prefer zero new keys).
+
+No server files. Do not change Settings `MemberInvite` or `/admin`. Keep
+the quota panel, the revealed-URL panel, `copyRevealedUrl` (`writeText`
+only), `inviteMountedRef`, `LibraryInviteToast`, and the header
+`flex-wrap justify-end`.
+
+State: `inviteConfirmOpen`, default false. `closeSheets` sets it false.
+The header button is `disabled={invitePending || inviteConfirmOpen}` and
+still shows `admin.creating` only while `invitePending`.
+
+Member header `onClick` sets `inviteConfirmOpen` true and does not mint.
+Owner header `onClick` runs the mint click below and does not open the
+sheet.
+
+Confirm sheet, only when `inviteConfirmOpen` and the client is `'member'`:
+
+```tsx
+<Sheet
+  dismissible={!invitePending}
+  onClose={() => {
+    if (!invitePending) closeSheets();
+  }}
+>
+  <h2 className="text-lg font-semibold">{t('settings.inviteTitle')}</h2>
+  <p className="mt-1 text-sm text-ink-muted">{t('settings.inviteIntro')}</p>
+  <button
+    type="button"
+    disabled={invitePending}
+    className={`${primaryBtn} mt-3 w-full py-3`}
+    onClick={/* mint click; write before any await */}
+  >
+    {invitePending ? t('admin.creating') : t('admin.createLink')}
+  </button>
+  <button
+    type="button"
+    disabled={invitePending}
+    className={`${secondaryBtn} mt-2 w-full py-3`}
+    onClick={() => {
+      if (!invitePending) setInviteConfirmOpen(false);
+    }}
+  >
+    {t('common.cancel')}
+  </button>
+</Sheet>
+```
+
+Cancel, backdrop, and Escape mint nothing. `Sheet` already listens for
+Escape in the capture phase, calls `onClose`, and
+`stopImmediatePropagation`. Also add `inviteConfirmOpen` to the existing
+Library `keydown` condition that calls `closeSheets`, and to that
+effect’s dependency list, so the close set stays consistent. That
+listener must not mint.
+
+Mint click (owner header, or member Create), with no `await` before
+`write`:
+
+- If `user === null` or `invitePending`, return.
+- `setInvitePending(true)`.
+- Build `urlPromise` as the promise of `created.url` from
+  `createInvite()` or `createMemberInvite()` per `inviteMintClient`.
+  Do not `await` it yet.
+- If `copyStrategy({ hasClipboardItem: typeof ClipboardItem !== 'undefined' })`
+  is `'clipboard-item'`, call `navigator.clipboard.write` in this turn
+  with the `ClipboardItem` in Decision 5, and keep that promise.
+- Then `await urlPromise`.
+- On rejection: if still mounted, run the existing quota branch or the
+  existing error toast. Catch the `write` promise so it cannot become
+  the only failure. Do not show `library.inviteCopyFailed`. Do not
+  reveal a URL. Do not clear an already revealed URL. Close the confirm
+  sheet. Clear `invitePending` only if still mounted.
+- On success: if still mounted, clear the quota alert. If `write` was
+  started, `await` it. If it rejects, or it was not started, `await
+  navigator.clipboard.writeText(url)`. Fulfillment clears the revealed
+  URL and toasts `library.inviteCopied`. Rejection stores that URL,
+  clears the copied flag, and toasts `library.inviteCopyFailed`. Close
+  the confirm sheet in the same settled update. Ignore the result if
+  `inviteMountedRef` is false.
+
+`docs/i18n-review/screens.json`: insert `library-invite-confirm` after
+`library-populated` and before `library-invite-copied`. Do not change
+`library-empty`, `library-populated`, or `library-invite-quota`. Those
+empty and populated notes already say not to click Invite; do not tell
+the review to click it there.
+
+- `library-invite-confirm`, route `/`, `needsData: true`. Setup: signed
+  in as a non-owner, Invite opened the sheet, the invite intro is
+  showing, Create link and Cancel are showing, and the review must not
+  click Create link (it writes an invite).
+- Replace the `library-invite-copied` setup with: signed in, with the
+  “Invite link copied” toast showing. A member reaches it by tapping
+  Create link in the confirm sheet (`POST /api/invites`, which replaces
+  that member’s previous unused link). An owner reaches it by tapping
+  the header Invite button (`POST /api/admin/invites`). If the review
+  must not write, mark skipped: needs data.
+- Replace the `library-invite-copy-failed` setup with: signed in,
+  clipboard write failed, so the created-but-not-copied toast, the
+  readonly URL, and Copy are showing. A member reaches it via Create
+  link in the sheet. An owner reaches it via the header Invite button.
+  Reaching it writes an invite. If the clipboard accepts the write,
+  mark skipped: needs data. Do not mint again to force it.
+
+Do not run the in-context review.
+
+### 6. [core] Doc nits
+
+Files: `AGENTS.md`, `docs/handoff-invitation-only.md`.
+
+In the Auth two-tier bullet, replace only the library-header sentence
+(the long line near the “they do not see `/admin`.” sentence). Leave the
+rest of that bullet as it is. Wrap at about 76 columns, backtick both
+routes, and add one short clause that a member confirms in a sheet
+before the header mint:
+
+```
+  A signed-in person can also mint from the library header: an owner uses
+  the admin mint (`POST /api/admin/invites`), and a member confirms in a
+  sheet before minting (`POST /api/invites`).
+```
+
+In `docs/handoff-invitation-only.md` `## Invite links`, cut the sentence
+that begins “A signed-in person can also mint from the library header”
+out from between the Settings mint sentence and “Creating another”.
+“Creating another replaces that member's previous unused link, in one
+transaction.” must follow the Settings sentence directly, so it still
+describes Settings. Place the updated sentence immediately after
+“in one transaction.” and before “The response is the URL only”:
+
+```
+A signed-in person can also mint from the library header: an owner still
+mints in one tap, and a member confirms in a sheet before that mint
+(`POST /api/invites`).
+```
+
+Do not edit the plans table, privacy, terms, server invite rules, or
 `docs/plans/member-invite-links.md`.
 
 ## Verification
@@ -217,4 +482,36 @@ may be IPv6-only; do not use `127.0.0.1`):
   do not copy, and do not sign out an existing owner session to force the
   signed-out view. If a cached user is already present, confirm Invite is
   visible before Cooks and stop without clicking it.
+- No production deploy.
+
+## Verification (review fixes)
+
+This is the check for steps 4–6. Do not follow the earlier Verification
+section’s “do not click Invite” stop.
+
+From the repo root:
+
+- `npx tsc -b`
+- `npm test` (includes `copyStrategy` in `src/lib/inviteMint.test.ts`)
+
+Browser, `npm run dev` and `npm run dev:api`, `http://localhost:5173`
+(Vite may be IPv6-only; do not use `127.0.0.1`):
+
+- Do not sign in with Google. Do not mint a production invite. Stub
+  `POST /api/invites` and `POST /api/admin/invites` so neither write
+  reaches Firestore.
+- Member (`inviteMintClient` `'member'`): header Invite opens the sheet
+  and does not POST. Cancel does not POST and closes the sheet. Backdrop
+  and Escape close the sheet and do not POST. Create POSTs
+  `POST /api/invites`. The sheet shows `settings.inviteIntro`, Create
+  link, and Cancel.
+- Owner (`inviteMintClient` `'admin'`): one tap POSTs
+  `POST /api/admin/invites` and does not open the sheet.
+- A stubbed 409 with `member-invite-limit`, `member-invite-cap`, or
+  `invite-cap` shows the persistent sentence under the header
+  (`role="alert"`). It does not toast, does not show the URL panel, and
+  is not treated as a clipboard failure.
+- After a successful stubbed mint, a rejected clipboard write still
+  shows `library.inviteCopyFailed` and the readonly URL panel.
+- iPhone / iOS Safari is not available in this environment.
 - No production deploy.
