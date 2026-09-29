@@ -58,10 +58,10 @@ Publishing consent makes the sign-in page world-reachable. Admission is then a
   closed in the wrong direction)
 - the owner's Firestore + GCS data under `users/{uid}/…`
 
-Both tiers must fail closed. **`/admin`** is the only supported way to widen
-the member tier: approve a request, or mint a single-use invite link that the
-person redeems at Google consent. Do not add ordinary members to
-`ALLOWED_EMAILS`.
+Both tiers must fail closed. **`/admin`** is how the owner widens the member
+tier: approve a request, or mint a single-use invite link. An admitted member
+can also mint one invite link from Settings; that does not give them
+`/admin`. Do not add ordinary members to `ALLOWED_EMAILS`.
 
 HMAC on `sous_session` only proves we issued the cookie. The allowlist and
 membership checks are access control. They are re-evaluated on **every**
@@ -120,7 +120,9 @@ appears nowhere in production sources.
 
 Use **`/admin`** (Settings → Invitations for owners): they request access from
 the 403 page and you approve there, **or** you mint a single-use invite link
-and they sign in through it. **Do not** add an ordinary member to
+and they sign in through it. A member who already has access can also send
+one invite link from Settings; they cannot approve, remove, or see the
+people list. **Do not** add an ordinary member to
 `ALLOWED_EMAILS` — every address in that variable is an **administrator** who
 can approve and remove members. Do not invent a household `uid` or a "fix"
 that makes blank mean everyone. Named-collection view grants are the only
@@ -188,12 +190,20 @@ new writes.
 ## Invite links
 
 The owner can mint a bearer URL `{PUBLIC_ORIGIN}/invite/<token>` from `/admin`.
-Firestore stores only `sha256(token)` (`invites/{hash}`), unused for **7 days**,
-**single-use**. The raw token is shown once at mint time and is not stored.
-Redeem happens in the OAuth callback after Google identity is verified: the
-first `email_verified` account consumes the link, writes `members/{sub}`
-`active` and an `approved` `accessRequests/{sub}` row, and gets a session.
-Owners and already-active members who click their own link are not charged a
-use. Unverified email still fails closed and does not consume the invite.
-There is no email when a link is redeemed. Cap: **20** unused unexpired links.
+An admitted member who is not an owner can mint one from Settings
+(`POST /api/invites`). Creating another replaces that member's previous
+unused link. The response is the URL only — no invite id — so they cannot
+revoke. Firestore stores only `sha256(token)` (`invites/{hash}`), unused for
+**7 days**, **single-use**, plus the minter's `sub` and, when known, email.
+The raw token is shown once at mint time and is not stored. The owner list
+shows who created each unused link and can revoke any of them, including a
+member's. Redeem happens in the OAuth callback after Google identity is
+verified: the first `email_verified` account consumes the link, writes
+`members/{sub}` `active` and an `approved` `accessRequests/{sub}` row
+(`approvedBy` is the minter), and gets a session. Owners and already-active
+members who click a link are not charged a use. Unverified email still fails
+closed and does not consume the invite. There is no email when a link is
+redeemed. Cap: **20** unused unexpired links. A member mint is refused when
+other people's unused links already fill that cap, and their current link is
+left in place.
 

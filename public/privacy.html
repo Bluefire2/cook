@@ -51,7 +51,7 @@
   </head>
   <body>
     <h1>Privacy policy</h1>
-    <p class="muted">Last updated: 27 September 2026</p>
+    <p class="muted">Last updated: 29 September 2026</p>
 
     <h2>What is stored</h2>
     <p>
@@ -88,7 +88,8 @@
       a person who is not admitted.
     </p>
     <p>
-      If the owner sends you a single-use invite link and you open it, Sous
+      If someone who already has access sends you a single-use invite link
+      and you open it, Sous
       stores a hashed copy of that link (not the secret itself) until it is
       used, expires after 7 days, or is revoked. Redeeming it stores the same
       kind of membership and access-request records as an approved request.
@@ -158,7 +159,7 @@
       membership record lasts as long as the person has access; revoking
       access sets its status to <code>revoked</code> rather than deleting it,
       so a revoked person still has a row. Unused invite-link records are
-      kept until they are redeemed, expire, or the owner revokes them; a
+      kept until they are redeemed, expire, or they are revoked; a
       redeemed invite keeps a hashed identifier and the Google account id
       that used it. There is no automated purge job: none of these records is
       deleted on a schedule.
@@ -188,10 +189,10 @@
     <p>
       Sous is invitation-only: signing in is limited to allow-listed email
       addresses, to accounts the owner has approved from an access
-      request, and to accounts that redeem a single-use invite link the
-      owner created. Requesting access does not grant it. Opening an invite
-      link does not grant it until Google sign-in succeeds with a verified
-      email.
+      request, and to accounts that redeem a single-use invite link sent
+      by someone who already has access. Requesting access does not grant it.
+      Opening an invite link does not grant it until Google sign-in succeeds
+      with a verified email.
     </p>
 
     <h2>Contact</h2>
