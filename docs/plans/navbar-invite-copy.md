@@ -386,33 +386,52 @@ listener must not mint.
 Mint click (owner header, or member Create), with no `await` before
 `write`:
 
-- If `user === null` or `invitePending`, return.
+- If `user === null` or `invitePending`, return. This return stays
+  before `setInvitePending(true)` and outside the `try`, so a second
+  click does not clear a mint that is already in flight.
 - `setInvitePending(true)`.
 - Build `urlPromise` as the promise of `created.url` from
   `createInvite()` or `createMemberInvite()` per `inviteMintClient`.
   Do not `await` it yet.
-- If `copyStrategy({ hasClipboardItem: typeof ClipboardItem !== 'undefined' })`
-  is `'clipboard-item'`, call `navigator.clipboard.write` in this turn
-  with the `ClipboardItem` in Decision 5, and keep that promise.
-- Then `await urlPromise`.
-- On rejection: if still mounted, run the existing quota branch or the
-  existing error toast. Catch the `write` promise so it cannot become
-  the only failure. Do not show `library.inviteCopyFailed`. Do not
-  reveal a URL. Do not clear an already revealed URL. Close the confirm
-  sheet. Clear `invitePending` only if still mounted.
-- On success: if still mounted, clear the quota alert. If `write` was
-  started, `await` it. If it rejects, or it was not started, `await
-  navigator.clipboard.writeText(url)`. Fulfillment clears the revealed
-  URL and toasts `library.inviteCopied`. Rejection stores that URL,
-  clears the copied flag, and toasts `library.inviteCopyFailed`. Close
-  the confirm sheet in the same settled update. Ignore the result if
-  `inviteMountedRef` is false.
+- Keep `writeStarted` unset until `clipboard.write` returns a promise.
+  When `copyStrategy({ hasClipboardItem: typeof ClipboardItem !== 'undefined' })`
+  is `'clipboard-item'`, call `navigator.clipboard.write` in this turn,
+  before any `await`, with the `ClipboardItem` in Decision 5. If
+  `new ClipboardItem` or `write` throws synchronously, leave
+  `writeStarted` unset and continue. That throw is not a mint failure
+  and must not skip `urlPromise`. Otherwise keep the promise as
+  `writeStarted` and, in that same turn, attach
+  `void writeStarted.catch(() => {})` so an unmount or a mint failure
+  cannot make it an unhandled rejection. That empty catch does not
+  decide the UI. Awaiting the original promise still rejects, so the
+  success path can still fall through to `writeText`.
+- Then `await urlPromise` inside `try`. On rejection, if still mounted,
+  run the existing quota branch or the existing error toast. Do not
+  show `library.inviteCopyFailed`. Do not reveal a URL. Do not clear an
+  already revealed URL. Close the confirm sheet. Do not await
+  `writeStarted` for UI. On success, if `inviteMountedRef` is false, do
+  not update state. If still mounted, clear the quota alert. If
+  `writeStarted` is set, `await` it. If it rejects, or it was not
+  started, `await navigator.clipboard.writeText(url)`. Do not call
+  `writeText` when `write` already fulfilled. Fulfillment clears the
+  revealed URL, sets the copied flag false, and toasts
+  `library.inviteCopied`. Rejection stores that URL, clears the copied
+  flag, and toasts `library.inviteCopyFailed`. Close the confirm sheet
+  in that same settled update. In `finally`, if
+  `inviteMountedRef.current`, `setInvitePending(false)`. This runs on
+  success and on mint failure.
 
 `docs/i18n-review/screens.json`: insert `library-invite-confirm` after
 `library-populated` and before `library-invite-copied`. Do not change
-`library-empty`, `library-populated`, or `library-invite-quota`. Those
-empty and populated notes already say not to click Invite; do not tell
-the review to click it there.
+`library-empty` or `library-populated`. Those notes already say not to
+click Invite; do not tell the review to click it there. Replace the
+`library-invite-quota` setup with: signed in, the refusal sentence under
+the header (`role="alert"`), no toast and no URL panel. A member reaches
+it by tapping Create link in the confirm sheet when the response is 409
+`member-invite-limit` or `member-invite-cap`. An owner reaches it by
+tapping the header Invite button when the response is 409 `invite-cap`.
+Nothing was created. Do not mint a real invite to force it. If that
+state is not available, mark skipped: needs data.
 
 - `library-invite-confirm`, route `/`, `needsData: true`. Setup: signed
   in as a non-owner, Invite opened the sheet, the invite intro is
@@ -455,7 +474,11 @@ out from between the Settings mint sentence and “Creating another”.
 “Creating another replaces that member's previous unused link, in one
 transaction.” must follow the Settings sentence directly, so it still
 describes Settings. Place the updated sentence immediately after
-“in one transaction.” and before “The response is the URL only”:
+“in one transaction.” The next sentence today says “The response is the
+URL only — no invite id — so they cannot revoke.” That claim must not
+cover the owner one-tap: `POST /api/admin/invites` also returns
+`invites`, and the owner can revoke. After the inserted header sentence,
+replace that following sentence with: `A member mint’s response (`POST /api/invites`) is the URL only — no invite id — so that member cannot revoke.`
 
 ```
 A signed-in person can also mint from the library header: an owner still
