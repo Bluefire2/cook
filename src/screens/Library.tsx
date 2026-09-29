@@ -56,10 +56,9 @@ export default function Library() {
   const syncStatus = useSyncStatus();
   const { collectionId } = useParams();
   const navigate = useNavigate();
-  const requestedId = collectionId;
   const named =
-    requestedId && collections
-      ? collections.find((c) => c.id === requestedId)
+    collectionId && collections
+      ? collections.find((c) => c.id === collectionId)
       : undefined;
   const currentId = named?.id;
 

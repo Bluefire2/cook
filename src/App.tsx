@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Navigate, Route, Routes, useSearchParams } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
 import SyncToast from './components/SyncToast';
@@ -11,31 +12,43 @@ import ImportScreen from './screens/ImportScreen';
 import Settings from './screens/Settings';
 import Admin from './screens/Admin';
 
-function LibraryAtRoot() {
+function WithLegacyCollectionRedirect({
+  href,
+  children,
+}: {
+  href: (collectionId: string | undefined) => string;
+  children: ReactNode;
+}) {
   const [params] = useSearchParams();
   const legacy = params.get('c');
   if (legacy !== null) {
-    return <Navigate to={libraryHref(legacy)} replace />;
+    return <Navigate to={href(legacy)} replace />;
   }
-  return <Library />;
+  return children;
+}
+
+function LibraryAtRoot() {
+  return (
+    <WithLegacyCollectionRedirect href={libraryHref}>
+      <Library />
+    </WithLegacyCollectionRedirect>
+  );
 }
 
 function ImportAtRoot() {
-  const [params] = useSearchParams();
-  const legacy = params.get('c');
-  if (legacy !== null) {
-    return <Navigate to={importHref(legacy)} replace />;
-  }
-  return <ImportScreen />;
+  return (
+    <WithLegacyCollectionRedirect href={importHref}>
+      <ImportScreen />
+    </WithLegacyCollectionRedirect>
+  );
 }
 
 function NewRecipeAtRoot() {
-  const [params] = useSearchParams();
-  const legacy = params.get('c');
-  if (legacy !== null) {
-    return <Navigate to={newRecipeHref(legacy)} replace />;
-  }
-  return <RecipeEdit />;
+  return (
+    <WithLegacyCollectionRedirect href={newRecipeHref}>
+      <RecipeEdit />
+    </WithLegacyCollectionRedirect>
+  );
 }
 
 export default function App() {
@@ -44,6 +57,7 @@ export default function App() {
       <SyncToast />
       <Routes>
         <Route path="/" element={<LibraryAtRoot />} />
+        <Route path="/collections" element={<Navigate to="/" replace />} />
         <Route path="/collections/:collectionId/import" element={<ImportScreen />} />
         <Route
           path="/collections/:collectionId/recipe/new"

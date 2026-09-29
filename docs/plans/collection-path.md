@@ -20,8 +20,8 @@ the other plans that still say `/?c=`).
    otherwise. Chips, create, and move already navigate with
    `libraryHref`, including shared collections. No second href helper.
 2. `src/App.tsx` gains `<Route path="/collections/:collectionId"
-   element={<Library />} />`. `/` still renders the library. There is
-   no `/collections` index. Server grant routes stay
+   element={<Library />} />`. `/collections` alone redirects to `/`.
+   Server grant routes stay
    `/api/collections/:id/...`. Workbox `navigateFallbackDenylist` in
    `vite.config.ts` already excludes `/api/` and does not match
    `/collections/`; leave it alone. `/collections/:collectionId` stays
@@ -87,10 +87,11 @@ function LibraryAtRoot() {
 `react-router-dom`, and `libraryHref` from `src/lib/collectionStore.ts`.
 No enums, no constructor parameter properties.
 
-`Library`: drop `useSearchParams` for the collection id. `const {
-collectionId } = useParams()` and use that as `requestedId` (undefined
-on `/` is the same as a missing id today). Leave the `collections.find`
-check, `addQuery`, and the `libraryHref` navigations as they are.
+`Library`: drop `useSearchParams` for the collection id. Read
+`useParams().collectionId` (undefined on `/` is the same as a missing id
+today). Leave the `collections.find` check, `importHref` /
+`newRecipeHref` on the add sheet, and the `libraryHref` navigations as
+they are.
 
 ### 2. [ui] Review manifest routes
 
