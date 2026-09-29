@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Link, useMatch, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useT } from '../i18n';
 import LibraryInviteToast, {
   type LibraryInviteNotice,
@@ -14,8 +14,8 @@ import { importHref, libraryHref, newRecipeHref } from '../lib/collectionHref';
 import { collectionStore, useCollections } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
 import {
-  readPersistedLibrarySearch,
-  writePersistedLibrarySearch,
+  readPersistedLibraryView,
+  writePersistedLibraryView,
 } from '../lib/librarySearchMemory';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
@@ -53,7 +53,7 @@ export default function Library() {
   const collections = useCollections();
   const { status: sessionStatus, user } = useSession();
   const syncStatus = useSyncStatus();
-  const collectionId = useMatch('/collections/:collectionId')?.params.collectionId;
+  const { collectionId } = useParams();
   const navigate = useNavigate();
   const named =
     collectionId && collections
@@ -61,20 +61,13 @@ export default function Library() {
       : undefined;
   const currentId = named?.id;
 
-  const [query, setQuery] = useState(() => readPersistedLibrarySearch());
-  useLayoutEffect(() => {
-    const saved = readPersistedLibrarySearch();
-    if (saved !== query) {
-      setQuery(saved);
-    }
-  }, []);
-  const onSearchChange = (value: string) => {
-    setQuery(value);
-    if (value !== '') {
-      writePersistedLibrarySearch(value);
-    }
-  };
-  const [browseAll, setBrowseAll] = useState(false);
+  const [query, setQuery] = useState(() => readPersistedLibraryView().query);
+  const [browseAll, setBrowseAll] = useState(
+    () => readPersistedLibraryView().browseAll,
+  );
+  useEffect(() => {
+    writePersistedLibraryView({ query, browseAll });
+  }, [query, browseAll]);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -358,9 +351,17 @@ export default function Library() {
     showInviteToast('success', t('library.inviteCopied'));
   };
 
+  // Library stays mounted across collection routes, so per-collection state
+  // (open sheets, the typed name, scope) must not leak into the next one.
+  const shownCollectionId = useRef(collectionId);
   useEffect(() => {
+    if (shownCollectionId.current === collectionId) return;
+    shownCollectionId.current = collectionId;
     setBrowseAll(false);
-  }, [currentId]);
+    setMenuId(null);
+    setDeleteError(null);
+    closeSheets();
+  }, [collectionId]);
 
   useEffect(() => {
     if (!menuId) return;
@@ -600,7 +601,7 @@ export default function Library() {
                   : t('library.search')
             }
             value={query}
-            onChange={(e) => onSearchChange(e.target.value)}
+            onChange={(e) => setQuery(e.target.value)}
             className={`${inputClass} min-w-0 flex-1`}
           />
           <button
@@ -616,7 +617,7 @@ export default function Library() {
           type="search"
           placeholder={t('library.search')}
           value={query}
-          onChange={(e) => onSearchChange(e.target.value)}
+          onChange={(e) => setQuery(e.target.value)}
           className={`${inputClass} mb-4`}
         />
       )}

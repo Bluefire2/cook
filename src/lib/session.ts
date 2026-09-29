@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { clearLibrary } from './libraryMemory';
+import { clearPersistedLibraryView } from './librarySearchMemory';
 
 const SESSION_CACHE_KEY = 'cook.session';
 
@@ -48,6 +49,7 @@ export function invalidateSession(): void {
   snapshot = { user: null, status: 'signedOut' };
   emit();
   clearLibrary();
+  clearPersistedLibraryView();
 }
 
 export async function fetchSession(): Promise<FetchSessionResult> {

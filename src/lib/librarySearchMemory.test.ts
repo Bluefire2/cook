@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  readPersistedLibrarySearch,
-  writePersistedLibrarySearch,
+  clearPersistedLibraryView,
+  readPersistedLibraryView,
+  writePersistedLibraryView,
 } from './librarySearchMemory';
 
 const store = new Map<string, string>();
@@ -24,14 +25,31 @@ afterEach(() => {
 });
 
 describe('librarySearchMemory', () => {
-  it('round-trips a non-empty query', () => {
-    writePersistedLibrarySearch('pasta');
-    expect(readPersistedLibrarySearch()).toBe('pasta');
+  it('round-trips the query and scope', () => {
+    writePersistedLibraryView({ query: 'pasta', browseAll: true });
+    expect(readPersistedLibraryView()).toEqual({ query: 'pasta', browseAll: true });
   });
 
-  it('can clear an explicit empty write', () => {
-    writePersistedLibrarySearch('pasta');
-    writePersistedLibrarySearch('');
-    expect(readPersistedLibrarySearch()).toBe('');
+  it('keeps the scope when the query is empty', () => {
+    writePersistedLibraryView({ query: '', browseAll: true });
+    expect(readPersistedLibraryView()).toEqual({ query: '', browseAll: true });
+  });
+
+  it('removes the key for an empty, unwidened view', () => {
+    writePersistedLibraryView({ query: 'pasta', browseAll: false });
+    writePersistedLibraryView({ query: '', browseAll: false });
+    expect(store.size).toBe(0);
+    expect(readPersistedLibraryView()).toEqual({ query: '', browseAll: false });
+  });
+
+  it('clear removes a stored view', () => {
+    writePersistedLibraryView({ query: 'cake', browseAll: true });
+    clearPersistedLibraryView();
+    expect(store.size).toBe(0);
+  });
+
+  it('ignores a corrupt stored value', () => {
+    store.set('cook.librarySearch', 'not json');
+    expect(readPersistedLibraryView()).toEqual({ query: '', browseAll: false });
   });
 });
