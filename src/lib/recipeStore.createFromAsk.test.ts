@@ -191,6 +191,21 @@ describe('recipeStore.createFromAsk', () => {
     expect(getSnapshot().pendingBlobs.size).toBe(0);
   });
 
+  it('drops the moved copies when the cleanup delete is not confirmed', async () => {
+    upsertRecipe(parentRecipe(COVER, [GALLERY]));
+    vi.mocked(fetchPhotoBlobOutcome).mockResolvedValue(new Blob(['bytes'], { type: 'image/jpeg' }));
+    installPhotoServerFake({
+      failPush: (ops) => (ops[0]?.kind === 'recipe.delete' ? 'error' : undefined),
+      failPhoto: () => 'error',
+    });
+
+    await expect(recipeStore.createFromAsk(parentRecipe(COVER, [GALLERY]), draft)).rejects.toThrow(
+      t('error.photoSave'),
+    );
+    // A retry copies from the parent again, so nothing is kept for it.
+    expect(getSnapshot().pendingBlobs.size).toBe(0);
+  });
+
   it('ignores a photo id on the proposal', async () => {
     upsertRecipe(parentRecipe(COVER, [GALLERY]));
     vi.mocked(fetchPhotoBlobOutcome).mockResolvedValue(new Blob(['bytes'], { type: 'image/jpeg' }));

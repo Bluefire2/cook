@@ -19,10 +19,12 @@ export type PhotoServerFake = {
  * reports as `'error'`) unless the recipe row is live, and only an applied
  * `recipe.put` makes it live. `failPush` / `failPhoto` inject a failure; a
  * failed push applies nothing, and `'signedOut'` clears the library as
- * `remote` does on a 401.
+ * `remote` does on a 401. `failAfterApply` applies the batch and then reports
+ * a failure, as a dropped response or a later rejected op in the batch does.
  */
 export function installPhotoServerFake(opts?: {
   failPush?: (ops: PushOp[]) => PushResult | undefined;
+  failAfterApply?: (ops: PushOp[]) => PushResult | undefined;
   failPhoto?: (photoId: string) => PhotoResult | undefined;
 }): PhotoServerFake {
   const fake: PhotoServerFake = { calls: [], pushed: [], liveRecipeIds: new Set() };
@@ -45,7 +47,7 @@ export function installPhotoServerFake(opts?: {
         fake.liveRecipeIds.delete(op.payload.id);
       }
     }
-    return 'ok';
+    return opts?.failAfterApply?.(ops) ?? 'ok';
   });
   vi.mocked(postPhoto).mockImplementation(async (photoId, recipeId) => {
     fake.calls.push(`photo:${photoId}`);
