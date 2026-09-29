@@ -212,8 +212,10 @@ at most 20 live per collection. `/c/<token>` is server HTML (Vite proxies
 cookie and 303s to `/c/join`, so the token never reaches a rendered page,
 Referer, or the OAuth round trip. `GET /c/join` only renders: signed out ⇒ sign
 in with `returnTo=/c/join`; signed-in non-member ⇒ the invitation-only 403;
-member ⇒ a confirm form. Only the same-origin `POST /c/join` (Origin checked,
-posted id must match the hop cookie) redeems, through `orchestrateGrantAdd`,
+member ⇒ a confirm form. Only the same-origin `POST /c/join` redeems
+(`Origin` must be exactly ours, never `null`, so `/c/join` pages send
+`Referrer-Policy: same-origin`, not `no-referrer`; the posted id must match
+the hop cookie), through `orchestrateGrantAdd`,
 the same code path as add-by-email but with `onExisting: 'keepRole'`:
 unlike add-by-email, already granted keeps its role (a link never upgrades
 or downgrades anyone; the owner's row switch does), the

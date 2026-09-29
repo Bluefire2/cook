@@ -744,14 +744,23 @@ never admits anyone to Sous. Owner-confirmed decisions:
   days. At most 20 live links per collection (409 after). Mint, list, and
   revoke are `/api/collections/:id/links` (`GET`, `POST { role? }`,
   `POST …/revoke { id }`), cookie session, collection owner only, 404 for
-  anyone else. Revoke keeps the document with `status: 'revoked'`.
+  anyone else. Revoke keeps the document with `status: 'revoked'`. The mint
+  response carries the `url` and the link's sha256 `id` (never the token
+  twice). Once the write succeeded the response is always 200: if the list
+  read after it fails, `links` holds only the new row with `partial: true`
+  and the client rereads the list. The sheet hides the shown URL as soon as
+  that `id` is revoked or missing from a refreshed list.
 - **Visit.** `GET /c/<token>` is server HTML like `/invite/<token>`. A live
   link sets the `sous_collection_link` hop cookie (`v: 'clink'`, link id
   only, 10 minutes, `Path=/c`) and 303s to `/c/join`, so the token leaves
   the address bar at once and is never on a rendered page, in a Referer,
-  or in the OAuth transaction. `/c/*` responses send
-  `Referrer-Policy: no-referrer`, `Cache-Control: no-store`, and deny
-  framing.
+  or in the OAuth transaction. `/c/*` responses send `Cache-Control:
+  no-store` and deny framing. The `/c/<token>` landing (its 303 and its
+  error pages) sends `Referrer-Policy: no-referrer`, because the token is in
+  that URL. Every `/c/join` page sends `Referrer-Policy: same-origin`
+  instead: a document with `no-referrer` makes the browser send its form
+  POST with `Origin: null`, which the Join check refuses, so Join would
+  never work.
 - **Admission.** `GET /c/join`: signed out ⇒ Sign in with Google, then back
   to `/c/join`; the hop cookie survives the Google round trip by itself.
   A non-member finishing consent gets the existing invitation-only 403 from
@@ -759,7 +768,11 @@ never admits anyone to Sous. Owner-confirmed decisions:
   A signed-in non-member gets the same page. Membership unknown is 503.
 - **Redeem is an explicit POST.** An admitted member or owner sees the
   collection name, the sharer's email, the role, and that the sharer will
-  see their email, then presses Join. `POST /c/join` checks `Origin`, that
+  see their email, then presses Join. `POST /c/join` checks that `Origin`
+  is exactly the app's origin (`null` and anything else are refused); with
+  no `Origin` it needs `Sec-Fetch-Site: same-origin` (or `none`), and with
+  neither header it refuses, since every browser with `SameSite` cookies
+  sends `Origin` on a form POST. It then checks that
   the posted link id matches the hop cookie, `requireMember`, and that the
   collection owner is still admitted, then runs `orchestrateGrantAdd` inside
   the transaction that re-reads the link: the same forward grant +
@@ -794,3 +807,18 @@ Deviations recorded at implementation:
   fails generically; an undelete within 7 days revives its unexpired links.
 - **A revoked viewer can rejoin** with a link that is still live; revoke the
   link too.
+
+Known limits (documented, not fixed):
+
+- **Expired links are never swept.** An expired link keeps
+  `status: 'live'`, so the live-links query behind list and mint reads it
+  and filters it in memory. Growth is bounded by the cap: at most about 20
+  new links per collection per 7 days, so the query reads at most a few
+  dozen documents per collection in normal use. A sweep, or writing
+  `status: 'expired'` on read, is the fix if that ever matters.
+- **The raw token reaches Cloud Run request logs.** The first request,
+  `GET /c/<token>`, is logged with its path by Cloud Run, the same as
+  `/invite/<token>` today, and the URL stays in the browser history. The app
+  itself never logs it, and the 303 keeps it out of every later request.
+  Anyone with log access can read unexpired tokens; revoke a link if that
+  matters.
