@@ -9,7 +9,7 @@ import Sheet from '../components/Sheet';
 import { createInvite } from '../lib/adminApi';
 import { createMemberInvite } from '../lib/inviteApi';
 import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
-import { FolderIcon, PlusIcon, SharedIcon } from '../lib/icons';
+import { FolderIcon, PlusIcon, SettingsIcon, SharedIcon } from '../lib/icons';
 import {
   collectionStore,
   libraryHref,
@@ -433,8 +433,12 @@ export default function Library() {
           <Link to="/cooks" className={ghostBtn}>
             {t('library.cooks')}
           </Link>
-          <Link to="/settings" className={ghostBtn}>
-            {t('settings.title')}
+          <Link
+            to="/settings"
+            className={`${ghostBtn} inline-flex items-center justify-center px-2 py-2`}
+            aria-label={t('settings.title')}
+          >
+            <SettingsIcon className="block h-5 w-5" />
           </Link>
         </div>
       </header>
