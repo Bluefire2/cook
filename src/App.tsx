@@ -1,6 +1,7 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
 import SyncToast from './components/SyncToast';
+import { isLibraryListPath } from './lib/libraryRoutes';
 import Library from './screens/Library';
 import RecipeView from './screens/RecipeView';
 import RecipeEdit from './screens/RecipeEdit';
@@ -10,23 +11,19 @@ import ImportScreen from './screens/ImportScreen';
 import Settings from './screens/Settings';
 import Admin from './screens/Admin';
 
-function LibraryLeaf() {
+function LibraryRouteStub() {
   return null;
 }
 
-function LibraryLayout() {
-  return <Library />;
-}
-
-export default function App() {
+function AppRoutes() {
+  const { pathname } = useLocation();
+  const showLibrary = isLibraryListPath(pathname);
   return (
-    <ErrorBoundary>
-      <SyncToast />
+    <>
+      {showLibrary ? <Library /> : null}
       <Routes>
-        <Route element={<LibraryLayout />}>
-          <Route index element={<LibraryLeaf />} />
-          <Route path="collections/:collectionId" element={<LibraryLeaf />} />
-        </Route>
+        <Route path="/" element={<LibraryRouteStub />} />
+        <Route path="/collections/:collectionId" element={<LibraryRouteStub />} />
         <Route path="/collections" element={<Navigate to="/" replace />} />
         <Route path="/collections/*" element={<Navigate to="/" replace />} />
         <Route path="/collections/:collectionId/import" element={<ImportScreen />} />
@@ -44,6 +41,15 @@ export default function App() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/admin" element={<Admin />} />
       </Routes>
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <SyncToast />
+      <AppRoutes />
     </ErrorBoundary>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useMatch, useNavigate } from 'react-router-dom';
 import { useT } from '../i18n';
 import LibraryInviteToast, {
@@ -13,6 +13,10 @@ import { FolderIcon, PlusIcon, SettingsIcon, SharedIcon } from '../lib/icons';
 import { importHref, libraryHref, newRecipeHref } from '../lib/collectionHref';
 import { collectionStore, useCollections } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
+import {
+  readPersistedLibrarySearch,
+  writePersistedLibrarySearch,
+} from '../lib/librarySearchMemory';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
 import { visibleLibraryRecipes } from '../lib/visibleLibraryRecipes';
@@ -57,7 +61,19 @@ export default function Library() {
       : undefined;
   const currentId = named?.id;
 
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(() => readPersistedLibrarySearch());
+  useLayoutEffect(() => {
+    const saved = readPersistedLibrarySearch();
+    if (saved !== query) {
+      setQuery(saved);
+    }
+  }, []);
+  const onSearchChange = (value: string) => {
+    setQuery(value);
+    if (value !== '') {
+      writePersistedLibrarySearch(value);
+    }
+  };
   const [browseAll, setBrowseAll] = useState(false);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -584,7 +600,7 @@ export default function Library() {
                   : t('library.search')
             }
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => onSearchChange(e.target.value)}
             className={`${inputClass} min-w-0 flex-1`}
           />
           <button
@@ -600,7 +616,7 @@ export default function Library() {
           type="search"
           placeholder={t('library.search')}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => onSearchChange(e.target.value)}
           className={`${inputClass} mb-4`}
         />
       )}
