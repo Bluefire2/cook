@@ -86,6 +86,7 @@ export const zhHans: Messages = {
   'settings.signOut': '退出登录',
   'settings.ownerHint': '查看想加入的人的申请——批准后，对方会得到自己的空食谱库。',
   'settings.inviteTitle': '邀请别人',
+  // The 5 matches MEMBER_INVITE_LIMIT in server/invites.ts.
   'settings.inviteIntro':
     '链接会接纳第一个用它登录的 Google 账号。只能用一次，7 天后过期。你最多可以邀请 5 个人。再创建一条会替换你上一条未使用的链接。网址只在你创建时显示——请现在复制。',
   'settings.offline': '离线——重新联网之前无法登录。',

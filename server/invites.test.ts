@@ -193,11 +193,7 @@ describe('redeemCreatorDecision', () => {
     creatorEmailAllowed: false,
   };
 
-  it('refuses a revoked minter and does not describe the invite as redeemed', () => {
-    const invite = unusedInvite({
-      createdBy: 'member',
-      createdByEmail: 'member@example.com',
-    });
+  it('refuses a revoked minter', () => {
     expect(
       redeemCreatorDecision({
         ...memberInvite,
@@ -205,7 +201,6 @@ describe('redeemCreatorDecision', () => {
         redeemedCount: 0,
       }),
     ).toEqual({ kind: 'refusal', reason: 'revoked' });
-    expect(invite.status).toBe('unused');
   });
 
   it('refuses the sixth redemption for an active member', () => {

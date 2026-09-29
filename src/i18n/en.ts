@@ -108,6 +108,7 @@ export const en = {
   'settings.ownerHint':
     'Review requests from people who want in — approving gives them their own empty library.',
   'settings.inviteTitle': 'Invite someone',
+  // The 5 matches MEMBER_INVITE_LIMIT in server/invites.ts.
   'settings.inviteIntro':
     'A link admits the first Google account that signs in with it. It works once and expires after 7 days. You can admit up to 5 people. Creating a new link replaces your previous unused one. The URL is shown only when you create it — copy it now.',
   'settings.offline': "Offline — sign-in is unavailable until you're back online.",

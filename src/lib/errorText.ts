@@ -51,6 +51,8 @@ type ErrorCode = keyof typeof ERROR_CODES;
 
 /** Used only when an invite-cap body omits `max`. Sharing reads `max` from the body. */
 const INVITE_CAP_MAX_FALLBACK = 20;
+/** Keep in sync with `MEMBER_INVITE_LIMIT` in `server/invites.ts`. */
+const MEMBER_INVITE_LIMIT_FALLBACK = 5;
 
 function asRecord(body: unknown): Record<string, unknown> | null {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
@@ -81,7 +83,7 @@ function paramsFor(code: ErrorCode, body: Record<string, unknown>): TranslatePar
     return max === undefined ? null : { max };
   }
   if (code === 'invite-cap' || code === 'member-invite-limit') {
-    const fallback = code === 'invite-cap' ? INVITE_CAP_MAX_FALLBACK : 5;
+    const fallback = code === 'invite-cap' ? INVITE_CAP_MAX_FALLBACK : MEMBER_INVITE_LIMIT_FALLBACK;
     return { max: numericField(body, 'max') ?? fallback };
   }
   if (code === 'import-refused') {
