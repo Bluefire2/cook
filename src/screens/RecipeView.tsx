@@ -56,7 +56,7 @@ function ingredientLabel(
 }
 
 const translateChipClass =
-  'inline-flex max-w-full items-center gap-1.5 rounded-full border border-line-strong bg-surface px-3 py-1.5 text-left text-sm font-medium text-ink shadow-sm hover:enabled:bg-surface-muted active:enabled:bg-surface-muted disabled:opacity-60';
+  'inline-flex max-w-full items-center gap-1.5 rounded-full border border-amber-600/70 bg-accent-soft px-3 py-1.5 text-left text-sm font-medium text-ink shadow-sm hover:enabled:opacity-90 active:enabled:opacity-80 disabled:opacity-60';
 
 function TranslateChip({
   mode,
@@ -79,11 +79,11 @@ function TranslateChip({
       className={translateChipClass}
     >
       {busy ? (
-        <SpinnerIcon className="h-4 w-4 shrink-0 animate-spin text-amber-500" />
+        <SpinnerIcon className="h-4 w-4 shrink-0 animate-spin" />
       ) : (
-        <TranslateIcon className="h-4 w-4 shrink-0 text-amber-500" />
+        <TranslateIcon className="h-4 w-4 shrink-0" />
       )}
-      {label}
+      <span className="min-w-0 text-left">{label}</span>
     </button>
   );
 }
