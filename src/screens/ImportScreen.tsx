@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { t as translateNow, useLocale, useT } from '../i18n';
 import ImportPreview from '../components/ImportPreview';
 import { type CreateRecipeSubmitStatus } from '../components/CreateRecipeForm';
@@ -35,10 +35,10 @@ export default function ImportScreen() {
   const t = useT();
   const locale = useLocale();
   const navigate = useNavigate();
-  const [params] = useSearchParams();
-  const collectionId = params.get('c') ?? undefined;
-  // Subscribed, not a one-shot store read: on a cold load of `?c=<id>` the
-  // pull has not landed yet, and only a subscriber re-renders once it does.
+  const { collectionId } = useParams();
+  // Subscribed, not a one-shot store read: on a cold load of a collection
+  // import path the pull has not landed yet, and only a subscriber re-renders
+  // once it does.
   const collections = useCollections();
   const knownCollectionId =
     collectionId &&

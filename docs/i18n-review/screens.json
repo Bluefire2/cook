@@ -8,7 +8,7 @@
   {
     "id": "library-populated",
     "route": "/",
-    "setup": "Signed in on the Recipes list (/) or an own named collection (/?c=<id>) that already shows at least one recipe card. Prefer / when it has cards. Do not create a recipe. If nothing is listed, mark skipped: needs data. A signed-in header shows Invite before Cooks. Do not click Invite.",
+    "setup": "Signed in on the Recipes list (/) or an own named collection (/collections/<id>) that already shows at least one recipe card. Prefer / when it has cards. Do not create a recipe. If nothing is listed, mark skipped: needs data. A signed-in header shows Invite before Cooks. Do not click Invite.",
     "needsData": true
   },
   {
@@ -62,7 +62,7 @@
   {
     "id": "import-idle",
     "route": "/import",
-    "setup": "Import with an empty textarea, the bulk-import checkbox off, no photo attached, and no preview. The Add photos button is visible. Open /import with no ?c= query. Do not extract.",
+    "setup": "Import with an empty textarea, the bulk-import checkbox off, no photo attached, and no preview. The Add photos button is visible. Open /import (not under /collections/…/import). Do not extract.",
     "needsData": false
   },
   {
@@ -80,13 +80,13 @@
   {
     "id": "import-preview",
     "route": "/import",
-    "setup": "From /import with bulk off and no ?c= query, extract one recipe (a single https URL, or pasted recipe text) and stop when the \"Fix it here before saving\" banner and the form are showing. Do not press Save. Extraction calls Gemini and writes nothing. The guessed-language line, translate checkbox, failure notice, and pasted-text hint are separate entries.",
+    "setup": "From /import with bulk off (not under /collections/…/import), extract one recipe (a single https URL, or pasted recipe text) and stop when the \"Fix it here before saving\" banner and the form are showing. Do not press Save. Extraction calls Gemini and writes nothing. The guessed-language line, translate checkbox, failure notice, and pasted-text hint are separate entries.",
     "needsData": false
   },
   {
     "id": "import-preview-guessed-language",
     "route": "/import",
-    "setup": "From /import with bulk off and no ?c= query, extract one recipe whose language the import can guess (a single https URL). Stop when the guessed-language line (\"Looks like … Change it if that's wrong.\") and its language select are showing above the form. Do not press Save. Extraction calls Gemini and writes nothing.",
+    "setup": "From /import with bulk off (not under /collections/…/import), extract one recipe whose language the import can guess (a single https URL). Stop when the guessed-language line (\"Looks like … Change it if that's wrong.\") and its language select are showing above the form. Do not press Save. Extraction calls Gemini and writes nothing.",
     "needsData": false
   },
   {
@@ -182,7 +182,7 @@
   {
     "id": "recipe-new",
     "route": "/recipe/new",
-    "setup": "The blank new-recipe form (heading New recipe), opened with no ?c= query. Do not fill it in and do not save. Saving with no collection chosen opens Save to collection; that sheet is a separate manifest entry.",
+    "setup": "The blank new-recipe form (heading New recipe), opened at /recipe/new (not under /collections/…/recipe/new). Do not fill it in and do not save. Saving with no collection chosen opens Save to collection; that sheet is a separate manifest entry.",
     "needsData": false
   },
   {
@@ -193,14 +193,14 @@
   },
   {
     "id": "share-collection-sheet",
-    "route": "/?c=:collectionId",
+    "route": "/collections/:collectionId",
     "setup": "Open one of your own named collections (not a shared-with-you folder) and tap Share. The sheet explains viewers and editors, and the email row has a role menu (Viewer / Editor). Opening the sheet only reads the grant list. Prefer a collection whose sheet says \"Nobody else can see this yet.\" Do not type an email, and do not add, change a role, or remove a person. If every own collection already lists grantees, redact those emails before judging, or mark skipped: shows another member's data. If you have no own named collection, mark skipped: needs data. Do not create one.",
     "needsData": true
   },
   {
     "id": "save-to-collection-sheet",
     "route": "/import",
-    "setup": "After the import preview is showing (import-preview: /import, bulk off, no ?c=), press Save. The Save to collection sheet opens and nothing is written until a destination is chosen. Capture the sheet, then Cancel. Do not pick Recipes, pick a collection, or create one. Do not reach this sheet from bulk import.",
+    "setup": "After the import preview is showing (import-preview: /import, bulk off, not under /collections/…/import), press Save. The Save to collection sheet opens and nothing is written until a destination is chosen. Capture the sheet, then Cancel. Do not pick Recipes, pick a collection, or create one. Do not reach this sheet from bulk import.",
     "needsData": false
   },
   {
@@ -211,13 +211,13 @@
   },
   {
     "id": "library-shared-banner",
-    "route": "/?c=:collectionId",
+    "route": "/collections/:collectionId",
     "setup": "Select a collection shared with you so the Library banner is visible: who shared it, then either \"You can edit these recipes.\" or \"View only.\", and a Leave control. Capture a viewer collection and, if one exists, an editor collection; they are the same banner with a different access sentence. The review never creates a share and never taps Leave. If the account has no incoming share, mark skipped: needs data. The banner and folder label can show the owner's email; redact that before the image goes to the judging model, or mark skipped: shows another member's data.",
     "needsData": true
   },
   {
     "id": "library-leave-sheet",
-    "route": "/?c=:collectionId",
+    "route": "/collections/:collectionId",
     "setup": "From a collection shared with you, tap Leave so the confirmation sheet is open (title, the sentence about losing access, Leave collection, Cancel). Do not confirm. The review never creates a share. If the account has no incoming share, mark skipped: needs data. The title names the collection; redact another member's collection name before judging, or mark skipped: shows another member's data.",
     "needsData": true
   },

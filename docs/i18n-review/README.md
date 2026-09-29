@@ -94,7 +94,7 @@ rubric, either yourself or with a vision-capable model given the images.
 | Field | Meaning |
 | --- | --- |
 | `id` | Stable name used in the report. |
-| `route` | Path from `src/App.tsx`. A query such as `?c=` is included when the state is a named collection. |
+| `route` | Path from `src/App.tsx`. A named collection is `/collections/:collectionId`. |
 | `setup` | Plain language: how to reach the state without writing. |
 | `needsData` | `true` when the state depends on library or share data the review must not create. If that data is not already there, mark the state `skipped: needs data`. |
 
