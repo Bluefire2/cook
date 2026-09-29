@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useLocale, useT } from '../i18n';
 import Sheet from './Sheet';
-import { collectionStore } from '../lib/collectionStore';
+import {
+  collectionStore,
+  visibleMintedUrl,
+  type MintedLink,
+} from '../lib/collectionStore';
 import { relativeExpiryLabel } from '../lib/relativeTime';
 import type { CollectionGrant, CollectionLink, GrantRole } from '../lib/remote';
 import {
@@ -30,8 +34,10 @@ export default function ShareCollectionSheet({
   const [links, setLinks] = useState<CollectionLink[] | undefined>(undefined);
   const [linkRole, setLinkRole] = useState<GrantRole>('viewer');
   // The raw link is only in this state: the server never returns it again.
-  const [mintedUrl, setMintedUrl] = useState<string | null>(null);
+  const [minted, setMinted] = useState<MintedLink | null>(null);
   const [copied, setCopied] = useState(false);
+  // Hidden as soon as its link is revoked or drops out of a refreshed list.
+  const mintedUrl = visibleMintedUrl(minted, links);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,7 +89,7 @@ export default function ShareCollectionSheet({
     try {
       const created = await collectionStore.createLink(collection.id, linkRole);
       setLinks(created.links);
-      setMintedUrl(created.url);
+      setMinted({ url: created.url, id: created.linkId });
       await copyUrl(created.url);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
@@ -97,6 +103,9 @@ export default function ShareCollectionSheet({
     setBusy(true);
     try {
       setLinks(await collectionStore.revokeLink(collection.id, linkId));
+      if (minted?.id === linkId) {
+        setMinted(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {

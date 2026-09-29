@@ -74,6 +74,13 @@ describe('parseCollectionLinksBody', () => {
     });
   });
 
+  it('keeps the minted id and the partial flag, and nothing else', () => {
+    expect(
+      parseCollectionLinksBody({ url: 'u', id: 'a'.repeat(64), links: [], partial: true, extra: 1 }),
+    ).toEqual({ url: 'u', id: 'a'.repeat(64), links: [], partial: true });
+    expect(parseCollectionLinksBody({ links: [], partial: 'yes', id: 5 })).toEqual({ links: [] });
+  });
+
   it('has no url on a list or revoke response, and rejects a body without links', () => {
     expect(parseCollectionLinksBody({ links: [] })).toEqual({ links: [] });
     expect(parseCollectionLinksBody({ grants: [] })).toBeNull();

@@ -36,6 +36,7 @@ import {
   type CollectionGrant,
   type CollectionLink,
   type CollectionLinkHttpResult,
+  type CollectionLinksBody,
   type GrantRole,
   type LeaveSharedResult,
   type RemoteResult,
@@ -63,16 +64,43 @@ function saveError(result: RemoteResult, created = false): Error {
   return new Error(collectionPushErrorMessage(result, created));
 }
 
+/** A link the share sheet just minted: the one-time URL and its sha256 id. */
+export type MintedLink = { url: string; id: string };
+
+/**
+ * The shown-once URL stays visible only while its link is in the live list.
+ * Revoking it, or a refreshed list without it, hides the URL.
+ */
+export function visibleMintedUrl(
+  minted: MintedLink | null,
+  links: readonly CollectionLink[] | undefined,
+): string | null {
+  if (minted === null || links === undefined) {
+    return null;
+  }
+  return links.some((link) => link.id === minted.id) ? minted.url : null;
+}
+
 function linkResult(
   result: CollectionLinkHttpResult,
-): { links: CollectionLink[]; url?: string } {
+): CollectionLinksBody {
   if (result.kind === 'signedOut') {
     throw new Error(t('error.sessionExpired'));
   }
   if (result.kind === 'error') {
     throw new Error(result.message);
   }
-  return result.url === undefined ? { links: result.links } : { links: result.links, url: result.url };
+  const body: CollectionLinksBody = { links: result.links };
+  if (result.url !== undefined) {
+    body.url = result.url;
+  }
+  if (result.id !== undefined) {
+    body.id = result.id;
+  }
+  if (result.partial) {
+    body.partial = true;
+  }
+  return body;
 }
 
 async function pushCollection(
@@ -274,17 +302,30 @@ export const collectionStore = {
     return linkResult(await listCollectionLinks(id)).links;
   },
 
-  /** The returned `url` carries the raw token and is never shown again. */
+  /**
+   * The returned `url` carries the raw token and is never shown again;
+   * `linkId` is its sha256 id, so the caller can tell when it was revoked.
+   * Once the server has minted, this never throws: a list read that failed
+   * after the mint is retried once, and otherwise the minted row stands in.
+   */
   async createLink(
     id: string,
     role: GrantRole = 'viewer',
-  ): Promise<{ url: string; links: CollectionLink[] }> {
+  ): Promise<{ url: string; linkId: string; links: CollectionLink[] }> {
     rejectShared(id);
-    const { links, url } = linkResult(await createCollectionLink(id, role));
-    if (url === undefined) {
+    const minted = linkResult(await createCollectionLink(id, role));
+    if (minted.url === undefined || minted.id === undefined) {
       throw new Error(t('error.sharingUpdate'));
     }
-    return { url, links };
+    let links = minted.links;
+    if (minted.partial) {
+      try {
+        links = linkResult(await listCollectionLinks(id)).links;
+      } catch {
+        // Keep the minted row; the next open of the sheet rereads the list.
+      }
+    }
+    return { url: minted.url, linkId: minted.id, links };
   },
 
   async revokeLink(id: string, linkId: string): Promise<CollectionLink[]> {

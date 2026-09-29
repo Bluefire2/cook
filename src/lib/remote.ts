@@ -672,15 +672,22 @@ export type CollectionLink = {
   expiresAt: number;
 };
 
+export type CollectionLinksBody = {
+  links: CollectionLink[];
+  /** Mint response only: the one time the token is shown. */
+  url?: string;
+  /** Mint response only: the new link's sha256 id (never the token). */
+  id?: string;
+  /** Mint response only: the list read failed after the mint; refetch it. */
+  partial?: true;
+};
+
 export type CollectionLinkHttpResult =
-  | { kind: 'ok'; links: CollectionLink[]; url?: string }
+  | ({ kind: 'ok' } & CollectionLinksBody)
   | { kind: 'signedOut' }
   | { kind: 'error'; message: string; status?: number };
 
-/** `url` is present only on the mint response; it is the one time the token is shown. */
-export function parseCollectionLinksBody(
-  body: unknown,
-): { links: CollectionLink[]; url?: string } | null {
+export function parseCollectionLinksBody(body: unknown): CollectionLinksBody | null {
   if (!body || typeof body !== 'object' || !Array.isArray((body as { links?: unknown }).links)) {
     return null;
   }
@@ -704,8 +711,18 @@ export function parseCollectionLinksBody(
       expiresAt: row.expiresAt,
     });
   }
-  const url = (body as { url?: unknown }).url;
-  return typeof url === 'string' ? { links, url } : { links };
+  const record = body as { url?: unknown; id?: unknown; partial?: unknown };
+  const parsed: CollectionLinksBody = { links };
+  if (typeof record.url === 'string') {
+    parsed.url = record.url;
+  }
+  if (typeof record.id === 'string') {
+    parsed.id = record.id;
+  }
+  if (record.partial === true) {
+    parsed.partial = true;
+  }
+  return parsed;
 }
 
 async function linkRequest(path: string, init?: RequestInit): Promise<CollectionLinkHttpResult> {
