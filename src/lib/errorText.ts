@@ -35,6 +35,7 @@ const ERROR_CODES = {
   'unknown-request': 'error.adminUnknownRequest',
   'unknown-invite': 'error.adminUnknownInvite',
   'invite-cap': 'error.inviteCap',
+  'member-invite-cap': 'error.memberInviteCap',
   'unsupported-media': 'error.unsupportedMedia',
   'payload-too-large': 'error.payloadTooLarge',
   'translate-bad-request': 'error.translateBadRequest',

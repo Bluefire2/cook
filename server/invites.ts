@@ -30,6 +30,7 @@ export interface InviteRecord {
   status: InviteStatus;
   createdAt: number;
   createdBy: string;
+  createdByEmail?: string;
   expiresAt: number;
   redeemedAt?: number;
   redeemedBy?: string;
@@ -98,6 +99,9 @@ export function parseInviteDoc(raw: unknown): InviteRecord | null {
     createdBy: row.createdBy,
     expiresAt: row.expiresAt,
   };
+  if (typeof row.createdByEmail === 'string' && row.createdByEmail !== '') {
+    record.createdByEmail = row.createdByEmail;
+  }
   if (typeof row.redeemedAt === 'number' && Number.isFinite(row.redeemedAt)) {
     record.redeemedAt = row.redeemedAt;
   }
@@ -107,22 +111,48 @@ export function parseInviteDoc(raw: unknown): InviteRecord | null {
   return record;
 }
 
-export function mintInviteRecord(createdBy: string, now: number): {
+export function mintInviteRecord(
+  createdBy: string,
+  now: number,
+  createdByEmail?: string,
+): {
   token: string;
   id: string;
   record: InviteRecord;
 } {
   const token = randomToken(32);
+  const record: InviteRecord = {
+    status: 'unused',
+    createdAt: now,
+    createdBy,
+    expiresAt: now + INVITE_TTL_MS,
+  };
+  if (createdByEmail !== undefined && createdByEmail !== '') {
+    record.createdByEmail = createdByEmail;
+  }
   return {
     token,
     id: hashInviteToken(token),
-    record: {
-      status: 'unused',
-      createdAt: now,
-      createdBy,
-      expiresAt: now + INVITE_TTL_MS,
-    },
+    record,
   };
+}
+
+/**
+ * A member may hold one unused link. When other people's unused links already
+ * fill the cap, refuse and leave the caller's link in place.
+ */
+export function memberMintRevokeIds(
+  unused: { id: string; record: InviteRecord }[],
+  createdBy: string,
+): { kind: 'cap' } | { kind: 'ok'; revokeIds: string[] } {
+  const revokeIds = unused
+    .filter((row) => row.record.createdBy === createdBy)
+    .map((row) => row.id);
+  const others = unused.length - revokeIds.length;
+  if (others >= INVITE_UNUSED_CAP) {
+    return { kind: 'cap' };
+  }
+  return { kind: 'ok', revokeIds };
 }
 
 export function unusedUnexpired(rows: InviteRecord[], now: number): InviteRecord[] {
@@ -265,12 +295,31 @@ export async function listUnusedInvites(now: number): Promise<{ id: string; reco
 export async function mintInvite(
   createdBy: string,
   now: number,
+  createdByEmail?: string,
 ): Promise<{ kind: 'ok'; token: string; id: string } | { kind: 'cap' }> {
   const unused = await listUnusedInvites(now);
   if (unused.length >= INVITE_UNUSED_CAP) {
     return { kind: 'cap' };
   }
-  const minted = mintInviteRecord(createdBy, now);
+  const minted = mintInviteRecord(createdBy, now, createdByEmail);
+  await invitesCollection().doc(minted.id).create(minted.record);
+  return { kind: 'ok', token: minted.token, id: minted.id };
+}
+
+export async function mintMemberInvite(
+  createdBy: string,
+  createdByEmail: string,
+  now: number,
+): Promise<{ kind: 'ok'; token: string; id: string } | { kind: 'cap' }> {
+  const unused = await listUnusedInvites(now);
+  const plan = memberMintRevokeIds(unused, createdBy);
+  if (plan.kind === 'cap') {
+    return { kind: 'cap' };
+  }
+  for (const id of plan.revokeIds) {
+    await revokeInvite(id);
+  }
+  const minted = mintInviteRecord(createdBy, now, createdByEmail);
   await invitesCollection().doc(minted.id).create(minted.record);
   return { kind: 'ok', token: minted.token, id: minted.id };
 }

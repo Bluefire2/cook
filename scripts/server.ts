@@ -34,6 +34,7 @@ import {
   adminInvitesGet,
   adminInvitesPost,
   adminRequestsGet,
+  memberInvitesPost,
 } from '../server/admin.ts';
 import { accessRequestPost } from '../server/access.ts';
 import { extensionImport, extensionImportOptions } from '../server/extensionImport.ts';
@@ -70,6 +71,7 @@ const apiRoutes: ApiRoute[] = [
   { method: 'GET', path: '/api/admin/invites', handler: adminInvitesGet },
   { method: 'POST', path: '/api/admin/invites', handler: adminInvitesPost },
   { method: 'POST', path: '/api/admin/invites/revoke', handler: adminInviteRevokePost },
+  { method: 'POST', path: '/api/invites', handler: memberInvitesPost },
   { method: 'GET', path: '/api/auth/start', handler: authStart },
   { method: 'GET', path: '/api/auth/callback/google', handler: authCallbackGoogle },
   { method: 'GET', path: '/api/auth/session', handler: authSession },

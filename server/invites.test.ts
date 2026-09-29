@@ -5,6 +5,7 @@ import {
   inviteLandingVerdict,
   inviteTokenFromPath,
   isInviteTokenShape,
+  memberMintRevokeIds,
   mintInviteRecord,
   parseInviteDoc,
   redeemInviteTransition,
@@ -77,6 +78,15 @@ describe('parseInviteDoc', () => {
     ).toMatchObject({ status: 'redeemed', redeemedAt: 3, redeemedBy: 'guest' });
   });
 
+  it('keeps a creator email and ignores an empty or non-string one', () => {
+    expect(parseInviteDoc({ ...valid, createdByEmail: 'owner@example.com' })).toEqual({
+      ...valid,
+      createdByEmail: 'owner@example.com',
+    });
+    expect(parseInviteDoc({ ...valid, createdByEmail: '' })).toEqual(valid);
+    expect(parseInviteDoc({ ...valid, createdByEmail: 1 })).toEqual(valid);
+  });
+
   const rejectCases: { label: string; raw: unknown }[] = [
     { label: 'null', raw: null },
     { label: 'empty', raw: {} },
@@ -98,9 +108,40 @@ describe('mintInviteRecord', () => {
     const minted = mintInviteRecord('owner-sub', now);
     expect(minted.record.status).toBe('unused');
     expect(minted.record.createdBy).toBe('owner-sub');
+    expect(minted.record.createdByEmail).toBeUndefined();
     expect(minted.record.expiresAt).toBe(now + INVITE_TTL_MS);
     expect(minted.id).toBe(hashInviteToken(minted.token));
     expect(isInviteTokenShape(minted.token)).toBe(true);
+  });
+
+  it('stores the creator email when one is given', () => {
+    const minted = mintInviteRecord('member-sub', now, 'member@example.com');
+    expect(minted.record.createdByEmail).toBe('member@example.com');
+  });
+});
+
+describe('memberMintRevokeIds', () => {
+  function row(id: string, createdBy: string): { id: string; record: InviteRecord } {
+    return { id, record: unusedInvite({ createdBy }) };
+  }
+
+  it('revokes only the caller unused rows and leaves other people', () => {
+    const mine = 'a'.repeat(64);
+    const alsoMine = 'b'.repeat(64);
+    const other = 'c'.repeat(64);
+    expect(memberMintRevokeIds([row(mine, 'member'), row(other, 'owner'), row(alsoMine, 'member')], 'member')).toEqual({
+      kind: 'ok',
+      revokeIds: [mine, alsoMine],
+    });
+  });
+
+  it('does not revoke the caller when other unused links fill the cap', () => {
+    const unused = Array.from({ length: INVITE_UNUSED_CAP }, (_, index) =>
+      row(index.toString(16).padStart(64, '0'), 'other'),
+    );
+    const mine = 'd'.repeat(64);
+    unused.push(row(mine, 'member'));
+    expect(memberMintRevokeIds(unused, 'member')).toEqual({ kind: 'cap' });
   });
 });
 

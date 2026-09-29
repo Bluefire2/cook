@@ -77,6 +77,17 @@ describe('serverErrorText', () => {
     ).toBe('You already have 3 unused invite links. Revoke one to mint another.');
   });
 
+  it('uses the member cap sentence that does not mention revoke', () => {
+    settings.setLocale('en');
+    expect(
+      serverErrorText(
+        { code: 'member-invite-cap', error: 'cap' },
+        'error.requestFailed',
+        { status: 409 },
+      ),
+    ).toBe('There are already too many unused invite links. Try again later.');
+  });
+
   it('falls back to the English error when the code is unknown', () => {
     settings.setLocale('uk');
     expect(
