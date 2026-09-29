@@ -7,6 +7,7 @@ import {
   MAX_PHOTO_BYTES,
   photoUploadDecision,
   photoUploadStopsAtLiveReplay,
+  planUploadIntent,
 } from './photos.ts';
 
 describe('assertPhotoId', () => {
@@ -82,5 +83,45 @@ describe('photo body size predicates', () => {
   it('flags streamed byte counts over 2 MB', () => {
     expect(isPhotoByteCountTooLarge(MAX_PHOTO_BYTES)).toBe(false);
     expect(isPhotoByteCountTooLarge(MAX_PHOTO_BYTES + 1)).toBe(true);
+  });
+});
+
+describe('planUploadIntent', () => {
+  const RECIPE = '11111111-1111-4111-8111-111111111111';
+
+  it('accepts a revived id after its tombstone and drops the queued object delete', () => {
+    expect(planUploadIntent(true, { id: 'p', updatedAt: 10, deletedAt: 10 }, 11)).toEqual({
+      kind: 'proceed',
+      clearQueuedGcsDelete: true,
+    });
+  });
+
+  it('accepts a new id and a retried uploading id', () => {
+    expect(planUploadIntent(true, undefined, 1)).toEqual({
+      kind: 'proceed',
+      clearQueuedGcsDelete: true,
+    });
+    expect(planUploadIntent(true, { status: 'uploading', updatedAt: 5 }, 5)).toEqual({
+      kind: 'proceed',
+      clearQueuedGcsDelete: true,
+    });
+  });
+
+  it('leaves the queue alone when the upload is not accepted', () => {
+    expect(planUploadIntent(false, undefined, 1)).toEqual({
+      kind: 'conflict',
+      error: 'recipe-deleted',
+    });
+    expect(planUploadIntent(true, { updatedAt: 10, deletedAt: 10 }, 10)).toEqual({
+      kind: 'conflict',
+      error: 'already-deleted',
+    });
+    expect(planUploadIntent(true, { status: 'uploading', updatedAt: 10 }, 9)).toEqual({
+      kind: 'conflict',
+      error: 'stale',
+    });
+    expect(
+      planUploadIntent(true, { status: 'live', updatedAt: 10, recipeId: RECIPE }, 1),
+    ).toEqual({ kind: 'stop' });
   });
 });

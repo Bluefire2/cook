@@ -1,6 +1,7 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { t } from '../i18n';
 import {
+  addPendingBlob,
   beginLocalWrite,
   captureSnapshot,
   dropPhoto,
@@ -37,6 +38,32 @@ import type { PushOp } from './pushOps';
 
 export { compactRecipe };
 
+/**
+ * A 401/403 from the server. The message is the usual sign-in prompt; the type
+ * lets a rollback tell sign-out apart without reading the text.
+ */
+class SessionExpiredError extends Error {
+  constructor() {
+    super(t('error.sessionExpired'));
+  }
+}
+
+/**
+ * A create that did not stick. The message is the error to show. Its staged
+ * photo bytes are kept for a retry, but when the server may still hold the
+ * failed recipe they move to new ids: `photoIdRemap` maps each old id to its
+ * new one, and a retry must use the new ids (`remapPhotoIds`). Empty when
+ * the old ids are safe to reuse.
+ */
+export class CreateRollbackError extends Error {
+  readonly photoIdRemap: ReadonlyMap<string, string>;
+
+  constructor(cause: unknown, photoIdRemap: ReadonlyMap<string, string>) {
+    super(cause instanceof Error ? cause.message : t('error.recipeSave'), { cause });
+    this.photoIdRemap = photoIdRemap;
+  }
+}
+
 async function uploadPhotoIfNeeded(
   photoId: string | undefined,
   recipeId: string,
@@ -51,7 +78,7 @@ async function uploadPhotoIfNeeded(
   }
   const result = await postPhoto(photoId, recipeId, updatedAt, blob);
   if (result !== 'ok') {
-    throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.photoSave'));
+    throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.photoSave'));
   }
   markPhotoRemote(photoId);
 }
@@ -182,6 +209,101 @@ async function saveShared(recipe: Recipe): Promise<void> {
   }
 }
 
+/** Bytes a new recipe's photos are waiting to upload, captured before any upload. */
+function stagedBlobs(recipe: Recipe): Map<string, Blob> {
+  const staged = new Map<string, Blob>();
+  for (const photoId of recipePhotoIds(recipe)) {
+    const blob = getPendingBlob(photoId);
+    if (blob) {
+      staged.set(photoId, blob);
+    }
+  }
+  return staged;
+}
+
+/**
+ * Puts a failed create's staged bytes back as pending, including any this
+ * attempt uploaded, so a retry uploads them again. Same ids only when the
+ * server is known not to hold the failed recipe; otherwise that recipe may
+ * still list the ids, and deleting it later force-tombstones every photo it
+ * lists, including ones a retry shared with it. `remove` of a saved recipe
+ * still drops its bytes.
+ */
+function restageBlobs(
+  staged: ReadonlyMap<string, Blob>,
+  sameIds: boolean,
+): ReadonlyMap<string, string> {
+  const remap = new Map<string, string>();
+  for (const [photoId, blob] of staged) {
+    const nextId = sameIds ? photoId : crypto.randomUUID();
+    addPendingBlob(nextId, blob);
+    if (nextId !== photoId) {
+      remap.set(photoId, nextId);
+    }
+  }
+  return remap;
+}
+
+/**
+ * Undoes a create that may have reached the server: its recipe put, or a
+ * photo upload after it, failed. Whether the put landed is unknowable (a
+ * dropped response, or a rejected collection op in the same batch), so this
+ * always pushes `recipe.delete` plus the collection scrub; for an id that
+ * never landed it writes an unused tombstone. The server's delete cascade
+ * tombstones any photo already stored under the recipe. Best effort, never
+ * retried. Returns the photo id remap for `CreateRollbackError`, or
+ * `'signedOut'` when the delete met a 401 (the library is already cleared).
+ */
+async function discardCreatedRecipe(
+  id: string,
+  staged: ReadonlyMap<string, Blob>,
+): Promise<ReadonlyMap<string, string> | 'signedOut'> {
+  const at = Date.now();
+  // Same membership scrub as `remove`: a dead id still counts against the cap.
+  const scrubbed = listCollections()
+    .filter((c) => c.recipeIds.includes(id))
+    .map((c) =>
+      compactCollection({
+        ...c,
+        recipeIds: c.recipeIds.filter((recipeId) => recipeId !== id),
+        updatedAt: at,
+      }),
+    );
+  // A pull that read the live row before the delete landed must not paint it
+  // back; hold the library as `remove` does.
+  const writeEpoch = beginLocalWrite();
+  removeRecipeLocal(id);
+  for (const collection of scrubbed) {
+    upsertCollection(collection);
+  }
+  const ops: PushOp[] = [{ kind: 'recipe.delete', payload: { id, updatedAt: at } }];
+  for (const collection of scrubbed) {
+    ops.push({ kind: 'collection.put', payload: collection });
+  }
+  let result: Awaited<ReturnType<typeof pushOps>> = 'error';
+  try {
+    result = await pushOps(ops);
+  } catch {
+    // Best effort; the caller surfaces the original error.
+  } finally {
+    endLocalWrite();
+  }
+  if (result === 'signedOut') {
+    // The 401 cleared the library; keep nothing.
+    return 'signedOut';
+  }
+  // Anything but 'ok' leaves the failed recipe possibly live on the server.
+  const remap = restageBlobs(staged, result === 'ok');
+  if (result === 'ok' && localWriteOverlapsPull(writeEpoch)) {
+    try {
+      await pullAfterLocalWrite(writeEpoch);
+    } catch {
+      // The next pull reconciles.
+    }
+  }
+  return remap;
+}
+
 export const recipeStore = {
   list(): Recipe[] {
     return listRecipes();
@@ -273,12 +395,27 @@ export const recipeStore = {
    */
   async createFromAsk(parent: Recipe, draft: RecipeDraft): Promise<Recipe> {
     const copied = await copyParentPhotos(parent);
-    return recipeStore.create({
-      ...draft,
-      lang: parent.lang,
-      photoId: copied.photoId,
-      galleryPhotoIds: copied.galleryPhotoIds,
-    });
+    try {
+      return await recipeStore.create({
+        ...draft,
+        lang: parent.lang,
+        photoId: copied.photoId,
+        galleryPhotoIds: copied.galleryPhotoIds,
+      });
+    } catch (err) {
+      // A retry copies onto fresh ids, so these copies would never upload.
+      for (const photoId of [copied.photoId, ...(copied.galleryPhotoIds ?? [])]) {
+        if (photoId !== undefined) {
+          dropPhoto(photoId);
+        }
+      }
+      if (err instanceof CreateRollbackError) {
+        for (const photoId of err.photoIdRemap.values()) {
+          dropPhoto(photoId);
+        }
+      }
+      throw err;
+    }
   },
 
   async create(
@@ -309,26 +446,37 @@ export const recipeStore = {
         updatedAt: now,
       });
     }
+    const staged = stagedBlobs(recipe);
+    if (staged.size !== recipePhotoIds(recipe).length) {
+      // This call uploads a new recipe's photos. An id with no bytes here
+      // would save a recipe pointing at a photo that never exists.
+      throw new Error(t('error.photoSave'));
+    }
     upsertRecipe(recipe);
     if (nextCollection) {
       upsertCollection(nextCollection);
     }
+    // The server stores a photo only under a live recipe, so the recipe row
+    // goes first and the photos follow.
     try {
-      await uploadRecipePhotos(recipe);
       const ops: PushOp[] = [{ kind: 'recipe.put', payload: recipe }];
       if (nextCollection) {
         ops.push({ kind: 'collection.put', payload: nextCollection });
       }
       const result = await pushOps(ops);
       if (result !== 'ok') {
-        throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
+        throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
       }
+      await uploadRecipePhotos(recipe);
     } catch (err) {
-      removeRecipeLocal(recipe.id);
-      if (previousCollection) {
-        upsertCollection(previousCollection);
+      if (err instanceof SessionExpiredError) {
+        // The 401 cleared the library already; write nothing back into it.
+        throw err;
       }
-      throw err;
+      // Any other failure may have left the recipe on the server: at the
+      // batch, where the client cannot tell which op failed, or at a photo.
+      const remap = await discardCreatedRecipe(recipe.id, staged);
+      throw remap === 'signedOut' ? new SessionExpiredError() : new CreateRollbackError(err, remap);
     }
     return recipe;
   },

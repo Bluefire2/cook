@@ -3,8 +3,8 @@ import { useT } from '../i18n';
 import { resolveCollectionDestination } from '../lib/collectionDestination';
 import { useCollections } from '../lib/collectionStore';
 import { photoStore } from '../lib/photoStore';
-import { recipePhotoIds } from '../lib/recipePhotos';
-import { recipeStore } from '../lib/recipeStore';
+import { recipePhotoIds, remapPhotoIds } from '../lib/recipePhotos';
+import { CreateRollbackError, recipeStore } from '../lib/recipeStore';
 import { SpinnerIcon } from '../lib/icons';
 import type { Recipe, RecipeDraft } from '../lib/types';
 import { primaryBtn, secondaryBtn } from '../lib/uiClasses';
@@ -116,6 +116,15 @@ export default function CreateRecipeForm({
       stagedPhotoIds.current = [];
       setDraft(null);
       onCreated(recipe);
+    } catch (err) {
+      // The failed recipe may still be on the server under the old photo ids;
+      // Try again must submit the ids the bytes were moved to.
+      if (err instanceof CreateRollbackError && err.photoIdRemap.size > 0) {
+        const remap = err.photoIdRemap;
+        stagedPhotoIds.current = stagedPhotoIds.current.map((photoId) => remap.get(photoId) ?? photoId);
+        setDraft(remapPhotoIds(pending, remap));
+      }
+      throw err;
     } finally {
       inFlight.current = false;
       setBusy(false);
