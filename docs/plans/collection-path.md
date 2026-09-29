@@ -1,8 +1,9 @@
 # Collection path
 
 Named collections open at `/collections/<id>`. The default library stays
-`/`. Add-recipe links keep `?c=` on `/import` and `/recipe/new`; that
-query is a destination hint, not the collection path.
+`/`. When adding from an owned named collection, import and new-recipe
+open at `/collections/<id>/import` and `/collections/<id>/recipe/new`.
+Legacy `?c=` on `/`, `/import`, and `/recipe/new` replace-redirect.
 
 Constitutions: `docs/constitutions/i18n.md` was read and does not apply.
 This slice changes no user-facing text and does not touch `src/i18n/`.
@@ -34,13 +35,12 @@ the other plans that still say `/?c=`).
    `/collections/<encoded id>`, and empty `c` goes to `/` and drops the
    query. `c` is the only search param `Library` reads, so redirect the
    whole `/?c=` URL and do not keep other params. Use `replace` so Back
-   does not return to `/?c=`. Do not redirect `?c=` on `/import` or
-   `/recipe/new`.
-5. `Library`'s `addQuery` stays `` `?c=${encodeURIComponent(currentId)}` ``
-   for an owned named collection. `ImportScreen` and `CreateRecipe`
-   keep `params.get('c')`. Their back links already call `libraryHref`
-   and pick up the new path. Do not edit those reads or the comments
-   that describe a cold load of `?c=<id>`.
+   does not return to `/?c=`. `/import?c=` and `/recipe/new?c=` redirect
+   to `importHref` / `newRecipeHref` the same way.
+5. `importHref` and `newRecipeHref` in `collectionStore.ts` mirror
+   `libraryHref`. `Library` links use them for an owned named collection.
+   `ImportScreen` and `CreateRecipe` read `useParams().collectionId`.
+   Back links call `libraryHref(knownCollectionId)`.
 6. No new copy. Do not edit `src/i18n/`. No production deploy.
 
 ## Steps
@@ -130,6 +130,7 @@ do not sign out.
 - Visiting `/?c=` replace-navigates to `/` with no query.
 - `/collections/<unknown id>` stays on that URL and shows the unfiled
   list after collections load.
-- `/import?c=<id>` and `/recipe/new?c=<id>` stay on those screens.
-  Their back links go to `/collections/<id>`. Do not save or extract.
+- `/import?c=<id>` and `/recipe/new?c=<id>` replace-navigate to
+  `/collections/<id>/import` and `/collections/<id>/recipe/new`. Back
+  links go to `/collections/<id>`. Do not save or extract.
 - No production deploy.

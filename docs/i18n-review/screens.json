@@ -62,7 +62,7 @@
   {
     "id": "import-idle",
     "route": "/import",
-    "setup": "Import with an empty textarea, the bulk-import checkbox off, no photo attached, and no preview. The Add photos button is visible. Open /import with no ?c= query. Do not extract.",
+    "setup": "Import with an empty textarea, the bulk-import checkbox off, no photo attached, and no preview. The Add photos button is visible. Open /import (not under /collections/…/import). Do not extract.",
     "needsData": false
   },
   {
@@ -80,13 +80,13 @@
   {
     "id": "import-preview",
     "route": "/import",
-    "setup": "From /import with bulk off and no ?c= query, extract one recipe (a single https URL, or pasted recipe text) and stop when the \"Fix it here before saving\" banner and the form are showing. Do not press Save. Extraction calls Gemini and writes nothing. The guessed-language line, translate checkbox, failure notice, and pasted-text hint are separate entries.",
+    "setup": "From /import with bulk off (not under /collections/…/import), extract one recipe (a single https URL, or pasted recipe text) and stop when the \"Fix it here before saving\" banner and the form are showing. Do not press Save. Extraction calls Gemini and writes nothing. The guessed-language line, translate checkbox, failure notice, and pasted-text hint are separate entries.",
     "needsData": false
   },
   {
     "id": "import-preview-guessed-language",
     "route": "/import",
-    "setup": "From /import with bulk off and no ?c= query, extract one recipe whose language the import can guess (a single https URL). Stop when the guessed-language line (\"Looks like … Change it if that's wrong.\") and its language select are showing above the form. Do not press Save. Extraction calls Gemini and writes nothing.",
+    "setup": "From /import with bulk off (not under /collections/…/import), extract one recipe whose language the import can guess (a single https URL). Stop when the guessed-language line (\"Looks like … Change it if that's wrong.\") and its language select are showing above the form. Do not press Save. Extraction calls Gemini and writes nothing.",
     "needsData": false
   },
   {
@@ -182,7 +182,7 @@
   {
     "id": "recipe-new",
     "route": "/recipe/new",
-    "setup": "The blank new-recipe form (heading New recipe), opened with no ?c= query. Do not fill it in and do not save. Saving with no collection chosen opens Save to collection; that sheet is a separate manifest entry.",
+    "setup": "The blank new-recipe form (heading New recipe), opened at /recipe/new (not under /collections/…/recipe/new). Do not fill it in and do not save. Saving with no collection chosen opens Save to collection; that sheet is a separate manifest entry.",
     "needsData": false
   },
   {
@@ -200,7 +200,7 @@
   {
     "id": "save-to-collection-sheet",
     "route": "/import",
-    "setup": "After the import preview is showing (import-preview: /import, bulk off, no ?c=), press Save. The Save to collection sheet opens and nothing is written until a destination is chosen. Capture the sheet, then Cancel. Do not pick Recipes, pick a collection, or create one. Do not reach this sheet from bulk import.",
+    "setup": "After the import preview is showing (import-preview: /import, bulk off, not under /collections/…/import), press Save. The Save to collection sheet opens and nothing is written until a destination is chosen. Capture the sheet, then Cancel. Do not pick Recipes, pick a collection, or create one. Do not reach this sheet from bulk import.",
     "needsData": false
   },
   {

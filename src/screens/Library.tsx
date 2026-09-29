@@ -12,7 +12,9 @@ import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/invit
 import { FolderIcon, PlusIcon, SharedIcon } from '../lib/icons';
 import {
   collectionStore,
+  importHref,
   libraryHref,
+  newRecipeHref,
   useCollections,
 } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
@@ -109,8 +111,8 @@ export default function Library() {
   const moveRecipe = allRecipes?.find((r) => r.id === moveRecipeId);
   const namedIsShared = named ? collectionStore.isShared(named.id) : false;
   const showSwitcher = (collections?.length ?? 0) > 0;
-  const addQuery =
-    currentId && !namedIsShared ? `?c=${encodeURIComponent(currentId)}` : '';
+  const addCollectionId =
+    currentId && !namedIsShared ? currentId : undefined;
   const ownedCollections =
     collections?.filter((collection) => !collectionStore.isShared(collection.id)) ?? [];
 
@@ -726,13 +728,13 @@ export default function Library() {
         <Sheet onClose={() => setAddOpen(false)}>
           <h2 className="text-lg font-semibold">{t('library.addRecipeTitle')}</h2>
           <Link
-            to={`/import${addQuery}`}
+            to={importHref(addCollectionId)}
             className={`${primaryBtn} mt-3 block py-3 text-center`}
           >
             {t('library.importFromLink')}
           </Link>
           <Link
-            to={`/recipe/new${addQuery}`}
+            to={newRecipeHref(addCollectionId)}
             className={`${secondaryBtn} mt-2 block py-3 text-center`}
           >
             {t('library.writeFromScratch')}
