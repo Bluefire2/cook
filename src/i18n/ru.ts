@@ -39,6 +39,9 @@ export const ru: Messages = {
   'time.expiresIn': 'истекает {in}',
 
   'library.cooks': 'Приготовления',
+  'library.inviteLink': 'Пригласить',
+  'library.inviteCopied': 'Ссылка-приглашение скопирована',
+  'library.inviteCopyFailed': 'Ссылка-приглашение создана, но её не удалось скопировать',
   'library.collectionsNav': 'Коллекции',
   'library.recipes': 'Рецепты',
   'library.sharedByLabel': '{name} (от {email})',

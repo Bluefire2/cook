@@ -1,5 +1,5 @@
 import { t } from '../i18n';
-import { serverErrorText } from './errorText';
+import { serverError } from './errorText';
 import { invalidateSession } from './session';
 
 export interface MemberInvite {
@@ -15,7 +15,7 @@ async function throwInviteError(response: Response): Promise<never> {
     throw new Error(t('error.adminUnavailable'));
   }
   const data = (await response.json().catch(() => null)) as unknown;
-  throw new Error(serverErrorText(data, 'error.requestFailed', { status: response.status }));
+  throw serverError(data, 'error.requestFailed', { status: response.status });
 }
 
 export async function createMemberInvite(): Promise<MemberInvite> {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { serverErrorText } from './errorText';
+import { serverError, serverErrorText } from './errorText';
 import { settings } from './settings';
 
 const store = new Map<string, string>();
@@ -97,6 +97,19 @@ describe('serverErrorText', () => {
         { status: 409 },
       ),
     ).toBe('You have already invited 5 people.');
+  });
+
+  it('keeps the quota code on the thrown error', () => {
+    settings.setLocale('en');
+    const err = serverError(
+      { code: 'member-invite-limit', error: 'limit', max: 5 },
+      'error.requestFailed',
+      { status: 409 },
+    );
+    expect(err).toMatchObject({
+      message: 'You have already invited 5 people.',
+      code: 'member-invite-limit',
+    });
   });
 
   it('falls back to the English error when the code is unknown', () => {

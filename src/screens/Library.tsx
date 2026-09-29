@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useT } from '../i18n';
+import LibraryInviteToast, {
+  type LibraryInviteNotice,
+} from '../components/LibraryInviteToast';
 import ShareCollectionSheet from '../components/ShareCollectionSheet';
 import Sheet from '../components/Sheet';
+import { createInvite } from '../lib/adminApi';
+import { createMemberInvite } from '../lib/inviteApi';
+import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
 import { FolderIcon, PlusIcon, SharedIcon } from '../lib/icons';
 import {
   collectionStore,
@@ -44,7 +50,7 @@ export default function Library() {
   const t = useT();
   const allRecipes = useRecipes();
   const collections = useCollections();
-  const { status: sessionStatus } = useSession();
+  const { status: sessionStatus, user } = useSession();
   const syncStatus = useSyncStatus();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -70,6 +76,13 @@ export default function Library() {
   const [collectionError, setCollectionError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [invitePending, setInvitePending] = useState(false);
+  const [inviteConfirmOpen, setInviteConfirmOpen] = useState(false);
+  const [revealedUrl, setRevealedUrl] = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const [inviteNotice, setInviteNotice] = useState<LibraryInviteNotice | null>(null);
+  const [inviteQuota, setInviteQuota] = useState<{ id: number; message: string } | null>(null);
+  const inviteMountedRef = useRef(true);
   const [createdCollection, setCreatedCollection] = useState<{
     id: string;
     name: string;
@@ -120,6 +133,7 @@ export default function Library() {
     setDeleteCollectionOpen(false);
     setLeaveOpen(false);
     setShareOpen(false);
+    setInviteConfirmOpen(false);
     setCollectionName('');
     setCollectionError(null);
     setCreatedCollection(null);
@@ -215,6 +229,124 @@ export default function Library() {
   };
 
   useEffect(() => {
+    inviteMountedRef.current = true;
+    return () => {
+      inviteMountedRef.current = false;
+    };
+  }, []);
+
+  const showInviteToast = (kind: 'success' | 'error', message: string) => {
+    setInviteNotice((prev) => ({
+      id: (prev?.id ?? 0) + 1,
+      kind,
+      message,
+    }));
+  };
+
+  const mint = async () => {
+    if (user === null || invitePending) {
+      return;
+    }
+    setInvitePending(true);
+    const client = inviteMintClient(user);
+    const urlPromise =
+      client === 'admin'
+        ? createInvite().then((created) => created.url)
+        : createMemberInvite().then((created) => created.url);
+    let writeStarted: Promise<void> | undefined;
+    if (
+      copyStrategy({ hasClipboardItem: typeof ClipboardItem !== 'undefined' }) ===
+      'clipboard-item'
+    ) {
+      try {
+        writeStarted = navigator.clipboard.write([
+          new ClipboardItem({
+            'text/plain': urlPromise.then((u) => new Blob([u], { type: 'text/plain' })),
+          }),
+        ]);
+        void writeStarted.catch(() => {});
+      } catch {
+        writeStarted = undefined;
+      }
+    }
+    try {
+      const url = await urlPromise;
+      if (!inviteMountedRef.current) {
+        return;
+      }
+      setInviteQuota(null);
+      let copied = false;
+      if (writeStarted !== undefined) {
+        try {
+          await writeStarted;
+          copied = true;
+        } catch {
+          copied = false;
+        }
+      }
+      if (!copied) {
+        try {
+          await navigator.clipboard.writeText(url);
+          copied = true;
+        } catch {
+          copied = false;
+        }
+      }
+      if (!inviteMountedRef.current) {
+        return;
+      }
+      setInviteConfirmOpen(false);
+      if (copied) {
+        setRevealedUrl(null);
+        setInviteCopied(false);
+        showInviteToast('success', t('library.inviteCopied'));
+      } else {
+        setRevealedUrl(url);
+        setInviteCopied(false);
+        showInviteToast('error', t('library.inviteCopyFailed'));
+      }
+    } catch (err) {
+      if (!inviteMountedRef.current) {
+        return;
+      }
+      const message = err instanceof Error ? err.message : t('common.somethingWentWrong');
+      setInviteConfirmOpen(false);
+      if (isInviteQuotaError(err)) {
+        setInviteQuota((prev) => ({ id: (prev?.id ?? 0) + 1, message }));
+        return;
+      }
+      setInviteQuota(null);
+      showInviteToast('error', message);
+    } finally {
+      if (inviteMountedRef.current) {
+        setInvitePending(false);
+      }
+    }
+  };
+
+  const copyRevealedUrl = async () => {
+    if (revealedUrl === null) {
+      return;
+    }
+    const url = revealedUrl;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      if (!inviteMountedRef.current) {
+        return;
+      }
+      setInviteCopied(false);
+      return;
+    }
+    if (!inviteMountedRef.current) {
+      return;
+    }
+    setRevealedUrl(null);
+    setInviteCopied(true);
+    showInviteToast('success', t('library.inviteCopied'));
+  };
+
+  useEffect(() => {
     setBrowseAll(false);
   }, [currentId]);
 
@@ -239,7 +371,8 @@ export default function Library() {
         createOpen ||
         renameOpen ||
         deleteCollectionOpen ||
-        leaveOpen
+        leaveOpen ||
+        inviteConfirmOpen
       ) {
         event.preventDefault();
         closeSheets();
@@ -256,6 +389,7 @@ export default function Library() {
     renameOpen,
     deleteCollectionOpen,
     leaveOpen,
+    inviteConfirmOpen,
   ]);
 
   const emptyCopy = () => {
@@ -276,9 +410,26 @@ export default function Library() {
 
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
+      <LibraryInviteToast notice={inviteNotice} />
       <header className="flex items-center justify-between py-4">
         <h1 className="text-2xl font-bold">Sous</h1>
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+          {user !== null && (
+            <button
+              type="button"
+              className={`${ghostBtn} disabled:opacity-40`}
+              disabled={invitePending || inviteConfirmOpen}
+              onClick={() => {
+                if (inviteMintClient(user) === 'member') {
+                  setInviteConfirmOpen(true);
+                  return;
+                }
+                void mint();
+              }}
+            >
+              {invitePending ? t('admin.creating') : t('library.inviteLink')}
+            </button>
+          )}
           <Link to="/cooks" className={ghostBtn}>
             {t('library.cooks')}
           </Link>
@@ -287,6 +438,34 @@ export default function Library() {
           </Link>
         </div>
       </header>
+
+      {inviteQuota !== null && (
+        <p key={inviteQuota.id} className="mb-3 text-sm text-danger" role="alert">
+          {inviteQuota.message}
+        </p>
+      )}
+
+      {revealedUrl !== null && (
+        <div className="mb-3 rounded-2xl border border-line bg-surface p-4 shadow-sm">
+          <label className="text-xs text-ink-muted" htmlFor="library-invite-url">
+            {t('admin.newInviteLink')}
+          </label>
+          <input
+            id="library-invite-url"
+            className={`${inputClass} mt-1 font-mono text-sm`}
+            readOnly
+            value={revealedUrl}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+          <button
+            type="button"
+            onClick={() => void copyRevealedUrl()}
+            className={`${secondaryBtn} mt-2 px-3 py-1.5 text-sm`}
+          >
+            {inviteCopied ? t('admin.copied') : t('admin.copy')}
+          </button>
+        </div>
+      )}
 
       {showSwitcher && (
         <nav aria-label={t('library.collectionsNav')} className="mb-3 flex items-start gap-1.5">
@@ -765,6 +944,38 @@ export default function Library() {
           collection={named}
           onClose={() => setShareOpen(false)}
         />
+      )}
+
+      {inviteConfirmOpen && user !== null && inviteMintClient(user) === 'member' && (
+        <Sheet
+          dismissible={!invitePending}
+          onClose={() => {
+            if (!invitePending) closeSheets();
+          }}
+        >
+          <h2 className="text-lg font-semibold">{t('settings.inviteTitle')}</h2>
+          <p className="mt-1 text-sm text-ink-muted">{t('settings.inviteIntro')}</p>
+          <button
+            type="button"
+            disabled={invitePending}
+            className={`${primaryBtn} mt-3 w-full py-3`}
+            onClick={() => {
+              void mint();
+            }}
+          >
+            {invitePending ? t('admin.creating') : t('admin.createLink')}
+          </button>
+          <button
+            type="button"
+            disabled={invitePending}
+            className={`${secondaryBtn} mt-2 w-full py-3`}
+            onClick={() => {
+              if (!invitePending) setInviteConfirmOpen(false);
+            }}
+          >
+            {t('common.cancel')}
+          </button>
+        </Sheet>
       )}
     </div>
   );

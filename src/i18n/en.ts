@@ -57,6 +57,9 @@ export const en = {
   'time.expiresIn': 'expires {in}',
 
   'library.cooks': 'Cooks',
+  'library.inviteLink': 'Invite',
+  'library.inviteCopied': 'Invite link copied',
+  'library.inviteCopyFailed': 'Invite link created, but it could not be copied',
   'library.collectionsNav': 'Collections',
   'library.recipes': 'Recipes',
   'library.sharedByLabel': '{name} (shared by {email})',

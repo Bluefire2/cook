@@ -1,5 +1,5 @@
 import { t } from '../i18n';
-import { serverErrorText } from './errorText';
+import { serverError } from './errorText';
 import { invalidateSession } from './session';
 
 export interface AccessRequestEntry {
@@ -54,7 +54,7 @@ async function throwAdminError(response: Response): Promise<never> {
     code?: unknown;
     max?: unknown;
   } | null;
-  throw new Error(serverErrorText(data, 'error.requestFailed', { status: response.status }));
+  throw serverError(data, 'error.requestFailed', { status: response.status });
 }
 
 async function parseAdminResponse(response: Response): Promise<AccessRequestLists> {
