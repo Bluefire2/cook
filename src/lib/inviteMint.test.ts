@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inviteMintClient, isInviteQuotaError } from './inviteMint';
+import { copyStrategy, inviteMintClient, isInviteQuotaError } from './inviteMint';
 
 describe('inviteMintClient', () => {
   it('returns admin only when isOwner is true', () => {
@@ -10,6 +10,15 @@ describe('inviteMintClient', () => {
   });
   it('returns member when isOwner is omitted', () => {
     expect(inviteMintClient({})).toBe('member');
+  });
+});
+
+describe('copyStrategy', () => {
+  it('uses ClipboardItem when it exists', () => {
+    expect(copyStrategy({ hasClipboardItem: true })).toBe('clipboard-item');
+  });
+  it('falls back to writeText when ClipboardItem is absent', () => {
+    expect(copyStrategy({ hasClipboardItem: false })).toBe('write-text');
   });
 });
 

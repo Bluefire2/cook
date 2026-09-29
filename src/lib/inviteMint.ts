@@ -3,6 +3,11 @@ export function inviteMintClient(user: { isOwner?: boolean }): 'admin' | 'member
   return user.isOwner === true ? 'admin' : 'member';
 }
 
+/** Clipboard write path. Does not read navigator and does not fetch. */
+export function copyStrategy(input: { hasClipboardItem: boolean }): 'clipboard-item' | 'write-text' {
+  return input.hasClipboardItem ? 'clipboard-item' : 'write-text';
+}
+
 const INVITE_QUOTA_CODES = new Set(['member-invite-limit', 'member-invite-cap', 'invite-cap']);
 
 /** True when minting was refused because this person, or the shared pool, has no invite left. */
