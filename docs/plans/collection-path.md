@@ -52,6 +52,11 @@ the other plans that still say `/?c=`).
    per-collection state must be reset when the path's collection
    changes: open sheets, menu, typed name, errors, and the All
    collections scope (`shownCollectionId` effect in `Library`).
+   A save (rename, delete, leave) that finishes after the user moved to
+   another collection must not close that collection's sheets, show an
+   error in them, or navigate; it compares against `shownCollectionId`.
+   The reset runs in `useLayoutEffect` so the old sheet never paints over
+   the new collection.
 8. Search text and the All collections scope are kept in
    `sessionStorage` under `cook.librarySearch`
    (`src/lib/librarySearchMemory.ts`) so they also survive leaving
@@ -83,6 +88,12 @@ Assert `undefined` and `''` return `/`, and an id returns
 changes, such as `a/b` → `/collections/a%2Fb`). The helper does not
 `fetch`. Do not add a DOM test, a router integration test, a Firestore
 emulator, or a fake IndexedDB.
+
+Route patterns live in `src/lib/routePaths.ts` and `src/App.tsx` uses
+them, so `src/lib/routePaths.test.ts` can check with `matchRoutes` (no
+DOM) which paths reach the `Library` layout, that import, new-recipe,
+and junk paths stay outside it, and that `libraryHref`, `importHref`, and
+`newRecipeHref` build paths the table matches.
 
 In `src/App.tsx`, wrap the two list paths in one pathless layout route:
 

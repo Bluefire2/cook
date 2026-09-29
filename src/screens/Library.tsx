@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useT } from '../i18n';
 import LibraryInviteToast, {
@@ -61,6 +61,9 @@ export default function Library() {
       : undefined;
   const currentId = named?.id;
 
+  // The collection the URL shows now. A save that finishes after the user has
+  // moved on must not touch the sheets or the route of the collection they are on.
+  const shownCollectionId = useRef(collectionId);
   const [query, setQuery] = useState(() => readPersistedLibraryView().query);
   const [browseAll, setBrowseAll] = useState(
     () => readPersistedLibraryView().browseAll,
@@ -189,11 +192,14 @@ export default function Library() {
     if (!currentId) {
       return;
     }
+    const startedOn = shownCollectionId.current;
     setCollectionError(null);
     try {
       await collectionStore.rename(currentId, collectionName);
+      if (shownCollectionId.current !== startedOn) return;
       closeSheets();
     } catch (err) {
+      if (shownCollectionId.current !== startedOn) return;
       setCollectionError(err instanceof Error ? err.message : t('error.collectionSave'));
     }
   };
@@ -202,12 +208,15 @@ export default function Library() {
     if (!currentId) {
       return;
     }
+    const startedOn = shownCollectionId.current;
     setCollectionError(null);
     try {
       await collectionStore.remove(currentId);
+      if (shownCollectionId.current !== startedOn) return;
       closeSheets();
       navigate('/');
     } catch (err) {
+      if (shownCollectionId.current !== startedOn) return;
       setCollectionError(
         err instanceof Error ? err.message : t('error.collectionDelete'),
       );
@@ -218,13 +227,16 @@ export default function Library() {
     if (!currentId) {
       return;
     }
+    const startedOn = shownCollectionId.current;
     setCollectionError(null);
     setLeaveBusy(true);
     try {
       await collectionStore.leave(currentId);
+      if (shownCollectionId.current !== startedOn) return;
       closeSheets();
       navigate('/');
     } catch (err) {
+      if (shownCollectionId.current !== startedOn) return;
       setCollectionError(
         err instanceof Error ? err.message : t('error.leaveCollection'),
       );
@@ -353,8 +365,7 @@ export default function Library() {
 
   // Library stays mounted across collection routes, so per-collection state
   // (open sheets, the typed name, scope) must not leak into the next one.
-  const shownCollectionId = useRef(collectionId);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (shownCollectionId.current === collectionId) return;
     shownCollectionId.current = collectionId;
     setBrowseAll(false);
