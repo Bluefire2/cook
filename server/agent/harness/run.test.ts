@@ -559,6 +559,35 @@ describe('startAgent', () => {
     expect(responseForTool(calls, 1, 'big')).toEqual({ error: 'result too large' });
   });
 
+  it('measures a string tool result as sent, not re-encoded as JSON', async () => {
+    const output = '"x"'.repeat(10);
+    const limits = { ...defaultAgentLimits(), maxResultBytes: output.length };
+    const tools: ToolSpec<Ctx>[] = [
+      {
+        name: 'quoted',
+        description: 'd',
+        parameters: { type: 'object', properties: {} },
+        run: async () => ({ output }),
+      },
+    ];
+    const { client, calls } = modelFromSteps([
+      [callChunk('quoted', {})],
+      [textChunk('ok')],
+    ]);
+    const agent = await startAgent({
+      model: client,
+      systemInstruction: 'sys',
+      messages: baseMessages,
+      tools,
+      cards: [],
+      ctx,
+      limits,
+      signal: new AbortController().signal,
+    });
+    await collectEvents(agent.run);
+    expect(responseForTool(calls, 1, 'quoted')).toEqual({ output });
+  });
+
   it('errors on forced final step that still returns calls', async () => {
     const limits = { ...defaultAgentLimits(), maxSteps: 1 };
     const tools: ToolSpec<Ctx>[] = [

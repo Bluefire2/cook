@@ -25,8 +25,13 @@ function duplicateNameError(tools: ToolSpec<unknown>[], cards: CardSpec<unknown,
   }
 }
 
+/** A string output is measured as sent, not re-encoded as JSON. */
 function resultBytes(result: ToolResult): number {
-  return new TextEncoder().encode(JSON.stringify(result)).length;
+  const payload =
+    'output' in result && typeof result.output === 'string'
+      ? result.output
+      : JSON.stringify(result);
+  return new TextEncoder().encode(payload).length;
 }
 
 async function executeCall<Ctx>(

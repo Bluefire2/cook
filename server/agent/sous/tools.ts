@@ -15,7 +15,7 @@ function readNumber(obj: Record<string, unknown>, key: string): number | undefin
 
 /** Wrap untrusted library JSON so a value cannot close the delimiter early. */
 export function wrapLibraryData(value: unknown): string {
-  const json = JSON.stringify(value).replaceAll('</library_data>', '<\\/library_data>');
+  const json = JSON.stringify(value).replace(/<\/(library_data)/gi, '<\\/$1');
   return `<library_data>\n${json}\n</library_data>`;
 }
 
