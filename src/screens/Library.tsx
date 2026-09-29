@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useMatch, useNavigate } from 'react-router-dom';
 import { useT } from '../i18n';
 import LibraryInviteToast, {
   type LibraryInviteNotice,
@@ -10,13 +10,8 @@ import { createInvite } from '../lib/adminApi';
 import { createMemberInvite } from '../lib/inviteApi';
 import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
 import { FolderIcon, PlusIcon, SettingsIcon, SharedIcon } from '../lib/icons';
-import {
-  collectionStore,
-  importHref,
-  libraryHref,
-  newRecipeHref,
-  useCollections,
-} from '../lib/collectionStore';
+import { importHref, libraryHref, newRecipeHref } from '../lib/collectionHref';
+import { collectionStore, useCollections } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
@@ -54,7 +49,7 @@ export default function Library() {
   const collections = useCollections();
   const { status: sessionStatus, user } = useSession();
   const syncStatus = useSyncStatus();
-  const { collectionId } = useParams();
+  const collectionId = useMatch('/collections/:collectionId')?.params.collectionId;
   const navigate = useNavigate();
   const named =
     collectionId && collections

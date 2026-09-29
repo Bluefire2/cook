@@ -1,8 +1,15 @@
 import type { ReactNode } from 'react';
-import { Navigate, Route, Routes, useSearchParams } from 'react-router-dom';
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useSearchParams,
+} from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
 import SyncToast from './components/SyncToast';
-import { importHref, libraryHref, newRecipeHref } from './lib/collectionStore';
+import { importHref, libraryHref, newRecipeHref } from './lib/collectionHref';
+import { legacyCollectionRedirectTarget } from './lib/legacyCollectionRedirect';
 import Library from './screens/Library';
 import RecipeView from './screens/RecipeView';
 import RecipeEdit from './screens/RecipeEdit';
@@ -12,6 +19,20 @@ import ImportScreen from './screens/ImportScreen';
 import Settings from './screens/Settings';
 import Admin from './screens/Admin';
 
+function LibraryLeaf() {
+  return null;
+}
+
+function LibraryLayout() {
+  const { pathname } = useLocation();
+  const [params] = useSearchParams();
+  const target = legacyCollectionRedirectTarget(params.get('c'), libraryHref);
+  if (pathname === '/' && target !== null) {
+    return <Navigate to={target} replace />;
+  }
+  return <Library />;
+}
+
 function WithLegacyCollectionRedirect({
   href,
   children,
@@ -20,19 +41,11 @@ function WithLegacyCollectionRedirect({
   children: ReactNode;
 }) {
   const [params] = useSearchParams();
-  const legacy = params.get('c');
-  if (legacy !== null) {
-    return <Navigate to={href(legacy)} replace />;
+  const target = legacyCollectionRedirectTarget(params.get('c'), href);
+  if (target !== null) {
+    return <Navigate to={target} replace />;
   }
   return children;
-}
-
-function LibraryAtRoot() {
-  return (
-    <WithLegacyCollectionRedirect href={libraryHref}>
-      <Library />
-    </WithLegacyCollectionRedirect>
-  );
 }
 
 function ImportAtRoot() {
@@ -56,14 +69,17 @@ export default function App() {
     <ErrorBoundary>
       <SyncToast />
       <Routes>
-        <Route path="/" element={<LibraryAtRoot />} />
+        <Route element={<LibraryLayout />}>
+          <Route index element={<LibraryLeaf />} />
+          <Route path="collections/:collectionId" element={<LibraryLeaf />} />
+        </Route>
         <Route path="/collections" element={<Navigate to="/" replace />} />
+        <Route path="/collections/*" element={<Navigate to="/" replace />} />
         <Route path="/collections/:collectionId/import" element={<ImportScreen />} />
         <Route
           path="/collections/:collectionId/recipe/new"
           element={<RecipeEdit />}
         />
-        <Route path="/collections/:collectionId" element={<Library />} />
         <Route path="/recipe/new" element={<NewRecipeAtRoot />} />
         <Route path="/recipe/:id" element={<RecipeView />} />
         <Route path="/recipe/:id/edit" element={<RecipeEdit />} />
