@@ -22,12 +22,18 @@ function replayBytes(messages: AgentWireMessage[]): number {
   return new TextEncoder().encode(JSON.stringify(messages)).length;
 }
 
-/** Truncate fields and drop the oldest messages until the body fits the server limits. */
+/**
+ * Truncate fields and drop the oldest messages until the body fits the server
+ * limits. Gemini rejects a transcript that starts with an assistant turn, so
+ * a drop that would leave one is continued until a user turn is first.
+ */
 export function fitReplay(messages: AgentWireMessage[]): AgentWireMessage[] {
   let kept = messages.map(clampMessage);
   while (
     kept.length > 1 &&
-    (kept.length > MAX_REPLAY_MESSAGES || replayBytes(kept) > MAX_REPLAY_BODY_BYTES)
+    (kept.length > MAX_REPLAY_MESSAGES ||
+      replayBytes(kept) > MAX_REPLAY_BODY_BYTES ||
+      kept[0]?.role !== 'user')
   ) {
     kept = kept.slice(1);
   }

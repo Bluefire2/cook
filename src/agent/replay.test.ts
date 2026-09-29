@@ -41,9 +41,22 @@ describe('fitReplay', () => {
     );
     messages[messages.length - 1] = user('latest');
     const fitted = fitReplay(messages);
-    expect(fitted).toHaveLength(MAX_REPLAY_MESSAGES);
+    expect(fitted.length).toBeLessThanOrEqual(MAX_REPLAY_MESSAGES);
+    expect(fitted[0]?.role).toBe('user');
     expect(fitted[fitted.length - 1]?.content).toBe('latest');
     expect(fitted[0]?.content).not.toBe('u0');
+  });
+
+  it('drops a leading assistant turn left by the count cap', () => {
+    const messages = Array.from({ length: MAX_REPLAY_MESSAGES + 1 }, (_, i) =>
+      i % 2 === 0 ? user(`u${i}`) : assistant(`a${i}`),
+    );
+    messages[messages.length - 1] = user('latest');
+    const fitted = fitReplay(messages);
+    expect(fitted.length).toBeLessThanOrEqual(MAX_REPLAY_MESSAGES);
+    expect(fitted[0]?.role).toBe('user');
+    expect(fitted[fitted.length - 1]?.role).toBe('user');
+    expect(fitted[fitted.length - 1]?.content).toBe('latest');
   });
 
   it('drops oldest messages until the JSON body fits', () => {
