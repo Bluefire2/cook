@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { t } from '../i18n';
+import { LOCALE_KEY } from '../lib/settings';
 import { invalidateSession } from '../lib/session';
 import {
   applyEvent,
@@ -9,7 +11,6 @@ import {
   initialAgentState,
   markStopped,
   messagesForReplay,
-  STOPPED_LABEL,
   toggleChecked,
 } from './store';
 
@@ -21,7 +22,7 @@ vi.mock('../lib/libraryMemory', () => ({
 
 beforeEach(() => {
   clearAgentThread();
-  const store = new Map<string, string>();
+  const store = new Map<string, string>([[LOCALE_KEY, 'en']]);
   globalThis.localStorage = {
     getItem: (key) => store.get(key) ?? null,
     setItem: (key, value) => {
@@ -98,11 +99,11 @@ describe('applyEvent', () => {
     state = markStopped(state);
     const assistant = state.messages[state.messages.length - 1];
     expect(assistant?.interim).toBe(false);
-    expect(assistant?.content).toBe(`partial\n\n${STOPPED_LABEL}`);
+    expect(assistant?.content).toBe(`partial\n\n${t('assistant.stopped')}`);
     expect(state.streaming).toBe(false);
     expect(messagesForReplay(state).map((m) => m.content)).toEqual([
       'q',
-      `partial\n\n${STOPPED_LABEL}`,
+      `partial\n\n${t('assistant.stopped')}`,
     ]);
   });
 

@@ -1,4 +1,5 @@
 import type { ComponentType, ReactNode } from 'react';
+import { t } from '../../i18n';
 import type { AgentWireCard } from '../protocol';
 import { parseShoppingList, type ShoppingListData } from './parse';
 import ShoppingListCard from './ShoppingListCard';
@@ -15,11 +16,13 @@ type RegistryEntry<T> = {
   Component: ComponentType<CardComponentProps<T>>;
 };
 
-const fallback = (
-  <p className="mt-2 rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink-muted">
-    Update the app to see this card.
-  </p>
-);
+function cardFallback(): ReactNode {
+  return (
+    <p className="mt-2 rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink-muted">
+      {t('assistant.cardUnavailable')}
+    </p>
+  );
+}
 
 const registry: {
   shopping_list: RegistryEntry<ShoppingListData>;
@@ -38,11 +41,11 @@ export function renderAgentCard(
   try {
     const entry = registry[card.type as keyof typeof registry];
     if (!entry) {
-      return fallback;
+      return cardFallback();
     }
     const parsed = entry.parse(card.v, card.data);
     if (parsed === undefined) {
-      return fallback;
+      return cardFallback();
     }
     const Component = entry.Component;
     return (
@@ -54,6 +57,6 @@ export function renderAgentCard(
       />
     );
   } catch {
-    return fallback;
+    return cardFallback();
   }
 }

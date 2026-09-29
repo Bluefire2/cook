@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { invalidateSession } from '../lib/session';
 import type { AgentServerEvent } from './protocol';
 
@@ -107,7 +108,7 @@ export function createNdjsonParser(): NdjsonParser {
       return [];
     }
     if (utf8ByteLength(line) > MAX_LINE_BYTES) {
-      fatalError = 'Response too large.';
+      fatalError = t('assistant.responseTooLarge');
       return [];
     }
     const event = parseEventLine(line);
@@ -129,7 +130,7 @@ export function createNdjsonParser(): NdjsonParser {
       const nl = pending.indexOf('\n');
       if (nl === -1) {
         if (utf8ByteLength(pending) > MAX_LINE_BYTES) {
-          fatalError = 'Response too large.';
+          fatalError = t('assistant.responseTooLarge');
           pending = '';
         }
         break;
@@ -201,10 +202,10 @@ export async function postAgent(params: {
 
   if (response.status === 401) {
     invalidateSession();
-    throw new Error('Please sign in again — your session expired.');
+    throw new Error(t('assistant.sessionExpired'));
   }
   if (!response.ok || !response.body) {
-    throw new Error(`Assistant request failed (${response.status}).`);
+    throw new Error(t('assistant.requestFailed', { status: response.status }));
   }
 
   const parser = createNdjsonParser();

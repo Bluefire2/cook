@@ -5,6 +5,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { Link } from 'react-router-dom';
+import { useT } from '../i18n';
 import { useSession } from '../lib/session';
 import {
   backLink,
@@ -25,23 +26,23 @@ import {
   type AgentMessage,
 } from './store';
 
-const STARTERS = [
-  'What can I make tonight in about 30 minutes?',
-  'Help me cook two recipes together and make a shopping list.',
-] as const;
+const STARTERS = ['assistant.starterTonight', 'assistant.starterTogether'] as const;
 
-function toolChipLabel(name: string): string {
+function toolChipLabel(
+  name: string,
+  tr: ReturnType<typeof useT>,
+): string {
   switch (name) {
     case 'search_recipes':
-      return 'Searching recipes…';
+      return tr('assistant.searching');
     case 'get_recipes':
-      return 'Reading recipes…';
+      return tr('assistant.reading');
     case 'combine_ingredients':
-      return 'Combining ingredients…';
+      return tr('assistant.combining');
     case 'show_shopping_list':
-      return 'Making a shopping list…';
+      return tr('assistant.makingList');
     default:
-      return 'Working…';
+      return tr('assistant.working');
   }
 }
 
@@ -87,6 +88,7 @@ function MessageRow({
 }
 
 export default function AssistantScreen() {
+  const tr = useT();
   const { status: sessionStatus } = useSession();
   const state = useSyncExternalStore(subscribe, getAgentSnapshot);
   const draftRef = useRef<HTMLTextAreaElement>(null);
@@ -131,22 +133,21 @@ export default function AssistantScreen() {
       } else if (result.truncated) {
         dispatch({
           type: 'event',
-          event: { t: 'error', message: "The assistant's reply was cut off." },
+          event: { t: 'error', message: tr('assistant.cutOff') },
         });
       }
     } catch (err) {
       if (!stillThisTurn()) {
         return;
       }
-      const message =
-        err instanceof Error ? err.message : 'Something went wrong.';
+      const message = err instanceof Error ? err.message : tr('assistant.failed');
       dispatch({ type: 'event', event: { t: 'error', message } });
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null;
       }
     }
-  }, [sessionStatus]);
+  }, [sessionStatus, tr]);
 
   const onSend = () => {
     const el = draftRef.current;
@@ -180,15 +181,13 @@ export default function AssistantScreen() {
       <div className="mx-auto max-w-xl px-4 pb-24">
         <header className="flex items-center justify-between py-4">
           <Link to="/" className={backLink}>
-            ← Library
+            ← {tr('common.library')}
           </Link>
         </header>
         <p className="text-sm text-ink-muted">
-          Sign in from{' '}
           <Link to="/settings" className="text-ink hover:underline">
-            Settings
-          </Link>{' '}
-          to ask about your recipes.
+            {tr('assistant.signIn')}
+          </Link>
         </p>
       </div>
     );
@@ -198,24 +197,24 @@ export default function AssistantScreen() {
     <div className="mx-auto flex max-w-xl flex-col px-4 pb-24">
       <header className="flex items-center justify-between py-4">
         <Link to="/" className={backLink}>
-          ← Library
+          ← {tr('common.library')}
         </Link>
         <button type="button" onClick={onClear} className={ghostBtn}>
-          Clear
+          {tr('assistant.clear')}
         </button>
       </header>
 
       <div className="flex min-h-[50dvh] flex-1 flex-col gap-2.5 pb-4">
         {state.messages.length === 0 && !state.streaming && (
           <div className="flex flex-col gap-2 py-4">
-            {STARTERS.map((text) => (
+            {STARTERS.map((key) => (
               <button
-                key={text}
+                key={key}
                 type="button"
-                onClick={() => void runTurn(text)}
+                onClick={() => void runTurn(tr(key))}
                 className={`text-left text-sm ${secondaryBtn} px-4 py-3`}
               >
-                {text}
+                {tr(key)}
               </button>
             ))}
           </div>
@@ -231,7 +230,7 @@ export default function AssistantScreen() {
         ))}
 
         {state.streaming && state.toolLabel && (
-          <p className="text-sm text-ink-muted">{toolChipLabel(state.toolLabel)}</p>
+          <p className="text-sm text-ink-muted">{toolChipLabel(state.toolLabel, tr)}</p>
         )}
 
         {state.error && (
@@ -247,12 +246,12 @@ export default function AssistantScreen() {
             disabled={state.streaming}
             onKeyDown={onKeyDown}
             maxLength={MAX_USER_CONTENT}
-            placeholder="Ask about your recipes…"
+            placeholder={tr('assistant.placeholder')}
             className={`${inputClass} min-h-[2.75rem] resize-none text-sm`}
           />
           {state.streaming ? (
             <button type="button" onClick={onStop} className={`shrink-0 px-4 py-2.5 text-sm ${secondaryBtn}`}>
-              Stop
+              {tr('assistant.stop')}
             </button>
           ) : (
             <button
@@ -260,7 +259,7 @@ export default function AssistantScreen() {
               onClick={onSend}
               className={`shrink-0 px-4 py-2.5 text-sm ${primaryBtn}`}
             >
-              Send
+              {tr('assistant.send')}
             </button>
           )}
         </div>

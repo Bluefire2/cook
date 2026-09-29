@@ -268,5 +268,17 @@
     "route": "/recipe/:id/cooks/:logId/edit",
     "setup": "Open an existing cook log's edit form and open the delete dialog (\"Delete this cook?\"). Do not confirm delete and do not save. Dismiss the dialog when the capture is done. If there is no cook log, mark skipped: needs data.",
     "needsData": true
+  },
+  {
+    "id": "assistant-signed-out",
+    "route": "/assistant",
+    "setup": "Signed out. The screen shows the sign-in sentence linking to Settings and a link back to the library. Do not sign in.",
+    "needsData": false
+  },
+  {
+    "id": "assistant-empty",
+    "route": "/assistant",
+    "setup": "Signed in with an empty assistant thread, so the two starter prompts, the composer, Send, and Clear are showing. Do not send a message.",
+    "needsData": true
   }
 ]

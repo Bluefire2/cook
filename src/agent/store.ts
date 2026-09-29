@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { onSessionReset } from '../lib/session';
 import type { AgentServerEvent, AgentWireCard, AgentWireMessage } from './protocol';
 
@@ -160,22 +161,21 @@ function wireCards(cards: AgentWireCard[]): AgentWireCard[] {
   }));
 }
 
-export const STOPPED_LABEL = 'Stopped';
-
 /** Keep partial text, clear the interim flag, and label the reply so it replays. */
 export function markStopped(state: AgentState): AgentState {
   if (!state.streaming) {
     return state;
   }
+  const label = t('assistant.stopped');
   const settled = { ...state, streaming: false, toolLabel: null };
   const last = lastAssistant(state);
   if (!last) {
-    return appendAssistant(settled, { content: STOPPED_LABEL });
+    return appendAssistant(settled, { content: label });
   }
   return updateLastAssistant(settled, (msg) => ({
     ...msg,
     interim: false,
-    content: msg.content === '' ? STOPPED_LABEL : `${msg.content}\n\n${STOPPED_LABEL}`,
+    content: msg.content === '' ? label : `${msg.content}\n\n${label}`,
   }));
 }
 

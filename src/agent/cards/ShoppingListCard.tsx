@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { useT } from '../../i18n';
 import type { ShoppingListData } from './parse';
 import { secondaryBtn } from '../../lib/uiClasses';
 
@@ -25,10 +26,10 @@ function itemLine(
   return line;
 }
 
-function buildPlainText(data: ShoppingListData): string {
+function buildPlainText(data: ShoppingListData, recipesHeading: string): string {
   const lines: string[] = [data.title, ''];
   if (data.recipes.length > 0) {
-    lines.push('Recipes:');
+    lines.push(recipesHeading);
     for (const recipe of data.recipes) {
       lines.push(`- ${recipe.title}`);
     }
@@ -55,9 +56,10 @@ export default function ShoppingListCard({
   checked: Record<string, true> | undefined;
   onToggle: (itemKey: string) => void;
 }) {
+  const tr = useT();
   const copyAsText = () => {
     try {
-      void navigator.clipboard.writeText(buildPlainText(data));
+      void navigator.clipboard.writeText(buildPlainText(data, tr('assistant.recipesHeading')));
     } catch {
       // ignore clipboard failures
     }
@@ -68,7 +70,7 @@ export default function ShoppingListCard({
       <div className="flex items-start justify-between gap-2">
         <h3 className="font-semibold text-ink">{data.title}</h3>
         <button type="button" onClick={copyAsText} className={`shrink-0 px-3 py-1 text-sm ${secondaryBtn}`}>
-          Copy as text
+          {tr('assistant.copyAsText')}
         </button>
       </div>
       {data.recipes.length > 0 && (
