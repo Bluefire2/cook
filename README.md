@@ -39,9 +39,11 @@ admitted.
    and takes effect on the member’s next sign-in — **no redeploy**.
 4. A signed-in member who is not an owner creates one invite link from
    **Settings**. The URL is shown once. Creating another replaces their
-   unused link. They cannot open Invitations, approve anyone, remove access,
-   or revoke a link. The owner still sees every unused link on `/admin`,
-   including who created it, and can revoke it.
+   unused link. Each member can admit up to 5 people this way. They cannot
+   open Invitations, approve anyone, remove access, or revoke a link. The
+   owner still sees every unused link on `/admin`, including who created it,
+   and can revoke it. Removing someone’s access also revokes the unused
+   links they created.
 
 **Every address in `ALLOWED_EMAILS` is an owner/admin** who can manage
 invitations. Add ordinary members through `/admin` or an invite link, not by

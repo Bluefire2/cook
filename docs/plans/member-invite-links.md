@@ -1,7 +1,7 @@
 # Member invite links
 
-Parent: `docs/plans/invite-links.md`. Redeem is unchanged. This slice lets an
-admitted member mint one single-use link without opening `/admin`.
+Parent: `docs/plans/invite-links.md`. This slice lets an admitted member mint
+one single-use link without opening `/admin`.
 
 Constitutions: `docs/constitutions/i18n.md` (Settings and admin copy). Cook
 log and image import do not apply.
@@ -21,10 +21,23 @@ log and image import do not apply.
   account, `approvedBy` / `decidedBy` = the minter’s `sub`. No new env,
   scopes, or mail.
 - **One outstanding link per member.** Creating another revokes that member’s
-  previous unused links first, then mints. Other people’s links stay.
+  previous unused links and mints the new one in the same Firestore
+  transaction as the 5-person check. Other people’s links stay.
+- **Up to 5 people per member.** Lifetime count of redeemed invites whose
+  `createdBy` is that member. Replaced, revoked, and expired links do not
+  count. Owners are exempt. At 5, `POST /api/invites` returns 409
+  `member-invite-limit` and leaves the current unused link in place. Redeem
+  checks the same count inside its transaction and does not consume a link
+  that would be a sixth admission.
 - **Global cap stays 20.** The member’s link counts. If unused links that
   belong to other people already fill the cap, mint returns 409 and revokes
-  nothing.
+  nothing. The owner’s cap message says unused links exist, not that they
+  are all the owner’s.
+- **A removed member’s link stops working.** Redeem refuses unless the
+  creator is still admitted: active `members/{createdBy}`, or
+  `createdByEmail` in `ALLOWED_EMAILS`. Older owner-minted docs without
+  `createdByEmail` stay owner-minted. Removing access also marks that
+  person’s unused invites revoked.
 - **`{ url }` only.** `POST /api/invites` never returns an invite id.
 - **Owners get 403** on `POST /api/invites`, so this route cannot revoke
   admin-minted links. Owners keep `POST /api/admin/invites`.

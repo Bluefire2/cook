@@ -191,10 +191,16 @@ new writes.
 
 The owner can mint a bearer URL `{PUBLIC_ORIGIN}/invite/<token>` from `/admin`.
 An admitted member who is not an owner can mint one from Settings
-(`POST /api/invites`). Creating another replaces that member's previous
-unused link. The response is the URL only — no invite id — so they cannot
-revoke. Firestore stores only `sha256(token)` (`invites/{hash}`), unused for
-**7 days**, **single-use**, plus the minter's `sub` and, when known, email.
+(`POST /api/invites`) and can admit **up to 5 people** that way (lifetime
+redeemed links; replacing an unused link does not count). Creating another
+replaces that member's previous unused link, in one transaction. The
+response is the URL only — no invite id — so they cannot revoke. Firestore
+stores only `sha256(token)` (`invites/{hash}`), unused for **7 days**,
+**single-use**, plus the minter's `sub` and, when known, email. Removing a
+member marks their unused invites revoked. Redeem also refuses the link
+unless the minter is still admitted (active member, or `createdByEmail` in
+`ALLOWED_EMAILS`; older owner-minted docs without an email stay
+owner-minted) and, for a member, unless they are still under the limit of 5.
 The raw token is shown once at mint time and is not stored. The owner list
 shows who created each unused link and can revoke any of them, including a
 member's. Redeem happens in the OAuth callback after Google identity is

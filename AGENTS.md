@@ -98,8 +98,10 @@ No refresh tokens, no extra Google APIs, no Auth.js.
   `ALLOWED_EMAILS` (every address there is an admin). Owners mint single-use
   7-day bearer invite URLs on `/admin` and can revoke any unused one. An
   admitted member who is not an owner can mint one such link from Settings
-  (`POST /api/invites`); creating another replaces their previous unused
-  link, and they do not see `/admin`. The first verified Google account that
+  (`POST /api/invites`) and can admit up to 5 people that way; creating
+  another replaces their previous unused link, and they do not see `/admin`.
+  Removing a member revokes their unused links, and redeem refuses a link
+  whose minter is no longer admitted. The first verified Google account that
   finishes consent from a link is written as an active member and listed
   under Approved. `approvedBy` is the minter's `sub`.
 - **401 = denied** (client may invalidate the session). **503 = unknown**
