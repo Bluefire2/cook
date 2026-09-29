@@ -10,6 +10,7 @@ import { publicOrigin } from './env.ts';
 import {
   INVITE_UNUSED_CAP,
   listUnusedInvites,
+  MEMBER_INVITE_LIMIT,
   mintInvite,
   mintMemberInvite,
   revokeInvite,
@@ -101,6 +102,7 @@ const UNKNOWN_REQUEST_ERROR = 'That access request was not found.';
 const UNKNOWN_INVITE_ERROR = 'That invite link was not found.';
 const MEMBER_INVITE_CAP_ERROR =
   'There are already too many unused invite links. Try again later.';
+const MEMBER_INVITE_LIMIT_ERROR = `You have already invited ${MEMBER_INVITE_LIMIT} people.`;
 
 export function parseAdminListCursors(params: URLSearchParams): {
   pending?: string;
@@ -316,7 +318,7 @@ export async function adminInvitesPost(req: Request): Promise<Response> {
     if (minted.kind === 'cap') {
       return errorJson(
         'invite-cap',
-        `You already have ${INVITE_UNUSED_CAP} unused invite links. Revoke one to mint another.`,
+        `There are already ${INVITE_UNUSED_CAP} unused invite links. Revoke one to mint another.`,
         409,
         INVITE_UNUSED_CAP,
       );
@@ -348,6 +350,14 @@ export async function memberInvitesPost(req: Request): Promise<Response> {
     const minted = await mintMemberInvite(access.sub, access.email, Date.now());
     if (minted.kind === 'cap') {
       return errorJson('member-invite-cap', MEMBER_INVITE_CAP_ERROR, 409);
+    }
+    if (minted.kind === 'limit') {
+      return errorJson(
+        'member-invite-limit',
+        MEMBER_INVITE_LIMIT_ERROR,
+        409,
+        MEMBER_INVITE_LIMIT,
+      );
     }
     return jsonResponse({ url: invitePublicUrl(minted.token) });
   } catch (err) {

@@ -282,6 +282,16 @@ export function decisionTransition(
   return { kind: 'refusal', reason: 'unknown-request' };
 }
 
+/** Unused invites minted by `sub`. Used when that member's access is removed. */
+export function unusedInviteIdsForMember(
+  rows: { id: string; status: unknown; createdBy: unknown }[],
+  sub: string,
+): string[] {
+  return rows
+    .filter((row) => row.createdBy === sub && row.status === 'unused')
+    .map((row) => row.id);
+}
+
 export async function readMember(sub: string): Promise<MemberRecord | null> {
   const snap = await getStoreFirestore().collection('members').doc(sub).get();
   if (!snap.exists) {
@@ -463,6 +473,10 @@ export async function applyDecision(
     // Firestore forbids reads after writes in a transaction, so this get must
     // happen before any set — even when the transition later refuses.
     const memSnap = action === 'revoke' ? await tx.get(memberRef) : null;
+    const createdInvitesSnap =
+      action === 'revoke'
+        ? await tx.get(getStoreFirestore().collection('invites').where('createdBy', '==', sub))
+        : null;
     let existing: AccessRequestRecord | null = null;
     if (reqSnap.exists) {
       existing = parseAccessRequestDoc(reqSnap.data(), sub);
@@ -486,6 +500,23 @@ export async function applyDecision(
         }
       }
       tx.set(memberRef, memberBody);
+    }
+    if (action === 'revoke' && createdInvitesSnap !== null) {
+      const revokeIds = new Set(
+        unusedInviteIdsForMember(
+          createdInvitesSnap.docs.map((doc) => ({
+            id: doc.id,
+            status: doc.get('status'),
+            createdBy: doc.get('createdBy'),
+          })),
+          sub,
+        ),
+      );
+      for (const doc of createdInvitesSnap.docs) {
+        if (revokeIds.has(doc.id)) {
+          tx.update(doc.ref, { status: 'revoked' });
+        }
+      }
     }
   });
 

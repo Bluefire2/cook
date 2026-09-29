@@ -6,7 +6,8 @@ import {
   unavailablePageHtml,
   type InviteDeadReason,
 } from './access.ts';
-import { isSecureOrigin } from './env.ts';
+import { isAllowed } from './allowlist.ts';
+import { allowedEmails, isSecureOrigin } from './env.ts';
 import {
   parseAccessRequestDoc,
   parseMemberDoc,
@@ -23,6 +24,8 @@ import { getStoreFirestore } from './store.ts';
 
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const INVITE_UNUSED_CAP = 20;
+/** Lifetime redeemed invites per member. Keep `settings.inviteIntro` in sync. */
+export const MEMBER_INVITE_LIMIT = 5;
 
 export type InviteStatus = 'unused' | 'redeemed' | 'revoked';
 
@@ -47,7 +50,7 @@ export type RedeemInviteTransitionResult =
       member: Record<string, unknown>;
       request: AccessRequestRecord;
     }
-  | { kind: 'refusal'; reason: 'unknown' | 'expired' | 'used' | 'revoked' };
+  | { kind: 'refusal'; reason: 'unknown' | 'expired' | 'used' | 'revoked' | 'limit' };
 
 export type RevokeInviteTransitionResult =
   | { kind: 'ok'; invite: InviteRecord }
@@ -153,6 +156,50 @@ export function memberMintRevokeIds(
     return { kind: 'cap' };
   }
   return { kind: 'ok', revokeIds };
+}
+
+export function countRedeemedInvites(rows: InviteRecord[], createdBy: string): number {
+  return rows.filter((row) => row.createdBy === createdBy && row.status === 'redeemed').length;
+}
+
+export type MemberMintPlan =
+  | { kind: 'limit' }
+  | { kind: 'cap' }
+  | { kind: 'ok'; revokeIds: string[] };
+
+/**
+ * A member may redeem `MEMBER_INVITE_LIMIT` links in total. Replaced, revoked,
+ * and expired rows do not count. At the limit, the current unused link stays.
+ */
+export function planMemberMint(input: {
+  creatorInvites: InviteRecord[];
+  unused: { id: string; record: InviteRecord }[];
+  createdBy: string;
+}): MemberMintPlan {
+  if (countRedeemedInvites(input.creatorInvites, input.createdBy) >= MEMBER_INVITE_LIMIT) {
+    return { kind: 'limit' };
+  }
+  return memberMintRevokeIds(input.unused, input.createdBy);
+}
+
+export function redeemCreatorDecision(input: {
+  createdByEmail?: string;
+  creatorEmailAllowed: boolean;
+  creatorMemberStatus: 'active' | 'revoked' | null;
+  redeemedCount: number;
+}): { kind: 'ok' } | { kind: 'refusal'; reason: 'revoked' | 'limit' } {
+  const email = input.createdByEmail;
+  const ownerMinted = email === undefined || email === '' || input.creatorEmailAllowed;
+  if (ownerMinted) {
+    return { kind: 'ok' };
+  }
+  if (input.creatorMemberStatus !== 'active') {
+    return { kind: 'refusal', reason: 'revoked' };
+  }
+  if (input.redeemedCount >= MEMBER_INVITE_LIMIT) {
+    return { kind: 'refusal', reason: 'limit' };
+  }
+  return { kind: 'ok' };
 }
 
 export function unusedUnexpired(rows: InviteRecord[], now: number): InviteRecord[] {
@@ -306,22 +353,58 @@ export async function mintInvite(
   return { kind: 'ok', token: minted.token, id: minted.id };
 }
 
+function parsedInviteRows(
+  docs: { data: () => unknown }[],
+): InviteRecord[] {
+  const rows: InviteRecord[] = [];
+  for (const doc of docs) {
+    const parsed = parseInviteDoc(doc.data());
+    if (parsed !== null) {
+      rows.push(parsed);
+    }
+  }
+  return rows;
+}
+
 export async function mintMemberInvite(
   createdBy: string,
   createdByEmail: string,
   now: number,
-): Promise<{ kind: 'ok'; token: string; id: string } | { kind: 'cap' }> {
-  const unused = await listUnusedInvites(now);
-  const plan = memberMintRevokeIds(unused, createdBy);
-  if (plan.kind === 'cap') {
-    return { kind: 'cap' };
-  }
-  for (const id of plan.revokeIds) {
-    await revokeInvite(id);
-  }
-  const minted = mintInviteRecord(createdBy, now, createdByEmail);
-  await invitesCollection().doc(minted.id).create(minted.record);
-  return { kind: 'ok', token: minted.token, id: minted.id };
+): Promise<{ kind: 'ok'; token: string; id: string } | { kind: 'cap' } | { kind: 'limit' }> {
+  const invites = invitesCollection();
+  let outcome: { kind: 'ok'; token: string; id: string } | { kind: 'cap' } | { kind: 'limit' } = {
+    kind: 'cap',
+  };
+  await getStoreFirestore().runTransaction(async (tx) => {
+    const mineSnap = await tx.get(invites.where('createdBy', '==', createdBy));
+    const unusedSnap = await tx.get(invites.where('status', '==', 'unused'));
+    const unused: { id: string; record: InviteRecord }[] = [];
+    for (const doc of unusedSnap.docs) {
+      const parsed = parseInviteDoc(doc.data());
+      if (parsed !== null && parsed.expiresAt > now) {
+        unused.push({ id: doc.id, record: parsed });
+      }
+    }
+    const plan = planMemberMint({
+      creatorInvites: parsedInviteRows(mineSnap.docs),
+      unused,
+      createdBy,
+    });
+    if (plan.kind !== 'ok') {
+      outcome = plan;
+      return;
+    }
+    const revokeIds = new Set(plan.revokeIds);
+    for (const doc of unusedSnap.docs) {
+      if (revokeIds.has(doc.id)) {
+        tx.update(doc.ref, { status: 'revoked' });
+      }
+    }
+    const minted = mintInviteRecord(createdBy, now, createdByEmail);
+    tx.create(invites.doc(minted.id), minted.record);
+    outcome = { kind: 'ok', token: minted.token, id: minted.id };
+  });
+  return outcome;
 }
 
 export async function revokeInvite(id: string): Promise<RevokeInviteTransitionResult> {
@@ -373,8 +456,31 @@ export async function redeemInvite(
     }
     const transition = redeemInviteTransition(invite, identity, existingRequest, now);
     result = transition;
-    if (transition.kind !== 'ok') {
+    if (transition.kind !== 'ok' || invite === null) {
       return;
+    }
+    const creatorEmail = invite.createdByEmail;
+    const creatorIsOwner =
+      creatorEmail === undefined ||
+      creatorEmail === '' ||
+      isAllowed(creatorEmail, true, allowedEmails());
+    if (!creatorIsOwner) {
+      const creatorRef = getStoreFirestore().collection('members').doc(invite.createdBy);
+      const creatorSnap = await tx.get(creatorRef);
+      const creator = creatorSnap.exists
+        ? parseMemberDoc(creatorSnap.data(), invite.createdBy)
+        : null;
+      const createdSnap = await tx.get(invitesCollection().where('createdBy', '==', invite.createdBy));
+      const decision = redeemCreatorDecision({
+        createdByEmail: creatorEmail,
+        creatorEmailAllowed: false,
+        creatorMemberStatus: creator === null ? null : creator.status,
+        redeemedCount: countRedeemedInvites(parsedInviteRows(createdSnap.docs), invite.createdBy),
+      });
+      if (decision.kind !== 'ok') {
+        result = decision;
+        return;
+      }
     }
     tx.set(inviteRef, transition.invite);
     tx.set(memberRef, transition.member);

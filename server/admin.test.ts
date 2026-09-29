@@ -11,7 +11,7 @@ import {
   serializeInviteList,
   toAdminAccessRequestEntry,
 } from './admin.ts';
-import { INVITE_UNUSED_CAP } from './invites.ts';
+import { INVITE_UNUSED_CAP, MEMBER_INVITE_LIMIT } from './invites.ts';
 import * as invites from './invites.ts';
 import * as members from './members.ts';
 import * as membership from './membership.ts';
@@ -227,7 +227,7 @@ describe('admin JSON error codes', () => {
     );
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      error: `You already have ${INVITE_UNUSED_CAP} unused invite links. Revoke one to mint another.`,
+      error: `There are already ${INVITE_UNUSED_CAP} unused invite links. Revoke one to mint another.`,
       code: 'invite-cap',
       max: INVITE_UNUSED_CAP,
     });
@@ -330,6 +330,25 @@ describe('memberInvitesPost', () => {
     await expect(response.json()).resolves.toEqual({
       error: 'There are already too many unused invite links. Try again later.',
       code: 'member-invite-cap',
+    });
+  });
+
+  it('returns member-invite-limit and does not include an invite list', async () => {
+    vi.mocked(membership.requireMember).mockResolvedValueOnce({
+      kind: 'ok',
+      sub: 'member-sub',
+      email: 'member@example.com',
+      isOwner: false,
+    });
+    vi.mocked(invites.mintMemberInvite).mockResolvedValueOnce({ kind: 'limit' });
+    const response = await memberInvitesPost(
+      new Request('http://localhost/api/invites', { method: 'POST' }),
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: `You have already invited ${MEMBER_INVITE_LIMIT} people.`,
+      code: 'member-invite-limit',
+      max: MEMBER_INVITE_LIMIT,
     });
   });
 

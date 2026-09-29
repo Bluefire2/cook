@@ -5,8 +5,12 @@ import {
   inviteLandingVerdict,
   inviteTokenFromPath,
   isInviteTokenShape,
+  countRedeemedInvites,
+  MEMBER_INVITE_LIMIT,
   memberMintRevokeIds,
   mintInviteRecord,
+  planMemberMint,
+  redeemCreatorDecision,
   parseInviteDoc,
   redeemInviteTransition,
   revokeInviteTransition,
@@ -142,6 +146,108 @@ describe('memberMintRevokeIds', () => {
     const mine = 'd'.repeat(64);
     unused.push(row(mine, 'member'));
     expect(memberMintRevokeIds(unused, 'member')).toEqual({ kind: 'cap' });
+  });
+});
+
+describe('planMemberMint', () => {
+  function redeemed(createdBy: string): InviteRecord {
+    return unusedInvite({ status: 'redeemed', createdBy, redeemedBy: 'guest' });
+  }
+
+  it('allows a fourth redemption and replaces an unused link without counting it', () => {
+    const unusedId = 'a'.repeat(64);
+    const creatorInvites = [
+      redeemed('member'),
+      redeemed('member'),
+      redeemed('member'),
+      redeemed('member'),
+      unusedInvite({ createdBy: 'member' }),
+    ];
+    expect(countRedeemedInvites(creatorInvites, 'member')).toBe(4);
+    expect(MEMBER_INVITE_LIMIT).toBe(5);
+    expect(
+      planMemberMint({
+        creatorInvites,
+        unused: [{ id: unusedId, record: unusedInvite({ createdBy: 'member' }) }],
+        createdBy: 'member',
+      }),
+    ).toEqual({ kind: 'ok', revokeIds: [unusedId] });
+  });
+
+  it('refuses a mint at 5 redeemed and does not revoke the unused link', () => {
+    const creatorInvites = Array.from({ length: 5 }, () => redeemed('member'));
+    creatorInvites.push(unusedInvite({ createdBy: 'member' }));
+    expect(
+      planMemberMint({
+        creatorInvites,
+        unused: [{ id: 'b'.repeat(64), record: unusedInvite({ createdBy: 'member' }) }],
+        createdBy: 'member',
+      }),
+    ).toEqual({ kind: 'limit' });
+  });
+});
+
+describe('redeemCreatorDecision', () => {
+  const memberInvite = {
+    createdByEmail: 'member@example.com',
+    creatorEmailAllowed: false,
+  };
+
+  it('refuses a revoked minter and does not describe the invite as redeemed', () => {
+    const invite = unusedInvite({
+      createdBy: 'member',
+      createdByEmail: 'member@example.com',
+    });
+    expect(
+      redeemCreatorDecision({
+        ...memberInvite,
+        creatorMemberStatus: 'revoked',
+        redeemedCount: 0,
+      }),
+    ).toEqual({ kind: 'refusal', reason: 'revoked' });
+    expect(invite.status).toBe('unused');
+  });
+
+  it('refuses the sixth redemption for an active member', () => {
+    expect(
+      redeemCreatorDecision({
+        ...memberInvite,
+        creatorMemberStatus: 'active',
+        redeemedCount: 5,
+      }),
+    ).toEqual({ kind: 'refusal', reason: 'limit' });
+  });
+
+  it('allows the fifth redemption for an active member', () => {
+    expect(
+      redeemCreatorDecision({
+        ...memberInvite,
+        creatorMemberStatus: 'active',
+        redeemedCount: 4,
+      }),
+    ).toEqual({ kind: 'ok' });
+  });
+
+  it('treats a missing creator email as an owner mint', () => {
+    expect(
+      redeemCreatorDecision({
+        createdByEmail: undefined,
+        creatorEmailAllowed: false,
+        creatorMemberStatus: 'revoked',
+        redeemedCount: 9,
+      }),
+    ).toEqual({ kind: 'ok' });
+  });
+
+  it('exempts an allow-listed creator email', () => {
+    expect(
+      redeemCreatorDecision({
+        createdByEmail: 'owner@example.com',
+        creatorEmailAllowed: true,
+        creatorMemberStatus: null,
+        redeemedCount: 9,
+      }),
+    ).toEqual({ kind: 'ok' });
   });
 });
 

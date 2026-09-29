@@ -36,6 +36,7 @@ const ERROR_CODES = {
   'unknown-invite': 'error.adminUnknownInvite',
   'invite-cap': 'error.inviteCap',
   'member-invite-cap': 'error.memberInviteCap',
+  'member-invite-limit': 'error.memberInviteLimit',
   'unsupported-media': 'error.unsupportedMedia',
   'payload-too-large': 'error.payloadTooLarge',
   'translate-bad-request': 'error.translateBadRequest',
@@ -79,8 +80,9 @@ function paramsFor(code: ErrorCode, body: Record<string, unknown>): TranslatePar
     const max = numericField(body, 'max');
     return max === undefined ? null : { max };
   }
-  if (code === 'invite-cap') {
-    return { max: numericField(body, 'max') ?? INVITE_CAP_MAX_FALLBACK };
+  if (code === 'invite-cap' || code === 'member-invite-limit') {
+    const fallback = code === 'invite-cap' ? INVITE_CAP_MAX_FALLBACK : 5;
+    return { max: numericField(body, 'max') ?? fallback };
   }
   if (code === 'import-refused') {
     const status = numericField(body, 'status');
