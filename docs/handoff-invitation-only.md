@@ -201,6 +201,9 @@ member marks their unused invites revoked. Redeem also refuses the link
 unless the minter is still admitted (active member, or `createdByEmail` in
 `ALLOWED_EMAILS`; older owner-minted docs without an email stay
 owner-minted) and, for a member, unless they are still under the limit of 5.
+Opening the link runs that same check before the join page; a refusal
+shows the invalid-link page and does not set the invite cookie. Redeem
+still decides inside its transaction.
 The raw token is shown once at mint time and is not stored. The owner list
 shows who created each unused link and can revoke any of them, including a
 member's. Redeem happens in the OAuth callback after Google identity is

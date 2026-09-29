@@ -37,7 +37,10 @@ log and image import do not apply.
   creator is still admitted: active `members/{createdBy}`, or
   `createdByEmail` in `ALLOWED_EMAILS`. Older owner-minted docs without
   `createdByEmail` stay owner-minted. Removing access also marks that
-  person’s unused invites revoked.
+  person’s unused invites revoked. The landing page runs the same check
+  before showing the join page and, on refusal, shows the invalid-link
+  page without setting the invite cookie. Redeem still decides inside
+  its transaction.
 - **`{ url }` only.** `POST /api/invites` never returns an invite id.
 - **Owners get 403** on `POST /api/invites`, so this route cannot revoke
   admin-minted links. Owners keep `POST /api/admin/invites`.

@@ -311,6 +311,38 @@ function invitesCollection() {
   return getStoreFirestore().collection('invites');
 }
 
+/**
+ * Landing-page only. Redeem still checks the same decision inside its
+ * transaction. `null` means the join page may be shown.
+ */
+export async function readInviteCreatorRefusal(
+  invite: InviteRecord,
+): Promise<'revoked' | 'limit' | null> {
+  const creatorEmail = invite.createdByEmail;
+  const creatorEmailAllowed =
+    creatorEmail !== undefined &&
+    creatorEmail !== '' &&
+    isAllowed(creatorEmail, true, allowedEmails());
+  if (creatorEmail === undefined || creatorEmail === '' || creatorEmailAllowed) {
+    return null;
+  }
+  const creatorRef = getStoreFirestore().collection('members').doc(invite.createdBy);
+  const [creatorSnap, createdSnap] = await Promise.all([
+    creatorRef.get(),
+    invitesCollection().where('createdBy', '==', invite.createdBy).get(),
+  ]);
+  const creator = creatorSnap.exists
+    ? parseMemberDoc(creatorSnap.data(), invite.createdBy)
+    : null;
+  const decision = redeemCreatorDecision({
+    createdByEmail: creatorEmail,
+    creatorEmailAllowed: false,
+    creatorMemberStatus: creator === null ? null : creator.status,
+    redeemedCount: countRedeemedInvites(parsedInviteRows(createdSnap.docs), invite.createdBy),
+  });
+  return decision.kind === 'ok' ? null : decision.reason;
+}
+
 export async function readInvite(id: string): Promise<InviteRecord | null> {
   const snap = await invitesCollection().doc(id).get();
   if (!snap.exists) {
@@ -515,8 +547,12 @@ export async function inviteLandingGet(req: Request): Promise<Response> {
   try {
     const invite = await readInvite(hashInviteToken(token));
     const verdict = inviteLandingVerdict(invite, Date.now());
-    if (verdict.kind === 'dead') {
-      return htmlResponse(inviteDeadPageHtml(verdict.reason), 404);
+    if (verdict.kind === 'dead' || invite === null) {
+      return htmlResponse(inviteDeadPageHtml(verdict.kind === 'dead' ? verdict.reason : 'unknown'), 404);
+    }
+    const creatorRefusal = await readInviteCreatorRefusal(invite);
+    if (creatorRefusal !== null) {
+      return htmlResponse(inviteDeadPageHtml('revoked'), 404);
     }
 
     const now = Date.now();

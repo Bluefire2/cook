@@ -101,7 +101,9 @@ No refresh tokens, no extra Google APIs, no Auth.js.
   (`POST /api/invites`) and can admit up to 5 people that way; creating
   another replaces their previous unused link, and they do not see `/admin`.
   Removing a member revokes their unused links, and redeem refuses a link
-  whose minter is no longer admitted. The first verified Google account that
+  whose minter is no longer admitted. The invite landing page runs that
+  same check before the join page; redeem still decides inside its
+  transaction. The first verified Google account that
   finishes consent from a link is written as an active member and listed
   under Approved. `approvedBy` is the minter's `sub`.
 - **401 = denied** (client may invalidate the session). **503 = unknown**
