@@ -39,8 +39,13 @@ export type AgentEvent =
   | { t: 'interim'; step: number }
   | { t: 'tool'; name: string; phase: 'start' | 'end'; ok?: boolean }
   | { t: 'card'; card: { type: string; v: number; id: string; data: unknown } }
-  | { t: 'error'; message: string }
+  | { t: 'error'; message: string; code?: string }
   | { t: 'done' };
+
+/** Machine code for the canned assistant failure. The client catalog owns the words. */
+export const ASSISTANT_UNAVAILABLE_CODE = 'assistant_unavailable';
+/** English fallback for clients that ignore `code`. */
+export const ASSISTANT_UNAVAILABLE_MESSAGE = "The assistant couldn't answer that.";
 
 export interface AgentLimits {
   maxSteps: number;
@@ -63,7 +68,7 @@ export interface ModelStepRequest {
   forceText: boolean;
   maxOutputTokens: number;
   signal: AbortSignal;
-  /** Appended as a final user text content after replaying prior turns (tool-limit nudge). */
+  /** Text part on the latest user content (the function-response turn), or a new user content when the transcript does not already end with one. */
   extraUserNote?: string;
 }
 

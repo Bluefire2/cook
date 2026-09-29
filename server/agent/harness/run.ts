@@ -1,12 +1,15 @@
-import type {
-  AgentEvent,
-  AgentRunSummary,
-  CardSpec,
-  ModelStepStream,
-  StartAgentOptions,
-  StartAgentResult,
-  ToolResult,
-  ToolSpec,
+import { toolResultBytes, truncateToolResult } from './taggedJson.ts';
+import {
+  ASSISTANT_UNAVAILABLE_CODE,
+  ASSISTANT_UNAVAILABLE_MESSAGE,
+  type AgentEvent,
+  type AgentRunSummary,
+  type CardSpec,
+  type ModelStepStream,
+  type StartAgentOptions,
+  type StartAgentResult,
+  type ToolResult,
+  type ToolSpec,
 } from './types.ts';
 
 function duplicateNameError(tools: ToolSpec<unknown>[], cards: CardSpec<unknown, unknown>[]): void {
@@ -25,13 +28,12 @@ function duplicateNameError(tools: ToolSpec<unknown>[], cards: CardSpec<unknown,
   }
 }
 
-/** A string output is measured as sent, not re-encoded as JSON. */
-function resultBytes(result: ToolResult): number {
-  const payload =
-    'output' in result && typeof result.output === 'string'
-      ? result.output
-      : JSON.stringify(result);
-  return new TextEncoder().encode(payload).length;
+function unavailableEvent(): AgentEvent {
+  return {
+    t: 'error',
+    code: ASSISTANT_UNAVAILABLE_CODE,
+    message: ASSISTANT_UNAVAILABLE_MESSAGE,
+  };
 }
 
 async function executeCall<Ctx>(
@@ -145,12 +147,8 @@ async function runCallsInOrder<Ctx>(
         result = { error: 'limit' };
         emit({ t: 'tool', name: job.call.name, phase: 'end', ok: false });
       } else {
-        result = await executeCall(job.call, opts);
-        const bytes = resultBytes(result);
-        if (bytes > limits.maxResultBytes) {
-          result = { error: 'result too large' };
-        }
-        state.cumulativeResultBytes += resultBytes(result);
+        result = truncateToolResult(await executeCall(job.call, opts), limits.maxResultBytes);
+        state.cumulativeResultBytes += toolResultBytes(result);
         const ok = !('error' in result);
         emit({ t: 'tool', name: job.call.name, phase: 'end', ok });
       }
@@ -233,7 +231,6 @@ export function startAgent<Ctx>(opts: StartAgentOptions<Ctx>): Promise<StartAgen
     });
 
   return firstStepPromise.then(() => {
-    const CANNED = "The assistant couldn't answer that.";
     const LIMIT_NOTE =
       'You have reached the tool limit. Answer now from the information you already have. Do not call tools.';
 
@@ -258,7 +255,7 @@ export function startAgent<Ctx>(opts: StartAgentOptions<Ctx>): Promise<StartAgen
       summary: AgentRunSummary,
     ): AgentRunSummary {
       if (isDeadlineAbort(opts.signal)) {
-        emit({ t: 'error', message: CANNED });
+        emit(unavailableEvent());
         emit({ t: 'done' });
         summary.finish = 'error';
         return summary;
@@ -309,7 +306,7 @@ export function startAgent<Ctx>(opts: StartAgentOptions<Ctx>): Promise<StartAgen
         const { calls, hadText } = await consumeStream(stream, step, emit);
 
         if (stream.blocked()) {
-          emit({ t: 'error', message: CANNED });
+          emit(unavailableEvent());
           emit({ t: 'done' });
           summary.finish = 'error';
           return summary;
@@ -317,7 +314,7 @@ export function startAgent<Ctx>(opts: StartAgentOptions<Ctx>): Promise<StartAgen
 
         if (calls.length === 0) {
           if (!hadText) {
-            emit({ t: 'error', message: CANNED });
+            emit(unavailableEvent());
             emit({ t: 'done' });
             summary.finish = 'error';
             return summary;
@@ -328,7 +325,7 @@ export function startAgent<Ctx>(opts: StartAgentOptions<Ctx>): Promise<StartAgen
         }
 
         if (forceText) {
-          emit({ t: 'error', message: CANNED });
+          emit(unavailableEvent());
           emit({ t: 'done' });
           summary.finish = 'error';
           return summary;
@@ -379,7 +376,7 @@ export function startAgent<Ctx>(opts: StartAgentOptions<Ctx>): Promise<StartAgen
         step += 1;
       }
 
-      emit({ t: 'error', message: CANNED });
+      emit(unavailableEvent());
       emit({ t: 'done' });
       summary.finish = 'error';
       return summary;

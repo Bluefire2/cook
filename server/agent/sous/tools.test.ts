@@ -110,10 +110,10 @@ describe('dataTools', () => {
   });
 
   it('escapes closing tags regardless of case or trailing space', () => {
-    const value = { title: 'a </LIBRARY_DATA> b </library_data > c' };
+    const value = { title: 'a </LIBRARY_DATA> b </library_data > c </ library_data> d' };
     const wrapped = wrapLibraryData(value);
     const inner = wrapped.slice('<library_data>\n'.length, -'\n</library_data>'.length);
-    expect(inner).not.toMatch(/<\/library_data/i);
+    expect(inner).not.toMatch(/<\s*\/\s*library_data/i);
     expect(JSON.parse(inner)).toEqual(value);
   });
 

@@ -1,3 +1,4 @@
+import { wrapTaggedJson } from '../harness/taggedJson.ts';
 import type { ToolSpec } from '../harness/types.ts';
 import type { AgentLibrary, AgentRecipe } from './library.ts';
 import { winningMembership } from './library.ts';
@@ -15,8 +16,7 @@ function readNumber(obj: Record<string, unknown>, key: string): number | undefin
 
 /** Wrap untrusted library JSON so a value cannot close the delimiter early. */
 export function wrapLibraryData(value: unknown): string {
-  const json = JSON.stringify(value).replace(/<\/(library_data)/gi, '<\\/$1');
-  return `<library_data>\n${json}\n</library_data>`;
+  return wrapTaggedJson('library_data', value);
 }
 
 export function stripRecipeForAgent(recipe: AgentRecipe): Record<string, unknown> {

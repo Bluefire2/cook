@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FunctionCallingConfigMode, Type } from '@google/genai';
 import { googleModel, toolParametersToSchema } from './google.ts';
-import { fakeGenerateStream, textChunk } from '../../../test/fakeGeminiStream.ts';
+import { callChunk, fakeGenerateStream, textChunk } from '../../../test/fakeGeminiStream.ts';
 import type { AgentMessage } from './types.ts';
 
 describe('toolParametersToSchema', () => {
@@ -119,5 +119,65 @@ describe('googleModel adapter request mapping', () => {
       }
     }
     expect(deltas.join('')).toBe('Here are three ideas!');
+  });
+
+  it('appends extraUserNote onto the function-response turn', async () => {
+    const { generate, calls } = fakeGenerateStream([
+      [callChunk('search', {}, 'c1')],
+      [textChunk('done')],
+    ]);
+    const client = googleModel({ apiKey: 'k', model: 'm', generate });
+    const first = await client.step({
+      systemInstruction: 'sys',
+      messages: [{ role: 'user', text: 'hello' }],
+      priorTurns: [],
+      tools: [
+        {
+          name: 'search',
+          description: 'find',
+          parameters: { type: 'object', properties: {} },
+        },
+      ],
+      forceText: false,
+      maxOutputTokens: 100,
+      signal: new AbortController().signal,
+    });
+    for await (const _ of first.events) {
+      /* drain */
+    }
+    const turn = await first.continueWith([
+      { id: 'c1', name: 'search', result: { output: { hits: [] } } },
+    ]);
+    const second = await client.step({
+      systemInstruction: 'sys',
+      messages: [{ role: 'user', text: 'hello' }],
+      priorTurns: [turn],
+      tools: [
+        {
+          name: 'search',
+          description: 'find',
+          parameters: { type: 'object', properties: {} },
+        },
+      ],
+      forceText: true,
+      maxOutputTokens: 100,
+      signal: new AbortController().signal,
+      extraUserNote: 'You have reached the tool limit. Answer now.',
+    });
+    for await (const _ of second.events) {
+      /* drain */
+    }
+    const contents = calls[1]!.contents as {
+      role?: string;
+      parts?: { text?: string; functionResponse?: unknown }[];
+    }[];
+    for (let i = 1; i < contents.length; i += 1) {
+      expect(contents[i]!.role).not.toBe(contents[i - 1]!.role);
+    }
+    const last = contents[contents.length - 1]!;
+    expect(last.role).toBe('user');
+    expect(last.parts?.some((part) => part.functionResponse !== undefined)).toBe(true);
+    expect(last.parts?.some((part) => part.text?.includes('tool limit'))).toBe(true);
+    expect(contents.filter((content) => content.role === 'user')).toHaveLength(2);
   });
 });

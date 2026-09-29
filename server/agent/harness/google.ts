@@ -90,9 +90,19 @@ function replayTurns(priorTurns: OpaqueTurn[]): Content[] {
 
 function buildContents(request: ModelStepRequest): Content[] {
   const contents = [...agentMessagesToContents(request.messages), ...replayTurns(request.priorTurns)];
-  if (request.extraUserNote) {
-    contents.push({ role: 'user', parts: [{ text: request.extraUserNote }] });
+  const note = request.extraUserNote;
+  if (!note) {
+    return contents;
   }
+  const last = contents[contents.length - 1];
+  if (last?.role === 'user') {
+    contents[contents.length - 1] = {
+      role: 'user',
+      parts: [...(last.parts ?? []), { text: note }],
+    };
+    return contents;
+  }
+  contents.push({ role: 'user', parts: [{ text: note }] });
   return contents;
 }
 

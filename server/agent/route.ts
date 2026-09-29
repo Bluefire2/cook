@@ -2,7 +2,11 @@ import { encodeAgentEvent } from './harness/ndjson.ts';
 import { defaultAgentLimits } from './harness/limits.ts';
 import { startAgent } from './harness/run.ts';
 import { googleModel } from './harness/google.ts';
-import type { AgentEvent } from './harness/types.ts';
+import {
+  ASSISTANT_UNAVAILABLE_CODE,
+  ASSISTANT_UNAVAILABLE_MESSAGE,
+  type AgentEvent,
+} from './harness/types.ts';
 import { CARD_SPECS } from './sous/cards/index.ts';
 import { loadAgentLibrary } from './sous/library.ts';
 import { buildSystemPrompt } from './sous/prompt.ts';
@@ -65,15 +69,17 @@ export async function agentPost(req: Request): Promise<Response> {
   }
 
   let loadTimer: ReturnType<typeof setTimeout> | undefined;
+  const loadPromise = loadAgentLibrary(access.sub, {
+    maxDocs: 2000,
+    maxBytes: 8_000_000,
+    maxIndexEntries: 500,
+    maxIndexChars: 40_000,
+  });
+  void loadPromise.catch(() => {});
   let library;
   try {
     library = await Promise.race([
-      loadAgentLibrary(access.sub, {
-        maxDocs: 2000,
-        maxBytes: 8_000_000,
-        maxIndexEntries: 500,
-        maxIndexChars: 40_000,
-      }),
+      loadPromise,
       new Promise<never>((_, reject) => {
         loadTimer = setTimeout(() => reject(new Error('library load timeout')), LIBRARY_LOAD_TIMEOUT_MS);
       }),
@@ -164,7 +170,8 @@ export async function agentPost(req: Request): Promise<Response> {
                 encoder.encode(
                   encodeAgentEvent({
                     t: 'error',
-                    message: "The assistant couldn't answer that.",
+                    code: ASSISTANT_UNAVAILABLE_CODE,
+                    message: ASSISTANT_UNAVAILABLE_MESSAGE,
                   }),
                 ),
               );

@@ -4,7 +4,8 @@ import { defaultAgentLimits } from './limits.ts';
 import { encodeAgentEvent } from './ndjson.ts';
 import { googleModel } from './google.ts';
 import { startAgent } from './run.ts';
-import type { AgentEvent, CardSpec, ToolSpec } from './types.ts';
+import { toolResultBytes, unwrapTaggedJson, wrapTaggedJson } from './taggedJson.ts';
+import { ASSISTANT_UNAVAILABLE_CODE, ASSISTANT_UNAVAILABLE_MESSAGE, type AgentEvent, type CardSpec, type ToolSpec } from './types.ts';
 import {
   callChunk,
   chunkResponse,
@@ -390,7 +391,8 @@ describe('startAgent', () => {
     expect(events).toContainEqual({ t: 'text', step: 1, d: 'partial answer' });
     expect(events).toContainEqual({
       t: 'error',
-      message: "The assistant couldn't answer that.",
+      code: ASSISTANT_UNAVAILABLE_CODE,
+      message: ASSISTANT_UNAVAILABLE_MESSAGE,
     });
     expect(events.at(-1)).toEqual({ t: 'done' });
     expect(summary.finish).toBe('error');
@@ -524,11 +526,11 @@ describe('startAgent', () => {
     });
     await collectEvents(agent.run);
     expect(calls[1]!.config?.toolConfig?.functionCallingConfig?.mode).toBe('NONE');
-    expect(
-      (calls[1]!.contents as { parts?: { text?: string }[] }[]).some((c) =>
-        c.parts?.[0]?.text?.includes('tool limit'),
-      ),
-    ).toBe(true);
+    const contents = calls[1]!.contents as { role?: string; parts?: { text?: string }[] }[];
+    expect(contents.some((c) => c.parts?.some((p) => p.text?.includes('tool limit')))).toBe(true);
+    for (let i = 1; i < contents.length; i += 1) {
+      expect(contents[i]!.role).not.toBe(contents[i - 1]!.role);
+    }
   });
 
   it('replaces oversized tool results', async () => {
@@ -557,6 +559,51 @@ describe('startAgent', () => {
     });
     await collectEvents(agent.run);
     expect(responseForTool(calls, 1, 'big')).toEqual({ error: 'result too large' });
+  });
+
+  it('drops trailing recipes when a wrapped tool result is too large', async () => {
+    const recipes = [
+      { id: '1', title: 'a'.repeat(80) },
+      { id: '2', title: 'b'.repeat(80) },
+      { id: '3', title: 'c'.repeat(80) },
+    ];
+    const one = wrapTaggedJson('library_data', {
+      recipes: [recipes[0]],
+      truncated: true,
+    });
+    const limits = { ...defaultAgentLimits(), maxResultBytes: toolResultBytes({ output: one }) };
+    const tools: ToolSpec<Ctx>[] = [
+      {
+        name: 'big',
+        description: 'd',
+        parameters: { type: 'object', properties: {} },
+        run: async () => ({ output: wrapTaggedJson('library_data', { recipes }) }),
+      },
+    ];
+    const { client, calls } = modelFromSteps([
+      [callChunk('big', {})],
+      [textChunk('ok')],
+    ]);
+    const agent = await startAgent({
+      model: client,
+      systemInstruction: 'sys',
+      messages: baseMessages,
+      tools,
+      cards: [],
+      ctx,
+      limits,
+      signal: new AbortController().signal,
+    });
+    await collectEvents(agent.run);
+    const response = responseForTool(calls, 1, 'big') as { output?: string };
+    expect(typeof response.output).toBe('string');
+    expect(toolResultBytes({ output: response.output })).toBeLessThanOrEqual(limits.maxResultBytes);
+    const parsed = unwrapTaggedJson(response.output ?? '')?.value as {
+      recipes: { id: string }[];
+      truncated?: boolean;
+    };
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.recipes.map((recipe) => recipe.id)).toEqual(['1']);
   });
 
   it('measures a string tool result as sent, not re-encoded as JSON', async () => {
@@ -612,7 +659,8 @@ describe('startAgent', () => {
     const events = await collectEvents(agent.run);
     expect(events).toContainEqual({
       t: 'error',
-      message: "The assistant couldn't answer that.",
+      code: ASSISTANT_UNAVAILABLE_CODE,
+      message: ASSISTANT_UNAVAILABLE_MESSAGE,
     });
     expect(events.at(-1)).toEqual({ t: 'done' });
   });
@@ -632,7 +680,8 @@ describe('startAgent', () => {
     const events = await collectEvents(agent.run);
     expect(events).toContainEqual({
       t: 'error',
-      message: "The assistant couldn't answer that.",
+      code: ASSISTANT_UNAVAILABLE_CODE,
+      message: ASSISTANT_UNAVAILABLE_MESSAGE,
     });
     expect(events.at(-1)).toEqual({ t: 'done' });
   });
@@ -697,7 +746,7 @@ describe('startAgent', () => {
     });
     const events = await collectEvents(agent.run);
     expect(events).toEqual([
-      { t: 'error', message: "The assistant couldn't answer that." },
+      { t: 'error', code: ASSISTANT_UNAVAILABLE_CODE, message: ASSISTANT_UNAVAILABLE_MESSAGE },
       { t: 'done' },
     ]);
   });
@@ -736,7 +785,8 @@ describe('startAgent', () => {
     expect(summary.finish).toBe('error');
     expect(events.at(-2)).toEqual({
       t: 'error',
-      message: "The assistant couldn't answer that.",
+      code: ASSISTANT_UNAVAILABLE_CODE,
+      message: ASSISTANT_UNAVAILABLE_MESSAGE,
     });
     expect(events.at(-1)).toEqual({ t: 'done' });
   });
