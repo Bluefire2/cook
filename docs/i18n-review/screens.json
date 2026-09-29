@@ -12,21 +12,27 @@
     "needsData": true
   },
   {
+    "id": "library-invite-confirm",
+    "route": "/",
+    "setup": "Signed in as a non-owner, Invite opened the sheet, the invite intro is showing, Create link and Cancel are showing, and the review must not click Create link (it writes an invite).",
+    "needsData": true
+  },
+  {
     "id": "library-invite-copied",
     "route": "/",
-    "setup": "Signed in, after Invite, the “Invite link copied” toast is showing. Clicking Invite writes an invite (owner: POST /api/admin/invites; member: POST /api/invites, which replaces that member’s previous unused link). If the review must not write, mark skipped: needs data.",
+    "setup": "Signed in, with the “Invite link copied” toast showing. A member reaches it by tapping Create link in the confirm sheet (POST /api/invites, which replaces that member’s previous unused link). An owner reaches it by tapping the header Invite button (POST /api/admin/invites). If the review must not write, mark skipped: needs data.",
     "needsData": true
   },
   {
     "id": "library-invite-copy-failed",
     "route": "/",
-    "setup": "Signed in, after Invite, clipboard write failed, so the created-but-not-copied toast, the readonly URL, and Copy are showing. Reaching it writes an invite. If the clipboard accepts the write, mark skipped: needs data. Do not mint again to force it.",
+    "setup": "Signed in, clipboard write failed, so the created-but-not-copied toast, the readonly URL, and Copy are showing. A member reaches it via Create link in the sheet. An owner reaches it via the header Invite button. Reaching it writes an invite. If the clipboard accepts the write, mark skipped: needs data. Do not mint again to force it.",
     "needsData": true
   },
   {
     "id": "library-invite-quota",
     "route": "/",
-    "setup": "Signed in, after Invite, when minting is refused because that person has already invited 5 people, or because unused links already fill the shared cap. The refusal sentence stays under the header (it is not only a toast). Reaching it needs an account already at that limit, or a stubbed 409. Do not mint a real invite to force it. If that state is not available, mark skipped: needs data.",
+    "setup": "Signed in, the refusal sentence under the header (role=\"alert\"), no toast and no URL panel. A member reaches it by tapping Create link in the confirm sheet when the response is 409 member-invite-limit or member-invite-cap. An owner reaches it by tapping the header Invite button when the response is 409 invite-cap. Nothing was created. Do not mint a real invite to force it. If that state is not available, mark skipped: needs data.",
     "needsData": true
   },
   {

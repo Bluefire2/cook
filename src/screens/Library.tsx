@@ -8,7 +8,7 @@ import ShareCollectionSheet from '../components/ShareCollectionSheet';
 import Sheet from '../components/Sheet';
 import { createInvite } from '../lib/adminApi';
 import { createMemberInvite } from '../lib/inviteApi';
-import { inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
+import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
 import { FolderIcon, PlusIcon, SharedIcon } from '../lib/icons';
 import {
   collectionStore,
@@ -77,6 +77,7 @@ export default function Library() {
   const [shareOpen, setShareOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [invitePending, setInvitePending] = useState(false);
+  const [inviteConfirmOpen, setInviteConfirmOpen] = useState(false);
   const [revealedUrl, setRevealedUrl] = useState<string | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [inviteNotice, setInviteNotice] = useState<LibraryInviteNotice | null>(null);
@@ -132,6 +133,7 @@ export default function Library() {
     setDeleteCollectionOpen(false);
     setLeaveOpen(false);
     setShareOpen(false);
+    setInviteConfirmOpen(false);
     setCollectionName('');
     setCollectionError(null);
     setCreatedCollection(null);
@@ -242,40 +244,73 @@ export default function Library() {
   };
 
   const mint = async () => {
-    if (user === null) {
+    if (user === null || invitePending) {
       return;
     }
-    const client = inviteMintClient(user);
     setInvitePending(true);
+    const client = inviteMintClient(user);
+    const urlPromise =
+      client === 'admin'
+        ? createInvite().then((created) => created.url)
+        : createMemberInvite().then((created) => created.url);
+    let writeStarted: Promise<void> | undefined;
+    if (
+      copyStrategy({ hasClipboardItem: typeof ClipboardItem !== 'undefined' }) ===
+      'clipboard-item'
+    ) {
+      try {
+        writeStarted = navigator.clipboard.write([
+          new ClipboardItem({
+            'text/plain': urlPromise.then((u) => new Blob([u], { type: 'text/plain' })),
+          }),
+        ]);
+        void writeStarted.catch(() => {});
+      } catch {
+        writeStarted = undefined;
+      }
+    }
     try {
-      const url =
-        client === 'admin' ? (await createInvite()).url : (await createMemberInvite()).url;
+      const url = await urlPromise;
       if (!inviteMountedRef.current) {
         return;
       }
       setInviteQuota(null);
-      try {
-        await navigator.clipboard.writeText(url);
-      } catch {
-        if (!inviteMountedRef.current) {
-          return;
+      let copied = false;
+      if (writeStarted !== undefined) {
+        try {
+          await writeStarted;
+          copied = true;
+        } catch {
+          copied = false;
         }
-        setRevealedUrl(url);
-        setInviteCopied(false);
-        showInviteToast('error', t('library.inviteCopyFailed'));
-        return;
+      }
+      if (!copied) {
+        try {
+          await navigator.clipboard.writeText(url);
+          copied = true;
+        } catch {
+          copied = false;
+        }
       }
       if (!inviteMountedRef.current) {
         return;
       }
-      setRevealedUrl(null);
-      setInviteCopied(false);
-      showInviteToast('success', t('library.inviteCopied'));
+      setInviteConfirmOpen(false);
+      if (copied) {
+        setRevealedUrl(null);
+        setInviteCopied(false);
+        showInviteToast('success', t('library.inviteCopied'));
+      } else {
+        setRevealedUrl(url);
+        setInviteCopied(false);
+        showInviteToast('error', t('library.inviteCopyFailed'));
+      }
     } catch (err) {
       if (!inviteMountedRef.current) {
         return;
       }
       const message = err instanceof Error ? err.message : t('common.somethingWentWrong');
+      setInviteConfirmOpen(false);
       if (isInviteQuotaError(err)) {
         setInviteQuota((prev) => ({ id: (prev?.id ?? 0) + 1, message }));
         return;
@@ -336,7 +371,8 @@ export default function Library() {
         createOpen ||
         renameOpen ||
         deleteCollectionOpen ||
-        leaveOpen
+        leaveOpen ||
+        inviteConfirmOpen
       ) {
         event.preventDefault();
         closeSheets();
@@ -353,6 +389,7 @@ export default function Library() {
     renameOpen,
     deleteCollectionOpen,
     leaveOpen,
+    inviteConfirmOpen,
   ]);
 
   const emptyCopy = () => {
@@ -381,8 +418,14 @@ export default function Library() {
             <button
               type="button"
               className={`${ghostBtn} disabled:opacity-40`}
-              disabled={invitePending}
-              onClick={() => void mint()}
+              disabled={invitePending || inviteConfirmOpen}
+              onClick={() => {
+                if (inviteMintClient(user) === 'member') {
+                  setInviteConfirmOpen(true);
+                  return;
+                }
+                void mint();
+              }}
             >
               {invitePending ? t('admin.creating') : t('library.inviteLink')}
             </button>
@@ -901,6 +944,38 @@ export default function Library() {
           collection={named}
           onClose={() => setShareOpen(false)}
         />
+      )}
+
+      {inviteConfirmOpen && user !== null && inviteMintClient(user) === 'member' && (
+        <Sheet
+          dismissible={!invitePending}
+          onClose={() => {
+            if (!invitePending) closeSheets();
+          }}
+        >
+          <h2 className="text-lg font-semibold">{t('settings.inviteTitle')}</h2>
+          <p className="mt-1 text-sm text-ink-muted">{t('settings.inviteIntro')}</p>
+          <button
+            type="button"
+            disabled={invitePending}
+            className={`${primaryBtn} mt-3 w-full py-3`}
+            onClick={() => {
+              void mint();
+            }}
+          >
+            {invitePending ? t('admin.creating') : t('admin.createLink')}
+          </button>
+          <button
+            type="button"
+            disabled={invitePending}
+            className={`${secondaryBtn} mt-2 w-full py-3`}
+            onClick={() => {
+              if (!invitePending) setInviteConfirmOpen(false);
+            }}
+          >
+            {t('common.cancel')}
+          </button>
+        </Sheet>
       )}
     </div>
   );
