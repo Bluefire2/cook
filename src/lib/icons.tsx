@@ -88,6 +88,26 @@ export function SettingsIcon({ className }: { className?: string }) {
   );
 }
 
+/** Language globe for the recipe translate control. A two-script mark turns into a blob at 16px. */
+export function TranslateIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18" />
+    </svg>
+  );
+}
+
 export function SpinnerIcon({ className }: { className?: string }) {
   return (
     <svg
