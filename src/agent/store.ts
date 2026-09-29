@@ -273,10 +273,46 @@ export function dispatch(action: AgentAction): void {
   emit();
 }
 
+/**
+ * The in-flight request lives beside the thread, not in the screen, so Stop
+ * still works after the screen remounts and Clear or sign-out can end it.
+ */
+let activeRequest: AbortController | null = null;
+
+export function beginAgentRequest(): AbortController {
+  activeRequest?.abort();
+  activeRequest = new AbortController();
+  return activeRequest;
+}
+
+/** False once Clear, sign-out, or a newer turn has replaced this request. */
+export function isActiveAgentRequest(controller: AbortController): boolean {
+  return activeRequest === controller;
+}
+
+export function endAgentRequest(controller: AbortController): void {
+  if (activeRequest === controller) {
+    activeRequest = null;
+  }
+}
+
+/** Stop keeps the request active so its partial reply is labelled Stopped. */
+export function stopAgentRequest(): void {
+  activeRequest?.abort();
+}
+
+function discardAgentRequest(): void {
+  const controller = activeRequest;
+  activeRequest = null;
+  controller?.abort();
+}
+
 export function clearAgentThread(): void {
+  discardAgentRequest();
   dispatch({ type: 'clear' });
 }
 
 onSessionReset(() => {
+  discardAgentRequest();
   dispatch({ type: 'clear' });
 });

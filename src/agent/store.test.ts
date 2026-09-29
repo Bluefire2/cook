@@ -4,13 +4,17 @@ import { LOCALE_KEY } from '../lib/settings';
 import { invalidateSession } from '../lib/session';
 import {
   applyEvent,
+  beginAgentRequest,
   beginTurn,
   clearAgentThread,
   dispatch,
+  endAgentRequest,
   getAgentSnapshot,
+  isActiveAgentRequest,
   initialAgentState,
   markStopped,
   messagesForReplay,
+  stopAgentRequest,
   toggleChecked,
 } from './store';
 
@@ -154,5 +158,42 @@ describe('session reset', () => {
     expect(getAgentSnapshot().messages.length).toBeGreaterThan(0);
     invalidateSession();
     expect(getAgentSnapshot()).toEqual(initialAgentState);
+  });
+});
+
+describe('agent request', () => {
+  it('Clear aborts and retires a streaming request', () => {
+    const controller = beginAgentRequest();
+    dispatch({ type: 'begin', userText: 'q' });
+    clearAgentThread();
+    expect(controller.signal.aborted).toBe(true);
+    expect(isActiveAgentRequest(controller)).toBe(false);
+  });
+
+  it('sign-out aborts and retires a streaming request', () => {
+    const controller = beginAgentRequest();
+    dispatch({ type: 'begin', userText: 'q' });
+    invalidateSession();
+    expect(controller.signal.aborted).toBe(true);
+    expect(isActiveAgentRequest(controller)).toBe(false);
+  });
+
+  it('Stop aborts but keeps the request active so it can be labelled', () => {
+    const controller = beginAgentRequest();
+    stopAgentRequest();
+    expect(controller.signal.aborted).toBe(true);
+    expect(isActiveAgentRequest(controller)).toBe(true);
+    endAgentRequest(controller);
+    expect(isActiveAgentRequest(controller)).toBe(false);
+  });
+
+  it('a newer request replaces and aborts the old one', () => {
+    const first = beginAgentRequest();
+    const second = beginAgentRequest();
+    expect(first.signal.aborted).toBe(true);
+    expect(isActiveAgentRequest(first)).toBe(false);
+    endAgentRequest(first);
+    expect(isActiveAgentRequest(second)).toBe(true);
+    endAgentRequest(second);
   });
 });

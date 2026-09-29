@@ -18,10 +18,14 @@ import { postAgent } from './api';
 import { renderAgentCard } from './cards/registry';
 import { fitReplay, MAX_USER_CONTENT } from './replay';
 import {
+  beginAgentRequest,
   clearAgentThread,
   dispatch,
+  endAgentRequest,
   getAgentSnapshot,
+  isActiveAgentRequest,
   messagesForReplay,
+  stopAgentRequest,
   subscribe,
   type AgentMessage,
 } from './store';
@@ -92,7 +96,6 @@ export default function AssistantScreen() {
   const { status: sessionStatus } = useSession();
   const state = useSyncExternalStore(subscribe, getAgentSnapshot);
   const draftRef = useRef<HTMLTextAreaElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
   const onToggle = useCallback((cardId: string, itemKey: string) => {
     dispatch({ type: 'toggle', cardId, itemKey });
@@ -108,9 +111,8 @@ export default function AssistantScreen() {
     }
 
     dispatch({ type: 'begin', userText: trimmed });
-    const controller = new AbortController();
-    abortRef.current = controller;
-    const stillThisTurn = () => abortRef.current === controller;
+    const controller = beginAgentRequest();
+    const stillThisTurn = () => isActiveAgentRequest(controller);
 
     try {
       const result = await postAgent({
@@ -143,9 +145,7 @@ export default function AssistantScreen() {
       const message = err instanceof Error ? err.message : tr('assistant.failed');
       dispatch({ type: 'event', event: { t: 'error', message } });
     } finally {
-      if (abortRef.current === controller) {
-        abortRef.current = null;
-      }
+      endAgentRequest(controller);
     }
   }, [sessionStatus, tr]);
 
@@ -166,13 +166,10 @@ export default function AssistantScreen() {
   };
 
   const onStop = () => {
-    abortRef.current?.abort();
+    stopAgentRequest();
   };
 
   const onClear = () => {
-    const controller = abortRef.current;
-    abortRef.current = null;
-    controller?.abort();
     clearAgentThread();
   };
 
