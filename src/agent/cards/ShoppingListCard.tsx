@@ -87,8 +87,8 @@ export default function ShoppingListCard({
         </div>
       )}
       <div className="mt-3 space-y-3">
-        {data.sections.map((section) => (
-          <div key={section.name}>
+        {data.sections.map((section, index) => (
+          <div key={`${section.name}-${index}`}>
             <p className="text-sm font-medium text-ink-muted">{section.name}</p>
             <ul className="mt-1 space-y-1">
               {section.items.map((item) => {

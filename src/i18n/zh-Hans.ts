@@ -443,4 +443,5 @@ export const zhHans: Messages = {
   'assistant.copyAsText': '复制为文本',
   'assistant.recipesHeading': '菜谱：',
   'assistant.cardUnavailable': '请更新应用以查看此卡片。',
+  'assistant.couldntAnswer': '助手无法回答这个问题。',
 };

@@ -471,4 +471,5 @@ export const ru: Messages = {
   'assistant.copyAsText': 'Копировать текстом',
   'assistant.recipesHeading': 'Рецепты:',
   'assistant.cardUnavailable': 'Обновите приложение, чтобы увидеть эту карточку.',
+  'assistant.couldntAnswer': 'Ассистент не смог на это ответить.',
 };

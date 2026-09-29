@@ -83,7 +83,14 @@ function parseEventLine(line: string): AgentServerEvent | null {
   }
   if (t === 'error') {
     if (typeof record.message === 'string') {
-      return { t: 'error', message: record.message };
+      const event: Extract<AgentServerEvent, { t: 'error' }> = {
+        t: 'error',
+        message: record.message,
+      };
+      if (typeof record.code === 'string' && record.code.length > 0) {
+        event.code = record.code;
+      }
+      return event;
     }
     return null;
   }

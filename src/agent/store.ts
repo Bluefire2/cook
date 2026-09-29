@@ -2,6 +2,9 @@ import { t } from '../i18n';
 import { onSessionReset } from '../lib/session';
 import type { AgentServerEvent, AgentWireCard, AgentWireMessage } from './protocol';
 
+/** Same string as server/agent/harness/types.ts. Duplicated because the client cannot import server/. */
+const ASSISTANT_UNAVAILABLE_CODE = 'assistant_unavailable';
+
 export type AgentMessage = {
   id: string;
   role: 'user' | 'assistant';
@@ -107,8 +110,13 @@ export function applyEvent(state: AgentState, event: AgentServerEvent): AgentSta
       }
       return state;
     }
-    case 'error':
-      return { ...state, error: event.message, streaming: false };
+    case 'error': {
+      const message =
+        event.code === ASSISTANT_UNAVAILABLE_CODE
+          ? t('assistant.couldntAnswer')
+          : event.message;
+      return { ...state, error: message, streaming: false };
+    }
     case 'done':
       return { ...state, streaming: false };
     default:

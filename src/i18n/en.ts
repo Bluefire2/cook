@@ -475,6 +475,7 @@ export const en = {
   'assistant.copyAsText': 'Copy as text',
   'assistant.recipesHeading': 'Recipes:',
   'assistant.cardUnavailable': 'Update the app to see this card.',
+  'assistant.couldntAnswer': "The assistant couldn't answer that.",
 } as const satisfies Record<string, string | PluralForms>;
 
 type EnMessages = typeof en;

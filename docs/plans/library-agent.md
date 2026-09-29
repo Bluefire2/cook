@@ -125,8 +125,8 @@ For each step:
 3. If there are function calls, append the exact model content. Execute the calls with a concurrency limit of 4, then append **one** `role: 'user'` content containing a `functionResponse` for each call, in the original call order, echoing the call's `name` and `id` when present. The payload is `{ output }` or `{ error }`. Unknown tool names and argument validation failures become `{ error }`. Tool exceptions are caught and become a generic `{ error }` without the stack.
 4. Card calls go through `CardSpec.normalize`. On success the server emits `{"t":"card",...}` and the response is `{ output: { shown: true } }`. On failure the response is `{ error }` so the model can retry.
 5. A step with no calls ends the run. On the last allowed step the loop keeps the declarations but sets `functionCallingConfig.mode: NONE`, which forces text.
-6. A response with no text and no calls, or a blocked `finishReason` or prompt feedback, emits `{"t":"error","message":"The assistant couldn't answer that."}`.
-7. When a per-request call or byte limit is reached mid-run, the next step is forced to be the final one (mode `NONE`), and the prompt explains the limit.
+6. A response with no text and no calls, or a blocked `finishReason` or prompt feedback, emits `{"t":"error","code":"assistant_unavailable","message":"The assistant couldn't answer that."}`. The English `message` is the fallback for older clients; the client shows the catalog sentence for that code.
+7. When a per-request call or byte limit is reached mid-run, the next step is forced to be the final one (mode `NONE`). The limit note is an extra text part on the function-response user turn, so the transcript still alternates roles.
 
 ## Limits
 
@@ -161,10 +161,10 @@ Status mapping **before** the stream starts: everything that can fail with a rea
 | Body over 100 KB | 413 |
 | Malformed or invalid body | 400 |
 | `GEMINI_API_KEY` missing | 503 |
-| Firestore library load fails | 503. The library is loaded **eagerly** before the response, because the index is needed for the prompt anyway. |
+| Firestore library load fails | 503. The library is loaded **eagerly** before the response, because the index is needed for the prompt anyway. A rejection that arrives after the load timeout is caught so it does not surface as an unhandled rejection. |
 | First `generateContentStream` call rejects | 502. The route awaits `startAgent`, which opens the first stream before resolving (as `api/chat.ts` awaits its stream), and only then returns the `Response`. |
 
-After headers are sent, failures become a sanitized `{"t":"error","message":...}` followed by `{"t":"done"}`. The response is `application/x-ndjson` with `Cache-Control: no-store` and no `Content-Length`. A stream without `done` is treated as truncated by the client. A server deadline (`TimeoutError` from `AbortSignal.timeout`, including when it wins `AbortSignal.any`) emits that canned error and `done`. A client abort returns `finish: 'aborted'` with no error event, so the client can label the partial reply.
+After headers are sent, failures become a sanitized `{"t":"error","code":"assistant_unavailable","message":...}` followed by `{"t":"done"}`. The English message stays as a fallback; the client owns the words. The response is `application/x-ndjson` with `Cache-Control: no-store` and no `Content-Length`. A stream without `done` is treated as truncated by the client. A server deadline (`TimeoutError` from `AbortSignal.timeout`, including when it wins `AbortSignal.any`) emits that canned error and `done`. A client abort returns `finish: 'aborted'` with no error event, so the client can label the partial reply.
 
 **Cancellation is guaranteed only after the `Response` is returned.** Then client Stop aborts the fetch, and the stream's `cancel()` aborts the run's controller, which stops Gemini and any pending tools. The pre-response phase (library load and opening the first stream) cannot see a client disconnect: `dispatchFetch` in [scripts/server.ts](scripts/server.ts) builds the `Request` without a signal tied to the Node request. That phase is bounded by the same 90 s deadline instead. Wiring a disconnect signal through `dispatchFetch` is a possible generic follow-up, deliberately left out so v1 adds no new wiring outside the module.
 

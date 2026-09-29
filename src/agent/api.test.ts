@@ -61,6 +61,20 @@ describe('createNdjsonParser', () => {
     expect(parser.finish().error).toBe('Response too large.');
   });
 
+  it('keeps an error code and drops unknown fields', () => {
+    const parser = createNdjsonParser();
+    const events = parser.push(
+      '{"t":"error","code":"assistant_unavailable","message":"The assistant couldn\'t answer that.","extra":1}\n',
+    );
+    expect(events).toEqual([
+      {
+        t: 'error',
+        code: 'assistant_unavailable',
+        message: "The assistant couldn't answer that.",
+      },
+    ]);
+  });
+
   it('accepts string chunks', () => {
     const parser = createNdjsonParser();
     const events = parser.push('{"t":"done"}\n');

@@ -280,5 +280,23 @@
     "route": "/assistant",
     "setup": "Signed in with an empty assistant thread, so the two starter prompts, the composer, Send, and Clear are showing. Do not send a message.",
     "needsData": true
+  },
+  {
+    "id": "assistant-stopped",
+    "route": "/assistant",
+    "setup": "Signed in, with a stopped assistant reply already on screen (the Stopped line). If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "assistant-shopping-list",
+    "route": "/assistant",
+    "setup": "Signed in, with a shopping-list card already on screen. If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "assistant-couldnt-answer",
+    "route": "/assistant",
+    "setup": "Signed in, with the assistant error line already showing (the assistant could not answer). If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
   }
 ]

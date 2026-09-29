@@ -134,6 +134,18 @@ describe('applyEvent', () => {
     expect(state.streaming).toBe(false);
   });
 
+  it('shows the catalog sentence for assistant_unavailable', () => {
+    localStorage.setItem(LOCALE_KEY, 'uk');
+    let state = beginTurn(initialAgentState, 'q');
+    state = applyEvent(state, {
+      t: 'error',
+      code: 'assistant_unavailable',
+      message: "The assistant couldn't answer that.",
+    });
+    expect(state.error).toBe('Асистент не зміг на це відповісти.');
+    expect(state.error).toBe(t('assistant.couldntAnswer'));
+  });
+
   it('ends streaming on done', () => {
     let state = beginTurn(initialAgentState, 'q');
     state = applyEvent(state, { t: 'done' });

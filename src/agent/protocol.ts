@@ -18,5 +18,5 @@ export type AgentServerEvent =
   | { t: 'interim'; step: number }
   | { t: 'tool'; name: string; phase: 'start' | 'end'; ok?: boolean }
   | { t: 'card'; card: AgentWireCard }
-  | { t: 'error'; message: string }
+  | { t: 'error'; message: string; code?: string }
   | { t: 'done' };

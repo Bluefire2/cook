@@ -473,4 +473,5 @@ export const uk: Messages = {
   'assistant.copyAsText': 'Копіювати текстом',
   'assistant.recipesHeading': 'Рецепти:',
   'assistant.cardUnavailable': 'Оновіть застосунок, щоб побачити цю картку.',
+  'assistant.couldntAnswer': 'Асистент не зміг на це відповісти.',
 };
