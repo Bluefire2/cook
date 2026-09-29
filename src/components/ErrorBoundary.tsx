@@ -1,6 +1,27 @@
 import { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
+import { useT } from '../i18n';
 import { primaryBtn } from '../lib/uiClasses';
+
+function ErrorFallback({ message }: { message: string }) {
+  const t = useT();
+  return (
+    <div className="mx-auto max-w-xl px-4 pb-24">
+      <h1 className="py-4 text-2xl font-bold">{t('common.somethingWentWrong')}</h1>
+      <p className="text-sm text-ink-muted">{message}</p>
+      <button
+        type="button"
+        // A full reload is deliberate: the crashed subtree cannot be
+        // recovered by client routing, and a class component has no
+        // useNavigate.
+        onClick={() => window.location.assign('/')}
+        className={`${primaryBtn} mt-4 px-4 py-2`}
+      >
+        {t('common.backToLibrary')}
+      </button>
+    </div>
+  );
+}
 
 type ErrorBoundaryProps = {
   children: ReactNode;
@@ -31,22 +52,7 @@ export default class ErrorBoundary extends Component<
 
   render() {
     if (this.state.message !== null) {
-      return (
-        <div className="mx-auto max-w-xl px-4 pb-24">
-          <h1 className="py-4 text-2xl font-bold">Something went wrong.</h1>
-          <p className="text-sm text-ink-muted">{this.state.message}</p>
-          <button
-            type="button"
-            // A full reload is deliberate: the crashed subtree cannot be
-            // recovered by client routing, and a class component has no
-            // useNavigate.
-            onClick={() => window.location.assign('/')}
-            className={`${primaryBtn} mt-4 px-4 py-2`}
-          >
-            Back to library
-          </button>
-        </div>
-      );
+      return <ErrorFallback message={this.state.message} />;
     }
     return this.props.children;
   }

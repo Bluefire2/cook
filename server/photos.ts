@@ -287,6 +287,40 @@ type IntentOutcome =
   | { kind: 'conflict'; status: 409; error: string }
   | { kind: 'proceed'; contentType: string; sizeHint: number | undefined };
 
+export type UploadIntentPlan =
+  | { kind: 'stop' }
+  | { kind: 'conflict'; error: 'recipe-deleted' | 'already-deleted' | 'stale' }
+  /**
+   * The upload is accepted. A `gcsDeletes/{photoId}` row queued by an earlier
+   * tombstone of this id is dropped with it: the new bytes go to the same
+   * object path, and a later drain must not delete them. Every path that ends
+   * with the photo not live (confirm on a dead recipe, a tombstone racing
+   * the upload, the stale-`uploading` sweep) queues the row again.
+   */
+  | { kind: 'proceed'; clearQueuedGcsDelete: true };
+
+/** Pure intent decision for `POST /api/photos/:id`, read inside the intent transaction. */
+export function planUploadIntent(
+  recipeLive: boolean,
+  photoRaw: Record<string, unknown> | undefined,
+  clientUpdatedAt: number,
+): UploadIntentPlan {
+  if (!recipeLive) {
+    return { kind: 'conflict', error: 'recipe-deleted' };
+  }
+  const decision = photoUploadDecision(readStoredMutationState(photoRaw), clientUpdatedAt);
+  if (!decision.allow && decision.reason === 'already-deleted') {
+    return { kind: 'conflict', error: 'already-deleted' };
+  }
+  if (photoUploadStopsAtLiveReplay(photoRaw)) {
+    return { kind: 'stop' };
+  }
+  if (!decision.allow) {
+    return { kind: 'conflict', error: 'stale' };
+  }
+  return { kind: 'proceed', clearQueuedGcsDelete: true };
+}
+
 async function runUploadIntent(
   uid: string,
   photoId: string,
@@ -305,21 +339,18 @@ async function runUploadIntent(
     const photoRaw = photoSnap.exists
       ? (photoSnap.data() as Record<string, unknown>)
       : undefined;
-    const stored = readStoredMutationState(photoRaw);
-    const decision = photoUploadDecision(stored, clientUpdatedAt);
-
-    if (!decision.allow) {
-      if (decision.reason === 'already-deleted') {
-        return { kind: 'conflict', status: 409, error: 'already-deleted' };
-      }
+    const plan = planUploadIntent(recipeLive, photoRaw, clientUpdatedAt);
+    if (plan.kind === 'conflict') {
+      return { kind: 'conflict', status: 409, error: plan.error };
     }
-
-    if (photoUploadStopsAtLiveReplay(photoRaw)) {
+    if (plan.kind === 'stop') {
       return { kind: 'stop', status: 200 };
     }
 
-    if (!decision.allow) {
-      return { kind: 'conflict', status: 409, error: 'stale' };
+    if (plan.clearQueuedGcsDelete) {
+      // Every writer keys the row by photo id (`drainGcsDeletes` also reads
+      // `data.photoId`, which is always that same id).
+      tx.delete(gcsDeletesColRef(uid).doc(photoId));
     }
 
     const serverUpdatedAt = Date.now();

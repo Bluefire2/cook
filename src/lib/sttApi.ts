@@ -1,4 +1,7 @@
+import { t } from '../i18n';
+import { serverErrorText } from './errorText';
 import { invalidateSession } from './session';
+import { settings } from './settings';
 import { baseAudioMime, stripTranscript } from './voiceRecorder';
 
 export async function transcribeAudio(params: {
@@ -8,9 +11,11 @@ export async function transcribeAudio(params: {
 }): Promise<string> {
   const headers: Record<string, string> = {
     'Content-Type': baseAudioMime(params.blob.type) || 'application/octet-stream',
+    'x-sous-language': settings.getLocale(),
   };
   if (params.title !== undefined && params.title.trim() !== '') {
-    headers['x-recipe-title'] = params.title;
+    headers['x-recipe-title'] = encodeURIComponent(params.title);
+    headers['x-recipe-title-encoding'] = 'uri';
   }
 
   const response = await fetch('/api/stt', {
@@ -23,27 +28,15 @@ export async function transcribeAudio(params: {
 
   if (response.status === 401) {
     invalidateSession();
-    throw new Error('Please sign in again — your session expired.');
+    throw new Error(t('error.sessionExpired'));
   }
 
   const data = (await response.json().catch(() => null)) as
     | { text?: unknown; error?: unknown }
     | null;
 
-  if (response.status === 503) {
-    const message =
-      typeof data?.error === 'string' && data.error !== ''
-        ? data.error
-        : 'Dictation failed — try again.';
-    throw new Error(message);
-  }
-
   if (!response.ok) {
-    const message =
-      typeof data?.error === 'string' && data.error !== ''
-        ? data.error
-        : 'Dictation failed — try again.';
-    throw new Error(message);
+    throw new Error(serverErrorText(data, 'error.dictationFailed'));
   }
 
   const text = typeof data?.text === 'string' ? data.text : '';

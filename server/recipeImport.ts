@@ -1,14 +1,28 @@
 /**
- * Recipe import: page HTML or pasted text in, a saveable recipe draft out.
+ * Recipe import: page HTML, pasted text, or photos in, a saveable recipe draft out.
  *
  * The one pipeline behind `POST /api/import` (`server/importRoute.ts`),
  * `POST /api/extension/import` (`server/extensionImport.ts`) and the live
- * import evals (`evals/recipeImport.eval.ts`). Nothing here knows about HTTP:
- * routes map `ImportOutcome` / `PageFetchOutcome` to statuses and copy. The
- * Gemini client and model are passed in; `recipeImportDepsFromEnv` is the only
- * place that reads the environment.
+ * import evals (`evals/recipeImport.eval.ts`). Callers enter through
+ * `importFromHtml`, `importFromSource`, or `importFromImages`. Nothing here
+ * knows about HTTP: routes map `ImportOutcome` / `PageFetchOutcome` to statuses
+ * and copy. The Gemini client and model are passed in; `recipeImportDepsFromEnv`
+ * is the only place that reads the environment. Translation uses the injected
+ * `translator` (`translateSegments`); a failure there never fails the import.
+ *
+ * Photo import is bound by `docs/constitutions/image-import.md`.
  */
-import { GoogleGenAI, Type, type Schema } from '@google/genai';
+import { GoogleGenAI, MediaResolution, Type, type Schema } from '@google/genai';
+import { normalizeLang, sameLanguage, toSupportedLocale, type Locale } from './lang.ts';
+import { applyTranslation, recipeSegments, translationExceedsCaps } from './recipeTranslation.ts';
+import {
+  TRANSLATE_FAILED,
+  geminiTranslateDepsFromEnv,
+  translateSegments,
+  validateTranslatedSegments,
+  type TranslateInput,
+  type TranslateOutcome,
+} from './translate.ts';
 
 export interface ImportedIngredient {
   quantity?: number;
@@ -33,16 +47,61 @@ export interface ImportedRecipe {
   notes?: string;
   prepMinutes?: number;
   cookMinutes?: number;
+  /** Canonical BCP 47 tag, when the source language could be normalized. */
+  lang?: string;
+}
+
+/**
+ * Bound `translateSegments`: the same input and outcome, with the provider
+ * client already applied. Fakes implement this and must not call the network.
+ * A missing key or unavailable provider resolves to `{ ok: false }`; it does
+ * not throw.
+ */
+export type RecipeTranslator = (input: TranslateInput) => Promise<TranslateOutcome>;
+
+/**
+ * One photo: raw base64 with no data-URL prefix, the same shape as
+ * `ChatRequestImage`. `importFromImages` trusts it, so callers validate first
+ * (`checkImportImages` in `server/importRoute.ts`).
+ */
+export interface ImportImage {
+  mediaType: string;
+  base64: string;
 }
 
 export interface RecipeImportDeps {
   /** Only `models.generateContent` is used; fakes implement exactly this. */
   ai: { models: Pick<GoogleGenAI['models'], 'generateContent'> };
   model: string;
+  translator: RecipeTranslator;
 }
 
+export const IMPORT_BAD_LANGUAGE_CODE = 'import-bad-language';
+export const IMPORT_BAD_LANGUAGE_ERROR = 'That language is not supported.';
+
+/**
+ * Absent is allowed. A present value must normalize to a supported UI
+ * language (`ua` → `uk`, `zh-CN` → `zh-Hans`). Anything else is rejected.
+ */
+export function readImportTranslateTo(
+  value: unknown,
+): { ok: true; translateTo?: Locale } | { ok: false } {
+  if (value === undefined) {
+    return { ok: true };
+  }
+  const translateTo = toSupportedLocale(value);
+  if (translateTo === undefined) {
+    return { ok: false };
+  }
+  return { ok: true, translateTo };
+}
+
+export type ImportTranslation =
+  | { kind: 'ok'; lang: string; recipe: ImportedRecipe }
+  | { kind: 'failed' };
+
 export type ImportOutcome =
-  | { kind: 'ok'; recipe: ImportedRecipe }
+  | { kind: 'ok'; recipe: ImportedRecipe; translation?: ImportTranslation }
   /** Nothing to send; Gemini is not called. */
   | { kind: 'empty_source' }
   /** The model reported that the source holds no recipe. */
@@ -64,7 +123,8 @@ const DEFAULT_MODEL = 'gemini-3.7-flash';
 const MAX_SOURCE_CHARS = 60000;
 
 // NOTE: `api/chat.ts` still carries its own copy of this schema for
-// `update_recipe`. Keep the two in sync until chat gets the same treatment.
+// `update_recipe`. Keep the two in sync until chat gets the same treatment,
+// except `lang`: it is import-only and must not be copied into `api/chat.ts`.
 const RECIPE_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -116,8 +176,19 @@ const RECIPE_SCHEMA: Schema = {
       description: '2-4 short lowercase tags like "pasta", "weeknight".',
     },
     notes: { type: Type.STRING, description: 'Tips or variations worth keeping.' },
+    lang: {
+      type: Type.STRING,
+      description:
+        'BCP 47 language tag of the source recipe, such as "it" or "zh-Hans". Omit if you cannot tell.',
+    },
   },
   required: ['title', 'servings', 'ingredientSections', 'steps', 'tags'],
+};
+
+const RECIPE_OUTPUT_CONFIG = {
+  maxOutputTokens: 4096,
+  responseMimeType: 'application/json',
+  responseSchema: RECIPE_SCHEMA,
 };
 
 interface HtmlTag {
@@ -486,13 +557,21 @@ export function normalizeImportedRecipe(raw: unknown): ImportedRecipe | null {
   const cookMinutes = finiteNumber(raw.cookMinutes);
   if (cookMinutes !== undefined && cookMinutes >= 0) recipe.cookMinutes = cookMinutes;
 
+  const lang = normalizeLang(raw.lang);
+  if (lang !== undefined) recipe.lang = lang;
+
   return recipe;
 }
 
-/** Source text (pasted, or from `extractRecipeSource`) → outcome. The one Gemini call. */
+/**
+ * Source text (pasted, or from `extractRecipeSource`) → outcome.
+ * Extraction is the one Gemini call and stays faithful to the source.
+ * `translateTo`, when set, may add a translation; it never changes that call.
+ */
 export async function importFromSource(
   source: string,
   deps: RecipeImportDeps,
+  translateTo?: string,
 ): Promise<ImportOutcome> {
   if (source.trim() === '') {
     return { kind: 'empty_source' };
@@ -506,16 +585,73 @@ export async function importFromSource(
       'faithful to the original but trim fluff. If the source contains ' +
       'no recipe, save a recipe with the title "NOT_A_RECIPE".\n\n' +
       `Source material:\n${source}`,
+    config: { ...RECIPE_OUTPUT_CONFIG },
+  });
+
+  return finishIfExtracted(outcomeFromModelText(result.text), translateTo, deps);
+}
+
+function imageImportPrompt(extraText: string): string {
+  const prompt = [
+    'The photos are the pages of one recipe, often handwritten. Extract the recipe and save it.',
+    'Read the pages in the order given: the first photo is page 1.',
+    'Transcribe what is written. Skip anything that is crossed out.',
+    "If you are unsure how a word reads, write your best reading followed by (?). If you are unsure of an amount, keep your best reading as the quantity and add (?) to that ingredient's note.",
+    'If you cannot tell whether an amount is a tablespoon or a teaspoon (for example a T that could be a t), use your best reading and say so in notes.',
+    'Never invent quantities, ingredients, or steps that are not written. If an amount is missing or unreadable, leave the quantity out.',
+    'Convert fractions to decimals for quantities.',
+    'If no title is written, use a short plain name for the dish. Give a description or prep and cook times only if they are written. If servings are not written, use 1.',
+    'If the photos contain no recipe, save a recipe with the title "NOT_A_RECIPE".',
+  ].join('\n');
+  const notes = extraText.trim();
+  if (notes === '') return prompt;
+  return (
+    `${prompt}\n\nNotes from the person importing these photos (context only; the photos are the source):\n` +
+    notes.slice(0, MAX_SOURCE_CHARS)
+  );
+}
+
+/**
+ * Photos of one recipe, in page order, plus optional notes → outcome.
+ * The one Gemini call extracts. `translateTo`, when set, may add a translation
+ * and never changes that call.
+ */
+export async function importFromImages(
+  images: readonly ImportImage[],
+  extraText: string,
+  deps: RecipeImportDeps,
+  translateTo?: string,
+): Promise<ImportOutcome> {
+  if (images.length === 0) {
+    return { kind: 'empty_source' };
+  }
+
+  const result = await deps.ai.models.generateContent({
+    model: deps.model,
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          ...images.map((image) => ({
+            inlineData: { mimeType: image.mediaType, data: image.base64 },
+          })),
+          { text: imageImportPrompt(extraText) },
+        ],
+      },
+    ],
     config: {
-      maxOutputTokens: 4096,
-      responseMimeType: 'application/json',
-      responseSchema: RECIPE_SCHEMA,
+      ...RECIPE_OUTPUT_CONFIG,
+      mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH,
     },
   });
 
+  return finishIfExtracted(outcomeFromModelText(result.text), translateTo, deps);
+}
+
+function outcomeFromModelText(text: string | undefined): ImportOutcome {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(result.text ?? '');
+    parsed = JSON.parse(text ?? '');
   } catch {
     return { kind: 'parse_error' };
   }
@@ -532,16 +668,139 @@ export async function importFromSource(
   return { kind: 'ok', recipe };
 }
 
-/** Page HTML → outcome: `extractRecipeSource` then `importFromSource`. */
-export function importFromHtml(html: string, deps: RecipeImportDeps): Promise<ImportOutcome> {
-  return importFromSource(extractRecipeSource(html), deps);
+function finishIfExtracted(
+  outcome: ImportOutcome,
+  translateTo: string | undefined,
+  deps: RecipeImportDeps,
+): Promise<ImportOutcome> {
+  if (outcome.kind !== 'ok') return Promise.resolve(outcome);
+  return finishImport(outcome.recipe, translateTo, deps);
 }
 
-/** The only environment read in this module. Call it per request, not at module scope. */
+/** Page HTML → outcome: `extractRecipeSource` then `importFromSource`. */
+export function importFromHtml(
+  html: string,
+  deps: RecipeImportDeps,
+  translateTo?: string,
+): Promise<ImportOutcome> {
+  return importFromSource(extractRecipeSource(html), deps, translateTo);
+}
+
+/**
+ * The only environment read in this module. Call it per request, not at module scope.
+ * The translator reads env when it is called, the same way extraction reads the key here.
+ */
 export function recipeImportDepsFromEnv(): RecipeImportDeps {
   return {
     ai: new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }),
     // `??` is wrong here: `node --env-file` turns a bare `CHAT_MODEL=` into `''`, which is not nullish.
     model: process.env.CHAT_MODEL || DEFAULT_MODEL,
+    translator: translateWithEnv,
+  };
+}
+
+/** Missing key and provider errors are translation failures, not thrown import errors. */
+async function translateWithEnv(input: TranslateInput): Promise<TranslateOutcome> {
+  const built = geminiTranslateDepsFromEnv();
+  if (!built.ok) {
+    return { ok: false, code: TRANSLATE_FAILED };
+  }
+  try {
+    return await translateSegments(input, built.deps);
+  } catch {
+    return { ok: false, code: TRANSLATE_FAILED };
+  }
+}
+
+type TranslationAttempt =
+  | { kind: 'failed' }
+  | { kind: 'ok'; detectedLang: string | null; recipe: ImportedRecipe };
+
+async function translateRecipe(
+  recipe: ImportedRecipe,
+  translateTo: string,
+  translator: RecipeTranslator,
+  sourceLang: string | undefined,
+): Promise<TranslationAttempt> {
+  const segments = recipeSegments(recipe);
+  if (translationExceedsCaps(segments)) {
+    return { kind: 'failed' };
+  }
+  const input: TranslateInput = { segments, target: translateTo };
+  if (sourceLang !== undefined) {
+    input.sourceLang = sourceLang;
+  }
+  let outcome: TranslateOutcome;
+  try {
+    outcome = await translator(input);
+  } catch {
+    return { kind: 'failed' };
+  }
+  if (!outcome.ok) {
+    return { kind: 'failed' };
+  }
+  const validated = validateTranslatedSegments(
+    segments.map((segment) => segment.id),
+    outcome.segments,
+  );
+  if (!validated.ok) {
+    return { kind: 'failed' };
+  }
+  const applied = applyTranslation(recipe, validated.segments);
+  return {
+    kind: 'ok',
+    detectedLang: normalizeLang(outcome.detectedLang) ?? null,
+    recipe: { ...applied, lang: translateTo },
+  };
+}
+
+/**
+ * `translateTo` unset: the extraction alone.
+ * Same language: skip the translator.
+ * Different: translate with the extracted source language.
+ * Missing or ambiguous (`sameLanguage` is `unknown`, including bare `zh`
+ * against `zh-Hans`): translate with no source language. A detected language
+ * that matches the target discards the translation and labels the original.
+ * Otherwise the original is labelled with the detection and the translation
+ * is returned. Provider failure, caps, and bad segments set `translation`
+ * to `{ kind: 'failed' }` and still return the original.
+ */
+async function finishImport(
+  recipe: ImportedRecipe,
+  translateTo: string | undefined,
+  deps: RecipeImportDeps,
+): Promise<ImportOutcome> {
+  if (translateTo === undefined) {
+    return { kind: 'ok', recipe };
+  }
+  const comparison = sameLanguage(recipe.lang, translateTo);
+  if (comparison === 'same') {
+    return { kind: 'ok', recipe };
+  }
+  const knownSource = comparison === 'different';
+  const attempt = await translateRecipe(
+    recipe,
+    translateTo,
+    deps.translator,
+    knownSource ? recipe.lang : undefined,
+  );
+  if (attempt.kind === 'failed') {
+    return { kind: 'ok', recipe, translation: { kind: 'failed' } };
+  }
+  if (
+    !knownSource &&
+    attempt.detectedLang !== null &&
+    sameLanguage(attempt.detectedLang, translateTo) === 'same'
+  ) {
+    return { kind: 'ok', recipe: { ...recipe, lang: attempt.detectedLang } };
+  }
+  const original =
+    !knownSource && attempt.detectedLang !== null
+      ? { ...recipe, lang: attempt.detectedLang }
+      : recipe;
+  return {
+    kind: 'ok',
+    recipe: original,
+    translation: { kind: 'ok', lang: translateTo, recipe: attempt.recipe },
   };
 }

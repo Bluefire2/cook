@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   applyPullChanges,
+  fetchPhotoBlob,
+  fetchPhotoBlobOutcome,
   firstPushRejection,
+  leaveSharedCollection,
   normalizeChatChange,
   normalizeCookChange,
   pullSharedPage,
@@ -101,6 +104,40 @@ describe('firstPushRejection', () => {
   });
 });
 
+describe('fetchPhotoBlobOutcome', () => {
+  it('returns the blob on 200', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 })),
+    );
+    const outcome = await fetchPhotoBlobOutcome('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    expect(outcome).toBeInstanceOf(Blob);
+  });
+
+  it('returns missing on 404 and unavailable on 503 or a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })));
+    expect(await fetchPhotoBlobOutcome('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')).toBe('missing');
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
+    expect(await fetchPhotoBlobOutcome('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')).toBe('unavailable');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    );
+    expect(await fetchPhotoBlobOutcome('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')).toBe('unavailable');
+  });
+
+  it('keeps fetchPhotoBlob collapsing missing and unavailable to null', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })));
+    expect(await fetchPhotoBlob('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')).toBeNull();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
+    expect(await fetchPhotoBlob('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')).toBeNull();
+  });
+});
+
 describe('pushOps', () => {
   it.each([
     [{ applied: false, reason: 'invalid' }, 'invalid'],
@@ -137,6 +174,86 @@ describe('pushOps', () => {
   it('returns signedOut on 401', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })));
     expect(await pushOps([op])).toBe('signedOut');
+  });
+});
+
+describe('leaveSharedCollection', () => {
+  const ownerSub = 'owner-sub';
+  const collectionId = 'collection-id';
+
+  it('treats a 404 (already gone) as success', async () => {
+    const fetchMock = vi.fn(async () => new Response('', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'ok',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/shared/leave',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ ownerSub, collectionId }),
+      }),
+    );
+  });
+
+  it('reports ok for a successful leave', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ ok: true })));
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'ok',
+    });
+  });
+
+  it('signs the client out on 401/403', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })));
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'signedOut',
+    });
+  });
+
+  it('reports unavailable on 503 without signing out', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 503 })));
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'error',
+      message: 'Sharing is temporarily unavailable.',
+      status: 503,
+    });
+  });
+
+  it('surfaces the server message on another error status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ error: 'Bad request' }, 400)),
+    );
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'error',
+      message: 'Bad request',
+      status: 400,
+    });
+  });
+
+  it('maps a known error code instead of the English sentence', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ error: 'Bad request', code: 'bad-request' }, 400)),
+    );
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'error',
+      message: 'That request was not valid.',
+      status: 400,
+    });
+  });
+
+  it('returns a generic error when fetch throws', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    );
+    await expect(leaveSharedCollection(ownerSub, collectionId)).resolves.toEqual({
+      kind: 'error',
+      message: "Couldn't leave the collection.",
+    });
   });
 });
 
@@ -284,6 +401,7 @@ describe('normalizeChatChange / normalizeCookChange', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set<string>(),
       chatParentOrigins: new Map<string, string>(),
       cookParentOrigins: new Map<string, string>(),

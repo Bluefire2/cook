@@ -1,0 +1,26 @@
+{
+  "title": "Peanut Butter Cookies",
+  "servings": 1,
+  "ingredientSections": [
+    {
+      "items": [
+        { "quantity": 0.5, "unit": "cup", "item": "butter" },
+        { "quantity": 0.5, "unit": "cup", "item": "peanut butter" },
+        { "quantity": 0.5, "unit": "cup", "item": "white sugar" },
+        { "quantity": 0.5, "unit": "cup", "item": "brown sugar" },
+        { "quantity": 1, "item": "egg" },
+        { "quantity": 1.5, "unit": "cup", "item": "flour" },
+        { "quantity": 0.75, "unit": "tsp", "item": "baking soda" },
+        { "quantity": 0.5, "unit": "tsp", "item": "baking powder" },
+        { "quantity": 0.25, "unit": "tsp", "item": "salt" }
+      ]
+    }
+  ],
+  "steps": [
+    { "text": "Chill the dough and form it into a large ball, or make a roll." },
+    { "text": "Slice about 1/8\" or 1/4\" thick and flatten with a fork dipped in flour, making a criss-cross pattern." },
+    { "text": "Bake in a 375°F oven." }
+  ],
+  "tags": ["cookies", "baking", "peanut butter"],
+  "notes": "No mixing method or baking time is written on the card."
+}

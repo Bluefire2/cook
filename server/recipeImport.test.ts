@@ -1,14 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { MediaResolution, type Content } from '@google/genai';
+import { describe, expect, it, vi } from 'vitest';
 import type { RecipeDraft } from '../src/lib/types.ts';
 import { fakeImportDeps } from '../test/fakeGemini.ts';
 import {
   extractRecipeSource,
   fetchPageHtml,
   importFromHtml,
+  importFromImages,
   importFromSource,
   normalizeImportedRecipe,
+  readImportTranslateTo,
+  recipeImportDepsFromEnv,
   type ImportedRecipe,
+  type RecipeTranslator,
 } from './recipeImport.ts';
+import { TRANSLATE_FAILED, type TranslateInput, type TranslateOutcome } from './translate.ts';
 
 // Drift guard: the server cannot import `src/` at runtime, so ImportedRecipe
 // is declared separately. If it stops being a RecipeDraft, `tsc -b` fails here.
@@ -212,14 +218,17 @@ describe('normalizeImportedRecipe', () => {
       notes: 'Freezes well.',
       prepMinutes: 5,
       cookMinutes: 20,
+      lang: 'it-IT',
       photoId: 'not-from-a-model',
       sourceUrl: 'https://model.example/invented',
       nutrition: { calories: 100 },
     });
+    expect(recipe?.lang).toBe('it');
     expect(Object.keys(recipe ?? {}).sort()).toEqual([
       'cookMinutes',
       'description',
       'ingredientSections',
+      'lang',
       'notes',
       'prepMinutes',
       'servings',
@@ -227,6 +236,15 @@ describe('normalizeImportedRecipe', () => {
       'tags',
       'title',
     ]);
+  });
+
+  it('drops a lang it cannot normalize without rejecting the recipe', () => {
+    for (const lang of ['garbage!!', '', 12, null]) {
+      const recipe = normalizeImportedRecipe({ ...MINIMAL, lang });
+      expect(recipe).not.toBeNull();
+      expect(recipe).not.toHaveProperty('lang');
+    }
+    expect(normalizeImportedRecipe({ ...MINIMAL, lang: 'zh-CN' })?.lang).toBe('zh-Hans');
   });
 
   it('returns null without a usable title', () => {
@@ -349,6 +367,112 @@ describe('importFromSource', () => {
   });
 });
 
+describe('importFromImages', () => {
+  const JPEG = { mediaType: 'image/jpeg', base64: 'AAAA' };
+
+  async function promptFor(extraText: string): Promise<string> {
+    const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
+    await importFromImages([JPEG], extraText, deps);
+    const parts = (calls[0].contents as Content[])[0].parts ?? [];
+    return parts[parts.length - 1].text ?? '';
+  }
+
+  it('returns empty_source and does not call the model with no images', async () => {
+    const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
+    expect(await importFromImages([], 'notes', deps)).toEqual({ kind: 'empty_source' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('sends each photo as an inlineData part, in order, then one prompt part', async () => {
+    const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
+    const images = [
+      { mediaType: 'image/jpeg', base64: 'AAAA' },
+      { mediaType: 'image/png', base64: 'BBBB' },
+      { mediaType: 'image/webp', base64: 'CCCC' },
+    ];
+    await importFromImages(images, '', deps);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe('test-model');
+    const contents = calls[0].contents as Content[];
+    expect(contents).toHaveLength(1);
+    expect(contents[0].role).toBe('user');
+    const parts = contents[0].parts ?? [];
+    expect(parts).toHaveLength(4);
+    images.forEach((image, i) => {
+      expect(parts[i]).toEqual({ inlineData: { mimeType: image.mediaType, data: image.base64 } });
+    });
+    expect(typeof parts[3].text).toBe('string');
+    expect(parts[3].inlineData).toBeUndefined();
+  });
+
+  it('asks for high media resolution with the shared recipe schema', async () => {
+    const photo = fakeImportDeps(JSON.stringify(MINIMAL));
+    await importFromImages([JPEG], '', photo.deps);
+    const text = fakeImportDeps(JSON.stringify(MINIMAL));
+    await importFromSource('soup', text.deps);
+
+    const config = photo.calls[0].config;
+    expect(config?.mediaResolution).toBe(MediaResolution.MEDIA_RESOLUTION_HIGH);
+    expect(config?.mediaResolution).toBe('MEDIA_RESOLUTION_HIGH');
+    expect(config?.maxOutputTokens).toBe(4096);
+    expect(config?.responseMimeType).toBe('application/json');
+    expect(config?.responseSchema).toBe(text.calls[0].config?.responseSchema);
+  });
+
+  it('keeps the text import request unchanged', async () => {
+    const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
+    await importFromSource('soup', deps);
+    expect('mediaResolution' in (calls[0].config ?? {})).toBe(false);
+    expect(typeof calls[0].contents).toBe('string');
+  });
+
+  it('tells the model to transcribe faithfully', async () => {
+    const prompt = await promptFor('');
+    for (const phrase of [
+      'in the order given',
+      'crossed out',
+      '(?)',
+      'tablespoon',
+      'teaspoon',
+      'notes',
+      'Never invent',
+      'NOT_A_RECIPE',
+    ]) {
+      expect(prompt, phrase).toContain(phrase);
+    }
+  });
+
+  it('adds the notes as context only when given', async () => {
+    const withNotes = await promptFor("  Grandma's, 1970s  ");
+    expect(withNotes).toContain('Notes from the person importing');
+    expect(withNotes).toContain("Grandma's, 1970s");
+
+    const blank = await promptFor('   ');
+    expect(blank).not.toContain('Notes from');
+    expect(blank.endsWith('If the photos contain no recipe, save a recipe with the title "NOT_A_RECIPE".')).toBe(
+      true,
+    );
+  });
+
+  it('maps the model reply like text import', async () => {
+    for (const reply of [undefined, '', 'Sure!', '42', 'null']) {
+      const { deps } = fakeImportDeps(reply);
+      expect(await importFromImages([JPEG], '', deps), String(reply)).toEqual({
+        kind: 'parse_error',
+      });
+    }
+    const cases: [unknown, unknown][] = [
+      [{ ...MINIMAL, title: 'NOT_A_RECIPE' }, { kind: 'not_a_recipe' }],
+      [{ ...MINIMAL, title: ' ' }, { kind: 'unusable' }],
+      [{ ...MINIMAL, servings: 0, photoId: 'x' }, { kind: 'ok', recipe: { ...MINIMAL, servings: 1 } }],
+    ];
+    for (const [reply, outcome] of cases) {
+      const { deps } = fakeImportDeps(JSON.stringify(reply));
+      expect(await importFromImages([JPEG], '', deps)).toEqual(outcome);
+    }
+  });
+});
+
 describe('importFromHtml', () => {
   it('sends the extracted source, not the page', async () => {
     const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
@@ -407,5 +531,203 @@ describe('fetchPageHtml', () => {
       kind: 'ok',
       html: '<html>soup</html>',
     });
+  });
+});
+
+const ITALIAN = { ...MINIMAL, lang: 'it' };
+
+const UKRAINIAN = {
+  title: 'UK Tomato soup',
+  servings: 4,
+  ingredientSections: [{ items: [{ item: 'UK tomatoes', quantity: 6 }] }],
+  steps: [{ text: 'UK Simmer.' }],
+  tags: ['soup'],
+  lang: 'uk',
+};
+
+function prefixTranslator(detectedLang: string | null): {
+  calls: TranslateInput[];
+  translator: RecipeTranslator;
+} {
+  const calls: TranslateInput[] = [];
+  const translator: RecipeTranslator = (input) => {
+    calls.push(input);
+    const outcome: TranslateOutcome = {
+      ok: true,
+      detectedLang,
+      segments: input.segments.map((segment) => ({
+        id: segment.id,
+        text: `UK ${segment.text}`,
+      })),
+    };
+    return Promise.resolve(outcome);
+  };
+  return { calls, translator };
+}
+
+function restoreEnv(name: 'GEMINI_API_KEY' | 'TRANSLATE_PROVIDER', value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
+
+describe('readImportTranslateTo', () => {
+  it('accepts a supported UI language, including aliases', () => {
+    expect(readImportTranslateTo(undefined)).toEqual({ ok: true });
+    expect(readImportTranslateTo('uk')).toEqual({ ok: true, translateTo: 'uk' });
+    expect(readImportTranslateTo('  ua  ')).toEqual({ ok: true, translateTo: 'uk' });
+    expect(readImportTranslateTo('zh-CN')).toEqual({ ok: true, translateTo: 'zh-Hans' });
+  });
+
+  it('rejects a language that is not a supported UI language', () => {
+    for (const value of ['fr', 'zh', '', '  ', null, 1]) {
+      expect(readImportTranslateTo(value), String(value)).toEqual({ ok: false });
+    }
+  });
+});
+
+describe('import translation', () => {
+  it('skips translation when the languages match', async () => {
+    const { calls, translator } = prefixTranslator('it');
+    const { deps } = fakeImportDeps(JSON.stringify(ITALIAN), translator);
+    await expect(importFromSource('soup', deps, 'it')).resolves.toEqual({
+      kind: 'ok',
+      recipe: ITALIAN,
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('applies translation when the languages differ', async () => {
+    const { calls, translator } = prefixTranslator('it');
+    const { deps } = fakeImportDeps(JSON.stringify(ITALIAN), translator);
+    await expect(importFromSource('soup', deps, 'uk')).resolves.toEqual({
+      kind: 'ok',
+      recipe: ITALIAN,
+      translation: { kind: 'ok', lang: 'uk', recipe: UKRAINIAN },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.target).toBe('uk');
+    expect(calls[0]?.sourceLang).toBe('it');
+  });
+
+  it('labels a missing lang and discards the translation when detection matches', async () => {
+    const { calls, translator } = prefixTranslator('uk');
+    const { deps } = fakeImportDeps(JSON.stringify(MINIMAL), translator);
+    await expect(importFromSource('soup', deps, 'uk')).resolves.toEqual({
+      kind: 'ok',
+      recipe: { ...MINIMAL, lang: 'uk' },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty('sourceLang');
+    expect(calls[0]?.target).toBe('uk');
+  });
+
+  it('labels a missing lang and returns the translation when detection differs', async () => {
+    const { calls, translator } = prefixTranslator('it');
+    const { deps } = fakeImportDeps(JSON.stringify(MINIMAL), translator);
+    await expect(importFromSource('soup', deps, 'uk')).resolves.toEqual({
+      kind: 'ok',
+      recipe: ITALIAN,
+      translation: { kind: 'ok', lang: 'uk', recipe: UKRAINIAN },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty('sourceLang');
+  });
+
+  it('discards the translation when bare zh is detected as the UI script', async () => {
+    const { calls, translator } = prefixTranslator('zh-Hans');
+    const { deps } = fakeImportDeps(JSON.stringify({ ...MINIMAL, lang: 'zh' }), translator);
+    await expect(importFromSource('soup', deps, 'zh-Hans')).resolves.toEqual({
+      kind: 'ok',
+      recipe: { ...MINIMAL, lang: 'zh-Hans' },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty('sourceLang');
+    expect(calls[0]?.target).toBe('zh-Hans');
+  });
+
+  it('returns the translation when bare zh is detected as another script', async () => {
+    const { calls, translator } = prefixTranslator('zh-Hant');
+    const { deps } = fakeImportDeps(JSON.stringify({ ...MINIMAL, lang: 'zh' }), translator);
+    const traditional = {
+      ...UKRAINIAN,
+      lang: 'zh-Hans',
+    };
+    await expect(importFromSource('soup', deps, 'zh-Hans')).resolves.toEqual({
+      kind: 'ok',
+      recipe: { ...MINIMAL, lang: 'zh-Hant' },
+      translation: { kind: 'ok', lang: 'zh-Hans', recipe: traditional },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty('sourceLang');
+  });
+
+  it('returns the original with a failure flag when translation fails', async () => {
+    const translators: RecipeTranslator[] = [
+      () => Promise.resolve({ ok: false, code: TRANSLATE_FAILED }),
+      () => Promise.reject(new Error('provider down')),
+    ];
+    for (const translator of translators) {
+      const { deps } = fakeImportDeps(JSON.stringify(ITALIAN), translator);
+      await expect(importFromSource('soup', deps, 'uk')).resolves.toEqual({
+        kind: 'ok',
+        recipe: ITALIAN,
+        translation: { kind: 'failed' },
+      });
+    }
+  });
+
+  it('forwards translateTo from importFromHtml', async () => {
+    const { calls, translator } = prefixTranslator('it');
+    const { deps, calls: modelCalls } = fakeImportDeps(JSON.stringify(ITALIAN), translator);
+    const html =
+      '<html><head><script>var tracking = 1;</script></head>' +
+      '<body><nav>Home</nav><main><p>Simmer the tomatoes.</p></main></body></html>';
+    await expect(importFromHtml(html, deps, 'uk')).resolves.toEqual({
+      kind: 'ok',
+      recipe: ITALIAN,
+      translation: { kind: 'ok', lang: 'uk', recipe: UKRAINIAN },
+    });
+    expect(modelCalls[0]?.contents).toContain('Simmer the tomatoes.');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.target).toBe('uk');
+    expect(calls[0]?.sourceLang).toBe('it');
+  });
+
+  it('keeps the import when the translation key is missing or the provider is unavailable', async () => {
+    const savedKey = process.env.GEMINI_API_KEY;
+    const savedProvider = process.env.TRANSLATE_PROVIDER;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.TRANSLATE_PROVIDER;
+      const missing = fakeImportDeps(JSON.stringify(ITALIAN));
+      const missingTranslator = recipeImportDepsFromEnv().translator;
+      await expect(
+        importFromSource('soup', { ...missing.deps, translator: missingTranslator }, 'uk'),
+      ).resolves.toEqual({
+        kind: 'ok',
+        recipe: ITALIAN,
+        translation: { kind: 'failed' },
+      });
+
+      process.env.GEMINI_API_KEY = 'test-key';
+      process.env.TRANSLATE_PROVIDER = 'nmt';
+      const unavailable = fakeImportDeps(JSON.stringify(ITALIAN));
+      const unavailableTranslator = recipeImportDepsFromEnv().translator;
+      await expect(
+        importFromSource('soup', { ...unavailable.deps, translator: unavailableTranslator }, 'uk'),
+      ).resolves.toEqual({
+        kind: 'ok',
+        recipe: ITALIAN,
+        translation: { kind: 'failed' },
+      });
+    } finally {
+      warn.mockRestore();
+      restoreEnv('GEMINI_API_KEY', savedKey);
+      restoreEnv('TRANSLATE_PROVIDER', savedProvider);
+    }
   });
 });

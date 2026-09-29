@@ -44,6 +44,7 @@ function entities(overrides: Partial<BackupImportEntities> = {}): BackupImportEn
     tags: [],
     photoId: ALICE_PHOTO,
     galleryPhotoIds: [ALICE_PHOTO],
+    lang: 'it',
     createdAt: 1,
     updatedAt: 2,
   };
@@ -74,6 +75,7 @@ function entities(overrides: Partial<BackupImportEntities> = {}): BackupImportEn
     collections: [collection],
     chatMessages: [chat],
     cookState: [cook],
+    cookLogs: [],
     backupPhotoIds: [ALICE_PHOTO],
     ...overrides,
   };
@@ -86,6 +88,7 @@ function graphIds(
     recipeIds: new Set(values.recipeIds),
     collectionIds: new Set(values.collectionIds),
     chatMessageIds: new Set(values.chatMessageIds),
+    cookLogIds: new Set(values.cookLogIds),
     photoIds: new Set(values.photoIds),
   };
 }
@@ -179,6 +182,7 @@ describe('remapBackupImport', () => {
     const input = entities();
     const out = remapBackupImport(input, 'preserve', seqUuid());
     expect(out.recipes[0]?.id).toBe(ALICE_RECIPE);
+    expect(out.recipes[0]?.lang).toBe('it');
     expect(out.collections[0]?.id).toBe(ALICE_COLLECTION);
     expect(out.collections[0]?.recipeIds).toEqual([ALICE_RECIPE]);
     expect(out.chatMessages[0]?.id).toBe(ALICE_CHAT);
@@ -204,6 +208,7 @@ describe('remapBackupImport', () => {
 
     expect(newCollection.recipeIds).toEqual([newRecipe.id]);
     expect(newRecipe.photoId).toBe(newPhoto);
+    expect(newRecipe.lang).toBe('it');
     expect(newRecipe.galleryPhotoIds).toEqual([newPhoto]);
     expect(newChat.recipeId).toBe(newRecipe.id);
     expect(newChat.photoIds).toEqual([newPhoto]);
@@ -231,6 +236,7 @@ describe('remapBackupImport', () => {
       recipeIds: new Set([orphanRecipe]),
       collectionIds: new Set([ALICE_COLLECTION]),
       chatMessageIds: new Set([ALICE_CHAT]),
+      cookLogIds: new Set(),
       photoIds: new Set([orphanPhoto]),
     });
   });
@@ -283,6 +289,7 @@ describe('remapBackupImport', () => {
       collections: new Map([[cloned.collections[0]!.id, cloned.collections[0]!]]),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
 

@@ -1,4 +1,7 @@
+import { t } from '../i18n';
+import { serverErrorText } from './errorText';
 import { compactCollection } from './compactCollection';
+import { compactCookLog, isUsableCookLog } from './cookLogShape';
 import { compactRecipe } from './compactRecipe';
 import { MAX_PUSH_OPS, type PushOp } from './pushOps';
 import {
@@ -7,14 +10,17 @@ import {
   type DiscardedPushReason,
 } from './pushReasons';
 import { invalidateSession } from './session';
-import type { ChatMessage, Collection, Recipe } from './types';
+import type { ChatMessage, Collection, CookLog, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
 import { clearLibrary } from './libraryMemory';
 
 export { SHARED_PARENT_OWNER_SUB_FIELD };
 
 export type PullCursor = Partial<
-  Record<'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections', [number, string]>
+  Record<
+    'recipes' | 'chatMessages' | 'cookState' | 'photos' | 'collections' | 'cookLogs',
+    [number, string]
+  >
 >;
 
 export type PullChanges = {
@@ -23,6 +29,7 @@ export type PullChanges = {
   cookState: Record<string, unknown>[];
   photos: Record<string, unknown>[];
   collections?: Record<string, unknown>[];
+  cookLogs?: Record<string, unknown>[];
 };
 
 export type PullPage = {
@@ -217,10 +224,13 @@ export async function postPhoto(
   return readErrorStatus(response);
 }
 
-export async function fetchPhotoBlob(
+/** `missing` is a 404. `unavailable` is a network error or any other non-OK status. */
+export type PhotoFetchOutcome = Blob | 'missing' | 'unavailable' | 'signedOut';
+
+export async function fetchPhotoBlobOutcome(
   id: string,
   ownerSub?: string,
-): Promise<Blob | null | 'signedOut'> {
+): Promise<PhotoFetchOutcome> {
   let response: Response;
   try {
     const params = ownerSub ? `?owner=${encodeURIComponent(ownerSub)}` : '';
@@ -229,17 +239,31 @@ export async function fetchPhotoBlob(
       cache: 'no-store',
     });
   } catch {
-    return null;
+    return 'unavailable';
   }
   if (response.status === 401 || response.status === 403) {
     invalidateSession();
     clearLibrary();
     return 'signedOut';
   }
+  if (response.status === 404) {
+    return 'missing';
+  }
   if (!response.ok) {
-    return null;
+    return 'unavailable';
   }
   return response.blob();
+}
+
+export async function fetchPhotoBlob(
+  id: string,
+  ownerSub?: string,
+): Promise<Blob | null | 'signedOut'> {
+  const outcome = await fetchPhotoBlobOutcome(id, ownerSub);
+  if (outcome === 'missing' || outcome === 'unavailable') {
+    return null;
+  }
+  return outcome;
 }
 
 export function normalizeRecipeChange(raw: Record<string, unknown>): Recipe | 'tombstone' {
@@ -284,6 +308,20 @@ export function normalizeCookChange(
   };
 }
 
+/**
+ * An unusable live row is dropped like a tombstone: nothing in the UI can
+ * render it, and keeping it would hand a malformed entry to the next backup.
+ */
+export function normalizeCookLogChange(raw: Record<string, unknown>): CookLog | 'tombstone' {
+  if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
+    return 'tombstone';
+  }
+  if (!isUsableCookLog(raw)) {
+    return 'tombstone';
+  }
+  return compactCookLog(raw);
+}
+
 function readSharedParentOwnerSub(raw: Record<string, unknown>): string | undefined {
   const value = raw[SHARED_PARENT_OWNER_SUB_FIELD];
   if (typeof value !== 'string' || value === '') {
@@ -298,6 +336,7 @@ export function applyPullChanges(
     collections: Map<string, Collection>;
     chat: Map<string, ChatMessage>;
     cook: Map<string, CookStateRow>;
+    cookLogs: Map<string, CookLog>;
     remotePhotoIds: Set<string>;
     chatParentOrigins: Map<string, string>;
     cookParentOrigins: Map<string, string>;
@@ -352,6 +391,15 @@ export function applyPullChanges(
       } else {
         acc.cookParentOrigins.set(recipeId, owner);
       }
+    }
+  }
+  for (const raw of changes.cookLogs ?? []) {
+    const id = raw.id as string;
+    const normalized = normalizeCookLogChange(raw);
+    if (normalized === 'tombstone') {
+      acc.cookLogs.delete(id);
+    } else {
+      acc.cookLogs.set(id, normalized);
     }
   }
   for (const raw of changes.photos) {
@@ -442,7 +490,15 @@ export async function pullSharedPage(
   };
 }
 
-export type CollectionGrant = { sub: string; email: string; createdAt: number };
+export type GrantRole = 'viewer' | 'editor';
+
+export type CollectionGrant = {
+  sub: string;
+  email: string;
+  /** Older servers omit it; that means viewer. */
+  role?: GrantRole;
+  createdAt: number;
+};
 
 export type GrantHttpResult =
   | { kind: 'ok'; grants?: CollectionGrant[]; grant?: CollectionGrant }
@@ -461,7 +517,7 @@ async function grantRequest(
       ...init,
     });
   } catch {
-    return { kind: 'error', message: "Couldn't update sharing." };
+    return { kind: 'error', message: t('error.sharingUpdate') };
   }
   if (response.status === 401 || response.status === 403) {
     invalidateSession();
@@ -469,7 +525,7 @@ async function grantRequest(
     return { kind: 'signedOut' };
   }
   if (response.status === 503) {
-    return { kind: 'error', message: 'Sharing is temporarily unavailable.', status: 503 };
+    return { kind: 'error', message: t('error.sharingUnavailable'), status: 503 };
   }
   let body: unknown = null;
   try {
@@ -478,11 +534,11 @@ async function grantRequest(
     body = null;
   }
   if (!response.ok) {
-    const message =
-      body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
-        ? (body as { error: string }).error
-        : "Couldn't update sharing.";
-    return { kind: 'error', message, status: response.status };
+    return {
+      kind: 'error',
+      message: serverErrorText(body, 'error.sharingUpdate'),
+      status: response.status,
+    };
   }
   return {
     kind: 'ok',
@@ -500,12 +556,28 @@ export async function listCollectionGrants(
 export async function addCollectionGrant(
   collectionId: string,
   email: string,
+  role: GrantRole,
 ): Promise<GrantHttpResult> {
   return grantRequest(`/api/collections/${encodeURIComponent(collectionId)}/grants`, {
     method: 'POST',
     headers: jsonHeaders(),
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, role }),
   });
+}
+
+export async function setCollectionGrantRole(
+  collectionId: string,
+  sub: string,
+  role: GrantRole,
+): Promise<GrantHttpResult> {
+  return grantRequest(
+    `/api/collections/${encodeURIComponent(collectionId)}/grants/role`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ sub, role }),
+    },
+  );
 }
 
 export async function revokeCollectionGrant(
@@ -520,4 +592,57 @@ export async function revokeCollectionGrant(
       body: JSON.stringify({ sub }),
     },
   );
+}
+
+export type LeaveSharedResult =
+  | { kind: 'ok' }
+  | { kind: 'signedOut' }
+  | { kind: 'error'; message: string; status?: number };
+
+/**
+ * A 404 here means the grant is already gone — the owner revoked it, or a
+ * prior leave already went through. Either way, the viewer is not on the
+ * collection any more, so the caller treats a 404 as success.
+ */
+export async function leaveSharedCollection(
+  ownerSub: string,
+  collectionId: string,
+): Promise<LeaveSharedResult> {
+  let response: Response;
+  try {
+    response = await fetch('/api/shared/leave', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ ownerSub, collectionId }),
+    });
+  } catch {
+    return { kind: 'error', message: t('error.leaveCollection') };
+  }
+  if (response.status === 401 || response.status === 403) {
+    invalidateSession();
+    clearLibrary();
+    return { kind: 'signedOut' };
+  }
+  if (response.status === 404) {
+    return { kind: 'ok' };
+  }
+  if (response.status === 503) {
+    return { kind: 'error', message: t('error.sharingUnavailable'), status: 503 };
+  }
+  if (!response.ok) {
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    return {
+      kind: 'error',
+      message: serverErrorText(body, 'error.leaveCollection'),
+      status: response.status,
+    };
+  }
+  return { kind: 'ok' };
 }

@@ -1,13 +1,21 @@
 import { useCallback, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import CreateRecipeForm, {
-  type CreateRecipeSubmitStatus,
-} from '../components/CreateRecipeForm';
+import { t as translateNow, useLocale, useT } from '../i18n';
+import ImportPreview from '../components/ImportPreview';
+import { type CreateRecipeSubmitStatus } from '../components/CreateRecipeForm';
 import SaveToCollectionSheet from '../components/SaveToCollectionSheet';
 import { collectionStore, libraryHref, useCollections } from '../lib/collectionStore';
 import { resolveCollectionDestination } from '../lib/collectionDestination';
-import { SpinnerIcon } from '../lib/icons';
-import { importRecipe, type ExtractedRecipe } from '../lib/importApi';
+import { CameraIcon, SpinnerIcon } from '../lib/icons';
+import { encodeImageForImport, type EncodedImage } from '../lib/image';
+import {
+  checkImportPhotoBytes,
+  fitImportPhotos,
+  importRecipe,
+  MAX_IMPORT_PHOTOS,
+  type ImportRecipeResult,
+} from '../lib/importApi';
+import { translatedPreviewDraft } from '../lib/importPreview';
 import {
   parseImportInput,
   validateImportInput,
@@ -15,14 +23,17 @@ import {
 import { recipeStore } from '../lib/recipeStore';
 import { backLink, inputFocus, primaryBtn, secondaryBtn } from '../lib/uiClasses';
 
-const SESSION_EXPIRED = 'Please sign in again — your session expired.';
 const IMPORT_FORM_ID = 'import-recipe-form';
 
 type BulkResult =
-  | { url: string; ok: true; id: string; title: string }
+  | { url: string; ok: true; id: string; title: string; untranslated?: true }
   | { url: string; ok: false; error: string };
 
+type ImportPhoto = { key: string; image: EncodedImage; src: string };
+
 export default function ImportScreen() {
+  const t = useT();
+  const locale = useLocale();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const collectionId = params.get('c') ?? undefined;
@@ -37,12 +48,17 @@ export default function ImportScreen() {
   const backTo = libraryHref(knownCollectionId);
   const [input, setInput] = useState('');
   const [bulk, setBulk] = useState(false);
+  const [bulkTranslate, setBulkTranslate] = useState(true);
+  const [photos, setPhotos] = useState<ImportPhoto[]>([]);
+  const photosRef = useRef(photos);
+  const [encoding, setEncoding] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(
     null,
   );
   const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<ExtractedRecipe | null>(null);
+  const [preview, setPreview] = useState<ImportRecipeResult | null>(null);
   const [pendingUrls, setPendingUrls] = useState<string[] | null>(null);
   const [batchDestination, setBatchDestination] = useState<string | null | undefined>();
   const [retrying, setRetrying] = useState(false);
@@ -61,7 +77,7 @@ export default function ImportScreen() {
   const runBulk = async (urls: string[], destinationId: string | undefined) => {
     if (inFlight.current) return;
     if (destinationId && !collectionStore.get(destinationId)) {
-      throw new Error('Collection not found. Choose another collection.');
+      throw new Error(t('import.collectionNotFoundChoose'));
     }
     inFlight.current = true;
     setBatchDestination(destinationId ?? null);
@@ -74,18 +90,34 @@ export default function ImportScreen() {
         setProgress({ current: i + 1, total: urls.length });
         try {
           if (destinationId && !collectionStore.get(destinationId)) {
-            throw new Error('Collection not found. Choose another collection.');
+            throw new Error(t('import.collectionNotFoundChoose'));
           }
-          const draft = await importRecipe({ url });
+          const imported = await importRecipe(
+            bulkTranslate ? { url, translateTo: locale } : { url },
+          );
+          const untranslated = bulkTranslate && imported.translationFailed === true;
+          const draft =
+            bulkTranslate && imported.translation && !untranslated
+              ? {
+                  ...translatedPreviewDraft(imported.recipe, imported.translation.recipe),
+                  lang: locale,
+                }
+              : imported.recipe;
           const recipe = await recipeStore.create(
             draft,
             destinationId ? { collectionId: destinationId } : undefined,
           );
-          results.push({ url, ok: true, id: recipe.id, title: recipe.title.trim() || url });
+          results.push({
+            url,
+            ok: true,
+            id: recipe.id,
+            title: recipe.title.trim() || url,
+            ...(untranslated ? { untranslated: true as const } : {}),
+          });
         } catch (e) {
-          const message = e instanceof Error ? e.message : 'Import failed.';
+          const message = e instanceof Error ? e.message : t('error.importFailed');
           results.push({ url, ok: false, error: message });
-          if (message === SESSION_EXPIRED || (destinationId && !collectionStore.get(destinationId))) {
+          if (message === translateNow('error.sessionExpired') || (destinationId && !collectionStore.get(destinationId))) {
             for (const rest of urls.slice(i + 1)) {
               results.push({ url: rest, ok: false, error: message });
             }
@@ -101,8 +133,79 @@ export default function ImportScreen() {
     }
   };
 
+  const setPhotoList = (next: ImportPhoto[]) => {
+    photosRef.current = next;
+    setPhotos(next);
+  };
+
+  const addPhotos = async (files: File[]) => {
+    const { accepted, overflow } = fitImportPhotos(photosRef.current.length, files);
+    setError(overflow ? t('import.photoLimit') : null);
+    setRetrying(false);
+    if (accepted.length === 0) return;
+    setEncoding(true);
+    try {
+      for (const file of accepted) {
+        let image: EncodedImage;
+        try {
+          image = await encodeImageForImport(file);
+        } catch {
+          setError(t('import.photoUnreadable'));
+          continue;
+        }
+        const check = checkImportPhotoBytes(
+          photosRef.current.map((p) => p.image),
+          image,
+        );
+        if (check === 'photo_too_large') {
+          setError(t('import.photoTooLarge'));
+          continue;
+        }
+        if (check === 'total_too_large') {
+          setError(t('import.photosTotalTooLarge'));
+          continue;
+        }
+        setPhotoList([
+          ...photosRef.current,
+          {
+            key: crypto.randomUUID(),
+            image,
+            src: `data:${image.mediaType};base64,${image.base64}`,
+          },
+        ]);
+      }
+    } finally {
+      setEncoding(false);
+    }
+  };
+
+  const removePhoto = (key: string) => {
+    setPhotoList(photosRef.current.filter((p) => p.key !== key));
+    setError(null);
+  };
+
   const extract = async () => {
     if (inFlight.current || pendingUrls || collections === undefined) return;
+    if (photosRef.current.length > 0) {
+      setError(null);
+      inFlight.current = true;
+      setBusy(true);
+      try {
+        setPreview(
+          await importRecipe({
+            images: photosRef.current.map((p) => p.image),
+            text: input.trim() || undefined,
+            translateTo: locale,
+          }),
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : t('error.importFailed'));
+      } finally {
+        inFlight.current = false;
+        setBusy(false);
+      }
+      return;
+    }
     const parsed = parseImportInput(input);
     if (parsed.kind === 'empty') return;
     const validated = validateImportInput(parsed, bulk);
@@ -122,7 +225,7 @@ export default function ImportScreen() {
         try {
           await runBulk(urls, destination.collectionId);
         } catch (e) {
-          setError(e instanceof Error ? e.message : 'Import failed.');
+          setError(e instanceof Error ? e.message : t('error.importFailed'));
           setPendingUrls(urls);
         }
       }
@@ -133,14 +236,13 @@ export default function ImportScreen() {
     setBusy(true);
     try {
       setPreview(
-        await importRecipe(
-          validated.mode === 'url'
-            ? { url: validated.url }
-            : { text: validated.text },
-        ),
+        await importRecipe({
+          ...(validated.mode === 'url' ? { url: validated.url } : { text: validated.text }),
+          translateTo: locale,
+        }),
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Import failed.');
+      setError(e instanceof Error ? e.message : t('error.importFailed'));
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -163,10 +265,10 @@ export default function ImportScreen() {
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
         <Link to={backTo} className={backLink}>
-          &larr; Library
+          &larr; {t('common.library')}
         </Link>
         <div className="mt-2 flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold">Import recipe</h1>
+          <h1 className="text-2xl font-bold">{t('import.title')}</h1>
           {summary === null && preview !== null && (
             <button
               type="submit"
@@ -179,7 +281,7 @@ export default function ImportScreen() {
               {saveStatus.saving && (
                 <SpinnerIcon className="block h-5 w-5 animate-spin" />
               )}
-              Save
+              {t('common.save')}
             </button>
           )}
         </div>
@@ -189,8 +291,8 @@ export default function ImportScreen() {
         <>
           <h2 className="text-lg font-semibold">
             {successCount === 0
-              ? "Couldn't import these recipes"
-              : `Imported ${successCount} of ${summary.length}`}
+              ? t('import.couldNotImport')
+              : t('import.importedOf', { count: successCount, total: summary.length })}
           </h2>
           <ul className="mt-3 space-y-2">
             {summary.map((row) => (
@@ -207,6 +309,9 @@ export default function ImportScreen() {
                       {row.title}
                     </Link>
                     <p className="mt-1 break-all text-ink-subtle">{row.url}</p>
+                    {row.untranslated && (
+                      <p className="mt-1 text-ink-subtle">{t('import.savedUntranslated')}</p>
+                    )}
                   </>
                 ) : (
                   <>
@@ -222,7 +327,7 @@ export default function ImportScreen() {
             onClick={() => navigate(backTo)}
             className={`${primaryBtn} mt-4 w-full py-3`}
           >
-            Back to library
+            {t('common.backToLibrary')}
           </button>
           {failedCount > 0 && (
             <button
@@ -230,7 +335,7 @@ export default function ImportScreen() {
               onClick={tryAgain}
               className={`${secondaryBtn} mt-2 w-full py-3`}
             >
-              Try again
+              {t('common.tryAgain')}
             </button>
           )}
         </>
@@ -245,18 +350,73 @@ export default function ImportScreen() {
             }}
             rows={5}
             readOnly={busy || pendingUrls !== null}
+            maxLength={photos.length > 0 ? 2000 : undefined}
             placeholder={
-              bulk
-                ? 'Paste one recipe link per line…'
-                : 'Paste a recipe link, or the recipe text itself…'
+              photos.length > 0
+                ? t('import.placeholderPhotos')
+                : bulk
+                  ? t('import.placeholderBulk')
+                  : t('import.placeholder')
             }
             className={`w-full rounded-xl border border-line bg-surface px-4 py-3 shadow-sm ${inputFocus}`}
           />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = '';
+              if (files.length > 0) void addPhotos(files);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={
+              busy ||
+              encoding ||
+              bulk ||
+              pendingUrls !== null ||
+              photos.length >= MAX_IMPORT_PHOTOS
+            }
+            className={`${secondaryBtn} mt-3 inline-flex items-center gap-2 px-4 py-2 disabled:opacity-40`}
+          >
+            <CameraIcon className="h-5 w-5" />
+            {t('import.addPhotos')}
+          </button>
+          <p className="mt-1 text-sm text-ink-subtle">{t('import.photoHint')}</p>
+          {photos.length > 0 && (
+            <ul className="mt-3 flex flex-wrap gap-2">
+              {photos.map((photo, i) => (
+                <li key={photo.key} className="relative">
+                  <div className="h-20 w-20 overflow-hidden rounded-lg bg-surface-muted">
+                    <img
+                      src={photo.src}
+                      alt={t('import.photoAlt', { n: i + 1 })}
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={t('import.removePhoto', { n: i + 1 })}
+                    onClick={() => removePhoto(photo.key)}
+                    disabled={busy}
+                    className="absolute -top-1.5 -right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-ink text-xs text-page hover:opacity-80 active:opacity-80 disabled:opacity-40"
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           <label className="mt-3 flex cursor-pointer items-start gap-3">
             <input
               type="checkbox"
               checked={bulk}
-              disabled={busy || pendingUrls !== null}
+              disabled={busy || pendingUrls !== null || encoding || photos.length > 0}
               onChange={(e) => {
                 setBulk(e.target.checked);
                 setRetrying(false);
@@ -266,33 +426,52 @@ export default function ImportScreen() {
               className={`mt-1 h-4 w-4 shrink-0 accent-ink disabled:opacity-40 ${inputFocus}`}
             />
             <span>
-              <span className="block font-medium text-ink">Bulk import</span>
+              <span className="block font-medium text-ink">{t('import.bulk')}</span>
               <span className="mt-0.5 block text-sm text-ink-subtle">
-                Paste several recipe links. Each is saved to your library
-                without a preview.
+                {t('import.bulkHint')}
               </span>
             </span>
           </label>
+          {bulk && (
+            <label className="mt-3 flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                checked={bulkTranslate}
+                disabled={busy || pendingUrls !== null}
+                onChange={(event) => setBulkTranslate(event.target.checked)}
+                className={`mt-1 h-4 w-4 shrink-0 accent-ink disabled:opacity-40 ${inputFocus}`}
+              />
+              <span className="block font-medium text-ink">
+                {t('import.translateInto')}
+              </span>
+            </label>
+          )}
           {error && (
             <p className="mt-2 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
               {error}
             </p>
           )}
-          {collections === undefined && <p role="status">Loading collections…</p>}
+          {collections === undefined && <p role="status">{t('common.loadingCollections')}</p>}
           <button
             type="button"
             onClick={() => void extract()}
-            disabled={busy || pendingUrls !== null || collections === undefined || input.trim() === ''}
+            disabled={
+              busy ||
+              encoding ||
+              pendingUrls !== null ||
+              collections === undefined ||
+              (input.trim() === '' && photos.length === 0)
+            }
             aria-busy={busy || undefined}
             className={`${primaryBtn} mt-3 inline-flex w-full items-center justify-center gap-2 py-3`}
             style={{ opacity: busy ? 1 : undefined }}
           >
             {busy && <SpinnerIcon className="block h-5 w-5 animate-spin" />}
             {busy
-              ? 'Extracting…'
+              ? t('import.extracting')
               : bulk
-                ? 'Extract recipes'
-                : 'Extract recipe'}
+                ? t('import.extractRecipes')
+                : t('import.extractRecipe')}
           </button>
           {busy && progress && (
             <div className="mt-3">
@@ -301,8 +480,11 @@ export default function ImportScreen() {
                 aria-valuemin={0}
                 aria-valuemax={progress.total}
                 aria-valuenow={progress.current}
-                aria-valuetext={`Reading recipe ${progress.current} of ${progress.total}`}
-                aria-label="Bulk import progress"
+                aria-valuetext={t('import.readingProgress', {
+                  current: progress.current,
+                  total: progress.total,
+                })}
+                aria-label={t('import.progressLabel')}
                 className="h-2 w-full overflow-hidden rounded-full bg-line"
               >
                 <div
@@ -318,25 +500,27 @@ export default function ImportScreen() {
                 className="mt-2 text-center text-sm text-ink-subtle"
                 role="status"
               >
-                Reading recipe {progress.current} of {progress.total} — this
-                takes a few seconds.
+                {t('import.readingProgressHint', {
+                  current: progress.current,
+                  total: progress.total,
+                })}
               </p>
             </div>
           )}
           {busy && !progress && (
             <p className="mt-3 text-center text-sm text-ink-subtle" role="status">
-              Reading the recipe — this takes a few seconds.
+              {photos.length > 0 ? t('import.readingPhotosHint') : t('import.readingHint')}
             </p>
           )}
         </>
       ) : (
         <>
           <div className="rounded-2xl border border-line bg-accent-soft px-4 py-3 text-sm text-ink">
-            Anything the extraction got wrong, fix it here before saving.
+            {t('import.fixBeforeSaving')}
           </div>
 
-          <CreateRecipeForm
-            initial={preview}
+          <ImportPreview
+            result={preview}
             collectionId={collectionId}
             formId={IMPORT_FORM_ID}
             onSubmitStatusChange={onSubmitStatusChange}
@@ -347,8 +531,8 @@ export default function ImportScreen() {
       )}
       {pendingUrls && (
         <SaveToCollectionSheet
-          title="Import recipes to"
-          createLabel="Create and import"
+          title={t('import.saveTo')}
+          createLabel={t('import.createAndImport')}
           onSave={(id) => runBulk(pendingUrls, id)}
           onCancel={() => setPendingUrls(null)}
         />

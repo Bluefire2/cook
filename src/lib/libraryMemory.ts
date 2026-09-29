@@ -1,17 +1,73 @@
+import { sortCookLogs } from './cookLogShape';
 import { recipePhotoIds } from './recipePhotos';
 import type { BackupGraphIds } from './backupImportRemap';
-import type { ChatMessage, Collection, Recipe } from './types';
+import type { ChatMessage, Collection, CookLog, Recipe } from './types';
 import type { CookStateRow } from './useCookState';
+
+/**
+ * What this session may do to a row. `owner` is the session's own tree.
+ * A shared row is `viewer` unless its grant (or, for a recipe, any shared
+ * collection listing it) says `editor`. Memory only, set when a pull
+ * publishes; never a `Recipe` or `Collection` field.
+ */
+export type LibraryAccess = 'owner' | 'editor' | 'viewer';
 
 export type ItemOrigin =
   | { kind: 'own' }
-  | { kind: 'shared'; ownerSub: string; ownerEmail?: string };
+  | {
+      kind: 'shared';
+      ownerSub: string;
+      ownerEmail?: string;
+      /** Missing means viewer. */
+      access?: 'editor' | 'viewer';
+    };
+
+export function originAccess(origin: ItemOrigin | undefined): LibraryAccess | undefined {
+  if (origin === undefined) {
+    return undefined;
+  }
+  if (origin.kind === 'own') {
+    return 'owner';
+  }
+  return origin.access === 'editor' ? 'editor' : 'viewer';
+}
+
+/**
+ * A shared recipe is editable when any shared collection that lists it was
+ * granted as editor: the stronger role wins, as it does on the server.
+ */
+export function withSharedRecipeAccess(
+  recipeOrigins: ReadonlyMap<string, ItemOrigin>,
+  collections: ReadonlyMap<string, Collection>,
+  collectionOrigins: ReadonlyMap<string, ItemOrigin>,
+): Map<string, ItemOrigin> {
+  const editable = new Set<string>();
+  for (const [id, collection] of collections) {
+    if (originAccess(collectionOrigins.get(id)) !== 'editor') {
+      continue;
+    }
+    for (const recipeId of collection.recipeIds) {
+      editable.add(recipeId);
+    }
+  }
+  const next = new Map<string, ItemOrigin>();
+  for (const [id, origin] of recipeOrigins) {
+    next.set(
+      id,
+      origin.kind === 'shared'
+        ? { ...origin, access: editable.has(id) ? 'editor' : 'viewer' }
+        : origin,
+    );
+  }
+  return next;
+}
 
 export type LibrarySnapshot = {
   recipes: ReadonlyMap<string, Recipe>;
   collections: ReadonlyMap<string, Collection>;
   chat: ReadonlyMap<string, ChatMessage>;
   cook: ReadonlyMap<string, CookStateRow>;
+  cookLogs: ReadonlyMap<string, CookLog>;
   remotePhotoIds: ReadonlySet<string>;
   pendingBlobs: ReadonlyMap<string, Blob>;
   recipeOrigins: ReadonlyMap<string, ItemOrigin>;
@@ -35,6 +91,7 @@ function empty(loaded: boolean): LibrarySnapshot {
     collections: new Map(),
     chat: new Map(),
     cook: new Map(),
+    cookLogs: new Map(),
     remotePhotoIds: new Set(),
     pendingBlobs: new Map(),
     recipeOrigins: new Map(),
@@ -46,6 +103,34 @@ function empty(loaded: boolean): LibrarySnapshot {
 }
 
 let snapshot: LibrarySnapshot = empty(false);
+
+/**
+ * Bumped when a local write starts. A pull that began at an older epoch, or
+ * while a write was still open, must not replace the library: its snapshot
+ * can still contain a recipe the write already deleted.
+ */
+let epoch = 0;
+let openWrites = 0;
+
+export function libraryEpoch(): number {
+  return epoch;
+}
+
+export function localWritesOpen(): number {
+  return openWrites;
+}
+
+export function beginLocalWrite(): number {
+  openWrites += 1;
+  epoch += 1;
+  return epoch;
+}
+
+export function endLocalWrite(): void {
+  if (openWrites > 0) {
+    openWrites -= 1;
+  }
+}
 
 function emit(next: LibrarySnapshot): void {
   snapshot = next;
@@ -59,6 +144,7 @@ function cloneMaps(from: LibrarySnapshot): {
   collections: Map<string, Collection>;
   chat: Map<string, ChatMessage>;
   cook: Map<string, CookStateRow>;
+  cookLogs: Map<string, CookLog>;
   remotePhotoIds: Set<string>;
   pendingBlobs: Map<string, Blob>;
   recipeOrigins: Map<string, ItemOrigin>;
@@ -71,6 +157,7 @@ function cloneMaps(from: LibrarySnapshot): {
     collections: new Map(from.collections),
     chat: new Map(from.chat),
     cook: new Map(from.cook),
+    cookLogs: new Map(from.cookLogs),
     remotePhotoIds: new Set(from.remotePhotoIds),
     pendingBlobs: new Map(from.pendingBlobs),
     recipeOrigins: new Map(from.recipeOrigins),
@@ -115,6 +202,7 @@ type OwnedPullSnapshot = {
   collections: Map<string, Collection>;
   chat: Map<string, ChatMessage>;
   cook: Map<string, CookStateRow>;
+  cookLogs: Map<string, CookLog>;
   remotePhotoIds: Set<string>;
   chatParentOrigins?: ReadonlyMap<string, string>;
   cookParentOrigins?: ReadonlyMap<string, string>;
@@ -148,6 +236,7 @@ export function replaceFromPull(next: OwnedPullSnapshot): void {
     collections: next.collections,
     chat: next.chat,
     cook: next.cook,
+    cookLogs: next.cookLogs,
     remotePhotoIds: next.remotePhotoIds,
     pendingBlobs: snapshot.pendingBlobs,
     recipeOrigins,
@@ -199,6 +288,7 @@ export function replaceFromPullWithShared(
     collections,
     chat: owned.chat,
     cook: owned.cook,
+    cookLogs: owned.cookLogs,
     remotePhotoIds: new Set([...owned.remotePhotoIds, ...shared.remotePhotoIds]),
     pendingBlobs: snapshot.pendingBlobs,
     recipeOrigins,
@@ -209,10 +299,11 @@ export function replaceFromPullWithShared(
   });
 }
 
-export function upsertRecipe(recipe: Recipe): void {
+/** `origin` defaults to own; an editor's optimistic save passes the shared origin through. */
+export function upsertRecipe(recipe: Recipe, origin: ItemOrigin = { kind: 'own' }): void {
   const next = cloneMaps(snapshot);
   next.recipes.set(recipe.id, recipe);
-  next.recipeOrigins.set(recipe.id, { kind: 'own' });
+  next.recipeOrigins.set(recipe.id, origin);
   emit({ ...snapshot, ...next });
 }
 
@@ -228,6 +319,15 @@ export function removeRecipeLocal(id: string): void {
       next.chat.delete(messageId);
       next.chatParentOrigins.delete(messageId);
       for (const photoId of message.photoIds ?? []) {
+        next.pendingBlobs.delete(photoId);
+        next.remotePhotoIds.delete(photoId);
+      }
+    }
+  }
+  for (const [logId, log] of next.cookLogs) {
+    if (log.recipeId === id) {
+      next.cookLogs.delete(logId);
+      for (const photoId of log.photoIds ?? []) {
         next.pendingBlobs.delete(photoId);
         next.remotePhotoIds.delete(photoId);
       }
@@ -299,6 +399,18 @@ export function upsertCook(row: CookStateRow): void {
     row.recipeId,
     next.recipeOrigins,
   );
+  emit({ ...snapshot, ...next });
+}
+
+export function upsertCookLog(log: CookLog): void {
+  const next = cloneMaps(snapshot);
+  next.cookLogs.set(log.id, log);
+  emit({ ...snapshot, ...next });
+}
+
+export function removeCookLogLocal(id: string): void {
+  const next = cloneMaps(snapshot);
+  next.cookLogs.delete(id);
   emit({ ...snapshot, ...next });
 }
 
@@ -391,6 +503,14 @@ export function getCollectionOrigin(id: string): ItemOrigin | undefined {
   return snapshot.collectionOrigins.get(id);
 }
 
+export function recipeAccess(id: string): LibraryAccess | undefined {
+  return originAccess(snapshot.recipeOrigins.get(id));
+}
+
+export function collectionAccess(id: string): LibraryAccess | undefined {
+  return originAccess(snapshot.collectionOrigins.get(id));
+}
+
 export function isSharedRecipe(id: string): boolean {
   return snapshot.recipeOrigins.get(id)?.kind === 'shared';
 }
@@ -421,6 +541,18 @@ export function listChat(recipeId: string): ChatMessage[] {
 
 export function getCook(recipeId: string): CookStateRow | undefined {
   return snapshot.cook.get(recipeId);
+}
+
+export function getCookLog(id: string): CookLog | undefined {
+  return snapshot.cookLogs.get(id);
+}
+
+/** Newest cook first; every entry when `recipeId` is omitted. */
+export function listCookLogs(recipeId?: string): CookLog[] {
+  const logs = [...snapshot.cookLogs.values()];
+  return sortCookLogs(
+    recipeId === undefined ? logs : logs.filter((log) => log.recipeId === recipeId),
+  );
 }
 
 export function getPendingBlob(id: string): Blob | undefined {
@@ -516,8 +648,19 @@ export function ownedBackupGraphIds(): BackupGraphIds {
     }
     recipeIds.add(row.recipeId);
   }
+  const cookLogIds = new Set<string>();
+  for (const log of snapshot.cookLogs.values()) {
+    if (!isOwnedRecipeId(log.recipeId)) {
+      continue;
+    }
+    cookLogIds.add(log.id);
+    recipeIds.add(log.recipeId);
+    for (const id of log.photoIds ?? []) {
+      photoIds.add(id);
+    }
+  }
 
-  return { recipeIds, collectionIds, chatMessageIds, photoIds };
+  return { recipeIds, collectionIds, chatMessageIds, cookLogIds, photoIds };
 }
 
 export function discardLegacyCookDb(): void {

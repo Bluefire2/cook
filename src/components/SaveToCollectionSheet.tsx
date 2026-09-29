@@ -1,4 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react';
+import { useT } from '../i18n';
 import { collectionStore, useCollections } from '../lib/collectionStore';
 import { SpinnerIcon } from '../lib/icons';
 import { inputClass, primaryBtn, secondaryBtn } from '../lib/uiClasses';
@@ -42,14 +43,17 @@ function SaveActionButton({
 export default function SaveToCollectionSheet({
   onSave,
   onCancel,
-  title = 'Save to',
-  createLabel = 'Create and save',
+  title,
+  createLabel,
 }: {
   onSave: (collectionId: string | undefined) => void | Promise<void>;
   onCancel: () => void;
   title?: string;
   createLabel?: string;
 }) {
+  const t = useT();
+  const heading = title ?? t('saveSheet.saveTo');
+  const createText = createLabel ?? t('saveSheet.createAndSave');
   const collections = useCollections()?.filter(
     (collection) => !collectionStore.isShared(collection.id),
   );
@@ -72,7 +76,7 @@ export default function SaveToCollectionSheet({
     try {
       await onSave(collectionId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save the recipe.");
+      setError(err instanceof Error ? err.message : t('error.recipeSave'));
       setPending(null);
     } finally {
       inFlight.current = false;
@@ -102,7 +106,7 @@ export default function SaveToCollectionSheet({
       await onSave(id);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Couldn't save the collection.",
+        err instanceof Error ? err.message : t('error.collectionSave'),
       );
       setPending(null);
     } finally {
@@ -112,8 +116,8 @@ export default function SaveToCollectionSheet({
 
   return (
     <Sheet onClose={onCancel} dismissible={!busy}>
-      <h2 className="text-lg font-semibold">{title}</h2>
-      {collections === undefined && <p role="status">Loading collections…</p>}
+      <h2 className="text-lg font-semibold">{heading}</h2>
+      {collections === undefined && <p role="status">{t('common.loadingCollections')}</p>}
       <SaveActionButton
         active={pending === UNFILED}
         busy={busy}
@@ -121,11 +125,11 @@ export default function SaveToCollectionSheet({
         onClick={() => void save(undefined)}
         className="mt-3 w-full rounded-xl bg-surface-muted py-3 font-medium text-ink hover:bg-line active:bg-line"
       >
-        No collection
+        {t('saveSheet.noCollection')}
       </SaveActionButton>
       {collections !== undefined && collections.length > 0 && (
         <div className="mt-4 border-t border-line pt-3">
-          <p className="text-sm font-medium text-ink-muted">Collections</p>
+          <p className="text-sm font-medium text-ink-muted">{t('saveSheet.collections')}</p>
           {collections.map((collection) => (
             <SaveActionButton
               key={collection.id}
@@ -147,14 +151,14 @@ export default function SaveToCollectionSheet({
         }}
       >
         <label className="text-sm font-medium text-ink" htmlFor="save-new-collection">
-          New collection
+          {t('common.newCollection')}
         </label>
         <input
           id="save-new-collection"
           autoFocus={collections?.length === 0}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Name"
+          placeholder={t('common.name')}
           disabled={busy || collections === undefined}
           className={`${inputClass} mt-1.5`}
         />
@@ -166,7 +170,7 @@ export default function SaveToCollectionSheet({
           disabled={name.trim() === '' || collections === undefined}
           className={`${primaryBtn} mt-3 w-full py-3`}
         >
-          {createLabel}
+          {createText}
         </SaveActionButton>
       </form>
       <button
@@ -175,7 +179,7 @@ export default function SaveToCollectionSheet({
         onClick={onCancel}
         className="mt-2 w-full py-2.5 text-sm text-ink-muted hover:text-ink"
       >
-        Cancel
+        {t('common.cancel')}
       </button>
     </Sheet>
   );

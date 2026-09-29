@@ -1,0 +1,287 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { languageName, useLocale, useT } from '../i18n';
+import type { ImportRecipeResult } from '../lib/importApi';
+import { importPreviewRules, translatedPreviewDraft } from '../lib/importPreview';
+import { translateRecipe } from '../lib/translateApi';
+import { SpinnerIcon } from '../lib/icons';
+import type { Recipe, RecipeDraft } from '../lib/types';
+import { inputFocus } from '../lib/uiClasses';
+import CreateRecipeForm, { type CreateRecipeSubmitStatus } from './CreateRecipeForm';
+import LanguagePicker from './LanguagePicker';
+
+const noticeClass = 'rounded-2xl border border-line bg-accent-soft px-4 py-3 text-sm text-ink';
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AbortError';
+}
+
+function pastedImport(recipe: RecipeDraft): boolean {
+  return recipe.sourceUrl === undefined || recipe.sourceUrl.trim() === '';
+}
+
+/**
+ * Single-recipe import preview. `sourceLang` is the original text's language.
+ * The translated draft's language is the UI language, applied at save.
+ * The form's own language field is hidden. This line owns `sourceLang`, and
+ * each draft's `lang` is set at save.
+ */
+export default function ImportPreview({
+  result,
+  collectionId,
+  formId,
+  onSubmitStatusChange,
+  onCreated,
+  onCancel,
+}: {
+  result: ImportRecipeResult;
+  collectionId?: string;
+  formId?: string;
+  onSubmitStatusChange?: (status: CreateRecipeSubmitStatus) => void;
+  onCreated: (recipe: Recipe) => void;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  const locale = useLocale();
+  const [original] = useState(result.recipe);
+  const pasted = pastedImport(original);
+  const [sourceLang, setSourceLang] = useState(original.lang);
+  const [translationFailed, setTranslationFailed] = useState(result.translationFailed === true);
+  const [held, setHeld] = useState<{ target: string; recipe: RecipeDraft } | undefined>(() => {
+    if (result.translationFailed === true || result.translation === undefined) {
+      return undefined;
+    }
+    return {
+      target: result.translation.lang,
+      recipe: translatedPreviewDraft(original, result.translation.recipe),
+    };
+  });
+  const [translateChecked, setTranslateChecked] = useState(true);
+  const [translating, setTranslating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const heldForUi = held !== undefined && held.target === locale;
+  const rules = importPreviewRules({
+    sourceLang,
+    uiLang: locale,
+    translationFailed,
+    pasted,
+    translateChecked,
+  });
+  const showingTranslated = rules.showCheckbox && translateChecked && heldForUi;
+  const [view, setView] = useState<'original' | 'translated'>(showingTranslated ? 'translated' : 'original');
+  const viewRef = useRef(view);
+  const editRef = useRef({ dirty: false, photosPicked: false });
+  const sourceLangRef = useRef(sourceLang);
+  sourceLangRef.current = sourceLang;
+
+  const displayed: 'original' | 'translated' =
+    view === 'translated' && heldForUi && rules.showCheckbox ? 'translated' : 'original';
+  const saveRules = importPreviewRules({
+    sourceLang,
+    uiLang: locale,
+    translationFailed,
+    pasted,
+    translateChecked: displayed === 'translated',
+  });
+  const saveLangRef = useRef(saveRules.saveLang);
+  saveLangRef.current = saveRules.saveLang;
+  const resolveLang = useCallback(() => saveLangRef.current, []);
+
+  const onEditStateChange = useCallback((state: { dirty: boolean; photosPicked: boolean }) => {
+    editRef.current = state;
+  }, []);
+
+  const confirmDiscardRef = useRef<() => boolean>(() => true);
+  confirmDiscardRef.current = () => {
+    const { dirty, photosPicked } = editRef.current;
+    if (!dirty) {
+      return true;
+    }
+    const message = photosPicked ? t('import.discardEditsAndPhotos') : t('import.discardEdits');
+    return window.confirm(message);
+  };
+
+  const showVersion = (next: 'original' | 'translated') => {
+    viewRef.current = next;
+    setView(next);
+  };
+
+  useEffect(() => {
+    if (translationFailed || !rules.showCheckbox || !translateChecked || heldForUi) {
+      setTranslating(false);
+      return;
+    }
+    const ac = new AbortController();
+    let cancelled = false;
+    setTranslating(true);
+    const sourceAtFetch = sourceLangRef.current;
+    translateRecipe({
+      recipe: original,
+      target: locale,
+      ...(sourceAtFetch !== undefined ? { sourceLang: sourceAtFetch } : {}),
+      signal: ac.signal,
+    })
+      .then((recipe) => {
+        if (cancelled) {
+          return;
+        }
+        setHeld({ target: locale, recipe: translatedPreviewDraft(original, recipe) });
+        if (viewRef.current === 'translated') {
+          return;
+        }
+        if (!confirmDiscardRef.current()) {
+          setTranslateChecked(false);
+          return;
+        }
+        viewRef.current = 'translated';
+        setView('translated');
+      })
+      .catch((err: unknown) => {
+        if (cancelled || isAbortError(err)) {
+          return;
+        }
+        if (err instanceof Error && err.message === t('error.sessionExpired')) {
+          setError(err.message);
+          setTranslateChecked(false);
+          return;
+        }
+        setTranslationFailed(true);
+        viewRef.current = 'original';
+        setView('original');
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setTranslating(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
+  }, [translationFailed, rules.showCheckbox, translateChecked, heldForUi, locale, original, t]);
+
+  const onToggle = (checked: boolean) => {
+    if (translating) {
+      return;
+    }
+    if (checked) {
+      if (heldForUi && viewRef.current !== 'translated' && !confirmDiscardRef.current()) {
+        return;
+      }
+      setTranslateChecked(true);
+      if (heldForUi) {
+        showVersion('translated');
+      }
+      return;
+    }
+    if (viewRef.current === 'translated' && !confirmDiscardRef.current()) {
+      return;
+    }
+    setTranslateChecked(false);
+    showVersion('original');
+  };
+
+  const onSourceLang = (next: string | undefined) => {
+    if (next === sourceLang || translating) {
+      return;
+    }
+    const nextVisible = importPreviewRules({
+      sourceLang: next,
+      uiLang: locale,
+      translationFailed,
+      pasted,
+      translateChecked: true,
+    }).showCheckbox;
+    const appearing = nextVisible && !rules.showCheckbox;
+    const checked = nextVisible ? (appearing ? true : translateChecked) : translateChecked;
+    const nextView: 'original' | 'translated' =
+      nextVisible && checked && heldForUi ? 'translated' : 'original';
+    if (nextView !== viewRef.current && !confirmDiscardRef.current()) {
+      return;
+    }
+    setSourceLang(next);
+    if (appearing) {
+      setTranslateChecked(true);
+    }
+    if (nextView !== viewRef.current) {
+      showVersion(nextView);
+    }
+  };
+
+  const guessedName = sourceLang !== undefined ? languageName(sourceLang, locale) : undefined;
+  const guessLine =
+    sourceLang !== undefined
+      ? t('import.looksLike', { language: guessedName ?? sourceLang })
+      : t('import.couldNotTellLanguage');
+  const shown = displayed === 'translated' && held ? held.recipe : original;
+
+  return (
+    <>
+      {translationFailed && (
+        <p className={`${noticeClass} mt-3`} role="status">
+          {t('import.translateFailedNotice')}
+        </p>
+      )}
+
+      <div className={pasted ? `${noticeClass} mt-3` : 'mt-3'}>
+        <label htmlFor="import-source-lang" className="block text-sm text-ink">
+          {guessLine}
+        </label>
+        <LanguagePicker
+          id="import-source-lang"
+          value={sourceLang}
+          disabled={translating}
+          onChange={onSourceLang}
+        />
+      </div>
+
+      {rules.showCheckbox && (
+        <label className="mt-3 flex cursor-pointer items-start gap-3">
+          <input
+            type="checkbox"
+            checked={translateChecked}
+            disabled={translating}
+            onChange={(event) => onToggle(event.target.checked)}
+            className={`mt-1 h-4 w-4 shrink-0 accent-ink disabled:opacity-40 ${inputFocus}`}
+          />
+          <span>
+            <span className="block font-medium text-ink">
+              {t('import.translateInto')}
+            </span>
+            {rules.showPastedHint && (
+              <span className="mt-0.5 block text-sm text-ink-subtle">
+                {t('import.pastedOriginalNotKept')}
+              </span>
+            )}
+          </span>
+        </label>
+      )}
+
+      {translating && (
+        <p role="status" className="mt-2 flex items-center gap-2 text-sm text-ink-subtle">
+          <SpinnerIcon className="h-4 w-4 animate-spin" /> {t('import.translating')}
+        </p>
+      )}
+
+      {error && (
+        <p role="alert" className="mt-3 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
+          {error}
+        </p>
+      )}
+
+      {/* RecipeForm copies `initial` once, so the key remounts it on original vs translated. */}
+      <CreateRecipeForm
+        formKey={displayed}
+        initial={shown}
+        collectionId={collectionId}
+        formId={formId}
+        submitLocked={translating}
+        resolveLang={resolveLang}
+        hideLanguage
+        onEditStateChange={onEditStateChange}
+        onSubmitStatusChange={onSubmitStatusChange}
+        onCreated={onCreated}
+        onCancel={onCancel}
+      />
+    </>
+  );
+}

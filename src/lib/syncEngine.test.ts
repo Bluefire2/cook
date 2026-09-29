@@ -2,10 +2,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { decideSyncToast, MAX_SHARED_PULL_ATTEMPTS, pullAll } from './syncEngine';
 import {
   addPendingBlob,
+  beginLocalWrite,
   clearLibrary,
+  endLocalWrite,
   getSnapshot,
+  originAccess,
+  removeRecipeLocal,
   replaceFromPull,
   subscribe,
+  type ItemOrigin,
 } from './libraryMemory';
 import { installSharedRows } from './testLibrary';
 import {
@@ -125,6 +130,7 @@ describe('applyPullChanges', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set<string>(),
       chatParentOrigins: new Map<string, string>(),
       cookParentOrigins: new Map<string, string>(),
@@ -185,6 +191,7 @@ describe('applyPullChanges', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set<string>(),
       chatParentOrigins: new Map<string, string>(),
       cookParentOrigins: new Map<string, string>(),
@@ -215,12 +222,115 @@ describe('applyPullChanges', () => {
     expect(acc.collections.size).toBe(0);
   });
 
+  const COOK_LOG_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const COOK_RECIPE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+  function emptyAcc() {
+    return {
+      recipes: new Map(),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set<string>(),
+      chatParentOrigins: new Map<string, string>(),
+      cookParentOrigins: new Map<string, string>(),
+    };
+  }
+
+  it('upserts live cook logs compacted and drops tombstones', () => {
+    const acc = emptyAcc();
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+      cookLogs: [
+        {
+          id: COOK_LOG_ID,
+          recipeId: COOK_RECIPE_ID,
+          cookedOn: '2026-09-20',
+          rating: 4,
+          notes: '  Less salt.  ',
+          stray: 'dropped',
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    });
+    expect(acc.cookLogs.get(COOK_LOG_ID)).toEqual({
+      id: COOK_LOG_ID,
+      recipeId: COOK_RECIPE_ID,
+      cookedOn: '2026-09-20',
+      createdAt: 1,
+      updatedAt: 2,
+      rating: 4,
+      notes: 'Less salt.',
+    });
+
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+      cookLogs: [{ id: COOK_LOG_ID, deletedAt: 9 }],
+    });
+    expect(acc.cookLogs.size).toBe(0);
+  });
+
+  it('drops an unusable live cook log from the map', () => {
+    const acc = emptyAcc();
+    acc.cookLogs.set(COOK_LOG_ID, {
+      id: COOK_LOG_ID,
+      recipeId: COOK_RECIPE_ID,
+      cookedOn: '2026-09-20',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+      cookLogs: [
+        {
+          id: COOK_LOG_ID,
+          recipeId: COOK_RECIPE_ID,
+          cookedOn: '2026-02-30',
+          createdAt: 1,
+          updatedAt: 3,
+        },
+      ],
+    });
+    expect(acc.cookLogs.size).toBe(0);
+  });
+
+  it('leaves cook logs alone when an old server omits the key', () => {
+    const acc = emptyAcc();
+    const log = {
+      id: COOK_LOG_ID,
+      recipeId: COOK_RECIPE_ID,
+      cookedOn: '2026-09-20',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    acc.cookLogs.set(COOK_LOG_ID, log);
+    applyPullChanges(acc, {
+      recipes: [],
+      chatMessages: [],
+      cookState: [],
+      photos: [],
+    });
+    expect(acc.cookLogs.get(COOK_LOG_ID)).toEqual(log);
+  });
+
   it('records shared parent provenance only in sidecars and drops it on tombstone', () => {
     const acc = {
       recipes: new Map(),
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set<string>(),
       chatParentOrigins: new Map<string, string>(),
       cookParentOrigins: new Map<string, string>(),
@@ -337,6 +447,7 @@ describe('pullAll', () => {
       collections: new Map([['old-owned-collection', collection('old-owned-collection', 'Old')]]),
       chat: new Map([['old-message', chat('old-message', oldOwn.id, 'old')]]),
       cook: new Map([[oldOwn.id, cook(oldOwn.id, 1)]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(['old-owned-photo']),
     });
     installSharedRows({
@@ -398,6 +509,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(['prior-owned-photo']),
     });
     installSharedRows({
@@ -471,6 +583,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map([['old-message', chat('old-message', 'old', 'hi')]]),
       cook: new Map([['old', cook('old', 1)]]),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(['old-photo']),
       chatParentOrigins: new Map([['old-message', 'former-owner']]),
       cookParentOrigins: new Map([['old', 'former-owner']]),
@@ -511,6 +624,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
     let ownedCalls = 0;
@@ -558,6 +672,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(),
     });
 
@@ -644,10 +759,12 @@ describe('pullAll', () => {
     expect(snapshot.recipeOrigins.get('shared-one')).toEqual({
       kind: 'shared',
       ownerSub: 'shared-owner',
+      access: 'viewer',
     });
     expect(snapshot.recipeOrigins.get('shared-two')).toEqual({
       kind: 'shared',
       ownerSub: 'shared-owner',
+      access: 'viewer',
     });
     expect(snapshot.collections.get('collection-collision')?.name).toBe('Owned collection');
     expect(snapshot.collectionOrigins.get('collection-collision')).toEqual({ kind: 'own' });
@@ -655,6 +772,7 @@ describe('pullAll', () => {
     expect(snapshot.collectionOrigins.get('shared-collection')).toEqual({
       kind: 'shared',
       ownerSub: 'shared-owner',
+      access: 'viewer',
     });
     expect([...snapshot.remotePhotoIds]).toEqual([
       'owned-photo',
@@ -692,17 +810,52 @@ describe('pullAll', () => {
       kind: 'shared',
       ownerSub: 'owner-a',
       ownerEmail: 'olivia@example.com',
+      access: 'viewer',
     });
     expect(snapshot.collectionOrigins.get('dinners-b')).toEqual({
       kind: 'shared',
       ownerSub: 'owner-b',
       ownerEmail: 'bruno@example.com',
+      access: 'viewer',
     });
     expect(snapshot.collectionOrigins.get('dinners-c')).toEqual({
       kind: 'shared',
       ownerSub: 'owner-c',
+      access: 'viewer',
     });
     expect(snapshot.collections.get('dinners-a')).not.toHaveProperty('ownerEmail');
+  });
+
+  it('publishes each shared role, and the stronger one for a recipe in two collections', async () => {
+    const result = await pullAll({
+      pullPage: async () => ownedPage(ownedChanges()),
+      pullSharedPage: async () =>
+        sharedPage({
+          collections: [
+            { ...collection('edit', 'Edit', ['both', 'edit-only']), ownerSub: 'o', role: 'editor' },
+            { ...collection('view', 'View', ['both', 'view-only']), ownerSub: 'o', role: 'viewer' },
+            { ...collection('legacy', 'Legacy', ['legacy-only']), ownerSub: 'o' },
+          ],
+          recipes: ['both', 'edit-only', 'view-only', 'legacy-only'].map((id) => ({
+            ...recipe(id, id),
+            ownerSub: 'o',
+          })),
+        }),
+    });
+
+    const snapshot = getSnapshot();
+    expect(result.outcome).toBe('ok');
+    const access = (map: ReadonlyMap<string, ItemOrigin>, id: string) =>
+      originAccess(map.get(id));
+    expect(access(snapshot.collectionOrigins, 'edit')).toBe('editor');
+    expect(access(snapshot.collectionOrigins, 'view')).toBe('viewer');
+    expect(access(snapshot.collectionOrigins, 'legacy')).toBe('viewer');
+    expect(access(snapshot.recipeOrigins, 'both')).toBe('editor');
+    expect(access(snapshot.recipeOrigins, 'edit-only')).toBe('editor');
+    expect(access(snapshot.recipeOrigins, 'view-only')).toBe('viewer');
+    expect(access(snapshot.recipeOrigins, 'legacy-only')).toBe('viewer');
+    expect(snapshot.recipes.get('both')).not.toHaveProperty('access');
+    expect(snapshot.collections.get('edit')).not.toHaveProperty('role');
   });
 
   it('keeps an open shared recipe in every snapshot while a successful refresh is in flight', async () => {
@@ -863,6 +1016,7 @@ describe('pullAll', () => {
       collections: new Map(),
       chat: new Map(),
       cook: new Map(),
+      cookLogs: new Map(),
       remotePhotoIds: new Set(['prior-owned-photo']),
     });
     installSharedRows({
@@ -1044,6 +1198,66 @@ describe('pullAll', () => {
   });
 });
 
+describe('pullAll overlapping a local delete', () => {
+  it('does not put back a recipe deleted while the pull was in flight', async () => {
+    const kept = recipe('kept', 'Kept');
+    replaceFromPull({
+      recipes: new Map([[kept.id, kept]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    let release: (page: PullPage) => void = () => {};
+    const gate = new Promise<PullPage>((resolve) => {
+      release = resolve;
+    });
+    const pending = pullAll({
+      pullPage: () => gate,
+      pullSharedPage: async () => sharedPage(),
+    });
+    beginLocalWrite();
+    removeRecipeLocal(kept.id);
+    endLocalWrite();
+    release(ownedPage(ownedChanges({ recipes: [pullDoc(kept)] })));
+
+    const result = await pending;
+
+    expect(result.outcome).toBe('superseded');
+    expect(getSnapshot().recipes.has(kept.id)).toBe(false);
+  });
+
+  it('does not publish a pull that started while a delete was still open', async () => {
+    const kept = recipe('kept-open', 'Kept');
+    replaceFromPull({
+      recipes: new Map([[kept.id, kept]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    beginLocalWrite();
+    removeRecipeLocal(kept.id);
+    let release: (page: PullPage) => void = () => {};
+    const gate = new Promise<PullPage>((resolve) => {
+      release = resolve;
+    });
+    const pending = pullAll({
+      pullPage: () => gate,
+      pullSharedPage: async () => sharedPage(),
+    });
+    endLocalWrite();
+    release(ownedPage(ownedChanges({ recipes: [pullDoc(kept)] })));
+
+    const result = await pending;
+
+    expect(result.outcome).toBe('superseded');
+    expect(getSnapshot().recipes.has(kept.id)).toBe(false);
+  });
+});
+
 describe('decideSyncToast', () => {
   it('toasts a material refresh', () => {
     expect(decideSyncToast({ outcome: 'ok', pushed: 0, applied: 3 })).toEqual({
@@ -1063,9 +1277,10 @@ describe('decideSyncToast', () => {
     });
   });
 
-  it('stays silent for signed-out, offline, and skipped', () => {
+  it('stays silent for signed-out, offline, skipped, and superseded', () => {
     expect(decideSyncToast({ outcome: 'offline', pushed: 0, applied: 0 })).toBeNull();
     expect(decideSyncToast({ outcome: 'signedOut', pushed: 1, applied: 0 })).toBeNull();
     expect(decideSyncToast({ outcome: 'skipped', pushed: 0, applied: 0 })).toBeNull();
+    expect(decideSyncToast({ outcome: 'superseded', pushed: 0, applied: 0 })).toBeNull();
   });
 });

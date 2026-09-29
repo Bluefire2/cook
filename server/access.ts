@@ -201,7 +201,7 @@ export function inviteDeadPageHtml(reason: InviteDeadReason): string {
     return pageHtml(
       'Invite expired',
       '<h1>This invite link has expired</h1>' +
-        '<p>Ask the owner for a new link, or sign in to request access.</p>' +
+        '<p>Ask whoever sent it for a new link, or sign in to request access.</p>' +
         '<p><a href="/">Home</a></p>',
     );
   }
@@ -209,7 +209,7 @@ export function inviteDeadPageHtml(reason: InviteDeadReason): string {
     return pageHtml(
       'Invite used',
       '<h1>This invite link has already been used</h1>' +
-        '<p>If you already joined, try signing in. Otherwise ask the owner ' +
+        '<p>If you already joined, try signing in. Otherwise ask whoever sent it ' +
         'for a new link.</p>' +
         '<p><a href="/">Home</a></p>',
     );
@@ -217,7 +217,7 @@ export function inviteDeadPageHtml(reason: InviteDeadReason): string {
   return pageHtml(
     'Invite not valid',
     '<h1>This invite link is not valid</h1>' +
-      '<p>Ask the owner for a new link, or sign in to request access.</p>' +
+      '<p>Ask whoever sent it for a new link, or sign in to request access.</p>' +
       '<p><a href="/">Home</a></p>',
   );
 }

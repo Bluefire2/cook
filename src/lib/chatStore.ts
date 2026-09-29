@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react';
+import { t } from '../i18n';
 import {
   clearChatLocal,
   getSnapshot,
@@ -20,9 +21,7 @@ async function uploadMessagePhotos(message: ChatMessage): Promise<void> {
     const result = await postPhoto(photoId, message.recipeId, message.createdAt, blob);
     if (result !== 'ok') {
       throw new Error(
-        result === 'signedOut'
-          ? 'Please sign in again — your session expired.'
-          : "Couldn't save the photo.",
+        result === 'signedOut' ? t('error.sessionExpired') : t('error.photoSave'),
       );
     }
     markPhotoRemote(photoId);
@@ -49,9 +48,7 @@ export const chatStore = {
       const result = await pushOps([{ kind: 'chat.put', payload: message }]);
       if (result !== 'ok') {
         throw new Error(
-          result === 'signedOut'
-            ? 'Please sign in again — your session expired.'
-            : "Couldn't save the message.",
+          result === 'signedOut' ? t('error.sessionExpired') : t('error.messageSave'),
         );
       }
     } catch (err) {
@@ -76,9 +73,7 @@ export const chatStore = {
         upsertChat(message);
       }
       throw new Error(
-        result === 'signedOut'
-          ? 'Please sign in again — your session expired.'
-          : "Couldn't clear the chat.",
+        result === 'signedOut' ? t('error.sessionExpired') : t('error.chatClear'),
       );
     }
   },

@@ -22,10 +22,10 @@ stub that always returns 401; Cloud Run serves `/api/import` from
 `server/importRoute.ts`.
 
 Recipe import (web URL/paste, extension, evals) is one pipeline in
-`server/recipeImport.ts`: `importFromHtml` / `importFromSource` take the
-Gemini client and model as arguments and return an `ImportOutcome`; routes map
-outcomes to HTTP. `normalizeImportedRecipe` is the only cleanup of model
-output for import.
+`server/recipeImport.ts`: `importFromHtml` / `importFromSource` /
+`importFromImages` take the Gemini client and model as arguments and return an
+`ImportOutcome`; routes map outcomes to HTTP. `normalizeImportedRecipe` is the
+only cleanup of model output for import.
 
 ## How to run it
 
@@ -68,8 +68,11 @@ UI (screens, components)
 library data. Screens must not `fetch`. Do not add fields to `Recipe`,
 `ChatMessage`, or `CookStateRow` — `compactRecipe` strips unknown keys, and
 `src/lib/recipeStore.test.ts` asserts the exact key set. That test is a
-schema lock; do not "fix" it by expanding the allow-list. Collections are a
-separate store kind. View-only grants live under
+schema lock; do not "fix" it by expanding the allow-list. Sharing avoided a
+`Recipe` field (`docs/plans/shared-recipes.md`, D3); optional `Recipe.lang`
+is the first deliberate exception since `galleryPhotoIds`
+(`docs/constitutions/i18n.md`), and code must work when `lang` is missing.
+Collections are a separate store kind. Grants live under
 `collections/{id}/grants/{viewerSub}` plus a reverse
 `incomingShares/{viewerSub}` index; they are REST, not LWW push. Shared
 rows stay in the owner's tree and carry origin metadata beside `Recipe`.
@@ -92,10 +95,20 @@ No refresh tokens, no extra Google APIs, no Auth.js.
   **no cache**. Firestore **`members/{sub}`** with `status: 'active'` is the
   member tier, keyed by Google **`sub`**. Owners short-circuit before any
   member read. Approve ordinary people from **`/admin`**, not by editing
-  `ALLOWED_EMAILS` (every address there is an admin). Owners can also mint a
-  single-use 7-day bearer invite URL on `/admin`; the first verified Google
-  account that finishes consent from that link is written as an active member
-  and listed under Approved.
+  `ALLOWED_EMAILS` (every address there is an admin). Owners mint single-use
+  7-day bearer invite URLs on `/admin` and can revoke any unused one. An
+  admitted member who is not an owner can mint one such link from Settings
+  (`POST /api/invites`) and can admit up to 5 people that way; creating
+  another replaces their previous unused link, and they do not see `/admin`.
+  A signed-in person can also mint from the library header: an owner uses
+  the admin mint (`POST /api/admin/invites`), and a member confirms in a
+  sheet before minting (`POST /api/invites`).
+  Removing a member revokes their unused links, and redeem refuses a link
+  whose minter is no longer admitted. The invite landing page runs that
+  same check before the join page; redeem still decides inside its
+  transaction. The first verified Google account that
+  finishes consent from a link is written as an active member and listed
+  under Approved. `approvedBy` is the minter's `sub`.
 - **401 = denied** (client may invalidate the session). **503 = unknown**
   (Firestore blip — do not sign the user out). Membership **denied** must never
   map to 503; membership **unknown** must never map to 401.
@@ -146,8 +159,8 @@ inside the IIFE — that wedges sync after a signed-out run.
 
 ## Sharing
 
-Named collections can be shared view-only with existing admitted members; the
-default collection remains private. Shared refresh is a **full positional
+Named collections can be shared with existing admitted members as viewer or
+editor; the default collection remains private. Shared refresh is a **full positional
 reread** of live incoming grants and current collection contents, not an
 `updatedAt` delta. The continuation cursor is HMAC-signed with a domain
 separate from the session cookie. If grants or collection membership change
@@ -161,6 +174,25 @@ emulator). Keep that trade unless shared pulls get much slower. After owned pull
 completes, a non-auth shared failure publishes the completed owned-only
 snapshot and returns the existing error outcome; a shared 401/403 still
 clears the session and library.
+
+Each grant has `role: 'viewer' | 'editor'`, copied onto its
+`incomingShares` row; a missing or unknown role reads as viewer (no
+backfill). The owner changes it with `POST /api/collections/:id/grants/role`
+`{ sub, role }` (404 for anyone else, 400 for a bad role); the 20-grant cap
+counts both roles. Add by email to someone already granted applies the
+chosen role (`orchestrateGrantAdd` `onExisting: 'applyRole'`); a grant path
+that must not change an existing role passes `'keepRole'`. An editor saves with `recipe.put` plus op-level
+`shared: true`. The server resolves owner and role from the session's shares
+inside the writing transaction (share → collection → listed live recipe,
+stronger role wins), writes the owner's row with the owner's `id`,
+`createdAt`, and photo ids, clamps `updatedAt` to server time before the LWW
+compare (and stores the clamped value), and rejects (`invalid`) a viewer, an unadmitted
+owner, or any photo-id change. The flag only narrows: without it a put is an
+ordinary own-tree write. Only the owner deletes; `recipe.delete` from a
+session with no own row that reaches the id through a share is `invalid`.
+Client role is in-memory `access` on the shared origin, never a `Recipe`
+field. Editors get Edit and Ask Apply (photos always kept), no photo, delete,
+move, or cook-log controls.
 
 Collection delete tombstones live grants in the same transaction. Forward
 grants carry an internal `active` flag, and the cascade time is
@@ -201,9 +233,17 @@ For a shared photo, metadata only indexes its parent recipe. Authorization
 still freshly reads the incoming share and live collection, then requires
 `canViewRecipe` and `recipeListsPhoto`; metadata alone never authorizes. Ask
 text works on shared recipes, but Ask photo attachments are intentionally
-unavailable. There is no viewer leave flow. Viewer-owned shared-parent chat
-can remain orphaned server-side after revoke; do not invent cleanup as part
-of sharing.
+unavailable.
+
+A grantee — viewer or editor, same endpoint, there is no separate "viewer
+leave" — can leave a shared collection with `POST /api/shared/leave`
+(`{ ownerSub, collectionId }`, grantee is the session sub only); it
+tombstones the same forward-grant + `incomingShares` pair as owner revoke,
+reusing that code path (so the tombstone omits `role` the same way a revoke
+does). A second leave, or a leave after the owner already revoked, 404s;
+the client treats that 404 as success. Viewer-owned shared-parent chat can
+remain orphaned server-side after revoke or leave; do not invent cleanup as
+part of sharing.
 
 ## Cloud and deploy
 
@@ -283,6 +323,27 @@ under `server/agent/harness/` knows nothing about recipes; only
 `server/agent/harness/google.ts` imports `@google/genai`. Domain tools live in
 `server/agent/sous/`. See `docs/plans/library-agent.md`.
 
+## Feature constitutions
+
+A constitution records a feature's principles and why each exists. The index
+below lists every constitution by name and description only. Before planning
+or editing, check your change against these descriptions. If one plausibly
+applies, read that constitution in full before you write code; when unsure,
+read it. Its frontmatter `scope` lists the exact files and concepts it covers.
+You may break a principle only by amending the constitution in the same PR:
+rewrite the principle, add an amendment-log entry saying why the break is
+worth it, and flag it in the PR description. An unacknowledged break is a
+defect. Plans, audits, and verifications name the constitutions they applied.
+
+A new constitution goes in `docs/constitutions/<slug>.md` with `name`,
+`description`, `status` (`draft` or `ratified`), and `scope` frontmatter,
+plus a matching index line here. `scripts/constitutions.test.ts` checks that
+this index matches each file's frontmatter.
+
+- **Cook log** (`docs/constitutions/cook-log.md`): Dated records of cooking a recipe (rating, servings, notes, lessons, photos), the /cooks journal, and promoting a lesson into recipe notes. Read before changing CookLog data, its sync ops or cascade, its photos, its backup handling, or those screens.
+- **i18n** (`docs/constitutions/i18n.md`): UI language (the src/i18n catalogs, t(), plurals, cook.locale), the Recipe.lang label and normalizeLang, recipe translation at import and on the recipe screen, dictation language, and the in-context translation review. Read before adding or changing any user-facing text, touching Recipe.lang or a language tag, sending recipe text to a translation provider, or changing the language passed to /api/stt.
+- **Image import** (`docs/constitutions/image-import.md`): Importing one recipe from 1–4 photos of notes. Gemini reads the photos and they are not stored. Read before changing importFromImages, the images field, the photo picker, handwritten evals, or the photo sentences in privacy and terms.
+
 ## Plans (source of truth for unfinished work)
 
 Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
@@ -294,7 +355,8 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/sync-toast.md` | Done (`b4b43b6`). |
 | `docs/plans/photos-and-deploy-docs.md` | Done (GCS photos, deploy.sh, README, legal rewrite). |
 | `docs/plans/invitation-flow.md` | In progress on branch `invitation-flow` (request access → `/admin` → Firestore membership). |
-| `docs/plans/invite-links.md` | Implementing. Owner-minted single-use 7-day bearer invite links that admit on Google consent. |
+| `docs/plans/invite-links.md` | Built. Single-use 7-day bearer invite links that admit on Google consent. Owners mint from `/admin`. |
+| `docs/plans/member-invite-links.md` | Built. A non-owner member mints one link from Settings (`POST /api/invites`). Not deployed. |
 | `docs/plans/deploy-and-end-state.md` | Production cutover (`sous-00004-mpx`) and consent In production done. |
 | `docs/plans/server-backed-library.md` | Done: drop IndexedDB; in-memory library over pull/push. |
 | `docs/plans/ask-voice-stt.md` | Implementing. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
@@ -306,6 +368,11 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/chrome-extension-import.md` | Built: `extension/` + `POST /api/extension/import`. Not deployed. |
 | `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web, extension, evals (`evals/recipeImport.eval.ts`). `api/import.ts` is a 401 stub. Not deployed. |
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
+| `docs/plans/image-import.md` | Built on `cursor/image-import-38e9`, not deployed. Import one recipe from 1–4 photos (handwritten notes) via `images` on `POST /api/import`; Gemini reads them; never stored. Bound by `docs/constitutions/image-import.md`. |
+| `docs/plans/image-import-evals-and-retry.md` | Built, not deployed. Handwritten evals split into dev/holdout with `evals/AGENTS.md` rules and `ocrCompare --thinking`. The photo retry and runaway-unit check were measured and reverted (dev approach A 14/15 → 12/15; holdout stayed 15/15). |
+| `docs/plans/cook-log.md` | Built on `cursor/cook-log-5615` (constitution `docs/constitutions/cook-log.md`). Not deployed. |
+| `docs/plans/i18n.md` | Built and verified on `cursor/i18n-implement-5489` (PR #42; constitution `docs/constitutions/i18n.md`). Not deployed. UI language with `src/i18n/` catalogs, `Recipe.lang`, translation at import and on the recipe screen, dictation language. |
+| `docs/plans/i18n-follow-ups.md` | Open. Post-deploy owner steps (Cloud Run translate p95, dictation clips, `lang` backfill `--write`), unrun checks, and review nits left after PR #42. |
 | `docs/plans/library-agent.md` | Implementing on `cursor/library-agent-336b`. App-level assistant: read-only tools over the user's own library, modular cards (shopping list first), ephemeral threads. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
@@ -324,6 +391,10 @@ and need `GEMINI_API_KEY` from `.env.local` (same as `dev:api`). Website
 fixtures use cached `page.html` (never fetch at eval time). Do not fold them
 into `npm test` or CI.
 
+Before changing an import prompt, model setting, output check, retry, or eval
+golden, read `evals/AGENTS.md` (dev/holdout split, no tuning on holdout,
+experiments logged in `evals/EXPERIMENTS.md`).
+
 UI and layout changes: exercise the flow in the browser (not a screenshot).
 Vite + `dev:api`, signed in at `localhost:5173`. Check other routes that share
 the state you touched.
@@ -333,12 +404,41 @@ Chat streaming must not grow `Content-Length` or `Content-Encoding` on
 step 2, with a `sous_session` cookie instead of `x-app-password`, is the
 guard — run it against Cloud Run after a production deploy, not only locally.
 
+## UI text and languages
+
+Any change touching UI copy, `Recipe.lang`, translation, import translation,
+or dictation language must follow `docs/constitutions/i18n.md`.
+
+**UI text rule.** Any change that adds or changes user-facing text must put
+it in the `src/i18n/` catalogs for every supported language (`en`, `uk`,
+`ru`, `zh-Hans`), with no hardcoded strings in screens, components, or
+client `lib/` messages. `src/i18n/en.ts` defines the key set; the other
+catalogs are typed `Messages`, so a missing key fails `tsc`, and the parity
+test in `src/i18n/messages.test.ts` checks plural forms and placeholders.
+Sentences are single catalog strings with named `{params}`, never joined
+fragments; relative times go through `src/lib/relativeTime.ts`.
+
+Any UI change that adds or changes user-facing text must add it to
+every catalog in `src/i18n/` (see `docs/constitutions/i18n.md`), in
+the same change. New screens or states are added to
+`docs/i18n-review/screens.json` in the same change. Once a task's
+implementation is complete and you think its PR may be ready to
+merge, and before opening the PR, run the in-context translation
+review in `docs/i18n-review/README.md` for every screen that shows
+text the task added or changed, in every non-English language. Fix
+the blockers, re-review those screens, and attach the report to the
+PR. Do not run the review after each individual change; it is a
+pre-PR check, not part of the iteration loop. Cursor agents can use
+the `.cursor/skills/i18n-visual-review` skill.
+
 ## Product copy
 
 `/about` is a short public page that says what the app is for. `/privacy`
 and `/terms` describe Firestore + GCS and that there is no on-device recipe
-database. Theme preference and `cook.session` stay in localStorage. Do not
+database. Theme preference, the UI language (`cook.locale`), and
+`cook.session` stay in localStorage. Do not
 describe IndexedDB, offline edits, or a local library. The Chrome extension
 sends rendered page HTML, possibly from a page behind a login, to the server
 and on to Gemini; `/privacy` and `/terms` must describe that before the
-extension is offered beyond the owner.
+extension is offered beyond the owner. Photos sent for import go to Gemini and
+are not stored; `/privacy` and `/terms` say so.

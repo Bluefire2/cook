@@ -8,8 +8,12 @@
  */
 import { GenerateContentResponse, type GenerateContentParameters } from '@google/genai';
 import type { RecipeImportDeps } from '../server/recipeImport.ts';
+import { TRANSLATE_FAILED, type TranslateOutcome } from '../server/translate.ts';
 
-export function fakeImportDeps(reply: string | undefined): {
+export function fakeImportDeps(
+  reply: string | undefined,
+  translator?: RecipeImportDeps['translator'],
+): {
   deps: RecipeImportDeps;
   calls: GenerateContentParameters[];
 } {
@@ -28,6 +32,10 @@ export function fakeImportDeps(reply: string | undefined): {
         },
       },
     },
+    translator:
+      translator ??
+      ((): Promise<TranslateOutcome> =>
+        Promise.resolve({ ok: false, code: TRANSLATE_FAILED })),
   };
   return { deps, calls };
 }

@@ -4,25 +4,34 @@ import { collectionPushErrorMessage, collectionStore } from './collectionStore';
 import {
   clearLibrary,
   countOwnedNamedCollections,
+  getCollection,
   listCollections,
+  removeCollectionLocal,
   upsertCollection,
 } from './libraryMemory';
 import { recipeStore } from './recipeStore';
 import { installSharedRows } from './testLibrary';
 import {
   addCollectionGrant,
+  leaveSharedCollection,
   listCollectionGrants,
   pushOps,
   revokeCollectionGrant,
 } from './remote';
+import { pullAfterLocalWrite } from './syncEngine';
 import type { CollectionGrant } from './remote';
 import type { Collection } from './types';
 
 vi.mock('./remote', () => ({
   addCollectionGrant: vi.fn(),
+  leaveSharedCollection: vi.fn(),
   listCollectionGrants: vi.fn(),
   pushOps: vi.fn(),
   revokeCollectionGrant: vi.fn(),
+}));
+
+vi.mock('./syncEngine', () => ({
+  pullAfterLocalWrite: vi.fn(),
 }));
 
 function collection(id: string, name: string): Collection {
@@ -38,9 +47,11 @@ function collection(id: string, name: string): Collection {
 afterEach(() => {
   clearLibrary();
   vi.mocked(addCollectionGrant).mockReset();
+  vi.mocked(leaveSharedCollection).mockReset();
   vi.mocked(listCollectionGrants).mockReset();
   vi.mocked(pushOps).mockReset();
   vi.mocked(revokeCollectionGrant).mockReset();
+  vi.mocked(pullAfterLocalWrite).mockReset();
 });
 
 describe('collectionPushErrorMessage', () => {
@@ -161,7 +172,7 @@ describe('collectionStore grant mutations', () => {
     await expect(collectionStore.addGrant('collection-id', grant.email)).resolves.toEqual(grant);
 
     expect(addCollectionGrant).toHaveBeenCalledTimes(1);
-    expect(addCollectionGrant).toHaveBeenCalledWith('collection-id', grant.email);
+    expect(addCollectionGrant).toHaveBeenCalledWith('collection-id', grant.email, 'viewer');
     expect(listCollectionGrants).not.toHaveBeenCalled();
   });
 
@@ -175,5 +186,99 @@ describe('collectionStore grant mutations', () => {
     expect(revokeCollectionGrant).toHaveBeenCalledTimes(1);
     expect(revokeCollectionGrant).toHaveBeenCalledWith('collection-id', 'member-sub');
     expect(listCollectionGrants).not.toHaveBeenCalled();
+  });
+});
+
+describe('collectionStore.leave', () => {
+  function installShared() {
+    installSharedRows({
+      recipes: new Map(),
+      collections: new Map([['shared', collection('shared', 'Theirs')]]),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map(),
+      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
+    });
+  }
+
+  it('refuses to leave an owned collection', async () => {
+    upsertCollection(collection('owned', 'Mine'));
+
+    await expect(collectionStore.leave('owned')).rejects.toThrow(
+      'This collection is not shared with you.',
+    );
+    expect(leaveSharedCollection).not.toHaveBeenCalled();
+    expect(pullAfterLocalWrite).not.toHaveBeenCalled();
+  });
+
+  it('refuses to leave an unknown collection id', async () => {
+    await expect(collectionStore.leave('does-not-exist')).rejects.toThrow(
+      'This collection is not shared with you.',
+    );
+    expect(leaveSharedCollection).not.toHaveBeenCalled();
+  });
+
+  it('leaves a shared collection by its owner sub and rereads the server', async () => {
+    installShared();
+    vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'ok' });
+    let presentBeforePull: boolean | undefined;
+    vi.mocked(pullAfterLocalWrite).mockImplementation(async () => {
+      // The collection stays until the pull publishes state without it.
+      presentBeforePull = getCollection('shared') !== undefined;
+      removeCollectionLocal('shared');
+      return 'ok';
+    });
+
+    await expect(collectionStore.leave('shared')).resolves.toBeUndefined();
+
+    expect(leaveSharedCollection).toHaveBeenCalledTimes(1);
+    expect(leaveSharedCollection).toHaveBeenCalledWith('alice', 'shared');
+    expect(presentBeforePull).toBe(true);
+    expect(getCollection('shared')).toBeUndefined();
+    expect(pullAfterLocalWrite).toHaveBeenCalledTimes(1);
+    expect(pullAfterLocalWrite).toHaveBeenCalledWith(expect.any(Number));
+  });
+
+  it('throws and keeps the collection when the follow-up pull fails', async () => {
+    installShared();
+    vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'ok' });
+    vi.mocked(pullAfterLocalWrite).mockResolvedValue('error');
+
+    await expect(collectionStore.leave('shared')).rejects.toThrow(
+      "Couldn't refresh after leaving.",
+    );
+    expect(getCollection('shared')).toBeDefined();
+  });
+
+  it('treats a signed-out follow-up pull as a sign-in error', async () => {
+    installShared();
+    vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'ok' });
+    vi.mocked(pullAfterLocalWrite).mockResolvedValue('signedOut');
+
+    await expect(collectionStore.leave('shared')).rejects.toThrow(
+      'Please sign in again — your session expired.',
+    );
+  });
+
+  it('surfaces a signed-out leave result without pulling', async () => {
+    installShared();
+    vi.mocked(leaveSharedCollection).mockResolvedValue({ kind: 'signedOut' });
+
+    await expect(collectionStore.leave('shared')).rejects.toThrow(
+      'Please sign in again — your session expired.',
+    );
+    expect(pullAfterLocalWrite).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a server error without pulling', async () => {
+    installShared();
+    vi.mocked(leaveSharedCollection).mockResolvedValue({
+      kind: 'error',
+      message: "Couldn't leave the collection.",
+    });
+
+    await expect(collectionStore.leave('shared')).rejects.toThrow(
+      "Couldn't leave the collection.",
+    );
+    expect(pullAfterLocalWrite).not.toHaveBeenCalled();
   });
 });

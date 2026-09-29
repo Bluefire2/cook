@@ -7,6 +7,11 @@ import {
 } from './grants.ts';
 import { drainGcsDeletes } from './photos.ts';
 import {
+  putSharedRecipe,
+  readSharedRecipeAccess,
+  sharedRecipeDeleteAllowed,
+} from './sharedRecipeWrite.ts';
+import {
   membershipUnauthorized,
   membershipUnavailable,
   requireMember,
@@ -24,6 +29,7 @@ import {
   cascadeRecipeDelete,
   clearChatForRecipe,
   compactCollectionFields,
+  compactCookLogFields,
   compactRecipeFields,
   countLiveNamedCollections,
   decodePullCursor,
@@ -37,6 +43,7 @@ import {
   readTombstonedRecipeIds,
   recipeIdsWithoutTombstones,
   chatCookPullFields,
+  tombstoneDoc,
   tombstonePhotoWithGcs,
   type PullCursor,
   type PushRejectReason,
@@ -44,7 +51,14 @@ import {
   validatePushOp,
 } from './store.ts';
 
-const STORE_KINDS: StoreKind[] = ['recipes', 'chatMessages', 'cookState', 'photos', 'collections'];
+export const STORE_KINDS: StoreKind[] = [
+  'recipes',
+  'chatMessages',
+  'cookState',
+  'photos',
+  'collections',
+  'cookLogs',
+];
 
 const MAX_PUSH_OPS = 50;
 const MAX_PUSH_BYTES = 1_000_000;
@@ -59,7 +73,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<string, unknown> {
+export function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<string, unknown> {
   const deletedAt = doc.deletedAt;
   if (deletedAt !== undefined && deletedAt !== null) {
     return { id: doc.id, deletedAt };
@@ -75,6 +89,9 @@ function docToChange(kind: StoreKind, doc: Record<string, unknown>): Record<stri
   }
   if (kind === 'collections') {
     return compactCollectionFields(copy);
+  }
+  if (kind === 'cookLogs') {
+    return compactCookLogFields(copy);
   }
   if (kind === 'photos') {
     return {
@@ -124,6 +141,7 @@ export async function syncPull(req: Request): Promise<Response> {
     cookState: [],
     photos: [],
     collections: [],
+    cookLogs: [],
   };
 
   let nextCursor: PullCursor = { ...cursor };
@@ -157,9 +175,15 @@ export type PushResult = {
   current?: Record<string, unknown>;
 };
 
+/**
+ * `shared` is the client saying "this is someone else's recipe; never create
+ * it in my tree". It only narrows the write: owner and role are still found
+ * from the session's incoming shares, and without it a put is an ordinary
+ * write to the session's own tree.
+ */
 export async function applyPushOp(
   uid: string,
-  op: { kind: string; payload: unknown },
+  op: { kind: string; payload: unknown; shared?: boolean },
 ): Promise<{ applied: boolean; reason?: PushRejectReason; current?: Record<string, unknown> }> {
   if (!isKnownPushKind(op.kind)) {
     return { applied: false, reason: 'unknown' };
@@ -176,10 +200,21 @@ export async function applyPushOp(
       const id = body.id as string;
       const updatedAt = body.updatedAt as number;
       const compact = compactRecipeFields(body);
+      if (op.shared === true) {
+        return putSharedRecipe(uid, id, compact, updatedAt, sharingOwnerAdmitted);
+      }
       return putDoc(uid, 'recipes', id, compact, updatedAt);
     }
     case 'recipe.delete': {
       const body = payload as { id: string; updatedAt: number };
+      // Only the owner deletes. With no row of its own, a session that
+      // reaches this id through a share gets a refusal, not a stray
+      // tombstone in its own tree.
+      const ownDocExists = (await readDocData(uid, 'recipes', body.id)) !== undefined;
+      const access = ownDocExists ? null : await readSharedRecipeAccess(uid, body.id);
+      if (!sharedRecipeDeleteAllowed(ownDocExists, access)) {
+        return { applied: false, reason: 'invalid' };
+      }
       await cascadeRecipeDelete(uid, body.id, body.updatedAt);
       return { applied: true };
     }
@@ -242,6 +277,17 @@ export async function applyPushOp(
       const body = payload as { id: string; updatedAt: number };
       return deleteCollectionWithGrants(uid, body.id, body.updatedAt);
     }
+    case 'cookLog.put': {
+      const body = payload as Record<string, unknown>;
+      const id = body.id as string;
+      const updatedAt = body.updatedAt as number;
+      const compact = compactCookLogFields(body);
+      return putDoc(uid, 'cookLogs', id, compact, updatedAt);
+    }
+    case 'cookLog.delete': {
+      const body = payload as { id: string; updatedAt: number };
+      return tombstoneDoc(uid, 'cookLogs', body.id, body.updatedAt);
+    }
     default:
       return { applied: false, reason: 'unknown' };
   }
@@ -299,7 +345,11 @@ export async function syncPush(req: Request): Promise<Response> {
     }
     const kind = record.kind;
     const payload = record.payload;
-    const outcome = await applyPushOp(uid, { kind: kind as string, payload });
+    const outcome = await applyPushOp(uid, {
+      kind: kind as string,
+      payload,
+      shared: record.shared === true,
+    });
     results.push({
       index,
       applied: outcome.applied,

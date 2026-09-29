@@ -8,15 +8,20 @@ import {
 } from './members.ts';
 import { publicOrigin } from './env.ts';
 import {
+  INVITE_UNUSED_CAP,
   listUnusedInvites,
+  MEMBER_INVITE_LIMIT,
   mintInvite,
+  mintMemberInvite,
   revokeInvite,
   type InviteRecord,
 } from './invites.ts';
 import {
   clearMembershipCache,
   membershipUnauthorized,
+  membershipUnavailable,
   readBoundedText,
+  requireMember,
   requireOwner,
   storeUnavailable,
 } from './membership.ts';
@@ -47,6 +52,7 @@ export interface AdminInviteEntry {
   id: string;
   createdAt: number;
   expiresAt: number;
+  creatorEmail?: string;
 }
 
 export interface AdminInviteList {
@@ -67,9 +73,36 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function adminForbidden(): Response {
-  return jsonResponse({ error: 'Forbidden' }, 403);
+function errorJson(code: string, error: string, status: number, max?: number): Response {
+  const body: { error: string; code: string; max?: number } = { error, code };
+  if (max !== undefined) {
+    body.max = max;
+  }
+  return jsonResponse(body, status);
 }
+
+function adminForbidden(): Response {
+  return errorJson('forbidden', 'Forbidden', 403);
+}
+
+function unsupportedMedia(): Response {
+  return errorJson('unsupported-media', 'Unsupported Media Type', 415);
+}
+
+function payloadTooLarge(): Response {
+  return errorJson('payload-too-large', 'Payload too large', 413);
+}
+
+function badRequest(): Response {
+  return errorJson('bad-request', 'Bad request', 400);
+}
+
+const SELF_ERROR = "You can't change your own access.";
+const UNKNOWN_REQUEST_ERROR = 'That access request was not found.';
+const UNKNOWN_INVITE_ERROR = 'That invite link was not found.';
+const MEMBER_INVITE_CAP_ERROR =
+  'There are already too many unused invite links. Try again later.';
+const MEMBER_INVITE_LIMIT_ERROR = `You have already invited ${MEMBER_INVITE_LIMIT} people.`;
 
 export function parseAdminListCursors(params: URLSearchParams): {
   pending?: string;
@@ -132,7 +165,11 @@ export function toAdminInviteEntry(
   id: string,
   row: InviteRecord,
 ): AdminInviteEntry {
-  return { id, createdAt: row.createdAt, expiresAt: row.expiresAt };
+  const entry: AdminInviteEntry = { id, createdAt: row.createdAt, expiresAt: row.expiresAt };
+  if (row.createdByEmail !== undefined && row.createdByEmail !== '') {
+    entry.creatorEmail = row.createdByEmail;
+  }
+  return entry;
 }
 
 export function serializeInviteList(
@@ -201,37 +238,37 @@ export async function adminDecisionPost(req: Request): Promise<Response> {
   }
 
   if (!isJsonContentType(req)) {
-    return jsonResponse({ error: 'Unsupported Media Type' }, 415);
+    return unsupportedMedia();
   }
 
   const text = await readBoundedText(req, 4096);
   if (text === null) {
-    return jsonResponse({ error: 'Payload too large' }, 413);
+    return payloadTooLarge();
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
 
   const body = parseDecisionBody(parsed);
   if (body === 'invalid') {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
 
   if (body.sub === owner.sub) {
-    return jsonResponse({ error: 'self' }, 409);
+    return errorJson('self', SELF_ERROR, 409);
   }
 
   try {
     const result = await applyDecision(body.sub, body.action, owner.sub, Date.now());
     if (result.kind === 'refusal') {
       if (result.reason === 'self') {
-        return jsonResponse({ error: 'self' }, 409);
+        return errorJson('self', SELF_ERROR, 409);
       }
-      return jsonResponse({ error: 'unknown-request' }, 404);
+      return errorJson('unknown-request', UNKNOWN_REQUEST_ERROR, 404);
     }
     clearMembershipCache(body.sub);
     const lists = await listAccessRequests();
@@ -277,9 +314,14 @@ export async function adminInvitesPost(req: Request): Promise<Response> {
   }
 
   try {
-    const minted = await mintInvite(owner.sub, Date.now());
+    const minted = await mintInvite(owner.sub, Date.now(), owner.email);
     if (minted.kind === 'cap') {
-      return jsonResponse({ error: 'invite-cap' }, 409);
+      return errorJson(
+        'invite-cap',
+        `There are already ${INVITE_UNUSED_CAP} unused invite links. Revoke one to mint another.`,
+        409,
+        INVITE_UNUSED_CAP,
+      );
     }
     const rows = await listUnusedInvites(Date.now());
     return jsonResponse({
@@ -292,6 +334,38 @@ export async function adminInvitesPost(req: Request): Promise<Response> {
   }
 }
 
+export async function memberInvitesPost(req: Request): Promise<Response> {
+  const access = await requireMember(req);
+  if (access.kind === 'denied') {
+    return membershipUnauthorized();
+  }
+  if (access.kind === 'unknown') {
+    return membershipUnavailable();
+  }
+  if (access.isOwner) {
+    return adminForbidden();
+  }
+
+  try {
+    const minted = await mintMemberInvite(access.sub, access.email, Date.now());
+    if (minted.kind === 'cap') {
+      return errorJson('member-invite-cap', MEMBER_INVITE_CAP_ERROR, 409);
+    }
+    if (minted.kind === 'limit') {
+      return errorJson(
+        'member-invite-limit',
+        MEMBER_INVITE_LIMIT_ERROR,
+        409,
+        MEMBER_INVITE_LIMIT,
+      );
+    }
+    return jsonResponse({ url: invitePublicUrl(minted.token) });
+  } catch (err) {
+    console.error('memberInvitesPost store error:', err);
+    return storeUnavailable();
+  }
+}
+
 export async function adminInviteRevokePost(req: Request): Promise<Response> {
   const owner = requireAdminOwner(req);
   if (owner.kind === 'response') {
@@ -299,30 +373,30 @@ export async function adminInviteRevokePost(req: Request): Promise<Response> {
   }
 
   if (!isJsonContentType(req)) {
-    return jsonResponse({ error: 'Unsupported Media Type' }, 415);
+    return unsupportedMedia();
   }
 
   const text = await readBoundedText(req, 4096);
   if (text === null) {
-    return jsonResponse({ error: 'Payload too large' }, 413);
+    return payloadTooLarge();
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
 
   const body = parseRevokeInviteBody(parsed);
   if (body === 'invalid') {
-    return jsonResponse({ error: 'Bad request' }, 400);
+    return badRequest();
   }
 
   try {
     const result = await revokeInvite(body.id);
     if (result.kind === 'refusal') {
-      return jsonResponse({ error: 'unknown-invite' }, 404);
+      return errorJson('unknown-invite', UNKNOWN_INVITE_ERROR, 404);
     }
     const rows = await listUnusedInvites(Date.now());
     return jsonResponse(serializeInviteList(rows));

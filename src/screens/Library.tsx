@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useT } from '../i18n';
+import LibraryInviteToast, {
+  type LibraryInviteNotice,
+} from '../components/LibraryInviteToast';
 import ShareCollectionSheet from '../components/ShareCollectionSheet';
 import Sheet from '../components/Sheet';
+import { createInvite } from '../lib/adminApi';
+import { createMemberInvite } from '../lib/inviteApi';
+import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
 import { FolderIcon, PlusIcon, SharedIcon } from '../lib/icons';
 import {
   collectionStore,
@@ -41,9 +48,10 @@ function chipClass(active: boolean): string {
 }
 
 export default function Library() {
+  const t = useT();
   const allRecipes = useRecipes();
   const collections = useCollections();
-  const { status: sessionStatus } = useSession();
+  const { status: sessionStatus, user } = useSession();
   const syncStatus = useSyncStatus();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -63,9 +71,19 @@ export default function Library() {
   const [createOpen, setCreateOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteCollectionOpen, setDeleteCollectionOpen] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [leaveBusy, setLeaveBusy] = useState(false);
   const [collectionName, setCollectionName] = useState('');
   const [collectionError, setCollectionError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [invitePending, setInvitePending] = useState(false);
+  const [inviteConfirmOpen, setInviteConfirmOpen] = useState(false);
+  const [revealedUrl, setRevealedUrl] = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const [inviteNotice, setInviteNotice] = useState<LibraryInviteNotice | null>(null);
+  const [inviteQuota, setInviteQuota] = useState<{ id: number; message: string } | null>(null);
+  const inviteMountedRef = useRef(true);
   const [createdCollection, setCreatedCollection] = useState<{
     id: string;
     name: string;
@@ -99,7 +117,12 @@ export default function Library() {
 
   const remove = async (id: string) => {
     setPendingDeleteId(null);
-    await recipeStore.remove(id);
+    setDeleteError(null);
+    try {
+      await recipeStore.remove(id);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : t('error.recipeDelete'));
+    }
   };
 
   const closeSheets = () => {
@@ -109,7 +132,9 @@ export default function Library() {
     setCreateOpen(false);
     setRenameOpen(false);
     setDeleteCollectionOpen(false);
+    setLeaveOpen(false);
     setShareOpen(false);
+    setInviteConfirmOpen(false);
     setCollectionName('');
     setCollectionError(null);
     setCreatedCollection(null);
@@ -138,7 +163,7 @@ export default function Library() {
       closeSheets();
       navigate(libraryHref(id));
     } catch (err) {
-      setCollectionError(err instanceof Error ? err.message : "Couldn't save the collection.");
+      setCollectionError(err instanceof Error ? err.message : t('error.collectionSave'));
     }
   };
 
@@ -152,7 +177,7 @@ export default function Library() {
       closeSheets();
       navigate(dest === 'default' ? '/' : libraryHref(dest));
     } catch (err) {
-      setCollectionError(err instanceof Error ? err.message : "Couldn't move the recipe.");
+      setCollectionError(err instanceof Error ? err.message : t('error.collectionMove'));
     }
   };
 
@@ -165,7 +190,7 @@ export default function Library() {
       await collectionStore.rename(currentId, collectionName);
       closeSheets();
     } catch (err) {
-      setCollectionError(err instanceof Error ? err.message : "Couldn't save the collection.");
+      setCollectionError(err instanceof Error ? err.message : t('error.collectionSave'));
     }
   };
 
@@ -180,9 +205,146 @@ export default function Library() {
       navigate('/');
     } catch (err) {
       setCollectionError(
-        err instanceof Error ? err.message : "Couldn't delete the collection.",
+        err instanceof Error ? err.message : t('error.collectionDelete'),
       );
     }
+  };
+
+  const submitLeave = async () => {
+    if (!currentId) {
+      return;
+    }
+    setCollectionError(null);
+    setLeaveBusy(true);
+    try {
+      await collectionStore.leave(currentId);
+      closeSheets();
+      navigate('/');
+    } catch (err) {
+      setCollectionError(
+        err instanceof Error ? err.message : t('error.leaveCollection'),
+      );
+    } finally {
+      setLeaveBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    inviteMountedRef.current = true;
+    return () => {
+      inviteMountedRef.current = false;
+    };
+  }, []);
+
+  const showInviteToast = (kind: 'success' | 'error', message: string) => {
+    setInviteNotice((prev) => ({
+      id: (prev?.id ?? 0) + 1,
+      kind,
+      message,
+    }));
+  };
+
+  const mint = async () => {
+    if (user === null || invitePending) {
+      return;
+    }
+    setInvitePending(true);
+    const client = inviteMintClient(user);
+    const urlPromise =
+      client === 'admin'
+        ? createInvite().then((created) => created.url)
+        : createMemberInvite().then((created) => created.url);
+    let writeStarted: Promise<void> | undefined;
+    if (
+      copyStrategy({ hasClipboardItem: typeof ClipboardItem !== 'undefined' }) ===
+      'clipboard-item'
+    ) {
+      try {
+        writeStarted = navigator.clipboard.write([
+          new ClipboardItem({
+            'text/plain': urlPromise.then((u) => new Blob([u], { type: 'text/plain' })),
+          }),
+        ]);
+        void writeStarted.catch(() => {});
+      } catch {
+        writeStarted = undefined;
+      }
+    }
+    try {
+      const url = await urlPromise;
+      if (!inviteMountedRef.current) {
+        return;
+      }
+      setInviteQuota(null);
+      let copied = false;
+      if (writeStarted !== undefined) {
+        try {
+          await writeStarted;
+          copied = true;
+        } catch {
+          copied = false;
+        }
+      }
+      if (!copied) {
+        try {
+          await navigator.clipboard.writeText(url);
+          copied = true;
+        } catch {
+          copied = false;
+        }
+      }
+      if (!inviteMountedRef.current) {
+        return;
+      }
+      setInviteConfirmOpen(false);
+      if (copied) {
+        setRevealedUrl(null);
+        setInviteCopied(false);
+        showInviteToast('success', t('library.inviteCopied'));
+      } else {
+        setRevealedUrl(url);
+        setInviteCopied(false);
+        showInviteToast('error', t('library.inviteCopyFailed'));
+      }
+    } catch (err) {
+      if (!inviteMountedRef.current) {
+        return;
+      }
+      const message = err instanceof Error ? err.message : t('common.somethingWentWrong');
+      setInviteConfirmOpen(false);
+      if (isInviteQuotaError(err)) {
+        setInviteQuota((prev) => ({ id: (prev?.id ?? 0) + 1, message }));
+        return;
+      }
+      setInviteQuota(null);
+      showInviteToast('error', message);
+    } finally {
+      if (inviteMountedRef.current) {
+        setInvitePending(false);
+      }
+    }
+  };
+
+  const copyRevealedUrl = async () => {
+    if (revealedUrl === null) {
+      return;
+    }
+    const url = revealedUrl;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      if (!inviteMountedRef.current) {
+        return;
+      }
+      setInviteCopied(false);
+      return;
+    }
+    if (!inviteMountedRef.current) {
+      return;
+    }
+    setRevealedUrl(null);
+    setInviteCopied(true);
+    showInviteToast('success', t('library.inviteCopied'));
   };
 
   useEffect(() => {
@@ -209,7 +371,9 @@ export default function Library() {
         moveRecipeId !== null ||
         createOpen ||
         renameOpen ||
-        deleteCollectionOpen
+        deleteCollectionOpen ||
+        leaveOpen ||
+        inviteConfirmOpen
       ) {
         event.preventDefault();
         closeSheets();
@@ -225,38 +389,88 @@ export default function Library() {
     createOpen,
     renameOpen,
     deleteCollectionOpen,
+    leaveOpen,
+    inviteConfirmOpen,
   ]);
 
   const emptyCopy = () => {
     if (q !== '') {
-      return 'No recipes match your search.';
+      return t('library.emptySearch');
     }
     if (sessionStatus === 'signedOut') {
-      return 'Sign in from Settings to load your recipes.';
+      return t('library.emptySignedOut');
     }
     if (syncStatus.status === 'error') {
-      return "Couldn't load your recipes. Try Refresh in Settings.";
+      return t('library.emptyError');
     }
     if (named) {
-      return 'No recipes in this collection yet.';
+      return t('library.emptyCollection');
     }
-    return 'No recipes yet. Import your first one!';
+    return t('library.empty');
   };
 
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
+      <LibraryInviteToast notice={inviteNotice} />
       <header className="flex items-center justify-between py-4">
         <h1 className="text-2xl font-bold">Sous</h1>
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
           <AssistantEntryLink />
+          {user !== null && (
+            <button
+              type="button"
+              className={`${ghostBtn} disabled:opacity-40`}
+              disabled={invitePending || inviteConfirmOpen}
+              onClick={() => {
+                if (inviteMintClient(user) === 'member') {
+                  setInviteConfirmOpen(true);
+                  return;
+                }
+                void mint();
+              }}
+            >
+              {invitePending ? t('admin.creating') : t('library.inviteLink')}
+            </button>
+          )}
+          <Link to="/cooks" className={ghostBtn}>
+            {t('library.cooks')}
+          </Link>
           <Link to="/settings" className={ghostBtn}>
-            Settings
+            {t('settings.title')}
           </Link>
         </div>
       </header>
 
+      {inviteQuota !== null && (
+        <p key={inviteQuota.id} className="mb-3 text-sm text-danger" role="alert">
+          {inviteQuota.message}
+        </p>
+      )}
+
+      {revealedUrl !== null && (
+        <div className="mb-3 rounded-2xl border border-line bg-surface p-4 shadow-sm">
+          <label className="text-xs text-ink-muted" htmlFor="library-invite-url">
+            {t('admin.newInviteLink')}
+          </label>
+          <input
+            id="library-invite-url"
+            className={`${inputClass} mt-1 font-mono text-sm`}
+            readOnly
+            value={revealedUrl}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+          <button
+            type="button"
+            onClick={() => void copyRevealedUrl()}
+            className={`${secondaryBtn} mt-2 px-3 py-1.5 text-sm`}
+          >
+            {inviteCopied ? t('admin.copied') : t('admin.copy')}
+          </button>
+        </div>
+      )}
+
       {showSwitcher && (
-        <nav aria-label="Collections" className="mb-3 flex items-start gap-1.5">
+        <nav aria-label={t('library.collectionsNav')} className="mb-3 flex items-start gap-1.5">
           <FolderIcon className="mt-2 block h-4 w-4 shrink-0 text-ink-muted" />
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <Link
@@ -264,14 +478,14 @@ export default function Library() {
               onClick={() => setBrowseAll(false)}
               className={chipClass(!browseAll && currentId === undefined)}
             >
-              Recipes
+              {t('library.recipes')}
             </Link>
             {collections?.map((collection) => {
               const shared = collectionStore.isShared(collection.id);
               const sharedBy = shared ? collectionStore.sharedBy(collection.id) : undefined;
               const sharedLabel = sharedBy
-                ? `${collection.name} (shared by ${sharedBy})`
-                : `${collection.name} (shared)`;
+                ? t('library.sharedByLabel', { name: collection.name, email: sharedBy })
+                : t('library.sharedLabel', { name: collection.name });
               return (
                 <Link
                   key={collection.id}
@@ -297,7 +511,7 @@ export default function Library() {
               }}
               className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
             >
-              New
+              {t('library.new')}
             </button>
             {named && !namedIsShared && (
               <>
@@ -306,7 +520,7 @@ export default function Library() {
                   onClick={() => setShareOpen(true)}
                   className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
                 >
-                  Share
+                  {t('common.share')}
                 </button>
                 <button
                   type="button"
@@ -317,14 +531,14 @@ export default function Library() {
                   }}
                   className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
                 >
-                  Rename
+                  {t('library.rename')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setDeleteCollectionOpen(true)}
                   className="rounded-full px-3 py-1.5 text-sm text-danger hover:text-ink"
                 >
-                  Delete
+                  {t('common.delete')}
                 </button>
               </>
             )}
@@ -333,11 +547,31 @@ export default function Library() {
       )}
 
       {named && namedIsShared && !browseAll && (
-        <p className="-mt-1 mb-3 text-sm text-ink-muted">
-          {collectionStore.sharedBy(named.id)
-            ? `Shared with you by ${collectionStore.sharedBy(named.id)}. View only.`
-            : 'Shared with you. View only.'}
-        </p>
+        <div className="-mt-1 mb-3 flex items-center justify-between gap-2 text-sm text-ink-muted">
+          <span>
+            {/* One catalog sentence per case: joining two with a space breaks Chinese punctuation. */}
+            {(() => {
+              const email = collectionStore.sharedBy(named.id);
+              const editor = collectionStore.access(named.id) === 'editor';
+              if (email) {
+                return editor
+                  ? t('library.sharedBannerByEdit', { email })
+                  : t('library.sharedBannerByView', { email });
+              }
+              return editor ? t('library.sharedBannerEdit') : t('library.sharedBannerView');
+            })()}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setCollectionError(null);
+              setLeaveOpen(true);
+            }}
+            className="shrink-0 text-sm text-danger hover:underline"
+          >
+            {t('library.leave')}
+          </button>
+        </div>
       )}
 
       {showSwitcher ? (
@@ -346,10 +580,10 @@ export default function Library() {
             type="search"
             placeholder={
               browseAll
-                ? 'Search all recipes…'
+                ? t('library.searchAll')
                 : named
-                  ? `Search in ${named.name}…`
-                  : 'Search recipes…'
+                  ? t('library.searchIn', { name: named.name })
+                  : t('library.search')
             }
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -360,21 +594,25 @@ export default function Library() {
             onClick={() => setBrowseAll((on) => !on)}
             className={`${chipClass(browseAll)} shrink-0`}
           >
-            All collections
+            {t('library.allCollections')}
           </button>
         </div>
       ) : (
         <input
           type="search"
-          placeholder="Search recipes…"
+          placeholder={t('library.search')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className={`${inputClass} mb-4`}
         />
       )}
 
+      {deleteError && (
+        <p className="mb-3 text-sm text-danger">{deleteError}</p>
+      )}
+
       {recipes === undefined ? (
-        <p className="py-12 text-center text-ink-muted">Loading recipes…</p>
+        <p className="py-12 text-center text-ink-muted">{t('library.loadingRecipes')}</p>
       ) : recipes.length === 0 ? (
         <p className="py-12 text-center text-ink-muted">{emptyCopy()}</p>
       ) : (
@@ -413,7 +651,7 @@ export default function Library() {
               {!recipeStore.isShared(recipe.id) && (
               <button
                 type="button"
-                aria-label={`Actions for ${recipe.title}`}
+                aria-label={t('library.actionsFor', { title: recipe.title })}
                 aria-expanded={menuId === recipe.id}
                 onClick={(event) => {
                   menuTriggerRef.current = event.currentTarget;
@@ -428,7 +666,7 @@ export default function Library() {
               {menuId === recipe.id && !recipeStore.isShared(recipe.id) && (
                 <div
                   role="group"
-                  aria-label={`Actions for ${recipe.title}`}
+                  aria-label={t('library.actionsFor', { title: recipe.title })}
                   className="absolute top-13 right-3 z-20 w-40 overflow-hidden rounded-xl border border-line bg-surface shadow-xl"
                 >
                   <Link
@@ -436,7 +674,7 @@ export default function Library() {
                     ref={firstActionRef}
                     className={menuItem}
                   >
-                    Edit
+                    {t('common.edit')}
                   </Link>
                   <button
                     type="button"
@@ -446,7 +684,7 @@ export default function Library() {
                     }}
                     className={`${menuItem} border-t border-line`}
                   >
-                    Move to…
+                    {t('library.moveTo')}
                   </button>
                   <button
                     type="button"
@@ -456,7 +694,7 @@ export default function Library() {
                     }}
                     className={`${menuItemDanger} border-t border-line`}
                   >
-                    Delete
+                    {t('common.delete')}
                   </button>
                 </div>
               )}
@@ -468,7 +706,7 @@ export default function Library() {
       {menuId !== null && (
         <button
           type="button"
-          aria-label="Close menu"
+          aria-label={t('library.closeMenu')}
           tabIndex={-1}
           onClick={() => setMenuId(null)}
           className="fixed inset-0 z-10"
@@ -478,7 +716,7 @@ export default function Library() {
       {sessionStatus === 'signedIn' && !namedIsShared && (
         <button
           type="button"
-          aria-label="Add recipe"
+          aria-label={t('library.addRecipe')}
           onClick={() => setAddOpen(true)}
           className="fixed right-5 bottom-8 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-page shadow-lg hover:opacity-90 active:opacity-90"
         >
@@ -488,25 +726,25 @@ export default function Library() {
 
       {addOpen && (
         <Sheet onClose={() => setAddOpen(false)}>
-          <h2 className="text-lg font-semibold">Add a recipe</h2>
+          <h2 className="text-lg font-semibold">{t('library.addRecipeTitle')}</h2>
           <Link
             to={`/import${addQuery}`}
             className={`${primaryBtn} mt-3 block py-3 text-center`}
           >
-            Import from a link or text
+            {t('library.importFromLink')}
           </Link>
           <Link
             to={`/recipe/new${addQuery}`}
             className={`${secondaryBtn} mt-2 block py-3 text-center`}
           >
-            Write one from scratch
+            {t('library.writeFromScratch')}
           </Link>
           <button
             type="button"
             onClick={() => setAddOpen(false)}
             className="mt-2 w-full py-2.5 text-sm text-ink-muted hover:text-ink"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
         </Sheet>
       )}
@@ -514,37 +752,37 @@ export default function Library() {
       {pendingDelete && (
         <Sheet onClose={() => setPendingDeleteId(null)}>
           <h2 className="text-lg font-semibold">
-            Delete “{pendingDelete.title}”?
+            {t('library.deleteRecipeTitle', { title: pendingDelete.title })}
           </h2>
           <p className="mt-1 text-sm text-ink-muted">
-            This also deletes its chat history. There is no undo.
+            {t('library.deleteRecipeBody')}
           </p>
           <button
             type="button"
             onClick={() => void remove(pendingDelete.id)}
             className={`${dangerBtn} mt-3 w-full py-3`}
           >
-            Delete
+            {t('common.delete')}
           </button>
           <button
             type="button"
             onClick={() => setPendingDeleteId(null)}
             className={`${secondaryBtn} mt-2 w-full py-3`}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
         </Sheet>
       )}
 
       {moveRecipe && !createOpen && (
         <Sheet onClose={() => closeSheets()}>
-          <h2 className="text-lg font-semibold">Move “{moveRecipe.title}”</h2>
+          <h2 className="text-lg font-semibold">{t('library.moveTitle', { title: moveRecipe.title })}</h2>
           <button
             type="button"
             onClick={() => void submitMove('default')}
             className={`${secondaryBtn} mt-3 w-full py-3`}
           >
-            Recipes
+            {t('library.recipes')}
           </button>
           {ownedCollections.map((collection) => (
             <button
@@ -568,21 +806,21 @@ export default function Library() {
             }}
             className={`${primaryBtn} mt-2 w-full py-3`}
           >
-            New collection
+            {t('common.newCollection')}
           </button>
           <button
             type="button"
             onClick={() => closeSheets()}
             className="mt-2 w-full py-2.5 text-sm text-ink-muted hover:text-ink"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
         </Sheet>
       )}
 
       {createOpen && (
         <Sheet onClose={() => closeSheets()}>
-          <h2 className="text-lg font-semibold">New collection</h2>
+          <h2 className="text-lg font-semibold">{t('common.newCollection')}</h2>
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -593,7 +831,7 @@ export default function Library() {
               autoFocus
               value={collectionName}
               onChange={(e) => setCollectionName(e.target.value)}
-              placeholder="Name"
+              placeholder={t('common.name')}
               className={`${inputClass} mt-3`}
             />
             {collectionError && (
@@ -604,14 +842,14 @@ export default function Library() {
               disabled={collectionName.trim() === ''}
               className={`${primaryBtn} mt-3 w-full py-3`}
             >
-              Create
+              {t('library.create')}
             </button>
             <button
               type="button"
               onClick={() => closeSheets()}
               className={`${secondaryBtn} mt-2 w-full py-3`}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
           </form>
         </Sheet>
@@ -619,7 +857,7 @@ export default function Library() {
 
       {renameOpen && named && (
         <Sheet onClose={() => closeSheets()}>
-          <h2 className="text-lg font-semibold">Rename collection</h2>
+          <h2 className="text-lg font-semibold">{t('library.renameCollection')}</h2>
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -639,14 +877,14 @@ export default function Library() {
               type="submit"
               className={`${primaryBtn} mt-3 w-full py-3`}
             >
-              Save
+              {t('common.save')}
             </button>
             <button
               type="button"
               onClick={() => closeSheets()}
               className={`${secondaryBtn} mt-2 w-full py-3`}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
           </form>
         </Sheet>
@@ -654,9 +892,9 @@ export default function Library() {
 
       {deleteCollectionOpen && named && (
         <Sheet onClose={() => closeSheets()}>
-          <h2 className="text-lg font-semibold">Delete “{named.name}”?</h2>
+          <h2 className="text-lg font-semibold">{t('library.deleteCollectionTitle', { name: named.name })}</h2>
           <p className="mt-1 text-sm text-ink-muted">
-            Recipes in it go back to Recipes. They are not deleted.
+            {t('library.deleteCollectionBody')}
           </p>
           {collectionError && (
             <p className="mt-2 text-sm text-danger">{collectionError}</p>
@@ -666,14 +904,39 @@ export default function Library() {
             onClick={() => void submitDeleteCollection()}
             className={`${dangerBtn} mt-3 w-full py-3`}
           >
-            Delete collection
+            {t('library.deleteCollection')}
           </button>
           <button
             type="button"
             onClick={() => closeSheets()}
             className={`${secondaryBtn} mt-2 w-full py-3`}
           >
-            Cancel
+            {t('common.cancel')}
+          </button>
+        </Sheet>
+      )}
+
+      {leaveOpen && named && namedIsShared && (
+        <Sheet onClose={() => closeSheets()}>
+          <h2 className="text-lg font-semibold">{t('library.leaveTitle', { name: named.name })}</h2>
+          <p className="mt-1 text-sm text-ink-muted">{t('library.leaveBody')}</p>
+          {collectionError && (
+            <p className="mt-2 text-sm text-danger">{collectionError}</p>
+          )}
+          <button
+            type="button"
+            onClick={() => void submitLeave()}
+            disabled={leaveBusy}
+            className={`${dangerBtn} mt-3 w-full py-3`}
+          >
+            {leaveBusy ? t('library.leaving') : t('library.leaveCollection')}
+          </button>
+          <button
+            type="button"
+            onClick={() => closeSheets()}
+            className={`${secondaryBtn} mt-2 w-full py-3`}
+          >
+            {t('common.cancel')}
           </button>
         </Sheet>
       )}
@@ -683,6 +946,38 @@ export default function Library() {
           collection={named}
           onClose={() => setShareOpen(false)}
         />
+      )}
+
+      {inviteConfirmOpen && user !== null && inviteMintClient(user) === 'member' && (
+        <Sheet
+          dismissible={!invitePending}
+          onClose={() => {
+            if (!invitePending) closeSheets();
+          }}
+        >
+          <h2 className="text-lg font-semibold">{t('settings.inviteTitle')}</h2>
+          <p className="mt-1 text-sm text-ink-muted">{t('settings.inviteIntro')}</p>
+          <button
+            type="button"
+            disabled={invitePending}
+            className={`${primaryBtn} mt-3 w-full py-3`}
+            onClick={() => {
+              void mint();
+            }}
+          >
+            {invitePending ? t('admin.creating') : t('admin.createLink')}
+          </button>
+          <button
+            type="button"
+            disabled={invitePending}
+            className={`${secondaryBtn} mt-2 w-full py-3`}
+            onClick={() => {
+              if (!invitePending) setInviteConfirmOpen(false);
+            }}
+          >
+            {t('common.cancel')}
+          </button>
+        </Sheet>
       )}
     </div>
   );

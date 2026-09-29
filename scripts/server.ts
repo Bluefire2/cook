@@ -34,6 +34,7 @@ import {
   adminInvitesGet,
   adminInvitesPost,
   adminRequestsGet,
+  memberInvitesPost,
 } from '../server/admin.ts';
 import { accessRequestPost } from '../server/access.ts';
 import { extensionImport, extensionImportOptions } from '../server/extensionImport.ts';
@@ -42,10 +43,13 @@ import { withMembership } from '../server/membership.ts';
 import { photosGet, photosPost } from '../server/photos.ts';
 import { agentPost } from '../server/agent/index.ts';
 import { sttPost } from '../server/stt.ts';
+import { translatePost } from '../server/translateRoute.ts';
 import {
   collectionGrantsGet,
   collectionGrantsPost,
   collectionGrantsRevokePost,
+  collectionGrantsRolePost,
+  sharedLeavePost,
 } from '../server/grantsHttp.ts';
 import { syncPull, syncPush, syncSharedPull } from '../server/sync.ts';
 
@@ -62,12 +66,14 @@ const apiRoutes: ApiRoute[] = [
   { method: 'POST', path: '/api/import', handler: withMembership(importPost) },
   { method: 'POST', path: '/api/stt', handler: sttPost },
   { method: 'POST', path: '/api/agent', handler: agentPost },
+  { method: 'POST', path: '/api/translate', handler: translatePost },
   { method: 'POST', path: '/api/access-request', handler: accessRequestPost },
   { method: 'GET', path: '/api/admin/requests', handler: adminRequestsGet },
   { method: 'POST', path: '/api/admin/decision', handler: adminDecisionPost },
   { method: 'GET', path: '/api/admin/invites', handler: adminInvitesGet },
   { method: 'POST', path: '/api/admin/invites', handler: adminInvitesPost },
   { method: 'POST', path: '/api/admin/invites/revoke', handler: adminInviteRevokePost },
+  { method: 'POST', path: '/api/invites', handler: memberInvitesPost },
   { method: 'GET', path: '/api/auth/start', handler: authStart },
   { method: 'GET', path: '/api/auth/callback/google', handler: authCallbackGoogle },
   { method: 'GET', path: '/api/auth/session', handler: authSession },
@@ -75,6 +81,7 @@ const apiRoutes: ApiRoute[] = [
   { method: 'GET', path: '/api/sync/pull', handler: syncPull },
   { method: 'GET', path: '/api/sync/shared', handler: syncSharedPull },
   { method: 'POST', path: '/api/sync/push', handler: syncPush },
+  { method: 'POST', path: '/api/shared/leave', handler: sharedLeavePost },
   { method: 'POST', path: '/api/extension/import', handler: extensionImport },
   { method: 'OPTIONS', path: '/api/extension/import', handler: extensionImportOptions },
 ];
@@ -267,6 +274,13 @@ function matchApiRoute(pathname: string, method: string): ApiHandler | 'wrongMet
   if (revokeMatch) {
     if (method === 'POST') {
       return collectionGrantsRevokePost;
+    }
+    return 'wrongMethod';
+  }
+  const roleMatch = pathname.match(/^\/api\/collections\/[^/]+\/grants\/role$/);
+  if (roleMatch) {
+    if (method === 'POST') {
+      return collectionGrantsRolePost;
     }
     return 'wrongMethod';
   }

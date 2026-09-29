@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useT } from '../i18n';
 import RecipeForm from '../components/RecipeForm';
 import CreateRecipeForm from '../components/CreateRecipeForm';
 import { collectionStore, libraryHref, useCollections } from '../lib/collectionStore';
@@ -42,6 +43,7 @@ function Screen({
 }
 
 function CreateRecipe() {
+  const t = useT();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const collectionId = params.get('c') ?? undefined;
@@ -57,7 +59,7 @@ function CreateRecipe() {
   const [initial] = useState(blankDraft);
 
   return (
-    <Screen heading="New recipe" backTo={backTo} backLabel="Library">
+    <Screen heading={t('recipeEdit.newRecipe')} backTo={backTo} backLabel={t('common.library')}>
       <CreateRecipeForm
         initial={initial}
         collectionId={knownCollectionId}
@@ -69,6 +71,7 @@ function CreateRecipe() {
 }
 
 function EditRecipe({ id }: { id: string }) {
+  const t = useT();
   const navigate = useNavigate();
   const recipe = useRecipe(id);
   const [canSubmit, setCanSubmit] = useState(true);
@@ -78,23 +81,27 @@ function EditRecipe({ id }: { id: string }) {
 
   if (recipe === undefined) {
     return (
-      <div className="p-6 text-center text-ink-muted">Loading recipe…</div>
+      <div className="p-6 text-center text-ink-muted">{t('common.loadingRecipe')}</div>
     );
   }
-  if (recipe === null || recipeStore.isShared(id)) {
+  // A shared recipe is editable only by an editor; for a viewer this route
+  // looks exactly like a missing recipe.
+  const shared = recipeStore.isShared(id);
+  if (recipe === null || (shared && recipeStore.access(id) !== 'editor')) {
     return (
       <div className="p-6 text-center text-ink-muted">
-        Recipe not found.{' '}
+        {t('common.recipeNotFound')}{' '}
         <Link to="/" className="underline hover:text-ink">
-          Back to library
+          {t('common.backToLibrary')}
         </Link>
       </div>
     );
   }
 
-  // `save` replaces the whole record, so identity and the fields the form has
-  // no UI for are carried over by hand rather than by spreading the old recipe
-  // — a spread would resurrect optional fields the user just cleared.
+  // `save` replaces the whole record. Identity and `sourceUrl` (the form has
+  // no field for it) are carried by hand rather than by spreading the old
+  // recipe — a spread would resurrect optional fields the user just cleared.
+  // `lang` arrives on `draft` from `toDraft`, so this spread keeps it.
   const save = async (draft: RecipeDraft) => {
     await recipeStore.save({
       ...draft,
@@ -108,9 +115,9 @@ function EditRecipe({ id }: { id: string }) {
 
   return (
     <Screen
-      heading="Edit recipe"
+      heading={t('recipeEdit.editRecipe')}
       backTo={`/recipe/${recipe.id}`}
-      backLabel="Recipe"
+      backLabel={t('common.recipe')}
       action={
         <button
           type="submit"
@@ -118,17 +125,18 @@ function EditRecipe({ id }: { id: string }) {
           disabled={!canSubmit}
           className={`${primaryBtn} shrink-0 px-5 py-2`}
         >
-          Save
+          {t('common.save')}
         </button>
       }
     >
       <RecipeForm
         initial={recipe}
-        submitLabel="Save"
+        submitLabel={t('common.save')}
         onSubmit={save}
         onCancel={() => navigate(`/recipe/${recipe.id}`)}
         formId={EDIT_FORM_ID}
         onCanSubmitChange={onCanSubmitChange}
+        photosEditable={!shared}
       />
     </Screen>
   );

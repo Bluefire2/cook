@@ -2,7 +2,8 @@
 
 A personal, allowlisted recipe book that runs as an installed PWA on a phone.
 It holds a readable recipe view, a cooking assistant attached to that recipe,
-and one-tap import of recipes from a URL or pasted text.
+and one-tap import of recipes from a URL, pasted text, or photos of
+handwritten notes.
 
 Live at <https://sous.kyrylo.lol>.
 
@@ -17,9 +18,10 @@ when you use chat or import.
 
 Sous is **invitation-only**: a Google account must either be in
 `ALLOWED_EMAILS` (the owner/admin bootstrap list) or hold an **`active`**
-`members/{sub}` record in Firestore. The owner creates that record by
-approving a request **or** by minting a single-use invite link the person
-redeems at Google sign-in. Everyone else completes Google consent, lands on a
+`members/{sub}` record in Firestore. That record is created when the owner
+approves a request, **or** when the person redeems a single-use invite link
+minted by the owner or by a member who already has access. Everyone else
+completes Google consent, lands on a
 server-rendered 403 with **Request access**, and gets no session cookie until
 admitted.
 
@@ -35,10 +37,17 @@ admitted.
    or declined; **Approved** rows can have access removed; **Declined** rows
    can be approved again. Approval (and invite redeem) writes `members/{sub}`
    and takes effect on the member’s next sign-in — **no redeploy**.
+4. A signed-in member who is not an owner creates one invite link from
+   **Settings**. The URL is shown once. Creating another replaces their
+   unused link. Each member can admit up to 5 people this way. They cannot
+   open Invitations, approve anyone, remove access, or revoke a link. The
+   owner still sees every unused link on `/admin`, including who created it,
+   and can revoke it. Removing someone’s access also revokes the unused
+   links they created.
 
 **Every address in `ALLOWED_EMAILS` is an owner/admin** who can manage
-invitations. Add ordinary members through `/admin`, not by editing that
-variable.
+invitations. Add ordinary members through `/admin` or an invite link, not by
+editing that variable.
 
 ## Installing it on a phone
 
@@ -245,7 +254,7 @@ the full map).
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | yes | Passed to `new GoogleGenAI({ apiKey })` in the Gemini handlers (chat, import, and Ask dictation). |
+| `GEMINI_API_KEY` | yes | Passed to `new GoogleGenAI({ apiKey })` in the Gemini handlers (chat, import, and Ask dictation). Use a key from a **paid-tier** AI Studio project: free-tier content may be used to improve Google's products, and import sends photos of personal notes. |
 | `AUTH_GOOGLE_ID` | yes | OAuth 2.0 Web client id. |
 | `AUTH_GOOGLE_SECRET` | yes | OAuth client secret. |
 | `SESSION_SECRET` | yes | HMAC key for the `sous_session` cookie. **Do not rotate casually** — every device is signed out if it changes. |
@@ -257,6 +266,8 @@ the full map).
 | `OWNER_NOTIFY_EMAIL` | yes (prod) | Inbox that receives access-request notifications. |
 | `RESEND_API_KEY` | no | Resend API key. Unset ⇒ no notification email; requests still land in `/admin`. |
 | `CHAT_MODEL` | no | Model id for the Gemini endpoints (chat, import, and Ask dictation). Defaults to `gemini-3.7-flash`. A bare `CHAT_MODEL=` is read as `''` by `--env-file`, which defeats the default — comment the line out instead. |
+| `TRANSLATE_PROVIDER` | no | Recipe translation provider. Defaults to `gemini`, the only accepted value. Any other value fails closed (`503`, code `translate-provider-unavailable`). A bare `TRANSLATE_PROVIDER=` is read as `''` and keeps the default — comment the line out instead. |
+| `TRANSLATE_MODEL` | no | Gemini model for recipe translation. Defaults to `gemini-3.5-flash-lite`. A bare `TRANSLATE_MODEL=` is read as `''` and keeps the default — comment the line out instead. |
 
 No `VITE_`-prefixed variable exists anywhere in the app, and none should. Vite
 inlines `VITE_*` values into the client bundle, so prefixing the Gemini key
@@ -284,8 +295,9 @@ Build, push, and deploy with the env map the container needs. The generator
 writes **ten** required keys (`GEMINI_API_KEY`, `AUTH_GOOGLE_ID`,
 `AUTH_GOOGLE_SECRET`, `SESSION_SECRET`, `ALLOWED_EMAILS`, `PUBLIC_ORIGIN`,
 `GOOGLE_CLOUD_PROJECT`, `PHOTO_BUCKET`, `MAIL_FROM`, `OWNER_NOTIFY_EMAIL`)
-and adds **`RESEND_API_KEY`** only when it is set — omitting it removes the
-key from Cloud Run because `--env-vars-file` replaces the whole map.
+and adds **`RESEND_API_KEY`**, **`TRANSLATE_PROVIDER`**, and **`TRANSLATE_MODEL`**
+only when they are set — omitting an empty optional key removes it from Cloud
+Run because `--env-vars-file` replaces the whole map.
 
 ```bash
 bash scripts/deploy.sh
@@ -342,7 +354,7 @@ is untouched. Chat and import there return 401.
 api/chat.ts               streaming Gemini proxy + the update_recipe tool
 api/import.ts             Vercel-only stub; always 401
 server/recipeImport.ts    import pipeline: page fetch, JSON-LD/region extraction, Gemini, cleanup
-server/importRoute.ts     POST /api/import: URL or pasted text in, recipe draft out
+server/importRoute.ts     POST /api/import: URL, pasted text, or up to 4 photos in, recipe draft out
 extension/                Chrome extension: import the page you are reading
 server/stt.ts             Ask dictation: raw audio in, `{ text }` out via Gemini
 server/auth.ts            Google OAuth and session cookie
@@ -363,7 +375,8 @@ The one rule to keep: **UI code goes through the stores in `src/lib/`
 (`recipeStore`, `chatStore`, `photoStore`) and never calls `fetch` for library
 data.** [`src/lib/syncEngine.ts`](src/lib/syncEngine.ts) and
 [`src/lib/remote.ts`](src/lib/remote.ts) own pull/push/photo HTTP. Admin
-HTTP lives in [`src/lib/adminApi.ts`](src/lib/adminApi.ts).
+HTTP lives in [`src/lib/adminApi.ts`](src/lib/adminApi.ts). Member invite
+minting lives in [`src/lib/inviteApi.ts`](src/lib/inviteApi.ts).
 
 Two details that are easy to trip over:
 
@@ -382,6 +395,11 @@ Two details that are easy to trip over:
 - `POST /api/stt` takes a raw audio body (`Content-Type` one of webm/mp4/aac/mpeg/ogg/wav)
   and a session cookie, and returns JSON `{ text }`. Vite must proxy `/api` to
   the Node server or dictation fails the same way chat does.
+- `POST /api/import` also accepts `images: { mediaType, base64 }[]` (1–4;
+  `image/jpeg`, `image/png`, `image/webp`; ≤ 3 MB decoded each; body ≤ 12 MB,
+  else 413). `url` wins, and `text` becomes notes. The browser sends 2048 px
+  JPEGs. The photos go to Gemini and are not stored. It is bound by
+  [`docs/constitutions/image-import.md`](docs/constitutions/image-import.md).
 
 ## Your data
 
@@ -392,7 +410,8 @@ They are loaded into the browser while you are signed in. There is no app
 password and no
 Google refresh token. Chat and import send recipe text (and any photos you
 attach) to Gemini at request time; Dictate sends a short microphone clip the
-same way. That traffic is not stored as a separate library on the server
+same way. Photos you add for import are sent to Gemini to read the recipe and
+are not stored. That traffic is not stored as a separate library on the server
 beyond what sync already keeps.
 
 Settings has **Export library** / **Import backup**, which write and read a

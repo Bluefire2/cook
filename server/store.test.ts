@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COOK_LOG_CASES,
+  FULL_COOK_LOG,
+  FULL_COOK_LOG_UNCOMPACTED,
+  MINIMAL_COOK_LOG,
+  MINIMAL_COOK_LOG_UNCOMPACTED,
+} from '../test/cookLogFixtures.ts';
+import {
+  cascadeChildJobs,
+  cascadeJobCost,
+  cascadeTombstoneAt,
+  compactCookLogFields,
+  cookLogMovesRecipe,
+  forcedTombstoneAt,
+  isCookedOn,
+  validateCookLogDelete,
+  validateCookLogPut,
   addedCollectionRecipeIds,
   chunkByCost,
   chunkForBatch,
@@ -11,6 +27,7 @@ import {
   collectionDeletePayload,
   compactCollectionFields,
   compactRecipeFields,
+  MAX_RECIPE_LANG_CHARS,
   compareMutation,
   SHARED_PARENT_OWNER_SUB_FIELD,
   sharedParentMarkerForWrite,
@@ -28,7 +45,9 @@ import {
   emailLowerBackfill,
   userProfileUpsertFields,
   validatePushOp,
+  isKnownPushKind,
 } from './store.ts';
+import { translationCacheDocIds } from './recipeTranslation.ts';
 
 describe('emailLowerBackfill', () => {
   it('returns the normalized address when emailLower is missing or stale', () => {
@@ -124,6 +143,15 @@ describe('pull cursor', () => {
   it('treats garbage as empty', () => {
     expect(decodePullCursor('not-json')).toEqual({});
   });
+
+  it('keeps the cookLogs cursor and drops unknown kinds', () => {
+    const cookLogs: [number, string] = [300, '33333333-3333-4333-8333-333333333333'];
+    const encoded = Buffer.from(
+      JSON.stringify({ cookLogs, somethingNew: [1, '44444444-4444-4444-8444-444444444444'] }),
+      'utf8',
+    ).toString('base64url');
+    expect(decodePullCursor(encoded)).toEqual({ cookLogs });
+  });
 });
 
 describe('chunkForBatch', () => {
@@ -191,6 +219,40 @@ describe('validatePushOp', () => {
         },
       }).ok,
     ).toBe(true);
+  });
+
+  it('rejects a non-string or oversized lang and accepts anything shorter', () => {
+    const base = {
+      id: '11111111-1111-4111-8111-111111111111',
+      title: 'T',
+      servings: 1,
+      ingredientSections: [],
+      steps: [],
+      tags: [],
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    expect(validatePushOp({ kind: 'recipe.put', payload: { ...base, lang: 'it' } }).ok).toBe(true);
+    expect(validatePushOp({ kind: 'recipe.put', payload: { ...base, lang: 'garbage!!' } }).ok).toBe(
+      true,
+    );
+    expect(
+      validatePushOp({
+        kind: 'recipe.put',
+        payload: { ...base, lang: 'x'.repeat(MAX_RECIPE_LANG_CHARS) },
+      }).ok,
+    ).toBe(true);
+    expect(
+      validatePushOp({
+        kind: 'recipe.put',
+        payload: { ...base, lang: 'x'.repeat(MAX_RECIPE_LANG_CHARS + 1) },
+      }).ok,
+    ).toBe(false);
+    expect(validatePushOp({ kind: 'recipe.put', payload: { ...base, lang: 1 } }).ok).toBe(false);
+    expect(validatePushOp({ kind: 'recipe.put', payload: { ...base, lang: null } }).ok).toBe(false);
+    expect(validatePushOp({ kind: 'recipe.put', payload: { ...base, lang: ['it'] } }).ok).toBe(
+      false,
+    );
   });
 
   it('rejects recipe.put with more than 8 gallery photos or a non-UUID', () => {
@@ -316,6 +378,17 @@ describe('compactRecipeFields', () => {
       galleryPhotoIds: ['g1', 'g2'],
     });
     expect(compacted.galleryPhotoIds).toEqual(['g1', 'g2']);
+  });
+
+  it('normalizes lang and omits a value it cannot understand', () => {
+    expect(compactRecipeFields({ ...required, lang: 'it-IT' }).lang).toBe('it');
+    expect(compactRecipeFields({ ...required, lang: 'ua' }).lang).toBe('uk');
+    expect(compactRecipeFields({ ...required, lang: 'zh-CN' }).lang).toBe('zh-Hans');
+    expect(compactRecipeFields({ ...required, lang: 'garbage!!' })).not.toHaveProperty('lang');
+    expect(compactRecipeFields({ ...required, lang: 4 })).not.toHaveProperty('lang');
+    expect(
+      compactRecipeFields({ ...required, lang: 'x'.repeat(MAX_RECIPE_LANG_CHARS) }),
+    ).not.toHaveProperty('lang');
   });
 
   it('omits an empty gallery and strips the cover id', () => {
@@ -855,6 +928,147 @@ describe('shared parent provenance', () => {
         sharedParentOwnerSub: 4,
       }),
     ).not.toHaveProperty('sharedParentOwnerSub');
+  });
+});
+
+describe('validateCookLogPut (shared table with isUsableCookLog)', () => {
+  it.each(COOK_LOG_CASES)('$name → $valid', ({ entry, valid }) => {
+    expect(validateCookLogPut(entry)).toBe(valid);
+    expect(validatePushOp({ kind: 'cookLog.put', payload: entry }).ok).toBe(valid);
+  });
+});
+
+describe('validateCookLogDelete', () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+
+  it('accepts an id and a finite updatedAt', () => {
+    expect(validateCookLogDelete({ id, updatedAt: 3 })).toBe(true);
+    expect(validatePushOp({ kind: 'cookLog.delete', payload: { id, updatedAt: 3 } }).ok).toBe(true);
+  });
+
+  it('rejects a bad id, a missing updatedAt, or a non-object', () => {
+    expect(validateCookLogDelete({ id: 'x', updatedAt: 3 })).toBe(false);
+    expect(validateCookLogDelete({ id })).toBe(false);
+    expect(validateCookLogDelete({ id, updatedAt: '3' })).toBe(false);
+    expect(validateCookLogDelete(null)).toBe(false);
+  });
+});
+
+describe('cook log push kinds', () => {
+  it('are known', () => {
+    expect(isKnownPushKind('cookLog.put')).toBe(true);
+    expect(isKnownPushKind('cookLog.delete')).toBe(true);
+    expect(isKnownPushKind('cookLog.move')).toBe(false);
+  });
+});
+
+describe('isCookedOn (server copy)', () => {
+  it('accepts real dates and rejects impossible ones', () => {
+    expect(isCookedOn('2024-02-29')).toBe(true);
+    expect(isCookedOn('2026-02-30')).toBe(false);
+    expect(isCookedOn('1900-02-29')).toBe(false);
+    expect(isCookedOn('2026-9-26')).toBe(false);
+  });
+});
+
+describe('compactCookLogFields', () => {
+  it('drops unknown keys and trims text, matching the client compactor', () => {
+    expect(compactCookLogFields(FULL_COOK_LOG_UNCOMPACTED)).toEqual(FULL_COOK_LOG);
+  });
+
+  it('omits blank text and empty photoIds', () => {
+    expect(compactCookLogFields(MINIMAL_COOK_LOG_UNCOMPACTED)).toEqual(MINIMAL_COOK_LOG);
+  });
+
+  it('strips server bookkeeping from a stored doc', () => {
+    expect(
+      compactCookLogFields({ ...FULL_COOK_LOG, serverUpdatedAt: 9, uid: 'u', sub: 's' }),
+    ).toEqual(FULL_COOK_LOG);
+  });
+});
+
+describe('cookLogMovesRecipe', () => {
+  const recipeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const otherId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+  it('rejects a put that changes the recipe of a live entry', () => {
+    expect(cookLogMovesRecipe({ recipeId, updatedAt: 1 }, { recipeId: otherId })).toBe(true);
+  });
+
+  it('allows the same recipe, a new entry, and a tombstone', () => {
+    expect(cookLogMovesRecipe({ recipeId, updatedAt: 1 }, { recipeId })).toBe(false);
+    expect(cookLogMovesRecipe(null, { recipeId: otherId })).toBe(false);
+    expect(
+      cookLogMovesRecipe({ id: 'x', updatedAt: 1, deletedAt: 1 }, { recipeId: otherId }),
+    ).toBe(false);
+  });
+});
+
+describe('forcedTombstoneAt', () => {
+  it('uses the delete time for an older or missing child', () => {
+    expect(forcedTombstoneAt(10, { updatedAt: 5 })).toBe(10);
+    expect(forcedTombstoneAt(10, null)).toBe(10);
+  });
+
+  it('raises to the stored time for a child edited after the delete', () => {
+    expect(forcedTombstoneAt(10, { updatedAt: 20 })).toBe(20);
+  });
+
+  it('skips a child that is already a tombstone', () => {
+    expect(forcedTombstoneAt(10, { updatedAt: 5, deletedAt: 5 })).toBeNull();
+    expect(forcedTombstoneAt(10, { updatedAt: 20, deletedAt: 20 })).toBeNull();
+  });
+});
+
+describe('cascadeChildJobs', () => {
+  const jobs = cascadeChildJobs({
+    chatIds: ['m1'],
+    cookStateIds: ['r1'],
+    cookLogIds: ['l1'],
+    photoIds: ['p1'],
+  });
+
+  it('forces cook logs and photos but not chat or cookState', () => {
+    expect(jobs).toEqual([
+      { kind: 'chatMessages', id: 'm1', forced: false },
+      { kind: 'cookState', id: 'r1', forced: false },
+      { kind: 'cookLogs', id: 'l1', forced: true },
+      { kind: 'photos', id: 'p1', forced: true },
+    ]);
+  });
+
+  it('tombstones a newer cook log or photo but skips a newer chat or cookState', () => {
+    const newer = { updatedAt: 20 };
+    expect(jobs.map((job) => cascadeTombstoneAt(job, 10, newer))).toEqual([null, null, 20, 20]);
+  });
+
+  it('tombstones every older child at the delete time', () => {
+    const older = { updatedAt: 5 };
+    expect(jobs.map((job) => cascadeTombstoneAt(job, 10, older))).toEqual([10, 10, 10, 10]);
+  });
+
+  it('counts cook logs like chat messages in the batch cost', () => {
+    expect(
+      chunkByCost(jobs, cascadeJobCost, 3).map((chunk) =>
+        chunk.map((job) => job.id),
+      ),
+    ).toEqual([['m1', 'r1', 'l1'], ['p1']]);
+  });
+});
+
+describe('translationCacheDocIds', () => {
+  it('names the four UI-language cache docs, in order, with no query', () => {
+    const recipeId = '550e8400-e29b-41d4-a716-446655440000';
+    expect(translationCacheDocIds(recipeId)).toEqual([
+      `${recipeId}.en`,
+      `${recipeId}.uk`,
+      `${recipeId}.ru`,
+      `${recipeId}.zh-Hans`,
+    ]);
+    expect(translationCacheDocIds(recipeId)).toEqual(translationCacheDocIds(recipeId));
+    for (const id of translationCacheDocIds(recipeId)) {
+      expect(id.includes('/')).toBe(false);
+    }
   });
 });
 

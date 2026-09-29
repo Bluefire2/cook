@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react';
+import { t } from '../i18n';
 import {
   MAX_COLLECTION_NAME_LENGTH,
   MAX_NAMED_COLLECTIONS,
@@ -7,7 +8,10 @@ import {
 } from './compactCollection';
 import { moveRecipe, wouldExceedRecipeIdCap } from './collectionMembership';
 import {
+  beginLocalWrite,
+  collectionAccess,
   countOwnedNamedCollections,
+  endLocalWrite,
   getCollectionOrigin,
   getCollection,
   getSnapshot,
@@ -17,31 +21,37 @@ import {
   removeCollectionLocal,
   subscribe,
   upsertCollection,
+  type LibraryAccess,
 } from './libraryMemory';
 import {
   addCollectionGrant,
+  leaveSharedCollection,
   listCollectionGrants,
   pushOps,
   revokeCollectionGrant,
+  setCollectionGrantRole,
   type CollectionGrant,
+  type GrantRole,
+  type LeaveSharedResult,
   type RemoteResult,
 } from './remote';
+import { pullAfterLocalWrite } from './syncEngine';
 import type { Collection } from './types';
 
 function rejectShared(id: string): void {
   if (isSharedCollection(id)) {
-    throw new Error('This shared collection is view-only.');
+    throw new Error(t('error.sharedViewOnly'));
   }
 }
 
 export function collectionPushErrorMessage(result: RemoteResult, created = false): string {
   if (result === 'signedOut') {
-    return 'Please sign in again — your session expired.';
+    return t('error.sessionExpired');
   }
   if (created && result === 'cap') {
-    return `You can have up to ${MAX_NAMED_COLLECTIONS} collections.`;
+    return t('error.collectionCap', { max: MAX_NAMED_COLLECTIONS });
   }
-  return "Couldn't save the collection.";
+  return t('error.collectionSave');
 }
 
 function saveError(result: RemoteResult, created = false): Error {
@@ -74,9 +84,14 @@ export const collectionStore = {
     return listCollections();
   },
 
-  /** True for a collection that arrived through an incoming share (view-only). */
+  /** True for a collection that arrived through an incoming share. */
   isShared(id: string): boolean {
     return isSharedCollection(id);
+  },
+
+  /** `editor` when a shared collection's recipes may be edited here. */
+  access(id: string): LibraryAccess | undefined {
+    return collectionAccess(id);
   },
 
   /** Email of whoever shared this collection with you, when known. */
@@ -94,12 +109,12 @@ export const collectionStore = {
     if (trimmed === undefined) {
       throw new Error(
         name.trim() === ''
-          ? 'Name this collection.'
-          : `Keep the name under ${MAX_COLLECTION_NAME_LENGTH} characters.`,
+          ? t('error.collectionNameEmpty')
+          : t('error.collectionNameLong', { max: MAX_COLLECTION_NAME_LENGTH }),
       );
     }
     if (countOwnedNamedCollections() >= MAX_NAMED_COLLECTIONS) {
-      throw new Error(`You can have up to ${MAX_NAMED_COLLECTIONS} collections.`);
+      throw new Error(t('error.collectionCap', { max: MAX_NAMED_COLLECTIONS }));
     }
     const now = Date.now();
     const collection = compactCollection({
@@ -117,14 +132,14 @@ export const collectionStore = {
     rejectShared(id);
     const existing = getCollection(id);
     if (!existing) {
-      throw new Error('Collection not found.');
+      throw new Error(t('error.collectionNotFound'));
     }
     const trimmed = compactCollectionName(name);
     if (trimmed === undefined) {
       throw new Error(
         name.trim() === ''
-          ? 'Name this collection.'
-          : `Keep the name under ${MAX_COLLECTION_NAME_LENGTH} characters.`,
+          ? t('error.collectionNameEmpty')
+          : t('error.collectionNameLong', { max: MAX_COLLECTION_NAME_LENGTH }),
       );
     }
     await pushCollection(
@@ -151,7 +166,7 @@ export const collectionStore = {
     rejectShared(id);
     const result = await listCollectionGrants(id);
     if (result.kind === 'signedOut') {
-      throw new Error('Please sign in again — your session expired.');
+      throw new Error(t('error.sessionExpired'));
     }
     if (result.kind === 'error') {
       throw new Error(result.message);
@@ -159,46 +174,98 @@ export const collectionStore = {
     return result.grants ?? [];
   },
 
-  async addGrant(id: string, email: string): Promise<CollectionGrant> {
+  async addGrant(
+    id: string,
+    email: string,
+    role: GrantRole = 'viewer',
+  ): Promise<CollectionGrant> {
     rejectShared(id);
-    const result = await addCollectionGrant(id, email);
+    const result = await addCollectionGrant(id, email, role);
     if (result.kind === 'signedOut') {
-      throw new Error('Please sign in again — your session expired.');
+      throw new Error(t('error.sessionExpired'));
     }
     if (result.kind === 'error') {
       throw new Error(result.message);
     }
     if (!result.grant) {
-      throw new Error("Couldn't update sharing.");
+      throw new Error(t('error.sharingUpdate'));
     }
     return result.grant;
+  },
+
+  async setGrantRole(id: string, sub: string, role: GrantRole): Promise<void> {
+    rejectShared(id);
+    const result = await setCollectionGrantRole(id, sub, role);
+    if (result.kind === 'signedOut') {
+      throw new Error(t('error.sessionExpired'));
+    }
+    if (result.kind === 'error') {
+      throw new Error(result.message);
+    }
   },
 
   async revokeGrant(id: string, sub: string): Promise<void> {
     rejectShared(id);
     const result = await revokeCollectionGrant(id, sub);
     if (result.kind === 'signedOut') {
-      throw new Error('Please sign in again — your session expired.');
+      throw new Error(t('error.sessionExpired'));
     }
     if (result.kind === 'error') {
       throw new Error(result.message);
     }
   },
 
+  /** Only for a collection shared with you. Owned collections have no Leave control. */
+  async leave(id: string): Promise<void> {
+    const origin = getCollectionOrigin(id);
+    if (origin?.kind !== 'shared') {
+      throw new Error(t('error.notSharedWithYou'));
+    }
+    // A pull that started before this tombstone can otherwise publish the
+    // collection back onto the screen after we return. Hold the library
+    // the same way recipe delete does, then read the server instead of
+    // trusting that a concurrent pull already saw the tombstone.
+    const writeEpoch = beginLocalWrite();
+    let result: LeaveSharedResult;
+    try {
+      result = await leaveSharedCollection(origin.ownerSub, id);
+    } finally {
+      endLocalWrite();
+    }
+    if (result.kind === 'signedOut') {
+      throw new Error(t('error.sessionExpired'));
+    }
+    if (result.kind === 'error') {
+      throw new Error(result.message);
+    }
+    // Leave succeeded (or the grant was already gone). Do not drop the
+    // collection locally first: that would unmount the Leave sheet, so a failed
+    // refresh could not show its error. The epoch hold above keeps an
+    // overlapping pull from repainting, and a successful pull publishes state
+    // without the collection and its recipes.
+    const outcome = await pullAfterLocalWrite(writeEpoch);
+    if (outcome === 'signedOut') {
+      throw new Error(t('error.sessionExpired'));
+    }
+    if (outcome !== 'ok') {
+      throw new Error(t('error.leaveRefresh'));
+    }
+  },
+
   async moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {
     if (isSharedRecipe(recipeId) || (dest !== 'default' && isSharedCollection(dest))) {
-      throw new Error('This shared collection is view-only.');
+      throw new Error(t('error.sharedViewOnly'));
     }
     if (dest !== 'default') {
       const destCollection = getCollection(dest);
       if (!destCollection) {
-        throw new Error('Collection not found.');
+        throw new Error(t('error.collectionNotFound'));
       }
       if (
         !destCollection.recipeIds.includes(recipeId) &&
         wouldExceedRecipeIdCap([...destCollection.recipeIds, recipeId])
       ) {
-        throw new Error('This collection is full.');
+        throw new Error(t('error.collectionFull'));
       }
     }
     const now = Date.now();
@@ -227,7 +294,6 @@ export const collectionStore = {
       throw err;
     }
   },
-
 };
 
 export function useCollections(): Collection[] | undefined {

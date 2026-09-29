@@ -5,11 +5,12 @@ import App from './App';
 import { clearLibrary, discardLegacyCookDb, markLoaded } from './lib/libraryMemory';
 import { fetchSession } from './lib/session';
 import { setupSyncTriggers, triggerSyncAfterSession } from './lib/syncEngine';
-import { settings } from './lib/settings';
+import { applyLocale, settings } from './lib/settings';
 import { applyTheme } from './lib/theme';
 import './index.css';
 
 applyTheme(settings.getTheme());
+applyLocale(settings.getLocale());
 discardLegacyCookDb();
 
 createRoot(document.getElementById('root')!).render(

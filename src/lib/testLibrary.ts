@@ -69,6 +69,7 @@ export function installSharedRows(shared: SharedPullSnapshot): void {
       collections: ownedCollections,
       chat: new Map(current.chat),
       cook: new Map(current.cook),
+      cookLogs: new Map(current.cookLogs),
       remotePhotoIds: new Set(current.remotePhotoIds),
       chatParentOrigins: current.chatParentOrigins,
       cookParentOrigins: current.cookParentOrigins,

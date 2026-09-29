@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import type { EncodedImage } from './image';
 import { invalidateSession } from './session';
 import { normalizeRecipeDraft } from './recipeShape';
@@ -13,6 +14,16 @@ export interface CookingState {
   servings: number;
   currentStep: number;
   checkedIngredients: string[];
+}
+
+/**
+ * The recipe posted to `/api/chat`. `lang` is removed so the request stays
+ * the same shape it had before the field existed.
+ */
+export function recipeForChat(recipe: Recipe): Recipe {
+  const posted: Recipe = { ...recipe };
+  delete posted.lang;
+  return posted;
 }
 
 export interface ChatReply {
@@ -43,7 +54,7 @@ export async function streamChatReply(params: {
     },
     body: JSON.stringify({
       messages: params.messages,
-      recipe: params.recipe,
+      recipe: recipeForChat(params.recipe),
       cookingState: params.cookingState,
     }),
     signal: params.signal,
@@ -51,10 +62,10 @@ export async function streamChatReply(params: {
 
   if (response.status === 401) {
     invalidateSession();
-    throw new Error('Please sign in again — your session expired.');
+    throw new Error(t('error.sessionExpired'));
   }
   if (!response.ok || !response.body) {
-    throw new Error(`Assistant request failed (${response.status}).`);
+    throw new Error(t('error.assistantRequestFailed', { status: response.status }));
   }
 
   const reader = response.body.getReader();

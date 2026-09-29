@@ -31,6 +31,11 @@ export interface Recipe {
   photoId?: string;
   /** Secondary photo FKs, shown as a gallery at the end of the recipe. */
   galleryPhotoIds?: string[];
+  /**
+   * BCP 47 language of the recipe text, when known. Missing is normal;
+   * code must keep working without it (`docs/constitutions/i18n.md`).
+   */
+  lang?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -57,6 +62,25 @@ export interface ChatMessage {
   /** Set when the assistant proposed a recipe modification via update_recipe. */
   proposedRecipe?: RecipeDraft;
   createdAt: number;
+}
+
+/** One time a recipe was cooked. Its own store kind; never fields on `Recipe`. */
+export interface CookLog {
+  id: string;
+  recipeId: string;
+  /** `YYYY-MM-DD`, the local calendar date the user entered. Not a timestamp. */
+  cookedOn: string;
+  /** Integer 1-5. */
+  rating?: number;
+  servings?: number;
+  /** How it went, substitutions. */
+  notes?: string;
+  /** What to do next time; the only field that can be promoted into recipe notes. */
+  lessons?: string;
+  /** FKs into the photos table, owned by `recipeId`. */
+  photoIds?: string[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface Photo {

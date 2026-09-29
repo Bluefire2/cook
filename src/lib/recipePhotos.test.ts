@@ -3,6 +3,7 @@ import {
   MAX_GALLERY_PHOTOS,
   compactGalleryPhotoIds,
   recipePhotoIds,
+  remapPhotoIds,
 } from './recipePhotos';
 
 describe('compactGalleryPhotoIds', () => {
@@ -33,5 +34,22 @@ describe('recipePhotoIds', () => {
         galleryPhotoIds: ['a', 'cover', 'b'],
       }),
     ).toEqual(['cover', 'a', 'b']);
+  });
+});
+
+describe('remapPhotoIds', () => {
+  it('replaces mapped cover and gallery ids and keeps the rest', () => {
+    const remap = new Map([
+      ['a', 'a2'],
+      ['c', 'c2'],
+    ]);
+    expect(
+      remapPhotoIds({ title: 'Soup', photoId: 'a', galleryPhotoIds: ['b', 'c'] }, remap),
+    ).toEqual({ title: 'Soup', photoId: 'a2', galleryPhotoIds: ['b', 'c2'] });
+  });
+
+  it('returns the same draft for an empty remap', () => {
+    const draft = { photoId: 'a' };
+    expect(remapPhotoIds(draft, new Map())).toBe(draft);
   });
 });

@@ -667,3 +667,66 @@ Also locked in audit: Save-as-new from Ask copies into the viewer’s
 default; Ask camera is off on shared recipes.
 
 No other open questions. Implement PR 1 from steps 1–6 without waiting.
+
+## Editor role (sharing-workback task 5)
+
+Extends PR 2 with a second grant role. View-only behavior (D17–D23) is
+unchanged for viewers. Owner-confirmed decisions:
+
+- **Roles.** The collection owner (admin) is not a grant, not transferable,
+  not demotable. A grant is `viewer` (today's behavior) or `editor`.
+- **Storage.** Forward grant and `incomingShares` reverse row both carry
+  `role`. Missing or unknown reads as `viewer`; existing grants are not
+  backfilled. Tombstones carry no role. Cap stays 20 live grants, both roles.
+- **REST.** `POST …/grants` accepts `{ email, role? }` (omitted ⇒ viewer,
+  anything else unknown ⇒ 400). `POST …/grants/role` `{ sub, role }` changes a
+  live grant's role, owner of the collection only: 404 for everyone else and
+  for a missing or revoked grant, 400 for a bad role or sub, same role is a
+  no-op 200. Add by email to someone with a live grant applies the requested
+  role in the same transaction (same pair write as a role change; no write
+  when unchanged) and returns the resulting role; otherwise it stays
+  idempotent (D20). `orchestrateGrantAdd` takes a required `onExisting`:
+  `applyRole` for add by email, `keepRole` for grant paths the owner did not
+  aim at that person, which must never upgrade or downgrade them. Responses
+  include `role`. Cookie auth only.
+- **Editor write.** An editor may `recipe.put` a recipe listed in a live
+  collection shared with them as editor. The client sends op-level
+  `shared: true`; the server resolves owner and role from the session's
+  incoming shares inside the writing transaction (share → live collection →
+  `recipeIds` lists the id → live recipe, same chain as shared chat). The
+  stronger role wins across collections. The write lands on the owner's
+  `users/{owner}/recipes/{id}` with the owner's `id`, `createdAt`, and photo
+  ids; `updatedAt` is the editor's clock clamped to server time
+  (`min(client, server)`), compared and stored under the normal LWW rule, so a
+  far-future stamp cannot lock the owner out. An editor may change every
+  recipe field except photos (title, description, ingredients, steps, notes,
+  servings, times, tags; the edit form has no source-URL field, but a put may
+  carry one). A
+  viewer, a missing share, an unadmitted owner, or any change to `photoId` /
+  `galleryPhotoIds` (add, remove, swap, reorder) is rejected `invalid`, so an
+  editor's bytes never reach the owner's bucket. No collection membership,
+  photo cascade, or tombstone path runs. `ownerSub` and `role` are never read
+  from the body.
+- **Delete.** Owner only. A `recipe.delete` from a session with no row of its
+  own that reaches the id through any share is rejected `invalid`.
+- **Editors cannot** change collection membership, rename or delete the
+  collection, grant or revoke.
+- **Client.** Shared pull emits `role` per collection. The client keeps
+  `access: 'owner' | 'editor' | 'viewer'` on the shared origin in memory at
+  publish time (a recipe is editor when any editor collection lists it); it is
+  not a `Recipe` or `Collection` field. Editors get Edit (no photo controls)
+  and Ask Apply, whose draft always keeps the stored photos. Delete, Move,
+  cook logs, and the Ask camera stay hidden. The share sheet has a
+  Viewer/Editor picker on add and a switch per row beside Remove.
+
+Deviations recorded at implementation:
+
+- **`shared: true` narrowing flag** on the push op. Without it the server
+  cannot tell an owner create from an edit, and a revoked editor's save would
+  silently fork a copy into their own tree. The flag grants nothing; without
+  it a put is an ordinary own-tree write, so a hand-built viewer put without
+  it still creates a row in the viewer's own tree (never the owner's).
+- **`access` on `ItemOrigin`**, not on a separate collection type.
+- **Share-sheet intro copy** changed from "view … not edit" to describe both
+  roles: editors edit the recipes except their photos; only the owner deletes
+  or changes access.

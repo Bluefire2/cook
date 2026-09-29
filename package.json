@@ -13,12 +13,14 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:import": "vitest run --config vitest.eval.config.ts"
+    "test:import": "vitest run --config vitest.eval.config.ts",
+    "eval:ocr-compare": "node --env-file=.env.local evals/ocrCompare.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.1.0",
     "@google-cloud/storage": "^8.1.0",
     "@google/genai": "^1.52.0",
+    "date-fns": "^4.4.0",
     "google-auth-library": "^11.0.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

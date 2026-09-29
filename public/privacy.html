@@ -51,7 +51,7 @@
   </head>
   <body>
     <h1>Privacy policy</h1>
-    <p class="muted">Last updated: 27 September 2026</p>
+    <p class="muted">Last updated: 29 September 2026</p>
 
     <h2>What is stored</h2>
     <p>
@@ -61,13 +61,19 @@
       <code>sub</code> and email; it is HttpOnly and is not readable by page
       scripts. A cached copy of your profile may also be kept in this browser's
       local storage under <code>cook.session</code>, so the app can show who is
-      signed in.
+      signed in. The UI language preference is kept in this browser's local
+      storage under <code>cook.locale</code>.
     </p>
     <p>
-      Your recipes, chat messages, cooking progress, and attached photos are
-      stored in Google Cloud (Firestore and Cloud Storage) in the
+      Your recipes, chat messages, cooking progress, cook log entries (the
+      date you cooked, rating, servings, notes, lessons and photos), and
+      attached photos are stored in Google Cloud (Firestore and Cloud Storage) in the
       <code>europe-west1</code> region. They are loaded into this browser
       while you are signed in. There is no on-device recipe database.
+      Cached translations of your recipes are stored in Firestore under your
+      account and are deleted when their recipe is deleted. Translations of
+      recipes shared with you are not stored; they are translated again each
+      session. Photos used only to import a recipe are not kept.
     </p>
     <p>
       No password and no Google refresh token is stored — the app only ever
@@ -82,12 +88,15 @@
       a person who is not admitted.
     </p>
     <p>
-      If the owner sends you a single-use invite link and you open it, Sous
+      If someone who already has access sends you a single-use invite link
+      and you open it, Sous
       stores a hashed copy of that link (not the secret itself) until it is
       used, expires after 7 days, or is revoked. Redeeming it stores the same
       kind of membership and access-request records as an approved request.
       Opening an invite link does not grant access by itself — you still
       complete Google sign-in, and only a verified email can join.
+      If you create an invite link, Sous stores your account id and email
+      with it, and the owner can see who created each unused link.
     </p>
 
     <h2>What it is used for</h2>
@@ -99,7 +108,11 @@
       If you share a named collection, the live recipes in that folder and
       their recipe photos become visible to the Google accounts whose emails
       you add, and they see your email address as the person who shared it.
-      Those people must already have a Sous account. Chat messages
+      Those people must already have a Sous account. If you make someone an
+      editor, their changes to a recipe's details (such as its title,
+      ingredients, steps, notes, servings, cooking times, and tags) are saved
+      to your copy of that recipe; they cannot change its photos, delete it,
+      or change who has access. Chat messages
       and cooking checkboxes on a shared recipe stay in the viewer's own
       account. The implicit default list (recipes that are not in a named
       collection) is never shareable.
@@ -123,7 +136,13 @@
       you are viewing, to Google's Gemini API at request time to produce the
       reply. Using
       Dictate uploads a short microphone recording to Sous, which sends it to
-      Gemini to turn into text and does not store the audio. Recipe
+      Gemini to turn into text and does not store the audio. Recipe text is
+      sent to Gemini, or the configured translation provider, for
+      translation, including at import. Photos you add on the Import screen
+      are uploaded to Sous, which sends them to Google's Gemini API to extract
+      the recipe. They are not stored and are not attached to the saved
+      recipe. Gemini processes these requests on Google's infrastructure,
+      which is not limited to the <code>europe-west1</code> region. Recipe
       import fetches the URL you paste. If you press Request access, the
       notification email to the owner is sent through Resend and contains
       your email address, display name and the time of the request; it
@@ -133,8 +152,10 @@
 
     <h2>Retention and deletion</h2>
     <p>
-      Deleting a recipe in Sous deletes its chat thread, cooking progress, and
-      attached photos from your stored library.
+      Deleting a recipe in Sous deletes its chat thread, cooking progress,
+      cook log entries (dates, ratings, notes, lessons and their photos),
+      attached photos, and cached translations from your stored library.
+      Deleting a single cook log entry deletes its photos too.
     </p>
     <p>
       Access records are kept as follows. A pending access request is kept
@@ -145,7 +166,7 @@
       membership record lasts as long as the person has access; revoking
       access sets its status to <code>revoked</code> rather than deleting it,
       so a revoked person still has a row. Unused invite-link records are
-      kept until they are redeemed, expire, or the owner revokes them; a
+      kept until they are redeemed, expire, or they are revoked; a
       redeemed invite keeps a hashed identifier and the Google account id
       that used it. There is no automated purge job: none of these records is
       deleted on a schedule.
@@ -157,9 +178,11 @@
       button. A deletion request covers all of it: your access-request record,
       your membership record, any invite-link redemption recorded for your
       account, and your stored library — recipes, chat
-      messages, cooking progress and photos — and deleting these also removes
-      your access. Revoking Sous's access from your Google account permissions
-      page signs you out but does not by itself delete your stored recipes.
+      messages, cooking progress, cook log entries (dates, ratings, notes,
+      lessons and photos), photos, and cached translations — and deleting
+      these also removes your access. Revoking Sous's access from your
+      Google account permissions page signs you out but does not by itself
+      delete your stored recipes.
     </p>
     <p>
       Sign out to drop the session cookie when the network request succeeds. If
@@ -173,10 +196,10 @@
     <p>
       Sous is invitation-only: signing in is limited to allow-listed email
       addresses, to accounts the owner has approved from an access
-      request, and to accounts that redeem a single-use invite link the
-      owner created. Requesting access does not grant it. Opening an invite
-      link does not grant it until Google sign-in succeeds with a verified
-      email.
+      request, and to accounts that redeem a single-use invite link sent
+      by someone who already has access. Requesting access does not grant it.
+      Opening an invite link does not grant it until Google sign-in succeeds
+      with a verified email.
     </p>
 
     <h2>Contact</h2>
