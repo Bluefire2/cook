@@ -111,6 +111,12 @@ describe('inviteDeadPageHtml', () => {
     expect(inviteDeadPageHtml('expired')).toContain('This invite link has expired');
     expect(inviteDeadPageHtml('used')).toContain('This invite link has already been used');
     expect(inviteDeadPageHtml('unknown')).toContain('This invite link is not valid');
+    expect(inviteDeadPageHtml('expired')).toContain('Ask whoever sent it for a new link');
+    expect(inviteDeadPageHtml('used')).toContain('ask whoever sent it for a new link');
+    expect(inviteDeadPageHtml('revoked')).toContain('Ask whoever sent it for a new link');
+    expect(inviteDeadPageHtml('expired')).not.toContain('the owner');
+    expect(inviteDeadPageHtml('used')).not.toContain('the owner');
+    expect(inviteDeadPageHtml('unknown')).not.toContain('the owner');
     expect(inviteDeadPageHtml('revoked')).not.toContain('<form');
     expect(inviteDeadPageHtml('malformed')).not.toContain('<script');
     expect(inviteDeadPageHtml('malformed')).not.toContain('href="/api/auth/start"');

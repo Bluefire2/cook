@@ -95,10 +95,17 @@ No refresh tokens, no extra Google APIs, no Auth.js.
   **no cache**. Firestore **`members/{sub}`** with `status: 'active'` is the
   member tier, keyed by Google **`sub`**. Owners short-circuit before any
   member read. Approve ordinary people from **`/admin`**, not by editing
-  `ALLOWED_EMAILS` (every address there is an admin). Owners can also mint a
-  single-use 7-day bearer invite URL on `/admin`; the first verified Google
-  account that finishes consent from that link is written as an active member
-  and listed under Approved.
+  `ALLOWED_EMAILS` (every address there is an admin). Owners mint single-use
+  7-day bearer invite URLs on `/admin` and can revoke any unused one. An
+  admitted member who is not an owner can mint one such link from Settings
+  (`POST /api/invites`) and can admit up to 5 people that way; creating
+  another replaces their previous unused link, and they do not see `/admin`.
+  Removing a member revokes their unused links, and redeem refuses a link
+  whose minter is no longer admitted. The invite landing page runs that
+  same check before the join page; redeem still decides inside its
+  transaction. The first verified Google account that
+  finishes consent from a link is written as an active member and listed
+  under Approved. `approvedBy` is the minter's `sub`.
 - **401 = denied** (client may invalidate the session). **503 = unknown**
   (Firestore blip — do not sign the user out). Membership **denied** must never
   map to 503; membership **unknown** must never map to 401.
@@ -332,7 +339,8 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/sync-toast.md` | Done (`b4b43b6`). |
 | `docs/plans/photos-and-deploy-docs.md` | Done (GCS photos, deploy.sh, README, legal rewrite). |
 | `docs/plans/invitation-flow.md` | In progress on branch `invitation-flow` (request access → `/admin` → Firestore membership). |
-| `docs/plans/invite-links.md` | Implementing. Owner-minted single-use 7-day bearer invite links that admit on Google consent. |
+| `docs/plans/invite-links.md` | Built. Single-use 7-day bearer invite links that admit on Google consent. Owners mint from `/admin`. |
+| `docs/plans/member-invite-links.md` | Built. A non-owner member mints one link from Settings (`POST /api/invites`). Not deployed. |
 | `docs/plans/deploy-and-end-state.md` | Production cutover (`sous-00004-mpx`) and consent In production done. |
 | `docs/plans/server-backed-library.md` | Done: drop IndexedDB; in-memory library over pull/push. |
 | `docs/plans/ask-voice-stt.md` | Implementing. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |

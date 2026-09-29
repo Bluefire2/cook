@@ -1,13 +1,85 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { isSupportedLocale, languageName, SUPPORTED_LOCALES, useLocale, useT } from '../i18n';
+import { isSupportedLocale, languageName, SUPPORTED_LOCALES, t as translate, useLocale, useT } from '../i18n';
 import { exportLibrary, importLibrary } from '../lib/backup';
+import { createMemberInvite } from '../lib/inviteApi';
 import { relativeAgoLabel } from '../lib/relativeTime';
 import { notifyImportComplete, sync, useSyncStatus } from '../lib/syncEngine';
 import { signInHref, signOut, useSession } from '../lib/session';
 import { settings, type Theme } from '../lib/settings';
 import { applyTheme } from '../lib/theme';
 import { backLink, inputClass, primaryBtn, secondaryBtn } from '../lib/uiClasses';
+
+function MemberInvite() {
+  const t = useT();
+  const [mintedUrl, setMintedUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const mint = async () => {
+    setCreating(true);
+    setError(null);
+    setCopied(false);
+    try {
+      const created = await createMemberInvite();
+      setMintedUrl(created.url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : translate('common.somethingWentWrong'));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const copyMintedUrl = async () => {
+    if (mintedUrl === null) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(mintedUrl);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <section>
+      <h2 className="mt-8 text-lg font-semibold">{t('settings.inviteTitle')}</h2>
+      <p className="mt-1 text-sm text-ink-muted">{t('settings.inviteIntro')}</p>
+      <button
+        type="button"
+        onClick={() => void mint()}
+        disabled={creating}
+        className={`${primaryBtn} mt-3 px-4 py-2.5 disabled:opacity-40`}
+      >
+        {creating ? t('admin.creating') : t('admin.createLink')}
+      </button>
+      {error !== null && <p className="mt-2 text-sm text-danger">{error}</p>}
+      {mintedUrl !== null && (
+        <div className="mt-3 rounded-2xl border border-line bg-surface p-4 shadow-sm">
+          <label className="text-xs text-ink-muted" htmlFor="member-invite-url">
+            {t('admin.newInviteLink')}
+          </label>
+          <input
+            id="member-invite-url"
+            className={`${inputClass} mt-1 font-mono text-sm`}
+            readOnly
+            value={mintedUrl}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+          <button
+            type="button"
+            onClick={() => void copyMintedUrl()}
+            className={`${secondaryBtn} mt-2 px-3 py-1.5 text-sm`}
+          >
+            {copied ? t('admin.copied') : t('admin.copy')}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
 
 export default function Settings() {
   const { user, status: sessionStatus } = useSession();
@@ -128,6 +200,7 @@ export default function Settings() {
                   </Link>
                 </>
               )}
+              {user.isOwner !== true && <MemberInvite />}
             </>
           )}
           {sessionStatus === 'offline' && (

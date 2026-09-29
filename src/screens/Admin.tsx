@@ -283,6 +283,11 @@ export default function Admin() {
                       {' · '}
                       {relativeExpiryLabel(entry.expiresAt)}
                     </p>
+                    {entry.creatorEmail !== undefined && entry.creatorEmail !== '' && (
+                      <p className="mt-0.5 text-xs text-ink-muted">
+                        {tr('admin.createdBy', { email: entry.creatorEmail })}
+                      </p>
+                    )}
                   </div>
                   <button
                     type="button"

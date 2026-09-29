@@ -69,12 +69,34 @@ describe('serverErrorText', () => {
     settings.setLocale('en');
     expect(serverErrorText({ code: 'invite-cap', error: 'invite-cap' }, 'error.requestFailed', {
       status: 409,
-    })).toBe('You already have 20 unused invite links. Revoke one to mint another.');
+    })).toBe('There are already 20 unused invite links. Revoke one to mint another.');
     expect(
       serverErrorText({ code: 'invite-cap', error: 'invite-cap', max: 3 }, 'error.requestFailed', {
         status: 409,
       }),
-    ).toBe('You already have 3 unused invite links. Revoke one to mint another.');
+    ).toBe('There are already 3 unused invite links. Revoke one to mint another.');
+  });
+
+  it('uses the member cap sentence that does not mention revoke', () => {
+    settings.setLocale('en');
+    expect(
+      serverErrorText(
+        { code: 'member-invite-cap', error: 'cap' },
+        'error.requestFailed',
+        { status: 409 },
+      ),
+    ).toBe('There are already too many unused invite links. Try again later.');
+  });
+
+  it('fills {max} for the member invite limit', () => {
+    settings.setLocale('en');
+    expect(
+      serverErrorText(
+        { code: 'member-invite-limit', error: 'limit', max: 5 },
+        'error.requestFailed',
+        { status: 409 },
+      ),
+    ).toBe('You have already invited 5 people.');
   });
 
   it('falls back to the English error when the code is unknown', () => {

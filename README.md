@@ -18,9 +18,10 @@ when you use chat or import.
 
 Sous is **invitation-only**: a Google account must either be in
 `ALLOWED_EMAILS` (the owner/admin bootstrap list) or hold an **`active`**
-`members/{sub}` record in Firestore. The owner creates that record by
-approving a request **or** by minting a single-use invite link the person
-redeems at Google sign-in. Everyone else completes Google consent, lands on a
+`members/{sub}` record in Firestore. That record is created when the owner
+approves a request, **or** when the person redeems a single-use invite link
+minted by the owner or by a member who already has access. Everyone else
+completes Google consent, lands on a
 server-rendered 403 with **Request access**, and gets no session cookie until
 admitted.
 
@@ -36,10 +37,17 @@ admitted.
    or declined; **Approved** rows can have access removed; **Declined** rows
    can be approved again. Approval (and invite redeem) writes `members/{sub}`
    and takes effect on the member’s next sign-in — **no redeploy**.
+4. A signed-in member who is not an owner creates one invite link from
+   **Settings**. The URL is shown once. Creating another replaces their
+   unused link. Each member can admit up to 5 people this way. They cannot
+   open Invitations, approve anyone, remove access, or revoke a link. The
+   owner still sees every unused link on `/admin`, including who created it,
+   and can revoke it. Removing someone’s access also revokes the unused
+   links they created.
 
 **Every address in `ALLOWED_EMAILS` is an owner/admin** who can manage
-invitations. Add ordinary members through `/admin`, not by editing that
-variable.
+invitations. Add ordinary members through `/admin` or an invite link, not by
+editing that variable.
 
 ## Installing it on a phone
 
@@ -367,7 +375,8 @@ The one rule to keep: **UI code goes through the stores in `src/lib/`
 (`recipeStore`, `chatStore`, `photoStore`) and never calls `fetch` for library
 data.** [`src/lib/syncEngine.ts`](src/lib/syncEngine.ts) and
 [`src/lib/remote.ts`](src/lib/remote.ts) own pull/push/photo HTTP. Admin
-HTTP lives in [`src/lib/adminApi.ts`](src/lib/adminApi.ts).
+HTTP lives in [`src/lib/adminApi.ts`](src/lib/adminApi.ts). Member invite
+minting lives in [`src/lib/inviteApi.ts`](src/lib/inviteApi.ts).
 
 Two details that are easy to trip over:
 

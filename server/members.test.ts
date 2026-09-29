@@ -5,6 +5,7 @@ import {
   nextNotificationCounter,
   nextRequestState,
   parseMemberDoc,
+  unusedInviteIdsForMember,
   type AccessRequestRecord,
 } from './members.ts';
 
@@ -23,6 +24,21 @@ function pendingRequest(overrides: Partial<AccessRequestRecord> = {}): AccessReq
     ...overrides,
   };
 }
+
+describe('unusedInviteIdsForMember', () => {
+  it('returns only that member unused invites', () => {
+    expect(
+      unusedInviteIdsForMember(
+        [
+          { id: 'unused', status: 'unused', createdBy: 'member' },
+          { id: 'redeemed', status: 'redeemed', createdBy: 'member' },
+          { id: 'other', status: 'unused', createdBy: 'owner' },
+        ],
+        'member',
+      ),
+    ).toEqual(['unused']);
+  });
+});
 
 describe('parseMemberDoc', () => {
   const valid = {

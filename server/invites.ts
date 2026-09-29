@@ -6,7 +6,8 @@ import {
   unavailablePageHtml,
   type InviteDeadReason,
 } from './access.ts';
-import { isSecureOrigin } from './env.ts';
+import { isAllowed } from './allowlist.ts';
+import { allowedEmails, isSecureOrigin } from './env.ts';
 import {
   parseAccessRequestDoc,
   parseMemberDoc,
@@ -23,6 +24,8 @@ import { getStoreFirestore } from './store.ts';
 
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const INVITE_UNUSED_CAP = 20;
+/** Lifetime redeemed invites per member. Keep `settings.inviteIntro` in sync. */
+export const MEMBER_INVITE_LIMIT = 5;
 
 export type InviteStatus = 'unused' | 'redeemed' | 'revoked';
 
@@ -30,6 +33,7 @@ export interface InviteRecord {
   status: InviteStatus;
   createdAt: number;
   createdBy: string;
+  createdByEmail?: string;
   expiresAt: number;
   redeemedAt?: number;
   redeemedBy?: string;
@@ -46,7 +50,7 @@ export type RedeemInviteTransitionResult =
       member: Record<string, unknown>;
       request: AccessRequestRecord;
     }
-  | { kind: 'refusal'; reason: 'unknown' | 'expired' | 'used' | 'revoked' };
+  | { kind: 'refusal'; reason: 'unknown' | 'expired' | 'used' | 'revoked' | 'limit' };
 
 export type RevokeInviteTransitionResult =
   | { kind: 'ok'; invite: InviteRecord }
@@ -98,6 +102,9 @@ export function parseInviteDoc(raw: unknown): InviteRecord | null {
     createdBy: row.createdBy,
     expiresAt: row.expiresAt,
   };
+  if (typeof row.createdByEmail === 'string' && row.createdByEmail !== '') {
+    record.createdByEmail = row.createdByEmail;
+  }
   if (typeof row.redeemedAt === 'number' && Number.isFinite(row.redeemedAt)) {
     record.redeemedAt = row.redeemedAt;
   }
@@ -107,22 +114,92 @@ export function parseInviteDoc(raw: unknown): InviteRecord | null {
   return record;
 }
 
-export function mintInviteRecord(createdBy: string, now: number): {
+export function mintInviteRecord(
+  createdBy: string,
+  now: number,
+  createdByEmail?: string,
+): {
   token: string;
   id: string;
   record: InviteRecord;
 } {
   const token = randomToken(32);
+  const record: InviteRecord = {
+    status: 'unused',
+    createdAt: now,
+    createdBy,
+    expiresAt: now + INVITE_TTL_MS,
+  };
+  if (createdByEmail !== undefined && createdByEmail !== '') {
+    record.createdByEmail = createdByEmail;
+  }
   return {
     token,
     id: hashInviteToken(token),
-    record: {
-      status: 'unused',
-      createdAt: now,
-      createdBy,
-      expiresAt: now + INVITE_TTL_MS,
-    },
+    record,
   };
+}
+
+/**
+ * A member may hold one unused link. When other people's unused links already
+ * fill the cap, refuse and leave the caller's link in place.
+ */
+export function memberMintRevokeIds(
+  unused: { id: string; record: InviteRecord }[],
+  createdBy: string,
+): { kind: 'cap' } | { kind: 'ok'; revokeIds: string[] } {
+  const revokeIds = unused
+    .filter((row) => row.record.createdBy === createdBy)
+    .map((row) => row.id);
+  const others = unused.length - revokeIds.length;
+  if (others >= INVITE_UNUSED_CAP) {
+    return { kind: 'cap' };
+  }
+  return { kind: 'ok', revokeIds };
+}
+
+export function countRedeemedInvites(rows: InviteRecord[], createdBy: string): number {
+  return rows.filter((row) => row.createdBy === createdBy && row.status === 'redeemed').length;
+}
+
+export type MemberMintPlan =
+  | { kind: 'limit' }
+  | { kind: 'cap' }
+  | { kind: 'ok'; revokeIds: string[] };
+
+/**
+ * A member may redeem `MEMBER_INVITE_LIMIT` links in total. Replaced, revoked,
+ * and expired rows do not count. At the limit, the current unused link stays.
+ */
+export function planMemberMint(input: {
+  creatorInvites: InviteRecord[];
+  unused: { id: string; record: InviteRecord }[];
+  createdBy: string;
+}): MemberMintPlan {
+  if (countRedeemedInvites(input.creatorInvites, input.createdBy) >= MEMBER_INVITE_LIMIT) {
+    return { kind: 'limit' };
+  }
+  return memberMintRevokeIds(input.unused, input.createdBy);
+}
+
+export function redeemCreatorDecision(input: {
+  createdByEmail?: string;
+  creatorEmailAllowed: boolean;
+  creatorMemberStatus: 'active' | 'revoked' | null;
+  redeemedCount: number;
+}): { kind: 'ok' } | { kind: 'refusal'; reason: 'revoked' | 'limit' } {
+  const email = input.createdByEmail;
+  const ownerMinted = email === undefined || email === '' || input.creatorEmailAllowed;
+  if (ownerMinted) {
+    return { kind: 'ok' };
+  }
+  if (input.creatorMemberStatus !== 'active') {
+    return { kind: 'refusal', reason: 'revoked' };
+  }
+  if (input.redeemedCount >= MEMBER_INVITE_LIMIT) {
+    return { kind: 'refusal', reason: 'limit' };
+  }
+  return { kind: 'ok' };
 }
 
 export function unusedUnexpired(rows: InviteRecord[], now: number): InviteRecord[] {
@@ -234,6 +311,38 @@ function invitesCollection() {
   return getStoreFirestore().collection('invites');
 }
 
+/**
+ * Landing-page only. Redeem still checks the same decision inside its
+ * transaction. `null` means the join page may be shown.
+ */
+export async function readInviteCreatorRefusal(
+  invite: InviteRecord,
+): Promise<'revoked' | 'limit' | null> {
+  const creatorEmail = invite.createdByEmail;
+  const creatorEmailAllowed =
+    creatorEmail !== undefined &&
+    creatorEmail !== '' &&
+    isAllowed(creatorEmail, true, allowedEmails());
+  if (creatorEmail === undefined || creatorEmail === '' || creatorEmailAllowed) {
+    return null;
+  }
+  const creatorRef = getStoreFirestore().collection('members').doc(invite.createdBy);
+  const [creatorSnap, createdSnap] = await Promise.all([
+    creatorRef.get(),
+    invitesCollection().where('createdBy', '==', invite.createdBy).get(),
+  ]);
+  const creator = creatorSnap.exists
+    ? parseMemberDoc(creatorSnap.data(), invite.createdBy)
+    : null;
+  const decision = redeemCreatorDecision({
+    createdByEmail: creatorEmail,
+    creatorEmailAllowed: false,
+    creatorMemberStatus: creator === null ? null : creator.status,
+    redeemedCount: countRedeemedInvites(parsedInviteRows(createdSnap.docs), invite.createdBy),
+  });
+  return decision.kind === 'ok' ? null : decision.reason;
+}
+
 export async function readInvite(id: string): Promise<InviteRecord | null> {
   const snap = await invitesCollection().doc(id).get();
   if (!snap.exists) {
@@ -265,14 +374,69 @@ export async function listUnusedInvites(now: number): Promise<{ id: string; reco
 export async function mintInvite(
   createdBy: string,
   now: number,
+  createdByEmail?: string,
 ): Promise<{ kind: 'ok'; token: string; id: string } | { kind: 'cap' }> {
   const unused = await listUnusedInvites(now);
   if (unused.length >= INVITE_UNUSED_CAP) {
     return { kind: 'cap' };
   }
-  const minted = mintInviteRecord(createdBy, now);
+  const minted = mintInviteRecord(createdBy, now, createdByEmail);
   await invitesCollection().doc(minted.id).create(minted.record);
   return { kind: 'ok', token: minted.token, id: minted.id };
+}
+
+function parsedInviteRows(
+  docs: { data: () => unknown }[],
+): InviteRecord[] {
+  const rows: InviteRecord[] = [];
+  for (const doc of docs) {
+    const parsed = parseInviteDoc(doc.data());
+    if (parsed !== null) {
+      rows.push(parsed);
+    }
+  }
+  return rows;
+}
+
+export async function mintMemberInvite(
+  createdBy: string,
+  createdByEmail: string,
+  now: number,
+): Promise<{ kind: 'ok'; token: string; id: string } | { kind: 'cap' } | { kind: 'limit' }> {
+  const invites = invitesCollection();
+  let outcome: { kind: 'ok'; token: string; id: string } | { kind: 'cap' } | { kind: 'limit' } = {
+    kind: 'cap',
+  };
+  await getStoreFirestore().runTransaction(async (tx) => {
+    const mineSnap = await tx.get(invites.where('createdBy', '==', createdBy));
+    const unusedSnap = await tx.get(invites.where('status', '==', 'unused'));
+    const unused: { id: string; record: InviteRecord }[] = [];
+    for (const doc of unusedSnap.docs) {
+      const parsed = parseInviteDoc(doc.data());
+      if (parsed !== null && parsed.expiresAt > now) {
+        unused.push({ id: doc.id, record: parsed });
+      }
+    }
+    const plan = planMemberMint({
+      creatorInvites: parsedInviteRows(mineSnap.docs),
+      unused,
+      createdBy,
+    });
+    if (plan.kind !== 'ok') {
+      outcome = plan;
+      return;
+    }
+    const revokeIds = new Set(plan.revokeIds);
+    for (const doc of unusedSnap.docs) {
+      if (revokeIds.has(doc.id)) {
+        tx.update(doc.ref, { status: 'revoked' });
+      }
+    }
+    const minted = mintInviteRecord(createdBy, now, createdByEmail);
+    tx.create(invites.doc(minted.id), minted.record);
+    outcome = { kind: 'ok', token: minted.token, id: minted.id };
+  });
+  return outcome;
 }
 
 export async function revokeInvite(id: string): Promise<RevokeInviteTransitionResult> {
@@ -324,8 +488,31 @@ export async function redeemInvite(
     }
     const transition = redeemInviteTransition(invite, identity, existingRequest, now);
     result = transition;
-    if (transition.kind !== 'ok') {
+    if (transition.kind !== 'ok' || invite === null) {
       return;
+    }
+    const creatorEmail = invite.createdByEmail;
+    const creatorIsOwner =
+      creatorEmail === undefined ||
+      creatorEmail === '' ||
+      isAllowed(creatorEmail, true, allowedEmails());
+    if (!creatorIsOwner) {
+      const creatorRef = getStoreFirestore().collection('members').doc(invite.createdBy);
+      const creatorSnap = await tx.get(creatorRef);
+      const creator = creatorSnap.exists
+        ? parseMemberDoc(creatorSnap.data(), invite.createdBy)
+        : null;
+      const createdSnap = await tx.get(invitesCollection().where('createdBy', '==', invite.createdBy));
+      const decision = redeemCreatorDecision({
+        createdByEmail: creatorEmail,
+        creatorEmailAllowed: false,
+        creatorMemberStatus: creator === null ? null : creator.status,
+        redeemedCount: countRedeemedInvites(parsedInviteRows(createdSnap.docs), invite.createdBy),
+      });
+      if (decision.kind !== 'ok') {
+        result = decision;
+        return;
+      }
     }
     tx.set(inviteRef, transition.invite);
     tx.set(memberRef, transition.member);
@@ -360,8 +547,12 @@ export async function inviteLandingGet(req: Request): Promise<Response> {
   try {
     const invite = await readInvite(hashInviteToken(token));
     const verdict = inviteLandingVerdict(invite, Date.now());
-    if (verdict.kind === 'dead') {
-      return htmlResponse(inviteDeadPageHtml(verdict.reason), 404);
+    if (verdict.kind === 'dead' || invite === null) {
+      return htmlResponse(inviteDeadPageHtml(verdict.kind === 'dead' ? verdict.reason : 'unknown'), 404);
+    }
+    const creatorRefusal = await readInviteCreatorRefusal(invite);
+    if (creatorRefusal !== null) {
+      return htmlResponse(inviteDeadPageHtml('revoked'), 404);
     }
 
     const now = Date.now();

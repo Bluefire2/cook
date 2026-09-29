@@ -18,6 +18,12 @@
     "needsData": false
   },
   {
+    "id": "settings-invite-link",
+    "route": "/settings",
+    "setup": "Settings while signed in as a non-owner member, after Create link, so the new invite URL and Copy button are showing. Creating the link writes one unused invite. If this session is an owner, the control is absent — mark skipped: needs data. Do not sign out.",
+    "needsData": true
+  },
+  {
     "id": "admin",
     "route": "/admin",
     "setup": "The admin page as an owner sees it: pending, approved, declined, and invites. Do not approve, decline, mint, copy in a way that creates an invite, or revoke. If this session is not an owner, capture the error line the page already shows; do not change membership.",
