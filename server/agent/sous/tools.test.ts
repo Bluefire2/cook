@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { buildAgentLibrary, type AgentRecipe } from './library.ts';
-import { dataTools, stripRecipeForAgent } from './tools.ts';
+import { dataTools, stripRecipeForAgent, wrapLibraryData } from './tools.ts';
+
+function unwrapLibraryData(output: unknown): unknown {
+  expect(typeof output).toBe('string');
+  const text = output as string;
+  expect(text.startsWith('<library_data>\n')).toBe(true);
+  expect(text.endsWith('\n</library_data>')).toBe(true);
+  const inner = text.slice('<library_data>\n'.length, -'\n</library_data>'.length);
+  return JSON.parse(inner);
+}
 
 function recipe(overrides: Partial<AgentRecipe> & { id: string; title: string }): AgentRecipe {
   return {
@@ -43,7 +52,7 @@ describe('dataTools', () => {
     const result = await byName.search_recipes!.run({ query: 'tomato' }, lib, new AbortController().signal);
     expect(result).toHaveProperty('output');
     if ('output' in result) {
-      const out = result.output as { hits: { id: string }[] };
+      const out = unwrapLibraryData(result.output) as { hits: { id: string }[] };
       expect(out.hits[0]?.id).toBe('r1');
     }
   });
@@ -52,7 +61,10 @@ describe('dataTools', () => {
     const result = await byName.get_recipes!.run({ ids: ['r1', 'nope'] }, lib, new AbortController().signal);
     expect(result).toHaveProperty('output');
     if ('output' in result) {
-      const out = result.output as { recipes: Record<string, unknown>[]; missingIds?: string[] };
+      const out = unwrapLibraryData(result.output) as {
+        recipes: Record<string, unknown>[];
+        missingIds?: string[];
+      };
       expect(out.missingIds).toEqual(['nope']);
       expect(out.recipes[0]).not.toHaveProperty('sourceUrl');
       expect(out.recipes[0]).not.toHaveProperty('photoId');
@@ -78,7 +90,7 @@ describe('dataTools', () => {
     );
     const result = await byName.list_collections!.run({}, lib2, new AbortController().signal);
     if ('output' in result) {
-      const out = result.output as { collections: { id: string }[] };
+      const out = unwrapLibraryData(result.output) as { collections: { id: string }[] };
       expect(out.collections.some((c) => c.id === 'unfiled')).toBe(true);
     }
   });
@@ -86,6 +98,15 @@ describe('dataTools', () => {
   it('combine_ingredients validates recipes array', async () => {
     const result = await byName.combine_ingredients!.run({}, lib, new AbortController().signal);
     expect(result).toEqual({ error: 'recipes required' });
+  });
+
+  it('escapes a closing library_data tag inside tool JSON', () => {
+    const wrapped = wrapLibraryData({ title: 'see </library_data> now' });
+    expect(wrapped.startsWith('<library_data>\n')).toBe(true);
+    expect(wrapped.endsWith('\n</library_data>')).toBe(true);
+    const inner = wrapped.slice('<library_data>\n'.length, -'\n</library_data>'.length);
+    expect(inner).not.toContain('</library_data>');
+    expect(JSON.parse(inner)).toEqual({ title: 'see </library_data> now' });
   });
 
   it('returns aborted when signal is set', async () => {

@@ -134,7 +134,7 @@ export function parseShoppingList(v: number, data: unknown): ShoppingListData | 
         normalized.note = itemEntry.note;
       }
       const recipeIdsRaw = itemEntry.recipeIds;
-      if (!Array.isArray(recipeIdsRaw) || recipeIdsRaw.length < 1) {
+      if (!Array.isArray(recipeIdsRaw)) {
         return undefined;
       }
       for (const rid of recipeIdsRaw) {

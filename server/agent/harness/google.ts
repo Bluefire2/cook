@@ -160,7 +160,6 @@ export function googleModel(opts: {
       let sawText = false;
       let sawCalls = false;
       const yieldedCallKeys = new Set<string>();
-      let textEmittedLen = 0;
       let streamDone = false;
 
       async function* eventGenerator(): AsyncGenerator<ModelStepEvent> {
@@ -194,14 +193,11 @@ export function googleModel(opts: {
               }
             }
           }
+          // `chunk.text` is this chunk's new text, matching api/chat.ts.
           const chunkText = chunk.text;
-          if (chunkText && chunkText.length > textEmittedLen) {
-            const delta = chunkText.slice(textEmittedLen);
-            textEmittedLen = chunkText.length;
-            if (delta.length > 0) {
-              sawText = true;
-              yield { kind: 'text', d: delta };
-            }
+          if (chunkText && chunkText.length > 0) {
+            sawText = true;
+            yield { kind: 'text', d: chunkText };
           }
         }
         streamDone = true;

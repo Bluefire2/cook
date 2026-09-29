@@ -15,6 +15,7 @@ import {
 } from '../lib/uiClasses';
 import { postAgent } from './api';
 import { renderAgentCard } from './cards/registry';
+import { fitReplay, MAX_USER_CONTENT } from './replay';
 import {
   clearAgentThread,
   dispatch,
@@ -99,7 +100,7 @@ export default function AssistantScreen() {
     if (sessionStatus === 'signedOut' || getAgentSnapshot().streaming) {
       return;
     }
-    const trimmed = userText.trim();
+    const trimmed = userText.trim().slice(0, MAX_USER_CONTENT);
     if (trimmed === '') {
       return;
     }
@@ -107,19 +108,26 @@ export default function AssistantScreen() {
     dispatch({ type: 'begin', userText: trimmed });
     const controller = new AbortController();
     abortRef.current = controller;
+    const stillThisTurn = () => abortRef.current === controller;
 
     try {
       const result = await postAgent({
-        messages: messagesForReplay(getAgentSnapshot()),
+        messages: fitReplay(messagesForReplay(getAgentSnapshot())),
         clientNow: new Date().toISOString(),
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         signal: controller.signal,
         onEvent: (event) => {
+          if (!stillThisTurn()) {
+            return;
+          }
           dispatch({ type: 'event', event });
         },
       });
+      if (!stillThisTurn()) {
+        return;
+      }
       if (result.aborted) {
-        dispatch({ type: 'event', event: { t: 'done' } });
+        dispatch({ type: 'stopped' });
       } else if (result.truncated) {
         dispatch({
           type: 'event',
@@ -127,11 +135,16 @@ export default function AssistantScreen() {
         });
       }
     } catch (err) {
+      if (!stillThisTurn()) {
+        return;
+      }
       const message =
         err instanceof Error ? err.message : 'Something went wrong.';
       dispatch({ type: 'event', event: { t: 'error', message } });
     } finally {
-      abortRef.current = null;
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
     }
   }, [sessionStatus]);
 
@@ -153,6 +166,13 @@ export default function AssistantScreen() {
 
   const onStop = () => {
     abortRef.current?.abort();
+  };
+
+  const onClear = () => {
+    const controller = abortRef.current;
+    abortRef.current = null;
+    controller?.abort();
+    clearAgentThread();
   };
 
   if (sessionStatus === 'signedOut') {
@@ -180,7 +200,7 @@ export default function AssistantScreen() {
         <Link to="/" className={backLink}>
           ← Library
         </Link>
-        <button type="button" onClick={() => clearAgentThread()} className={ghostBtn}>
+        <button type="button" onClick={onClear} className={ghostBtn}>
           Clear
         </button>
       </header>
@@ -226,6 +246,7 @@ export default function AssistantScreen() {
             rows={2}
             disabled={state.streaming}
             onKeyDown={onKeyDown}
+            maxLength={MAX_USER_CONTENT}
             placeholder="Ask about your recipes…"
             className={`${inputClass} min-h-[2.75rem] resize-none text-sm`}
           />

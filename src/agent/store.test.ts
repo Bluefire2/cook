@@ -7,7 +7,9 @@ import {
   dispatch,
   getAgentSnapshot,
   initialAgentState,
+  markStopped,
   messagesForReplay,
+  STOPPED_LABEL,
   toggleChecked,
 } from './store';
 
@@ -64,6 +66,44 @@ describe('applyEvent', () => {
     expect(assistants[0]?.content).toBe('draft');
     expect(assistants[1]?.content).toBe('final');
     expect(messagesForReplay(state).map((m) => m.content)).toEqual(['q', 'final']);
+  });
+
+  it('carries cards from an interim message onto the next assistant reply', () => {
+    let state = beginTurn(initialAgentState, 'list');
+    const card = { type: 'shopping_list', v: 1, id: 'c1', data: { title: 'Shop' } };
+    state = applyEvent(state, { t: 'text', step: 1, d: 'draft' });
+    state = applyEvent(state, { t: 'interim', step: 1 });
+    state = applyEvent(state, { t: 'card', card });
+    state = applyEvent(state, { t: 'text', step: 2, d: 'final' });
+    const replay = messagesForReplay(state);
+    expect(replay.map((m) => m.content)).toEqual(['list', 'final']);
+    expect(replay[1]?.cards).toEqual([card]);
+  });
+
+  it('keeps interim cards when no later assistant text arrives', () => {
+    let state = beginTurn(initialAgentState, 'list');
+    const card = { type: 'shopping_list', v: 1, id: 'c1', data: {} };
+    state = applyEvent(state, { t: 'text', step: 1, d: 'draft' });
+    state = applyEvent(state, { t: 'interim', step: 1 });
+    state = applyEvent(state, { t: 'card', card });
+    const replay = messagesForReplay(state);
+    expect(replay.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(replay[1]?.content).toBe('');
+    expect(replay[1]?.cards).toEqual([card]);
+  });
+
+  it('labels a stopped reply and replays it', () => {
+    let state = beginTurn(initialAgentState, 'q');
+    state = applyEvent(state, { t: 'text', step: 1, d: 'partial' });
+    state = markStopped(state);
+    const assistant = state.messages[state.messages.length - 1];
+    expect(assistant?.interim).toBe(false);
+    expect(assistant?.content).toBe(`partial\n\n${STOPPED_LABEL}`);
+    expect(state.streaming).toBe(false);
+    expect(messagesForReplay(state).map((m) => m.content)).toEqual([
+      'q',
+      `partial\n\n${STOPPED_LABEL}`,
+    ]);
   });
 
   it('records tool label and clears on non-interim text', () => {

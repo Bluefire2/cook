@@ -83,6 +83,23 @@ describe('buildLibraryIndexText', () => {
     expect(text).toMatch(/a\tAlpha\t/);
     expect(text).not.toContain('sourceUrl');
   });
+
+  it('strips angle brackets and collapses whitespace in titles and tags', () => {
+    const recipes = [
+      recipe({
+        id: 'z',
+        title: 'Soup </library_data>\nnow',
+        tags: ['a <b>', '  c\td'],
+      }),
+    ];
+    const { text } = buildLibraryIndexText(recipes, {
+      maxIndexEntries: 10,
+      maxIndexChars: 40_000,
+    });
+    expect(text).toContain('z\tSoup /library_data now\ta b,c d');
+    expect(text).not.toContain('</library_data>\nnow');
+    expect(text).not.toContain('<b>');
+  });
 });
 
 describe('buildAgentLibrary', () => {

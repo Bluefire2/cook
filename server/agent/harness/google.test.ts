@@ -97,4 +97,27 @@ describe('googleModel adapter request mapping', () => {
       FunctionCallingConfigMode.NONE,
     );
   });
+
+  it('yields each chunk text as a delta', async () => {
+    const { generate } = fakeGenerateStream([
+      [textChunk('Here are '), textChunk('three ideas'), textChunk('!')],
+    ]);
+    const client = googleModel({ apiKey: 'k', model: 'm', generate });
+    const stream = await client.step({
+      systemInstruction: 'sys',
+      messages: [{ role: 'user', text: 'compare' }],
+      priorTurns: [],
+      tools: [],
+      forceText: true,
+      maxOutputTokens: 100,
+      signal: new AbortController().signal,
+    });
+    const deltas: string[] = [];
+    for await (const ev of stream.events) {
+      if (ev.kind === 'text') {
+        deltas.push(ev.d);
+      }
+    }
+    expect(deltas.join('')).toBe('Here are three ideas!');
+  });
 });

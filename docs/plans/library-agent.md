@@ -164,7 +164,7 @@ Status mapping **before** the stream starts: everything that can fail with a rea
 | Firestore library load fails | 503. The library is loaded **eagerly** before the response, because the index is needed for the prompt anyway. |
 | First `generateContentStream` call rejects | 502. The route awaits `startAgent`, which opens the first stream before resolving (as `api/chat.ts` awaits its stream), and only then returns the `Response`. |
 
-After headers are sent, failures become a sanitized `{"t":"error","message":...}` followed by `{"t":"done"}`. The response is `application/x-ndjson` with `Cache-Control: no-store` and no `Content-Length`. A stream without `done` is treated as truncated by the client.
+After headers are sent, failures become a sanitized `{"t":"error","message":...}` followed by `{"t":"done"}`. The response is `application/x-ndjson` with `Cache-Control: no-store` and no `Content-Length`. A stream without `done` is treated as truncated by the client. A server deadline (`TimeoutError` from `AbortSignal.timeout`, including when it wins `AbortSignal.any`) emits that canned error and `done`. A client abort returns `finish: 'aborted'` with no error event, so the client can label the partial reply.
 
 **Cancellation is guaranteed only after the `Response` is returned.** Then client Stop aborts the fetch, and the stream's `cancel()` aborts the run's controller, which stops Gemini and any pending tools. The pre-response phase (library load and opening the first stream) cannot see a client disconnect: `dispatchFetch` in [scripts/server.ts](scripts/server.ts) builds the `Request` without a signal tied to the Node request. That phase is bounded by the same 90 s deadline instead. Wiring a disconnect signal through `dispatchFetch` is a possible generic follow-up, deliberately left out so v1 adds no new wiring outside the module.
 
@@ -173,7 +173,7 @@ If the user stops before a step's `interim` event arrives, the client keeps the 
 ## Server data access
 
 - `listLiveDocs(uid, kind: 'recipes' | 'collections', { maxDocs, maxBytes })` in [server/store.ts](server/store.ts) pages by document id (200 per page), skips tombstones, and stops at `maxDocs + 1` live documents, `maxBytes`, or exhaustion. It returns `{ docs, truncated }`. Recipes pass through `compactRecipeFields`.
-- The cost is one billed read per document per turn, which is hundreds of reads for a personal library. That is acceptable at this scale; the count is logged so cost can be watched.
+- The cost is one billed read per document per turn, which is hundreds of reads for a personal library. v1 re-reads on every turn on purpose and does not cache: a per-sub cache would serve recipes that another device has already edited. The count is logged so cost can be watched. `listLiveDocs` appends each kept document in place so the page fold stays linear in the number of live docs.
 - Collection membership is ported from `winningMembership` in [src/lib/collectionMembership.ts](src/lib/collectionMembership.ts) into `sous/library.ts`, with a comment linking the two copies.
 - Logs record only tool names, call counts, durations, step count, result bytes, document counts, and truncation flags. They never include recipe text, messages, or card data.
 

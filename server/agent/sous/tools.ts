@@ -13,6 +13,12 @@ function readNumber(obj: Record<string, unknown>, key: string): number | undefin
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
+/** Wrap untrusted library JSON so a value cannot close the delimiter early. */
+export function wrapLibraryData(value: unknown): string {
+  const json = JSON.stringify(value).replaceAll('</library_data>', '<\\/library_data>');
+  return `<library_data>\n${json}\n</library_data>`;
+}
+
 export function stripRecipeForAgent(recipe: AgentRecipe): Record<string, unknown> {
   return {
     id: recipe.id,
@@ -64,7 +70,7 @@ export function dataTools(_library: AgentLibrary): ToolSpec<AgentLibrary>[] {
           return { error: 'invalid arguments' };
         }
         const hits = searchRecipes(ctx, (args ?? {}) as SearchRecipesArgs);
-        return { output: { hits } };
+        return { output: wrapLibraryData({ hits }) };
       },
     },
     {
@@ -117,7 +123,7 @@ export function dataTools(_library: AgentLibrary): ToolSpec<AgentLibrary>[] {
         if (missingIds.length > 0) {
           output.missingIds = missingIds;
         }
-        return { output };
+        return { output: wrapLibraryData(output) };
       },
     },
     {
@@ -145,7 +151,7 @@ export function dataTools(_library: AgentLibrary): ToolSpec<AgentLibrary>[] {
         if (unfiledCount > 0) {
           collections.push({ id: 'unfiled', name: 'Unfiled', recipeCount: unfiledCount });
         }
-        return { output: { collections } };
+        return { output: wrapLibraryData({ collections }) };
       },
     },
     {
@@ -196,7 +202,7 @@ export function dataTools(_library: AgentLibrary): ToolSpec<AgentLibrary>[] {
           }
         }
         const result = combineIngredients(ctx, refs);
-        return { output: result };
+        return { output: wrapLibraryData(result) };
       },
     },
   ];

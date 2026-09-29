@@ -202,6 +202,11 @@ export function narrowAgentCollection(doc: Record<string, unknown>): AgentCollec
   return { id: doc.id, name, recipeIds };
 }
 
+/** Collapse whitespace and drop angle brackets so a title cannot close the index block. */
+export function libraryIndexField(value: string): string {
+  return value.replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 export function buildLibraryIndexText(
   recipes: readonly AgentRecipe[],
   limits: { maxIndexEntries: number; maxIndexChars: number },
@@ -215,8 +220,8 @@ export function buildLibraryIndexText(
   let charBudget = limits.maxIndexChars;
   for (let i = 0; i < sorted.length && lines.length < limits.maxIndexEntries; i++) {
     const recipe = sorted[i]!;
-    const tags = recipe.tags.join(',');
-    const line = `${recipe.id}\t${recipe.title}\t${tags}`;
+    const tags = recipe.tags.map(libraryIndexField).join(',');
+    const line = `${recipe.id}\t${libraryIndexField(recipe.title)}\t${tags}`;
     const lineWithNewline = line + '\n';
     if (charBudget < lineWithNewline.length) {
       indexTruncated = true;

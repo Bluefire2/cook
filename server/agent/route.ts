@@ -115,6 +115,28 @@ export async function agentPost(req: Request): Promise<Response> {
   }
 
   const encoder = new TextEncoder();
+  let streamSettled = false;
+  const safeEnqueue = (controller: ReadableStreamDefaultController<Uint8Array>, bytes: Uint8Array) => {
+    if (streamSettled) {
+      return;
+    }
+    try {
+      controller.enqueue(bytes);
+    } catch {
+      streamSettled = true;
+    }
+  };
+  const safeClose = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    if (streamSettled) {
+      return;
+    }
+    streamSettled = true;
+    try {
+      controller.close();
+    } catch {
+      /* consumer already cancelled */
+    }
+  };
   return new Response(
     new ReadableStream<Uint8Array>({
       start(controller) {
@@ -127,17 +149,18 @@ export async function agentPost(req: Request): Promise<Response> {
             if (event.t === 'tool' && event.phase === 'end') {
               console.log(`agent tool ${event.name} ok=${event.ok === true}`);
             }
-            controller.enqueue(encoder.encode(encodeAgentEvent(event)));
+            safeEnqueue(controller, encoder.encode(encodeAgentEvent(event)));
           })
           .then((summary) => {
             console.log(
               `agent steps=${summary.steps} calls=${summary.calls} resultBytes=${summary.resultBytes} finish=${summary.finish} recipes=${library.recipes.length} collections=${library.collections.length} truncated=${library.truncated} durationMs=${Date.now() - runStarted}`,
             );
-            controller.close();
+            safeClose(controller);
           })
           .catch(() => {
             if (!doneEmitted) {
-              controller.enqueue(
+              safeEnqueue(
+                controller,
                 encoder.encode(
                   encodeAgentEvent({
                     t: 'error',
@@ -145,15 +168,19 @@ export async function agentPost(req: Request): Promise<Response> {
                   }),
                 ),
               );
-              controller.enqueue(encoder.encode(encodeAgentEvent({ t: 'done' })));
+              safeEnqueue(controller, encoder.encode(encodeAgentEvent({ t: 'done' })));
             }
             console.log(
               `agent steps=0 calls=0 resultBytes=0 finish=error recipes=${library.recipes.length} collections=${library.collections.length} truncated=${library.truncated} durationMs=${Date.now() - runStarted}`,
             );
-            controller.close();
+            safeClose(controller);
+          })
+          .catch(() => {
+            /* Stop can close the stream before enqueue or close runs. */
           });
       },
       cancel() {
+        streamSettled = true;
         stop.abort();
       },
     }),

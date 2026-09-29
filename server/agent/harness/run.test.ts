@@ -651,4 +651,64 @@ describe('startAgent', () => {
     });
     expect(summary.finish).toBe('aborted');
   });
+
+  it('emits the canned error when the deadline fires between steps', async () => {
+    const ac = new AbortController();
+    ac.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+    const { client } = modelFromSteps([[textChunk('late')]]);
+    const agent = await startAgent({
+      model: client,
+      systemInstruction: 'sys',
+      messages: baseMessages,
+      tools: [],
+      cards: [],
+      ctx,
+      limits: defaultAgentLimits(),
+      signal: ac.signal,
+    });
+    const events = await collectEvents(agent.run);
+    expect(events).toEqual([
+      { t: 'error', message: "The assistant couldn't answer that." },
+      { t: 'done' },
+    ]);
+  });
+
+  it('emits the canned error when the deadline fires during tools', async () => {
+    const ac = new AbortController();
+    const tools: ToolSpec<Ctx>[] = [
+      {
+        name: 'wait',
+        description: 'd',
+        parameters: { type: 'object', properties: {} },
+        run: async () => ({ output: {} }),
+      },
+    ];
+    const { client } = modelFromSteps([
+      [callChunk('wait', {})],
+      [textChunk('never')],
+    ]);
+    const agent = await startAgent({
+      model: client,
+      systemInstruction: 'sys',
+      messages: baseMessages,
+      tools,
+      cards: [],
+      ctx,
+      limits: defaultAgentLimits(),
+      signal: ac.signal,
+    });
+    const events: AgentEvent[] = [];
+    const summary = await agent.run((e) => {
+      events.push(e);
+      if (e.t === 'tool' && e.phase === 'start') {
+        ac.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+      }
+    });
+    expect(summary.finish).toBe('error');
+    expect(events.at(-2)).toEqual({
+      t: 'error',
+      message: "The assistant couldn't answer that.",
+    });
+    expect(events.at(-1)).toEqual({ t: 'done' });
+  });
 });

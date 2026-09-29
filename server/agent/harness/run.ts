@@ -238,6 +238,30 @@ export function startAgent<Ctx>(opts: StartAgentOptions<Ctx>): Promise<StartAgen
       },
     };
 
+    function isDeadlineAbort(signal: AbortSignal): boolean {
+      const reason: unknown = signal.reason;
+      return (
+        typeof reason === 'object' &&
+        reason !== null &&
+        'name' in reason &&
+        (reason as { name: unknown }).name === 'TimeoutError'
+      );
+    }
+
+    function finishOnAbort(
+      emit: (event: AgentEvent) => void,
+      summary: AgentRunSummary,
+    ): AgentRunSummary {
+      if (isDeadlineAbort(opts.signal)) {
+        emit({ t: 'error', message: CANNED });
+        emit({ t: 'done' });
+        summary.finish = 'error';
+        return summary;
+      }
+      summary.finish = 'aborted';
+      return summary;
+    }
+
     async function runLoop(emit: (event: AgentEvent) => void): Promise<AgentRunSummary> {
       const summary: AgentRunSummary = {
         steps: 0,
@@ -254,9 +278,8 @@ export function startAgent<Ctx>(opts: StartAgentOptions<Ctx>): Promise<StartAgen
 
       while (step <= opts.limits.maxSteps) {
         if (opts.signal.aborted) {
-          summary.finish = 'aborted';
           summary.steps = step;
-          return summary;
+          return finishOnAbort(emit, summary);
         }
 
         summary.steps = step;
@@ -334,8 +357,7 @@ export function startAgent<Ctx>(opts: StartAgentOptions<Ctx>): Promise<StartAgen
         summary.resultBytes = state.cumulativeResultBytes;
 
         if (aborted || opts.signal.aborted) {
-          summary.finish = 'aborted';
-          return summary;
+          return finishOnAbort(emit, summary);
         }
 
         const turn = await stream.continueWith(responses);

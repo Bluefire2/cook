@@ -835,7 +835,7 @@ export type ListLiveDocsCandidate = {
   jsonBytes: number;
 };
 
-/** Pure fold for live-doc paging caps; tombstones pass `live: false`. */
+/** Fold for live-doc paging caps. Kept docs are appended in place; tombstones pass `live: false`. */
 export function foldListLiveDocsCandidate(
   acc: ListLiveDocsAccumulator,
   candidate: ListLiveDocsCandidate,
@@ -850,12 +850,9 @@ export function foldListLiveDocsCandidate(
   if (acc.totalBytes + candidate.jsonBytes > limits.maxBytes) {
     return { ...acc, truncated: true, done: true };
   }
-  return {
-    docs: [...acc.docs, candidate.doc],
-    totalBytes: acc.totalBytes + candidate.jsonBytes,
-    truncated: false,
-    done: false,
-  };
+  acc.docs.push(candidate.doc);
+  acc.totalBytes += candidate.jsonBytes;
+  return acc;
 }
 
 function liveDocJsonBytes(doc: Record<string, unknown>): number {

@@ -151,28 +151,85 @@ export function beginTurn(state: AgentState, userText: string): AgentState {
   };
 }
 
+function wireCards(cards: AgentWireCard[]): AgentWireCard[] {
+  return cards.map((c) => ({
+    type: c.type,
+    v: c.v,
+    id: c.id,
+    data: c.data,
+  }));
+}
+
+export const STOPPED_LABEL = 'Stopped';
+
+/** Keep partial text, clear the interim flag, and label the reply so it replays. */
+export function markStopped(state: AgentState): AgentState {
+  if (!state.streaming) {
+    return state;
+  }
+  const settled = { ...state, streaming: false, toolLabel: null };
+  const last = lastAssistant(state);
+  if (!last) {
+    return appendAssistant(settled, { content: STOPPED_LABEL });
+  }
+  return updateLastAssistant(settled, (msg) => ({
+    ...msg,
+    interim: false,
+    content: msg.content === '' ? STOPPED_LABEL : `${msg.content}\n\n${STOPPED_LABEL}`,
+  }));
+}
+
 export function messagesForReplay(state: AgentState): AgentWireMessage[] {
-  return state.messages
-    .filter((m) => !m.interim)
-    .map((m) => {
-      const wire: AgentWireMessage = { role: m.role, content: m.content };
-      if (m.cards && m.cards.length > 0) {
-        wire.cards = m.cards.map((c) => ({
-          type: c.type,
-          v: c.v,
-          id: c.id,
-          data: c.data,
-        }));
+  const out: AgentWireMessage[] = [];
+  let carried: AgentWireCard[] = [];
+
+  const takeCarried = (): AgentWireCard[] => {
+    const cards = carried;
+    carried = [];
+    return cards;
+  };
+
+  const pushAssistant = (content: string, cards: AgentWireCard[]) => {
+    const wire: AgentWireMessage = { role: 'assistant', content };
+    if (cards.length > 0) {
+      wire.cards = cards;
+    }
+    out.push(wire);
+  };
+
+  for (const m of state.messages) {
+    const own = m.cards && m.cards.length > 0 ? wireCards(m.cards) : [];
+    if (m.interim) {
+      if (own.length > 0) {
+        carried = [...carried, ...own];
       }
-      return wire;
-    });
+      continue;
+    }
+    if (m.role === 'assistant') {
+      pushAssistant(m.content, [...takeCarried(), ...own]);
+      continue;
+    }
+    if (carried.length > 0) {
+      pushAssistant('', takeCarried());
+    }
+    const wire: AgentWireMessage = { role: 'user', content: m.content };
+    if (own.length > 0) {
+      wire.cards = own;
+    }
+    out.push(wire);
+  }
+  if (carried.length > 0) {
+    pushAssistant('', takeCarried());
+  }
+  return out;
 }
 
 type AgentAction =
   | { type: 'event'; event: AgentServerEvent }
   | { type: 'toggle'; cardId: string; itemKey: string }
   | { type: 'clear' }
-  | { type: 'begin'; userText: string };
+  | { type: 'begin'; userText: string }
+  | { type: 'stopped' };
 
 let state: AgentState = { ...initialAgentState };
 const listeners = new Set<() => void>();
@@ -193,6 +250,8 @@ function reduce(current: AgentState, action: AgentAction): AgentState {
       return clearThread(current);
     case 'begin':
       return beginTurn(current, action.userText);
+    case 'stopped':
+      return markStopped(current);
     default:
       return current;
   }
