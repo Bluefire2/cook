@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { t } from '../i18n';
+import { t, translate } from '../i18n';
 import { recipeStore } from './recipeStore';
 import {
   addPendingBlob,
@@ -11,6 +11,7 @@ import {
   upsertCollection,
 } from './libraryMemory';
 import { postPhoto, pushOps } from './remote';
+import { settings } from './settings';
 import { installPhotoServerFake } from './testPhotoServer';
 import type { Collection, RecipeDraft } from './types';
 
@@ -50,6 +51,7 @@ afterEach(() => {
   clearLibrary();
   vi.mocked(postPhoto).mockReset();
   vi.mocked(pushOps).mockReset();
+  vi.restoreAllMocks();
 });
 
 describe('recipeStore.create with photos', () => {
@@ -220,6 +222,19 @@ describe('recipeStore.create with photos', () => {
 
     expect(postPhoto).not.toHaveBeenCalled();
     expect(listRecipes()).toEqual([]);
+    expect(getSnapshot().pendingBlobs.size).toBe(0);
+  });
+
+  it('tells sign-out apart by type, not by the text of any locale', async () => {
+    vi.spyOn(settings, 'getLocale').mockReturnValue('uk');
+    stagePhotos();
+    const server = installPhotoServerFake({ failPhoto: () => 'signedOut' });
+
+    await expect(recipeStore.create({ ...draft, photoId: COVER })).rejects.toThrow(
+      translate('uk', 'error.sessionExpired'),
+    );
+
+    expect(server.calls).toEqual(['push:recipe.put', `photo:${COVER}`]);
     expect(getSnapshot().pendingBlobs.size).toBe(0);
   });
 });
