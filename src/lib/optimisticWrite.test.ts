@@ -17,6 +17,7 @@ import {
 } from './libraryMemory';
 import { photoStore } from './photoStore';
 import {
+  postPhoto,
   pullPage,
   pullSharedPage,
   pushOps,
@@ -25,7 +26,8 @@ import {
   type SharedPullPage,
 } from './remote';
 import { recipeStore } from './recipeStore';
-import { pullAll, sync } from './syncEngine';
+import { pullAll, resetDiscardedPullForTests, sync } from './syncEngine';
+import { invalidateSession } from './session';
 import type { Collection, Recipe } from './types';
 import { updateCookState, type CookStateRow } from './useCookState';
 
@@ -186,8 +188,10 @@ beforeEach(() => {
 
 afterEach(() => {
   clearLibrary();
+  resetDiscardedPullForTests();
   vi.mocked(pushOps).mockReset();
   vi.mocked(pushOps).mockResolvedValue('ok');
+  vi.mocked(postPhoto).mockReset();
   vi.mocked(pullPage).mockReset();
   vi.mocked(pullSharedPage).mockReset();
   localStorage.clear();
@@ -460,6 +464,92 @@ describe('optimistic writes vs an in-flight pull', () => {
     expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
   });
 
+  it('rereads when the cook push outlasts the pull it superseded', async () => {
+    const base = recipe();
+    seed(base, cook(0));
+    const other = { ...recipe('From another device'), id: OTHER_RECIPE_ID };
+    let releasePush: (result: 'ok') => void = () => {};
+    vi.mocked(pushOps).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releasePush = resolve;
+        }),
+    );
+    const flight = startSync(
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+      ownedPage(
+        ownedChanges({
+          recipes: [pullDoc(base), pullDoc(other)],
+          cookState: [pullDoc(cook(1))],
+        }),
+      ),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    const writing = updateCookState(base, (prev) => ({ ...prev, currentStep: 1 }));
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalledOnce());
+    flight.releaseFirst();
+    await flight.pending;
+    expect(pullPage).toHaveBeenCalledOnce();
+
+    releasePush('ok');
+    flight.releaseSecond();
+    await writing;
+
+    expect(pullPage).toHaveBeenCalledTimes(2);
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+    expect(getRecipe(OTHER_RECIPE_ID)?.title).toBe('From another device');
+    expect(localWritesOpen()).toBe(0);
+  });
+
+  it('rereads after a second cook tap when the first follow-up bailed', async () => {
+    const base = recipe();
+    seed(base, cook(0));
+    const other = { ...recipe('From another device'), id: OTHER_RECIPE_ID };
+    const releases: Array<(result: 'ok') => void> = [];
+    vi.mocked(pushOps).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+    const flight = startSync(
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+      ownedPage(
+        ownedChanges({
+          recipes: [pullDoc(base), pullDoc(other)],
+          cookState: [pullDoc(cook(2))],
+        }),
+      ),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    const first = updateCookState(base, (prev) => ({
+      ...prev,
+      currentStep: prev.currentStep + 1,
+    }));
+    const second = updateCookState(base, (prev) => ({
+      ...prev,
+      currentStep: prev.currentStep + 1,
+    }));
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalledTimes(2));
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(2);
+
+    releases[0]?.('ok');
+    await vi.waitFor(() => expect(localWritesOpen()).toBe(1));
+    flight.releaseFirst();
+    await flight.pending;
+
+    releases[1]?.('ok');
+    flight.releaseSecond();
+    await Promise.all([first, second]);
+
+    expect(pullPage).toHaveBeenCalledTimes(2);
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(2);
+    expect(getRecipe(OTHER_RECIPE_ID)?.title).toBe('From another device');
+    expect(localWritesOpen()).toBe(0);
+  });
+
   it('keeps the second cook tap when both pushes are in flight together', async () => {
     const base = recipe();
     seed(base, cook(0));
@@ -533,6 +623,53 @@ describe('optimistic writes vs an in-flight pull', () => {
 
     expect((await flight.pending).outcome).toBe('superseded');
     expect(getSnapshot().remotePhotoIds.has(PHOTO_ID)).toBe(false);
+  });
+
+  it('puts a remote photo back when its delete does not land', async () => {
+    replaceFromPull({
+      recipes: new Map([[RECIPE_ID, recipe()]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set([PHOTO_ID]),
+    });
+    vi.mocked(pushOps).mockResolvedValue('error');
+    const flight = startSync(
+      ownedPage(ownedChanges({ photos: [{ id: PHOTO_ID }], recipes: [pullDoc(recipe())] })),
+      ownedPage(ownedChanges({ recipes: [pullDoc(recipe())] })),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    const removing = photoStore.remove(PHOTO_ID);
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalled());
+    flight.releaseFirst();
+    flight.releaseSecond();
+    await removing;
+    await flight.pending;
+
+    expect(pullPage).toHaveBeenCalledOnce();
+    expect(getSnapshot().remotePhotoIds.has(PHOTO_ID)).toBe(true);
+  });
+
+  it('does not put a photo back after the delete signs out', async () => {
+    replaceFromPull({
+      recipes: new Map([[RECIPE_ID, recipe()]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set([PHOTO_ID]),
+    });
+    vi.mocked(pushOps).mockImplementation(async () => {
+      invalidateSession();
+      return 'signedOut';
+    });
+
+    await photoStore.remove(PHOTO_ID);
+
+    expect(getSnapshot().remotePhotoIds.has(PHOTO_ID)).toBe(false);
+    expect(getRecipe(RECIPE_ID)).toBeUndefined();
   });
 
   it('keeps a removed collection when the pull still has it', async () => {

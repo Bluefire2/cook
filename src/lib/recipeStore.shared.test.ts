@@ -190,6 +190,34 @@ describe('recipeStore on a shared recipe', () => {
     expect(getRecipe(EDITABLE_ID)).toBeUndefined();
   });
 
+  it('does not roll a failed editor save back over a newer in-flight save', async () => {
+    publishShared();
+    let releaseFirst: (result: 'invalid') => void = () => {};
+    let calls = 0;
+    vi.mocked(pushOps).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          calls += 1;
+          if (calls === 1) {
+            releaseFirst = resolve;
+            return;
+          }
+          resolve('ok');
+        }),
+    );
+
+    const first = recipeStore.save({ ...recipe(EDITABLE_ID), title: 'First' });
+    const rejected = expect(first).rejects.toThrow("Couldn't save the recipe.");
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalledOnce());
+    const second = recipeStore.save({ ...recipe(EDITABLE_ID), title: 'Second' });
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalledTimes(2));
+    releaseFirst('invalid');
+
+    await rejected;
+    await second;
+    expect(getRecipe(EDITABLE_ID)?.title).toBe('Second');
+  });
+
   it('rolls back an editor save the server discards, keeping the shared origin', async () => {
     publishShared();
     vi.mocked(pushOps).mockResolvedValue('invalid');

@@ -320,6 +320,7 @@ export async function importLibrary(
   let failure: unknown;
   const outcome = await withLocalWrite(async () => {
     let recipesLanded = false;
+    let signedOut = false;
     try {
       for (const photo of photos) {
         addPendingBlob(photo.id, photo.blob);
@@ -351,6 +352,7 @@ export async function importLibrary(
       }));
       const recipeResult = await pushOps(recipeOps);
       if (recipeResult !== 'ok') {
+        signedOut = recipeResult === 'signedOut';
         throw importPushError(recipeResult);
       }
       recipesLanded = true;
@@ -367,7 +369,10 @@ export async function importLibrary(
           photo.blob,
         );
         if (uploaded !== 'ok') {
-          throw new Error(t('error.backupPhotoUpload'));
+          signedOut = uploaded === 'signedOut';
+          throw new Error(
+            uploaded === 'signedOut' ? t('error.sessionExpired') : t('error.backupPhotoUpload'),
+          );
         }
         markPhotoRemote(photoId);
       }
@@ -390,14 +395,19 @@ export async function importLibrary(
       }
       const dependentResult = await pushOps(dependentOps);
       if (dependentResult !== 'ok') {
+        signedOut = dependentResult === 'signedOut';
         throw importPushError(dependentResult);
       }
 
       return { value: { imported: importRecipes.length, skipped }, reconcile: true };
     } catch (err) {
-      restoreSnapshot(previous);
+      // A 401 already cleared the library. Restoring the previous snapshot
+      // would hand a signed-out client the pre-import library.
+      if (!signedOut) {
+        restoreSnapshot(previous);
+      }
       failure = err;
-      return { value: { imported: 0, skipped }, reconcile: recipesLanded };
+      return { value: { imported: 0, skipped }, reconcile: recipesLanded && !signedOut };
     }
   });
   if (failure) {

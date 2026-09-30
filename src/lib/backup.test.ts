@@ -699,7 +699,12 @@ describe('importLibrary', () => {
   it.each(['error', 'signedOut'] as const)(
     'a parent recipe %s performs zero photo uploads and zero dependent pushes',
     async (result) => {
-      vi.mocked(pushOps).mockResolvedValue(result);
+      vi.mocked(pushOps).mockImplementation(async () => {
+        if (result === 'signedOut') {
+          clearLibrary();
+        }
+        return result;
+      });
       vi.mocked(postPhoto).mockResolvedValue('ok');
 
       await expect(importLibrary(backupFile('alice-sub'), 'carol-sub')).rejects.toThrow(
@@ -737,6 +742,30 @@ describe('importLibrary', () => {
     expect(postPhoto).toHaveBeenCalledTimes(1);
     const ops = vi.mocked(pushOps).mock.calls[0]?.[0] ?? [];
     expect(ops.every((op) => op.kind === 'recipe.put')).toBe(true);
+  });
+
+  it('does not restore the library when a photo upload signs out', async () => {
+    const seedId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    replaceFromPull({
+      recipes: new Map([[seedId, { ...RECIPE, id: seedId, title: 'Already here' }]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    vi.mocked(postPhoto).mockImplementation(async () => {
+      clearLibrary();
+      return 'signedOut';
+    });
+
+    await expect(importLibrary(backupFile('alice-sub'), 'carol-sub')).rejects.toThrow(
+      'Please sign in again — your session expired.',
+    );
+
+    expect(listRecipes()).toEqual([]);
+    expect(postPhoto).toHaveBeenCalledTimes(1);
   });
 
   it('same-account preserve mode remains overwrite-by-id and idempotent', async () => {

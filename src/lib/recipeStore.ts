@@ -309,7 +309,11 @@ async function saveShared(recipe: Recipe): Promise<void> {
         // The 401 cleared the library already; write nothing back into it.
         throw err;
       }
-      upsertRecipe(previous, origin);
+      // A newer in-flight save has replaced this row. Restoring `previous`
+      // would wipe it. Same guard as an owned save.
+      if (getRecipe(next.id) === next) {
+        upsertRecipe(previous, origin);
+      }
       throw err;
     }
   });

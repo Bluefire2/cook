@@ -71,6 +71,13 @@ type Flight = {
 
 let flight: Flight | null = null;
 
+/**
+ * A sync flight returned `superseded` and its snapshot was not published.
+ * Stays set after `flight` is cleared, until a later flight publishes `ok`.
+ * A successful write that outlasted the discarded pull still has to reread.
+ */
+let discardedPull = false;
+
 let snapshot: SyncStatusSnapshot = {
   status: 'idle',
   lastSyncedAt: null,
@@ -314,6 +321,11 @@ function startFlight(): Promise<SyncResult> {
   const sawOpenWrite = localWritesOpen() > 0;
   const promise = (async () => {
     const result = await runOnce(startedEpoch, sawOpenWrite);
+    if (result.outcome === 'superseded') {
+      discardedPull = true;
+    } else if (result.outcome === 'ok') {
+      discardedPull = false;
+    }
     emitSyncFinished(result);
     return result;
   })();
@@ -329,11 +341,21 @@ function startFlight(): Promise<SyncResult> {
 }
 
 /**
- * True when a pull already running read (or may still read) library state
- * from before this write. Its snapshot must not be published.
+ * True when a pull read (or may still read) library state from before this
+ * write. An in-flight pull must not publish. A pull that already returned
+ * `superseded` and cleared `flight` still counts, until some later sync
+ * publishes `ok`.
  */
 export function localWriteOverlapsPull(writeEpoch: number): boolean {
-  return flight !== null && (flight.startedEpoch < writeEpoch || flight.sawOpenWrite);
+  return (
+    discardedPull ||
+    (flight !== null && (flight.startedEpoch < writeEpoch || flight.sawOpenWrite))
+  );
+}
+
+/** Drops the sticky discarded-pull flag. Tests isolate module state with this. */
+export function resetDiscardedPullForTests(): void {
+  discardedPull = false;
 }
 
 /**
@@ -347,6 +369,8 @@ export async function pullAfterLocalWrite(writeEpoch: number): Promise<SyncOutco
       await flight.promise;
     }
     if (localWritesOpen() > 0) {
+      // Another write is still open. Leave `discardedPull` set so the last
+      // successful write starts the reread this call is skipping.
       return 'superseded';
     }
     const current = flight;
