@@ -78,6 +78,14 @@ const photosHeldBySaves = new Map<string, number>();
  */
 const photosCommittedByPut = new Set<string>();
 
+/**
+ * Uploaded by a save whose put certainly did not land, while another save
+ * still held the id. The last holder deletes them when its own put certainly
+ * did not land. An unknown put outcome drops them instead: that save may
+ * have committed the id, and an orphan is cheaper than deleting a live photo.
+ */
+const photosLeftForLastHolder = new Set<string>();
+
 function holdPhotoIds(ids: readonly string[]): void {
   for (const id of ids) {
     photosHeldBySaves.set(id, (photosHeldBySaves.get(id) ?? 0) + 1);
@@ -111,10 +119,62 @@ function orphanedUploads(uploaded: readonly string[]): string[] {
   return orphans;
 }
 
+/**
+ * This save uploaded these ids, then failed, while another save still lists
+ * them. Remember them so the last holder can tombstone them if it fails too.
+ */
+function rememberUploadsHeldElsewhere(uploaded: readonly string[]): void {
+  for (const id of uploaded) {
+    if (photosCommittedByPut.has(id)) {
+      continue;
+    }
+    if ((photosHeldBySaves.get(id) ?? 0) > 1) {
+      photosLeftForLastHolder.add(id);
+    }
+  }
+}
+
+/**
+ * Ids a failed sibling uploaded that this save is the last to hold, and that
+ * no put has accepted. Taking one removes it; a committed id is removed too,
+ * since the live recipe lists it. An id another save still holds stays.
+ */
+function takePhotosLeftForLastHolder(held: readonly string[]): string[] {
+  const take: string[] = [];
+  for (const id of held) {
+    if (!photosLeftForLastHolder.has(id)) {
+      continue;
+    }
+    if (photosCommittedByPut.has(id)) {
+      photosLeftForLastHolder.delete(id);
+      continue;
+    }
+    // Count includes this save. 1 means nobody else is holding the id.
+    if ((photosHeldBySaves.get(id) ?? 0) !== 1) {
+      continue;
+    }
+    photosLeftForLastHolder.delete(id);
+    take.push(id);
+  }
+  return take;
+}
+
+/** The put's outcome is unknown, so these ids might be on the live recipe. */
+function forgetPhotosLeftForLastHolder(held: readonly string[]): void {
+  for (const id of held) {
+    photosLeftForLastHolder.delete(id);
+  }
+}
+
+function uniqueIds(ids: readonly string[]): string[] {
+  return [...new Set(ids)];
+}
+
 /** Clears the in-flight accounting. Tests reuse photo ids across cases. */
 export function resetRecipePhotoSaveTracking(): void {
   photosHeldBySaves.clear();
   photosCommittedByPut.clear();
+  photosLeftForLastHolder.clear();
 }
 
 /**
@@ -449,7 +509,14 @@ export const recipeStore = {
       for (const id of held) {
         photosCommittedByPut.add(id);
       }
-      await deleteRemovedPhotos(previous, next);
+      forgetPhotosLeftForLastHolder(held);
+      // The put landed. Dropping a replaced photo is best effort: reporting
+      // failure here would show a save error for an edit that is already live.
+      try {
+        await deleteRemovedPhotos(previous, next);
+      } catch {
+        // An orphan is the cheaper mistake. A later edit can drop it.
+      }
     } catch (err) {
       if (err instanceof SessionExpiredError) {
         // The 401 cleared the library already; write nothing back into it.
@@ -470,7 +537,12 @@ export const recipeStore = {
       // dropped response after the live recipe started listing these ids, and
       // deleting them would break it; an orphan is the cheaper mistake.
       if (putResult === undefined || isDiscardedPushReason(putResult)) {
-        await discardOrphanUploads(orphanedUploads(uploaded));
+        rememberUploadsHeldElsewhere(uploaded);
+        await discardOrphanUploads(
+          uniqueIds([...orphanedUploads(uploaded), ...takePhotosLeftForLastHolder(held)]),
+        );
+      } else if (putResult !== 'ok') {
+        forgetPhotosLeftForLastHolder(held);
       }
       throw err;
     } finally {
