@@ -678,7 +678,12 @@ export type CollectionLinksBody = {
   url?: string;
   /** Mint response only: the new link's sha256 id (never the token). */
   id?: string;
-  /** Mint response only: the list read failed after the mint; refetch it. */
+  /** Revoke response only: the link that was revoked. */
+  revokedId?: string;
+  /**
+   * Mint or revoke response: the write committed but the list read after it
+   * failed. `links` is only the minted row (mint) or empty (revoke); reread.
+   */
   partial?: true;
 };
 
@@ -711,13 +716,21 @@ export function parseCollectionLinksBody(body: unknown): CollectionLinksBody | n
       expiresAt: row.expiresAt,
     });
   }
-  const record = body as { url?: unknown; id?: unknown; partial?: unknown };
+  const record = body as {
+    url?: unknown;
+    id?: unknown;
+    revokedId?: unknown;
+    partial?: unknown;
+  };
   const parsed: CollectionLinksBody = { links };
   if (typeof record.url === 'string') {
     parsed.url = record.url;
   }
   if (typeof record.id === 'string') {
     parsed.id = record.id;
+  }
+  if (typeof record.revokedId === 'string') {
+    parsed.revokedId = record.revokedId;
   }
   if (record.partial === true) {
     parsed.partial = true;

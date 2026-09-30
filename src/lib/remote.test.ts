@@ -74,6 +74,14 @@ describe('parseCollectionLinksBody', () => {
     });
   });
 
+  it('keeps the revokedId of a revoke response', () => {
+    expect(parseCollectionLinksBody({ revokedId: 'a'.repeat(64), links: [], partial: true })).toEqual({
+      revokedId: 'a'.repeat(64),
+      links: [],
+      partial: true,
+    });
+  });
+
   it('keeps the minted id and the partial flag, and nothing else', () => {
     expect(
       parseCollectionLinksBody({ url: 'u', id: 'a'.repeat(64), links: [], partial: true, extra: 1 }),

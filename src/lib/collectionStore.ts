@@ -97,6 +97,9 @@ function linkResult(
   if (result.id !== undefined) {
     body.id = result.id;
   }
+  if (result.revokedId !== undefined) {
+    body.revokedId = result.revokedId;
+  }
   if (result.partial) {
     body.partial = true;
   }
@@ -328,9 +331,28 @@ export const collectionStore = {
     return { url: minted.url, linkId: minted.id, links };
   },
 
-  async revokeLink(id: string, linkId: string): Promise<CollectionLink[]> {
+  /**
+   * Revokes `linkId` and returns the live list to show. Once the server
+   * committed the revoke this never throws: if its list read failed
+   * (`partial`), the list is reread once, and otherwise `current` without the
+   * revoked link stands in.
+   */
+  async revokeLink(
+    id: string,
+    linkId: string,
+    current: readonly CollectionLink[] = [],
+  ): Promise<CollectionLink[]> {
     rejectShared(id);
-    return linkResult(await revokeCollectionLink(id, linkId)).links;
+    const revoked = linkResult(await revokeCollectionLink(id, linkId));
+    if (!revoked.partial) {
+      return revoked.links;
+    }
+    const gone = revoked.revokedId ?? linkId;
+    try {
+      return linkResult(await listCollectionLinks(id)).links;
+    } catch {
+      return current.filter((link) => link.id !== gone);
+    }
   },
 
   async moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {

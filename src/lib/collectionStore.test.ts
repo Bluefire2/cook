@@ -23,6 +23,7 @@ import {
   listCollectionLinks,
   pushOps,
   revokeCollectionGrant,
+  revokeCollectionLink,
   type CollectionLink,
 } from './remote';
 import { pullAfterLocalWrite } from './syncEngine';
@@ -324,6 +325,43 @@ describe('collection links', () => {
       links: [linkB, linkA],
     });
     expect(listCollectionLinks).not.toHaveBeenCalled();
+  });
+
+  it('revokeLink returns the server list after a full revoke', async () => {
+    vi.mocked(revokeCollectionLink).mockResolvedValueOnce({
+      kind: 'ok',
+      revokedId: linkA.id,
+      links: [linkB],
+    });
+    await expect(collectionStore.revokeLink('col-1', linkA.id, [linkA, linkB])).resolves.toEqual([
+      linkB,
+    ]);
+    expect(listCollectionLinks).not.toHaveBeenCalled();
+  });
+
+  it('a partial revoke rereads once, and otherwise drops the revoked id locally', async () => {
+    vi.mocked(revokeCollectionLink).mockResolvedValue({
+      kind: 'ok',
+      revokedId: linkA.id,
+      links: [],
+      partial: true,
+    });
+    vi.mocked(listCollectionLinks).mockResolvedValueOnce({ kind: 'ok', links: [linkB] });
+    await expect(collectionStore.revokeLink('col-1', linkA.id, [linkA, linkB])).resolves.toEqual([
+      linkB,
+    ]);
+    expect(listCollectionLinks).toHaveBeenCalledTimes(1);
+
+    vi.mocked(listCollectionLinks).mockResolvedValueOnce({
+      kind: 'error',
+      message: 'Sharing is temporarily unavailable.',
+      status: 503,
+    });
+    const shown = await collectionStore.revokeLink('col-1', linkA.id, [linkA, linkB]);
+    expect(shown).toEqual([linkB]);
+    // The shown URL for the revoked link is hidden by the same list.
+    expect(visibleMintedUrl(minted, shown)).toBeNull();
+    vi.mocked(revokeCollectionLink).mockReset();
   });
 
   it('createLink refetches a partial list and keeps the URL when that fails too', async () => {
