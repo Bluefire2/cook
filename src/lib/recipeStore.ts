@@ -35,6 +35,7 @@ import { wouldExceedRecipeIdCap } from './collectionMembership';
 import { recipePhotoIds } from './recipePhotos';
 import type { Recipe, RecipeDraft } from './types';
 import type { PushOp } from './pushOps';
+import { isDiscardedPushReason } from './pushReasons';
 
 export { compactRecipe };
 
@@ -369,24 +370,31 @@ export const recipeStore = {
     const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
     upsertRecipe(next);
     const uploaded: string[] = [];
-    let putLanded = false;
+    // Unset until the put is sent.
+    let putResult: Awaited<ReturnType<typeof pushOps>> | undefined;
     try {
       await uploadRecipePhotos(next, uploaded);
-      const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
-      if (result !== 'ok') {
-        throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
+      putResult = await pushOps([{ kind: 'recipe.put', payload: next }]);
+      if (putResult !== 'ok') {
+        throw putResult === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
       }
-      putLanded = true;
       await deleteRemovedPhotos(previous, next);
     } catch (err) {
+      if (err instanceof SessionExpiredError) {
+        // The 401 cleared the library already; write nothing back into it.
+        // The session also cannot authorize a tombstone.
+        throw err;
+      }
       if (previous) {
         upsertRecipe(previous);
       } else {
         removeRecipeLocal(next.id);
       }
-      // The put never landed, so these ids are finalized and unreferenced.
-      // A signed-out session cannot authorize the tombstone.
-      if (!putLanded && !(err instanceof SessionExpiredError)) {
+      // Tombstone only when the put certainly did not land: it was never sent,
+      // or the server answered that it discarded it. A plain 'error' can be a
+      // dropped response after the live recipe started listing these ids, and
+      // deleting them would break it; an orphan is the cheaper mistake.
+      if (putResult === undefined || isDiscardedPushReason(putResult)) {
         await discardOrphanUploads(uploaded);
       }
       throw err;

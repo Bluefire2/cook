@@ -58,13 +58,13 @@ afterEach(() => {
 });
 
 describe('recipeStore.save photo cleanup', () => {
-  it('tombstones each photo uploaded before a failed recipe put', async () => {
+  it('tombstones each photo uploaded before a put the server discarded', async () => {
     upsertRecipe(storedRecipe());
     addPendingBlob(NEW_COVER, jpeg('cover'));
     addPendingBlob(NEW_GALLERY, jpeg('gallery'));
     vi.mocked(postPhoto).mockResolvedValue('ok');
     vi.mocked(pushOps).mockImplementation(async (ops) =>
-      ops.some((op) => op.kind === 'recipe.put') ? 'error' : 'ok',
+      ops.some((op) => op.kind === 'recipe.put') ? 'invalid' : 'ok',
     );
 
     await expect(
@@ -119,7 +119,7 @@ describe('recipeStore.save photo cleanup', () => {
     addPendingBlob(NEW_COVER, jpeg('cover'));
     vi.mocked(postPhoto).mockResolvedValue('ok');
     vi.mocked(pushOps).mockImplementation(async (ops) => {
-      if (ops.some((op) => op.kind === 'recipe.put')) return 'error';
+      if (ops.some((op) => op.kind === 'recipe.put')) return 'invalid';
       throw new Error('delete blew up');
     });
 
@@ -139,7 +139,7 @@ describe('recipeStore.save photo cleanup', () => {
     addPendingBlob(NEW_GALLERY, jpeg('gallery'));
     vi.mocked(postPhoto).mockResolvedValue('ok');
     vi.mocked(pushOps).mockImplementation(async (ops) =>
-      ops.some((op) => op.kind === 'recipe.put') ? 'error' : 'ok',
+      ops.some((op) => op.kind === 'recipe.put') ? 'invalid' : 'ok',
     );
 
     await expect(
@@ -157,17 +157,38 @@ describe('recipeStore.save photo cleanup', () => {
     expect(getSnapshot().remotePhotoIds.has(OLD_COVER)).toBe(true);
   });
 
-  it('does not tombstone photos uploaded before a signed-out put', async () => {
+  it('keeps photos uploaded before a put whose outcome is unknown', async () => {
     upsertRecipe(storedRecipe());
     addPendingBlob(NEW_COVER, jpeg('cover'));
     vi.mocked(postPhoto).mockResolvedValue('ok');
-    vi.mocked(pushOps).mockResolvedValue('signedOut');
+    // 'error' is also a dropped response after the server stored the put.
+    vi.mocked(pushOps).mockResolvedValue('error');
+
+    await expect(
+      recipeStore.save({ ...storedRecipe(), title: 'Maybe landed', photoId: NEW_COVER }),
+    ).rejects.toThrow(t('error.recipeSave'));
+
+    expect(photoDeletes()).toEqual([]);
+    expect(getRecipe(RECIPE_ID)?.title).toBe('Soup');
+  });
+
+  it('does not tombstone or restore anything after a signed-out put', async () => {
+    upsertRecipe(storedRecipe());
+    addPendingBlob(NEW_COVER, jpeg('cover'));
+    vi.mocked(postPhoto).mockResolvedValue('ok');
+    // `remote` clears the library before it reports a 401.
+    vi.mocked(pushOps).mockImplementation(async () => {
+      clearLibrary();
+      return 'signedOut';
+    });
 
     await expect(
       recipeStore.save({ ...storedRecipe(), photoId: NEW_COVER }),
     ).rejects.toThrow(t('error.sessionExpired'));
 
     expect(photoDeletes()).toEqual([]);
+    expect(getRecipe(RECIPE_ID)).toBeUndefined();
+    expect(getSnapshot().recipes.size).toBe(0);
   });
 
   it('tombstones a removed photo after a save that lands, and keeps the new one', async () => {
