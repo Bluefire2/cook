@@ -42,14 +42,20 @@ export function withSharedRecipeAccess(
   collectionOrigins: ReadonlyMap<string, ItemOrigin>,
 ): Map<string, ItemOrigin> {
   const editable = new Set<string>();
-  // The shared pull carries the owner's email on collections only; every
-  // collection that lists a shared recipe belongs to that recipe's owner.
-  const ownerEmails = new Map<string, string>();
+  // The shared pull carries the owner's email on collections only. Keyed by
+  // owner, so a collection from someone else that happens to list the same
+  // recipe id cannot label this recipe with their address.
+  const ownerEmails = new Map<string, Map<string, string>>();
   for (const [id, collection] of collections) {
     const collectionOrigin = collectionOrigins.get(id);
     if (collectionOrigin?.kind === 'shared' && collectionOrigin.ownerEmail) {
+      let byRecipe = ownerEmails.get(collectionOrigin.ownerSub);
+      if (byRecipe === undefined) {
+        byRecipe = new Map();
+        ownerEmails.set(collectionOrigin.ownerSub, byRecipe);
+      }
       for (const recipeId of collection.recipeIds) {
-        ownerEmails.set(recipeId, collectionOrigin.ownerEmail);
+        byRecipe.set(recipeId, collectionOrigin.ownerEmail);
       }
     }
     if (originAccess(collectionOrigin) !== 'editor') {
@@ -65,7 +71,7 @@ export function withSharedRecipeAccess(
       next.set(id, origin);
       continue;
     }
-    const ownerEmail = origin.ownerEmail ?? ownerEmails.get(id);
+    const ownerEmail = origin.ownerEmail ?? ownerEmails.get(origin.ownerSub)?.get(id);
     next.set(id, {
       ...origin,
       ...(ownerEmail ? { ownerEmail } : {}),

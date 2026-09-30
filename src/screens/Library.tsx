@@ -595,7 +595,7 @@ export default function Library() {
 
       {named && namedIsShared && !browseAll && (
         <div className="-mt-1 mb-3 flex items-center justify-between gap-2 text-sm text-ink-muted">
-          <span>
+          <span className="min-w-0 break-words">
             {/* One catalog sentence per case: joining two with a space breaks Chinese punctuation. */}
             {(() => {
               const email = collectionStore.sharedBy(named.id);

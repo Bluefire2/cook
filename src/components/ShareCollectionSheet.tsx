@@ -49,6 +49,8 @@ export default function ShareCollectionSheet({
   const [links, setLinks] = useState<CollectionLink[] | undefined>(undefined);
   const [linksLoadError, setLinksLoadError] = useState<string | null>(null);
   const [linkBusy, setLinkBusy] = useState(false);
+  // Copy link says "Saving…" only while a mint is in flight, not during revoke.
+  const [mintingLink, setMintingLink] = useState(false);
   // Link mint/revoke errors show in the link block, not under the email form.
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkRole, setLinkRole] = useState<GrantRole>('viewer');
@@ -65,16 +67,29 @@ export default function ShareCollectionSheet({
   // must not overwrite a list an add has already updated.
   const grantsSeq = useRef(0);
   const linksSeq = useRef(0);
+  // `add`, `changeRole`, and `revoke` keep running after the render that
+  // started them. This is the list from the latest load or write, updated
+  // in the same turn as `setGrants`, so a saved change merges into the list
+  // that arrived while the request was in flight.
+  const grantsRef = useRef<CollectionGrant[] | undefined>(undefined);
   // Focusing the email field on a phone raises the keyboard over the people list.
   const [finePointer] = useState(
     () => typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches === true,
   );
 
-  const applyGrants = useCallback((rows: CollectionGrant[]) => {
-    grantsSeq.current += 1;
+  const rememberGrants = useCallback((rows: CollectionGrant[]) => {
+    grantsRef.current = rows;
     setGrants(rows);
     setGrantsLoadError(null);
   }, []);
+
+  const applyGrants = useCallback(
+    (rows: CollectionGrant[]) => {
+      grantsSeq.current += 1;
+      rememberGrants(rows);
+    },
+    [rememberGrants],
+  );
 
   const applyLinks = useCallback((rows: CollectionLink[]) => {
     linksSeq.current += 1;
@@ -90,8 +105,7 @@ export default function ShareCollectionSheet({
       try {
         const rows = await collectionStore.listGrants(collection.id);
         if (seq === grantsSeq.current) {
-          setGrants(rows);
-          setGrantsLoadError(null);
+          rememberGrants(rows);
         }
       } catch (err) {
         if (seq === grantsSeq.current && !quiet) {
@@ -99,7 +113,7 @@ export default function ShareCollectionSheet({
         }
       }
     },
-    [collection.id],
+    [collection.id, rememberGrants],
   );
 
   const loadLinks = useCallback(
@@ -119,6 +133,18 @@ export default function ShareCollectionSheet({
     },
     [collection.id],
   );
+
+  // Merge a confirmed write into the newest list, then reread. A list that
+  // has never loaded is reread instead of being replaced by one row.
+  const commitGrants = (next: (current: readonly CollectionGrant[]) => CollectionGrant[]) => {
+    const current = grantsRef.current;
+    if (current === undefined) {
+      void loadGrants(false);
+      return;
+    }
+    applyGrants(next(current));
+    void loadGrants(true);
+  };
 
   useEffect(() => {
     void loadGrants(false);
@@ -145,6 +171,7 @@ export default function ShareCollectionSheet({
     inFlight.current = true;
     setLinkError(null);
     setLinkBusy(true);
+    setMintingLink(true);
     setCopied(false);
     try {
       const created = await collectionStore.createLink(collection.id, linkRole);
@@ -156,6 +183,7 @@ export default function ShareCollectionSheet({
     } finally {
       inFlight.current = false;
       setLinkBusy(false);
+      setMintingLink(false);
     }
   };
 
@@ -188,15 +216,9 @@ export default function ShareCollectionSheet({
       const grant = await collectionStore.addGrant(collection.id, target, role);
       setEmail('');
       setRole('viewer');
-      if (grants === undefined) {
-        // The list never loaded, so a merge would present a partial list as whole.
-        void loadGrants(false);
-      } else {
-        // The server accepted the grant and sent it back: show that row now,
-        // then reconcile quietly (a failed read must not undo a saved add).
-        applyGrants(withGrant(grants, grant));
-        void loadGrants(true);
-      }
+      // The server accepted the grant and sent it back. Show that row now;
+      // a failed reread must not undo a saved add.
+      commitGrants((current) => withGrant(current, grant));
     } catch (err) {
       setFormError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
@@ -212,9 +234,7 @@ export default function ShareCollectionSheet({
     setPending({ kind: 'role', sub, role: next });
     try {
       await collectionStore.setGrantRole(collection.id, sub, next);
-      if (grants !== undefined) {
-        applyGrants(withGrantRole(grants, sub, next));
-      }
+      commitGrants((current) => withGrantRole(current, sub, next));
     } catch (err) {
       setListError(err instanceof Error ? err.message : t('error.sharingUpdate'));
       // The row snaps back to the server's role; reread in case it changed elsewhere.
@@ -232,9 +252,7 @@ export default function ShareCollectionSheet({
     setPending({ kind: 'remove', sub });
     try {
       await collectionStore.revokeGrant(collection.id, sub);
-      if (grants !== undefined) {
-        applyGrants(withoutGrant(grants, sub));
-      }
+      commitGrants((current) => withoutGrant(current, sub));
     } catch (err) {
       setListError(err instanceof Error ? err.message : t('error.sharingUpdate'));
       void loadGrants(true);
@@ -384,7 +402,7 @@ export default function ShareCollectionSheet({
           onClick={() => void createLink()}
           className={`${secondaryBtn} min-w-0 flex-1 py-2 disabled:opacity-40`}
         >
-          {t('share.copyLink')}
+          {mintingLink ? t('common.saving') : t('share.copyLink')}
         </button>
       </div>
       {linkError && (

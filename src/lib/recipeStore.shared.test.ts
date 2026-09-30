@@ -153,6 +153,26 @@ describe('shared recipe access', () => {
     expect(next.get('own')).toEqual({ kind: 'own' });
   });
 
+  it('copies the owner email only from that recipe owner', () => {
+    const next = withSharedRecipeAccess(
+      new Map<string, ItemOrigin>([
+        [EDITABLE_ID, { kind: 'shared', ownerSub: 'alice' }],
+        [VIEW_ONLY_ID, { kind: 'shared', ownerSub: 'alice' }],
+      ]),
+      new Map([
+        ['alice-col', collection('alice-col', [EDITABLE_ID])],
+        // Listed later, so a map keyed only by recipe id would keep this email.
+        ['bob-col', collection('bob-col', [EDITABLE_ID, VIEW_ONLY_ID])],
+      ]),
+      new Map<string, ItemOrigin>([
+        ['alice-col', { kind: 'shared', ownerSub: 'alice', ownerEmail: 'alice@example.com' }],
+        ['bob-col', { kind: 'shared', ownerSub: 'bob', ownerEmail: 'bob@example.com' }],
+      ]),
+    );
+    expect(next.get(EDITABLE_ID)).toMatchObject({ ownerEmail: 'alice@example.com' });
+    expect(next.get(VIEW_ONLY_ID)).not.toHaveProperty('ownerEmail');
+  });
+
   it('is published with the shared pull and is not a Recipe field', () => {
     publishShared();
     expect(recipeAccess(EDITABLE_ID)).toBe('editor');
