@@ -142,7 +142,7 @@ export const en = {
 
   'admin.title': 'Invitations',
   'admin.intro':
-    'Approving gives the person their own empty library. Remove access takes effect within a minute.',
+    'Approving gives the person their own empty library and sends them an email saying they were approved. Remove access takes effect within a minute.',
   'admin.refreshing': 'Refreshing…',
   'admin.inviteLinks': 'Invite links',
   'admin.inviteIntro':

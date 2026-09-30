@@ -121,22 +121,21 @@ export function invitationOnlyPage(
     identity.name !== undefined && identity.name !== ''
       ? `You signed in as ${escapeHtml(identity.name)} (${escapeHtml(identity.email)}).`
       : `You signed in as ${escapeHtml(identity.email)}.`;
-  // With or without the form, the page keeps D14's substance: nobody is
-  // emailed back, and signing in again works once they are approved. The
-  // no-form copy says the request could not be started and that retrying
-  // sign-in will offer it again — a mint failure is transient.
+  // Approval emails the requester, and signing in again works once they
+  // are approved. The no-form copy says the request could not be started
+  // and that retrying sign-in will offer it again — a mint failure is
+  // transient.
   const requestBlock =
     requestToken === null
       ? '<p class="muted">Your request could not be started right now — ' +
-        'signing in again will offer it once more. Nobody will email you ' +
-        'back; once you have been approved, you can try signing in again.</p>'
+        'signing in again will offer it once more. Once you have been ' +
+        "approved, we'll email you, and you can try signing in again.</p>"
       : '<form method="POST" action="/api/access-request">' +
         `<input type="hidden" name="t" value="${escapeHtml(requestToken)}">` +
         '<button type="submit">Request access</button>' +
         '</form>' +
         '<p class="muted">Your request goes to the owner of this app. ' +
-        'Nobody will email you back — once it is approved, you can try ' +
-        'signing in again.</p>';
+        "Once it is approved, we'll email you, and you can sign in again.</p>";
   return pageHtml(
     'Invitation only',
     '<h1>Sous is invitation-only</h1>' +
@@ -156,12 +155,21 @@ function expiredPage(): Response {
   );
 }
 
-function recordedPage(): Response {
-  return htmlPage(
+// A declined request is not re-sent to the owner, so its page keeps the
+// pre-approval-email copy and promises nothing.
+export function recordedPageHtml(promiseEmail: boolean): string {
+  const promise = promiseEmail ? " Once it is approved, we'll email you." : '';
+  return pageHtml(
     'Request sent',
-    '<h1>Request sent</h1><p>Your request was recorded.</p>',
-    200,
+    `<h1>Request sent</h1><p>Your request was recorded.${promise}</p>`,
   );
+}
+
+function recordedPage(promiseEmail: boolean): Response {
+  return new Response(recordedPageHtml(promiseEmail), {
+    status: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
 }
 
 function alreadyApprovedPage(): Response {
@@ -339,7 +347,7 @@ export async function accessRequestPost(req: Request): Promise<Response> {
     if (result.outcome === 'already-approved') {
       return alreadyApprovedPage();
     }
-    return recordedPage();
+    return recordedPage(result.outcome !== 'declined');
   } catch (err) {
     console.error('accessRequestPost failed:', err);
     return unavailablePage();

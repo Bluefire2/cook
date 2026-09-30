@@ -116,7 +116,7 @@ export const zhHans: Messages = {
   'settings.terms': '条款',
 
   'admin.title': '邀请',
-  'admin.intro': '批准后，对方会得到自己的空食谱库。移除访问会在一分钟内生效。',
+  'admin.intro': '批准后，对方会得到自己的空食谱库，并收到一封告知已获批准的邮件。移除访问会在一分钟内生效。',
   'admin.refreshing': '正在刷新…',
   'admin.inviteLinks': '邀请链接',
   'admin.inviteIntro':

@@ -262,7 +262,7 @@ the full map).
 | `PUBLIC_ORIGIN` | yes | Origin used to build the OAuth redirect URI. Local: `http://localhost:5173`. Production: `https://sous.kyrylo.lol`. |
 | `GOOGLE_CLOUD_PROJECT` | yes | `cooking-assistant-508423` for Firestore. |
 | `PHOTO_BUCKET` | no | GCS bucket name for recipe and chat photos. Unset ⇒ photo upload returns 503. |
-| `MAIL_FROM` | yes (prod) | Resend sender address for access-request notifications. Must be verified in Resend. |
+| `MAIL_FROM` | yes (prod) | Resend sender for the owner's access-request notifications and the approval email to requesters. Must be on a domain verified in Resend. The sandbox `onboarding@resend.dev` only reaches the Resend account's own inbox, so approval emails are skipped (and logged) while it is set. |
 | `OWNER_NOTIFY_EMAIL` | yes (prod) | Inbox that receives access-request notifications. |
 | `RESEND_API_KEY` | no | Resend API key. Unset ⇒ no notification email; requests still land in `/admin`. |
 | `CHAT_MODEL` | no | Model id for the Gemini endpoints (chat, import, and Ask dictation). Defaults to `gemini-3.7-flash`. A bare `CHAT_MODEL=` is read as `''` by `--env-file`, which defeats the default — comment the line out instead. |

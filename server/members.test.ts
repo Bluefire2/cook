@@ -5,6 +5,7 @@ import {
   nextNotificationCounter,
   nextRequestState,
   parseMemberDoc,
+  quietOutcome,
   unusedInviteIdsForMember,
   type AccessRequestRecord,
 } from './members.ts';
@@ -177,6 +178,17 @@ describe('nextRequestState', () => {
     expect(a).toEqual(b);
     expect(a.write).toBe(false);
     expect(a.doc).toBeNull();
+  });
+});
+
+describe('quietOutcome', () => {
+  it('marks a denied request as declined', () => {
+    expect(quietOutcome(pendingRequest({ status: 'denied' }))).toBe('declined');
+  });
+
+  it('keeps a pending request, or none, quiet', () => {
+    expect(quietOutcome(pendingRequest())).toBe('quiet');
+    expect(quietOutcome(null)).toBe('quiet');
   });
 });
 
