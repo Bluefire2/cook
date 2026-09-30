@@ -85,6 +85,78 @@ describe('client architecture', () => {
   });
 });
 
+describe('client state (docs/constitutions/client-state.md)', () => {
+  const LIBRARY_MEMORY = 'src/lib/libraryMemory.ts';
+
+  /** Top-level function bodies of a file, keyed by function name. */
+  function topLevelFunctions(path: string): Map<string, string> {
+    const out = new Map<string, string>();
+    const chunks = read(path).split(/^(?=(?:export )?(?:async )?function \w+)/m);
+    for (const chunk of chunks) {
+      const name = /^(?:export )?(?:async )?function (\w+)/.exec(chunk)?.[1];
+      if (name) {
+        out.set(name, chunk);
+      }
+    }
+    return out;
+  }
+
+  it('libraryMemory never mutates a published map in place', () => {
+    // Principle 2: a write copies the maps it changes; published maps stay untouched.
+    const offenders = matchingLines(
+      LIBRARY_MEMORY,
+      /\bsnapshot\.[A-Za-z]+\.(?:set|delete|add|clear)\(/,
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('libraryMemory copies every map only for rollback', () => {
+    // Principle 2: cloneMaps is for captureSnapshot/restoreSnapshot; ordinary
+    // writes copy only the maps they change.
+    const callers = [...topLevelFunctions(LIBRARY_MEMORY)]
+      .filter(([name, body]) => name !== 'cloneMaps' && /\bcloneMaps\(/.test(body))
+      .map(([name]) => name)
+      .sort();
+    expect(callers).toEqual(['captureSnapshot', 'restoreSnapshot']);
+  });
+
+  it('only useLibrary.ts subscribes React to libraryMemory', () => {
+    // Principles 3–4: other modules read the library through useLibrarySlice/useLibrarySelect.
+    // Flags a useSyncExternalStore call whose subscribe argument was imported
+    // from libraryMemory. A module may import other libraryMemory helpers and
+    // still subscribe React to its own store.
+    const libraryImport =
+      /import\s*\{([^}]*)\}\s*from\s*['"](?:\.\.?\/)+(?:lib\/)?libraryMemory['"]/g;
+    const offenders = filesUnder('src', ['.ts', '.tsx'])
+      .filter((path) => !isTestFile(path) && path !== 'src/lib/useLibrary.ts')
+      .flatMap((path) => {
+        const text = read(path);
+        const imported = new Set(
+          [...text.matchAll(libraryImport)].flatMap((match) =>
+            match[1]
+              .split(',')
+              .map((part) => part.trim().replace(/^type\s+/, '').split(/\s+as\s+/).pop() ?? '')
+              .filter((name) => name !== ''),
+          ),
+        );
+        return [...text.matchAll(/\buseSyncExternalStore\(\s*(\w+)/g)]
+          .filter((call) => imported.has(call[1]))
+          .map((call) => `${path}: useSyncExternalStore(${call[1]}, …)`);
+      });
+    expect(offenders).toEqual([]);
+  });
+
+  it('stores and hooks never force a render with a counter', () => {
+    // Principle 3: React reads module stores through useSyncExternalStore, not a bumped counter.
+    const counterBump = /\b(?:set\w*|tick)\(\s*\(?\s*(\w+)\s*\)?\s*=>\s*\1\s*\+\s*1\s*\)/;
+    const offenders = ['src/lib', 'src/agent']
+      .flatMap((dir) => filesUnder(dir, ['.ts', '.tsx']))
+      .filter((path) => !isTestFile(path))
+      .flatMap((path) => matchingLines(path, counterBump));
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('server', () => {
   it('never uses Response.redirect', () => {
     // AGENTS.md: Response.redirect() has immutable headers, so Set-Cookie on the
