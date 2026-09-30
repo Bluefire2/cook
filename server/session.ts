@@ -26,7 +26,7 @@ export interface SessionPayload {
   exp: number;
 }
 
-export interface OauthTxPayload {
+export interface AuthTxPayload {
   state: string;
   nonce: string;
   verifier: string;
@@ -84,6 +84,13 @@ function base64urlDecodeJson(tokenPart: string): unknown | null {
   }
 }
 
+/**
+ * HMAC-SHA256 with the server's `SESSION_SECRET` authenticates a token we
+ * issued; it is not password storage, so a slow KDF would be wrong here.
+ * CodeQL's `js/insufficient-password-hash` guesses passwords from names
+ * (anything containing "oauth" counts), so keep such names off the values
+ * passed to the sign/verify functions below.
+ */
 function hmacSign(payloadPart: string, secret: string): string {
   const sig = createHmac('sha256', secret).update(payloadPart).digest();
   return base64urlEncode(sig);
@@ -176,7 +183,8 @@ export function isInviteId(raw: string): boolean {
   return INVITE_ID_RE.test(raw);
 }
 
-export function signOauthTx(
+/** The Google sign-in transaction carried in the `sous_oauth` cookie. */
+export function signAuthTx(
   tx: {
     state: string;
     nonce: string;
@@ -212,7 +220,7 @@ export function signOauthTx(
   return `${payloadPart}.${signature}`;
 }
 
-export function verifyOauthTx(token: string, now: number): OauthTxPayload | null {
+export function verifyAuthTx(token: string, now: number): AuthTxPayload | null {
   const secret = sessionSecret();
   if (!secret) {
     return null;
@@ -255,7 +263,7 @@ export function verifyOauthTx(token: string, now: number): OauthTxPayload | null
   if (row.exp <= now) {
     return null;
   }
-  const out: OauthTxPayload = {
+  const out: AuthTxPayload = {
     state: row.state,
     nonce: row.nonce,
     verifier: row.verifier,

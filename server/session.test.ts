@@ -10,12 +10,12 @@ import {
   sessionCookie,
   sessionFromHeader,
   signAccessRequestTx,
+  signAuthTx,
   signInviteTx,
-  signOauthTx,
   signSession,
   verifyAccessRequestTx,
+  verifyAuthTx,
   verifyInviteTx,
-  verifyOauthTx,
   verifySession,
 } from './session.ts';
 
@@ -268,7 +268,7 @@ describe('signAccessRequestTx / verifyAccessRequestTx', () => {
   it('rejects session, oauth, and invite tokens', () => {
     const now = nowMs();
     const sessionToken = signSession({ sub: 'sub-a', email: 'a@example.com' }, now);
-    const oauthToken = signOauthTx(
+    const authTxToken = signAuthTx(
       { state: 's', nonce: 'n', verifier: 'v', returnTo: '/' },
       now,
     );
@@ -277,7 +277,7 @@ describe('signAccessRequestTx / verifyAccessRequestTx', () => {
       now,
     );
     expect(verifyAccessRequestTx(sessionToken, now)).toBeNull();
-    expect(verifyAccessRequestTx(oauthToken, now)).toBeNull();
+    expect(verifyAccessRequestTx(authTxToken, now)).toBeNull();
     expect(verifyAccessRequestTx(inviteToken, now)).toBeNull();
   });
 });
@@ -290,28 +290,63 @@ describe('verifySession rejects accessreq tokens', () => {
   });
 });
 
-describe('signOauthTx / verifyOauthTx', () => {
+describe('signAuthTx / verifyAuthTx', () => {
   it('round-trips oauth transaction fields', () => {
-    const token = signOauthTx(
+    const token = signAuthTx(
       { state: 'st', nonce: 'no', verifier: 'ver', returnTo: '/settings' },
       nowMs(),
     );
-    expect(verifyOauthTx(token, nowMs())).toMatchObject({
+    expect(verifyAuthTx(token, nowMs())).toMatchObject({
       state: 'st',
       nonce: 'no',
       verifier: 'ver',
       returnTo: '/settings',
     });
-    expect(verifyOauthTx(token, nowMs())?.invite).toBeUndefined();
+    expect(verifyAuthTx(token, nowMs())?.invite).toBeUndefined();
   });
 
   it('round-trips an optional invite hash', () => {
     const invite = 'ab'.repeat(32);
-    const token = signOauthTx(
+    const token = signAuthTx(
       { state: 'st', nonce: 'no', verifier: 'ver', returnTo: '/', invite },
       nowMs(),
     );
-    expect(verifyOauthTx(token, nowMs())).toMatchObject({ invite });
+    expect(verifyAuthTx(token, nowMs())).toMatchObject({ invite });
+  });
+
+  // Minted by the function before its rename (signOauthTx on main), with this
+  // file's SESSION_SECRET. A `sous_oauth` cookie in flight across a deploy
+  // must keep verifying, so the signed bytes must not change.
+  it('signs and verifies byte-identical tokens to the pre-rename format', () => {
+    const iat = 1_750_000_000_000;
+    const plain =
+      'eyJ2Ijoib2F1dGgiLCJzdGF0ZSI6InN0Iiwibm9uY2UiOiJubyIsInZlcmlmaWVyIjoidmVyIiwicmV0dXJuVG8iOiIvc2V0dGluZ3MiLCJpYXQiOjE3NTAwMDAwMDAwMDAsImV4cCI6MTc1MDAwMDYwMDAwMH0.YJmFBzzyW99EgpEfvd1ZLDcrAuDe_Kvvk4_x3PTuLPM';
+    const withInvite =
+      'eyJ2Ijoib2F1dGgiLCJzdGF0ZSI6InN0Iiwibm9uY2UiOiJubyIsInZlcmlmaWVyIjoidmVyIiwicmV0dXJuVG8iOiIvIiwiaWF0IjoxNzUwMDAwMDAwMDAwLCJleHAiOjE3NTAwMDA2MDAwMDAsImludml0ZSI6ImFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIifQ.Zhe93qniCIeSSvED4iyU2LSX04IycJyAJuOyYdCR8ec';
+    const invite = 'ab'.repeat(32);
+    expect(
+      signAuthTx({ state: 'st', nonce: 'no', verifier: 'ver', returnTo: '/settings' }, iat),
+    ).toBe(plain);
+    expect(
+      signAuthTx({ state: 'st', nonce: 'no', verifier: 'ver', returnTo: '/', invite }, iat),
+    ).toBe(withInvite);
+    expect(verifyAuthTx(plain, iat)).toEqual({
+      state: 'st',
+      nonce: 'no',
+      verifier: 'ver',
+      returnTo: '/settings',
+      iat,
+      exp: iat + 10 * 60 * 1000,
+    });
+    expect(verifyAuthTx(withInvite, iat)).toEqual({
+      state: 'st',
+      nonce: 'no',
+      verifier: 'ver',
+      returnTo: '/',
+      invite,
+      iat,
+      exp: iat + 10 * 60 * 1000,
+    });
   });
 
   it('rejects invite, session, and accessreq tokens', () => {
@@ -319,9 +354,9 @@ describe('signOauthTx / verifyOauthTx', () => {
     const inviteToken = signInviteTx({ id: 'b'.repeat(64) }, now);
     const sessionToken = signSession({ sub: 's', email: 'a@b.c' }, now);
     const accessreq = signAccessRequestTx({ sub: 's', email: 'a@b.c' }, now);
-    expect(verifyOauthTx(inviteToken, now)).toBeNull();
-    expect(verifyOauthTx(sessionToken, now)).toBeNull();
-    expect(verifyOauthTx(accessreq, now)).toBeNull();
+    expect(verifyAuthTx(inviteToken, now)).toBeNull();
+    expect(verifyAuthTx(sessionToken, now)).toBeNull();
+    expect(verifyAuthTx(accessreq, now)).toBeNull();
   });
 });
 
@@ -346,13 +381,13 @@ describe('signInviteTx / verifyInviteTx', () => {
   it('rejects session, oauth, and accessreq tokens', () => {
     const now = nowMs();
     const sessionToken = signSession({ sub: 's', email: 'a@b.c' }, now);
-    const oauthToken = signOauthTx(
+    const authTxToken = signAuthTx(
       { state: 's', nonce: 'n', verifier: 'v', returnTo: '/' },
       now,
     );
     const accessreq = signAccessRequestTx({ sub: 's', email: 'a@b.c' }, now);
     expect(verifyInviteTx(sessionToken, now)).toBeNull();
-    expect(verifyInviteTx(oauthToken, now)).toBeNull();
+    expect(verifyInviteTx(authTxToken, now)).toBeNull();
     expect(verifyInviteTx(accessreq, now)).toBeNull();
   });
 
