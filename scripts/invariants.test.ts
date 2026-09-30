@@ -146,6 +146,37 @@ describe('client state (docs/constitutions/client-state.md)', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('useLibrarySelect takes a named selector from librarySelectors.ts', () => {
+    // Principles 3–4: an inline selector escapes the stability test in
+    // librarySelectors.test.ts; a fresh object from one re-renders forever.
+    const offenders = filesUnder('src', ['.ts', '.tsx'])
+      .filter((path) => !isTestFile(path) && path !== 'src/lib/useLibrary.ts')
+      .flatMap((path) =>
+        matchingLines(path, /\buseLibrarySelect\(\s*(?:\(|function\b|async\b|\w+\s*=>)/),
+      );
+    expect(offenders).toEqual([]);
+  });
+
+  it('a component that reads sharing or access during render subscribes to that map', () => {
+    // Principle 5: recipeStore/collectionStore isShared/access/sharedBy read the
+    // origin maps, which only the list hooks subscribe to. A read beside
+    // useRecipe alone would go stale when a pull changes access.
+    const rules = [
+      { read: /\brecipeStore\.(?:isShared|access|sharedBy)\(/, hook: /\buseRecipes\(/ },
+      { read: /\bcollectionStore\.(?:isShared|access|sharedBy)\(/, hook: /\buseCollections\(/ },
+    ];
+    const offenders = ['src/screens', 'src/components', 'src/agent']
+      .flatMap((dir) => filesUnder(dir, ['.ts', '.tsx']))
+      .filter((path) => !isTestFile(path))
+      .flatMap((path) => {
+        const text = read(path);
+        return rules
+          .filter((rule) => rule.read.test(text) && !rule.hook.test(text))
+          .map((rule) => `${path}: ${rule.read.source} without ${rule.hook.source}`);
+      });
+    expect(offenders).toEqual([]);
+  });
+
   it('stores and hooks never force a render with a counter', () => {
     // Principle 3: React reads module stores through useSyncExternalStore, not a bumped counter.
     const counterBump = /\b(?:set\w*|tick)\(\s*\(?\s*(\w+)\s*\)?\s*=>\s*\1\s*\+\s*1\s*\)/;

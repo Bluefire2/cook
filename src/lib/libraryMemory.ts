@@ -229,6 +229,16 @@ export function markLoaded(): void {
 }
 
 export function clearLibrary(): void {
+  // Signed-out syncs call this repeatedly; an already empty library stays as is.
+  const alreadyEmpty =
+    snapshot.loaded &&
+    !snapshot.fullPull &&
+    Object.values(snapshot).every(
+      (value) => !(value instanceof Map || value instanceof Set) || value.size === 0,
+    );
+  if (alreadyEmpty) {
+    return;
+  }
   emit(empty(true));
 }
 
@@ -336,56 +346,104 @@ export function replaceFromPullWithShared(
   });
 }
 
+/** `source` with `key` set to `value`; the same map when it already holds that value. */
+function withEntry<K, V>(
+  source: ReadonlyMap<K, V>,
+  key: K,
+  value: V,
+  same: (a: V, b: V) => boolean = Object.is,
+): ReadonlyMap<K, V> {
+  const current = source.get(key);
+  if (source.has(key) && same(current as V, value)) {
+    return source;
+  }
+  const next = new Map(source);
+  next.set(key, value);
+  return next;
+}
+
+/** `source` without `keys`; the same map when none of them is present. */
+function without<K, V>(source: ReadonlyMap<K, V>, keys: Iterable<K>): ReadonlyMap<K, V> {
+  let next: Map<K, V> | undefined;
+  for (const key of keys) {
+    if ((next ?? source).has(key)) {
+      next ??= new Map(source);
+      next.delete(key);
+    }
+  }
+  return next ?? source;
+}
+
+/** `source` with `member` added; the same set when it is already there. */
+function withMember<T>(source: ReadonlySet<T>, member: T): ReadonlySet<T> {
+  if (source.has(member)) {
+    return source;
+  }
+  const next = new Set(source);
+  next.add(member);
+  return next;
+}
+
+/** `source` without `members`; the same set when none of them is present. */
+function withoutMembers<T>(source: ReadonlySet<T>, members: Iterable<T>): ReadonlySet<T> {
+  let next: Set<T> | undefined;
+  for (const member of members) {
+    if ((next ?? source).has(member)) {
+      next ??= new Set(source);
+      next.delete(member);
+    }
+  }
+  return next ?? source;
+}
+
+/**
+ * Publishes the changed fields together. When every field is the one already
+ * published, nothing changed, so there is nothing to publish.
+ */
+function publishChanges(changes: Partial<LibrarySnapshot>): void {
+  const keys = Object.keys(changes) as (keyof LibrarySnapshot)[];
+  if (keys.every((key) => Object.is(changes[key], snapshot[key]))) {
+    return;
+  }
+  emit({ ...snapshot, ...changes });
+}
+
+function sameOrigin(a: ItemOrigin, b: ItemOrigin): boolean {
+  if (a.kind === 'own' || b.kind === 'own') {
+    return a.kind === b.kind;
+  }
+  return a.ownerSub === b.ownerSub && a.ownerEmail === b.ownerEmail && a.access === b.access;
+}
+
 /** `origin` defaults to own; an editor's optimistic save passes the shared origin through. */
 export function upsertRecipe(recipe: Recipe, origin: ItemOrigin = { kind: 'own' }): void {
-  const recipes = new Map(snapshot.recipes);
-  recipes.set(recipe.id, recipe);
-  const recipeOrigins = new Map(snapshot.recipeOrigins);
-  recipeOrigins.set(recipe.id, origin);
-  emit({ ...snapshot, recipes, recipeOrigins });
+  publishChanges({
+    recipes: withEntry(snapshot.recipes, recipe.id, recipe),
+    recipeOrigins: withEntry(snapshot.recipeOrigins, recipe.id, origin, sameOrigin),
+  });
 }
 
 export function removeRecipeLocal(id: string): void {
-  const next = {
-    recipes: new Map(snapshot.recipes),
-    recipeOrigins: new Map(snapshot.recipeOrigins),
-    cook: new Map(snapshot.cook),
-    cookParentOrigins: new Map(snapshot.cookParentOrigins),
-    chat: new Map(snapshot.chat),
-    chatParentOrigins: new Map(snapshot.chatParentOrigins),
-    cookLogs: new Map(snapshot.cookLogs),
-    pendingBlobs: new Map(snapshot.pendingBlobs),
-    remotePhotoIds: new Set(snapshot.remotePhotoIds),
-  };
-  const recipe = next.recipes.get(id);
-  next.recipes.delete(id);
-  next.recipeOrigins.delete(id);
-  next.cook.delete(id);
-  next.cookParentOrigins.delete(id);
-  for (const [messageId, message] of next.chat) {
-    if (message.recipeId === id) {
-      next.chat.delete(messageId);
-      next.chatParentOrigins.delete(messageId);
-      for (const photoId of message.photoIds ?? []) {
-        next.pendingBlobs.delete(photoId);
-        next.remotePhotoIds.delete(photoId);
-      }
-    }
-  }
-  for (const [logId, log] of next.cookLogs) {
-    if (log.recipeId === id) {
-      next.cookLogs.delete(logId);
-      for (const photoId of log.photoIds ?? []) {
-        next.pendingBlobs.delete(photoId);
-        next.remotePhotoIds.delete(photoId);
-      }
-    }
-  }
-  for (const photoId of recipe ? recipePhotoIds(recipe) : []) {
-    next.pendingBlobs.delete(photoId);
-    next.remotePhotoIds.delete(photoId);
-  }
-  emit({ ...snapshot, ...next });
+  const recipe = snapshot.recipes.get(id);
+  const messages = [...snapshot.chat.values()].filter((message) => message.recipeId === id);
+  const logs = [...snapshot.cookLogs.values()].filter((log) => log.recipeId === id);
+  const messageIds = messages.map((message) => message.id);
+  const photoIds = [
+    ...messages.flatMap((message) => message.photoIds ?? []),
+    ...logs.flatMap((log) => log.photoIds ?? []),
+    ...(recipe ? recipePhotoIds(recipe) : []),
+  ];
+  publishChanges({
+    recipes: without(snapshot.recipes, [id]),
+    recipeOrigins: without(snapshot.recipeOrigins, [id]),
+    cook: without(snapshot.cook, [id]),
+    cookParentOrigins: without(snapshot.cookParentOrigins, [id]),
+    chat: without(snapshot.chat, messageIds),
+    chatParentOrigins: without(snapshot.chatParentOrigins, messageIds),
+    cookLogs: without(snapshot.cookLogs, logs.map((log) => log.id)),
+    pendingBlobs: without(snapshot.pendingBlobs, photoIds),
+    remotePhotoIds: withoutMembers(snapshot.remotePhotoIds, photoIds),
+  });
 }
 
 /**
@@ -393,125 +451,94 @@ export function removeRecipeLocal(id: string): void {
  * export is safe before the next pull. A live owned origin clears it. A
  * missing origin leaves a persisted sidecar in place: revocation drops the
  * recipe before pull returns the stored marker, and that absence must not
- * wipe the marker.
+ * wipe the marker. Returns the same map when nothing changes.
  */
-function assignInferredParentOrigin(
-  sidecar: Map<string, string>,
+function withInferredParentOrigin(
+  sidecar: ReadonlyMap<string, string>,
   key: string,
   recipeId: string,
-  recipeOrigins: ReadonlyMap<string, ItemOrigin>,
-): void {
-  const origin = recipeOrigins.get(recipeId);
+): ReadonlyMap<string, string> {
+  const origin = snapshot.recipeOrigins.get(recipeId);
   if (origin?.kind === 'shared' && origin.ownerSub !== '') {
-    sidecar.set(key, origin.ownerSub);
-    return;
+    return withEntry(sidecar, key, origin.ownerSub);
   }
   if (origin?.kind === 'own') {
-    sidecar.delete(key);
+    return without(sidecar, [key]);
   }
+  return sidecar;
 }
 
 export function upsertChat(message: ChatMessage): void {
-  const chat = new Map(snapshot.chat);
-  chat.set(message.id, message);
-  const chatParentOrigins = new Map(snapshot.chatParentOrigins);
-  assignInferredParentOrigin(
-    chatParentOrigins,
-    message.id,
-    message.recipeId,
-    snapshot.recipeOrigins,
-  );
-  emit({ ...snapshot, chat, chatParentOrigins });
+  publishChanges({
+    chat: withEntry(snapshot.chat, message.id, message),
+    chatParentOrigins: withInferredParentOrigin(
+      snapshot.chatParentOrigins,
+      message.id,
+      message.recipeId,
+    ),
+  });
 }
 
 export function clearChatLocal(recipeId: string): void {
-  const next = {
-    chat: new Map(snapshot.chat),
-    chatParentOrigins: new Map(snapshot.chatParentOrigins),
-    pendingBlobs: new Map(snapshot.pendingBlobs),
-    remotePhotoIds: new Set(snapshot.remotePhotoIds),
-  };
-  for (const [messageId, message] of next.chat) {
-    if (message.recipeId === recipeId) {
-      next.chat.delete(messageId);
-      next.chatParentOrigins.delete(messageId);
-      for (const photoId of message.photoIds ?? []) {
-        next.pendingBlobs.delete(photoId);
-        next.remotePhotoIds.delete(photoId);
-      }
-    }
-  }
-  emit({ ...snapshot, ...next });
+  const messages = [...snapshot.chat.values()].filter(
+    (message) => message.recipeId === recipeId,
+  );
+  const messageIds = messages.map((message) => message.id);
+  const photoIds = messages.flatMap((message) => message.photoIds ?? []);
+  publishChanges({
+    chat: without(snapshot.chat, messageIds),
+    chatParentOrigins: without(snapshot.chatParentOrigins, messageIds),
+    pendingBlobs: without(snapshot.pendingBlobs, photoIds),
+    remotePhotoIds: withoutMembers(snapshot.remotePhotoIds, photoIds),
+  });
 }
 
 export function upsertCook(row: CookStateRow): void {
-  const cook = new Map(snapshot.cook);
-  cook.set(row.recipeId, row);
-  const cookParentOrigins = new Map(snapshot.cookParentOrigins);
-  assignInferredParentOrigin(
-    cookParentOrigins,
-    row.recipeId,
-    row.recipeId,
-    snapshot.recipeOrigins,
-  );
-  emit({ ...snapshot, cook, cookParentOrigins });
+  publishChanges({
+    cook: withEntry(snapshot.cook, row.recipeId, row),
+    cookParentOrigins: withInferredParentOrigin(
+      snapshot.cookParentOrigins,
+      row.recipeId,
+      row.recipeId,
+    ),
+  });
 }
 
 export function upsertCookLog(log: CookLog): void {
-  const cookLogs = new Map(snapshot.cookLogs);
-  cookLogs.set(log.id, log);
-  emit({ ...snapshot, cookLogs });
+  publishChanges({ cookLogs: withEntry(snapshot.cookLogs, log.id, log) });
 }
 
 export function removeCookLogLocal(id: string): void {
-  const cookLogs = new Map(snapshot.cookLogs);
-  cookLogs.delete(id);
-  emit({ ...snapshot, cookLogs });
+  publishChanges({ cookLogs: without(snapshot.cookLogs, [id]) });
 }
 
 export function addPendingBlob(id: string, blob: Blob): void {
-  const pendingBlobs = new Map(snapshot.pendingBlobs);
-  pendingBlobs.set(id, blob);
-  emit({ ...snapshot, pendingBlobs });
+  publishChanges({ pendingBlobs: withEntry(snapshot.pendingBlobs, id, blob) });
 }
 
 export function dropPendingBlob(id: string): void {
-  if (!snapshot.pendingBlobs.has(id)) {
-    return;
-  }
-  const pendingBlobs = new Map(snapshot.pendingBlobs);
-  pendingBlobs.delete(id);
-  emit({ ...snapshot, pendingBlobs });
+  publishChanges({ pendingBlobs: without(snapshot.pendingBlobs, [id]) });
 }
 
 export function markPhotoRemote(id: string): void {
-  if (!snapshot.pendingBlobs.has(id) && snapshot.remotePhotoIds.has(id)) {
-    return;
-  }
-  const pendingBlobs = new Map(snapshot.pendingBlobs);
-  pendingBlobs.delete(id);
-  const remotePhotoIds = new Set(snapshot.remotePhotoIds);
-  remotePhotoIds.add(id);
-  emit({ ...snapshot, pendingBlobs, remotePhotoIds });
+  publishChanges({
+    pendingBlobs: without(snapshot.pendingBlobs, [id]),
+    remotePhotoIds: withMember(snapshot.remotePhotoIds, id),
+  });
 }
 
 export function cachePhotoBlob(id: string, blob: Blob): void {
-  if (snapshot.pendingBlobs.get(id) === blob && snapshot.remotePhotoIds.has(id)) {
-    return;
-  }
-  const pendingBlobs = new Map(snapshot.pendingBlobs);
-  pendingBlobs.set(id, blob);
-  const remotePhotoIds = new Set(snapshot.remotePhotoIds);
-  remotePhotoIds.add(id);
-  emit({ ...snapshot, pendingBlobs, remotePhotoIds });
+  publishChanges({
+    pendingBlobs: withEntry(snapshot.pendingBlobs, id, blob),
+    remotePhotoIds: withMember(snapshot.remotePhotoIds, id),
+  });
 }
 
 export function dropPhoto(id: string): void {
-  const pendingBlobs = new Map(snapshot.pendingBlobs);
-  pendingBlobs.delete(id);
-  const remotePhotoIds = new Set(snapshot.remotePhotoIds);
-  remotePhotoIds.delete(id);
-  emit({ ...snapshot, pendingBlobs, remotePhotoIds });
+  publishChanges({
+    pendingBlobs: without(snapshot.pendingBlobs, [id]),
+    remotePhotoIds: withoutMembers(snapshot.remotePhotoIds, [id]),
+  });
 }
 
 export function sortRecipes(recipes: ReadonlyMap<string, Recipe>): Recipe[] {
@@ -573,23 +600,19 @@ export function getCollection(id: string): Collection | undefined {
 }
 
 export function upsertCollection(collection: Collection): void {
-  const collections = new Map(snapshot.collections);
-  collections.set(collection.id, collection);
-  let collectionOrigins = snapshot.collectionOrigins;
-  if (!collectionOrigins.has(collection.id)) {
-    const origins = new Map(collectionOrigins);
-    origins.set(collection.id, { kind: 'own' });
-    collectionOrigins = origins;
-  }
-  emit({ ...snapshot, collections, collectionOrigins });
+  publishChanges({
+    collections: withEntry(snapshot.collections, collection.id, collection),
+    collectionOrigins: snapshot.collectionOrigins.has(collection.id)
+      ? snapshot.collectionOrigins
+      : withEntry(snapshot.collectionOrigins, collection.id, { kind: 'own' }),
+  });
 }
 
 export function removeCollectionLocal(id: string): void {
-  const collections = new Map(snapshot.collections);
-  collections.delete(id);
-  const collectionOrigins = new Map(snapshot.collectionOrigins);
-  collectionOrigins.delete(id);
-  emit({ ...snapshot, collections, collectionOrigins });
+  publishChanges({
+    collections: without(snapshot.collections, [id]),
+    collectionOrigins: without(snapshot.collectionOrigins, [id]),
+  });
 }
 
 export function getRecipeOrigin(id: string): ItemOrigin | undefined {

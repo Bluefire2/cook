@@ -3,8 +3,9 @@ name: Client state
 description: How React reads client state: the one library snapshot and its copy-only-what-changes writes, useSyncExternalStore with stable getters and narrow selectors, subscriptions for everything a render reads, and reducer-driven screen dialogs. Read before changing a libraryMemory write, any store hook, a module-level store that React reads, a store read inside a component's render, or Library's dialogs.
 status: ratified
 scope:
-  - src/lib/libraryMemory.ts (snapshot shape, writes, captureSnapshot/restoreSnapshot)
+  - src/lib/libraryMemory.ts (snapshot shape, writes and their copy/publish helpers, captureSnapshot/restoreSnapshot)
   - src/lib/useLibrary.ts
+  - src/lib/librarySelectors.ts
   - src/lib/recipeStore.ts (useRecipes, useRecipe, useRecipeAccess, useRecipeSharedBy)
   - src/lib/collectionStore.ts (useCollections, useFullPull)
   - src/lib/chatStore.ts (useChatMessages)
@@ -72,19 +73,31 @@ stores would let a screen render one half of a change without the other.
 
 A write builds new copies of just the maps and sets it changes and spreads
 everything else from the current snapshot. It never calls `.set`, `.delete`,
-`.add` or `.clear` on a map that is already published. A write that touches
-several related maps, such as `removeRecipeLocal`, publishes all of them in
-the same snapshot. A write that would change nothing, such as
-`cachePhotoBlob` with the same blob, doesn't publish. `cloneMaps` is for
-`captureSnapshot`/`restoreSnapshot` rollback only.
+`.add` or `.clear` on a map that is already published. The helpers in
+`libraryMemory.ts` (`withEntry`, `without`, `withMember`, `withoutMembers`)
+return the same map when there is nothing to change, and `publishChanges`
+publishes all of one write's maps in a single snapshot, or nothing at all when
+every map is unchanged.
+
+So a write that changes nothing doesn't publish:
+- an upsert of the value already stored;
+- a remove of an id that isn't there;
+- `clearChatLocal` for a recipe with no messages;
+- `clearLibrary` on a library that is already empty;
+- the chat and cook parent-origin sidecars when the recipe's origin gives
+  them nothing new.
+
+`cloneMaps` is for `captureSnapshot`/`restoreSnapshot` rollback only.
 
 **Why:** hooks treat an unchanged reference as unchanged data, so copying an
 untouched map makes every consumer re-render and re-derive for nothing. That
 was the original problem: one cached photo re-sorted the recipe and
-collection lists. Mutating a published map is worse. A consumer that
-memoized on it sees stale data, and a rollback that captured it no longer
-holds the old state. `scripts/invariants.test.ts` checks both halves in
-`libraryMemory.ts`.
+collection lists. Publishing an unchanged snapshot does the same. For
+example, every signed-out sync used to clear an already empty library.
+Mutating a published map is worse. A consumer that memoized on it sees stale
+data, and a rollback that captured it no longer holds the old state.
+`scripts/invariants.test.ts` checks that no published map is mutated and that
+only rollback copies every map.
 
 ### 3. React reads a module-level store only through `useSyncExternalStore` and a stable getter
 
@@ -96,7 +109,10 @@ returns an unsubscribe function, and a getter. Components read it through
 The getter returns an object the store already holds, or a primitive. It
 never builds a fresh array or object, because React compares results with
 `Object.is`, and a new object on every call re-renders forever. A store
-replaces its snapshot object when something changes and keeps it otherwise.
+replaces its snapshot object when something changes and keeps it otherwise:
+- `session.ts` compares status and the user's fields before it publishes, so
+  a refetch that returns the same session doesn't re-render its readers;
+- `syncEngine.ts` skips a status it already has.
 
 There are no subscribe-in-`useEffect` hooks and no dummy counters bumped to
 force a render.
@@ -111,7 +127,11 @@ counter re-renders without telling React what changed.
 
 A hook that returns one item selects that item: `useRecipe`, `useCookLog`,
 `useCookState`'s row, `usePhotoUrl`'s blob, `useRecipeAccess`,
-`useRecipeSharedBy`.
+`useRecipeSharedBy`. Its selector is a named export of
+`src/lib/librarySelectors.ts`, never an inline function.
+`librarySelectors.test.ts` checks every export there returns the identical
+value on repeated reads, and `scripts/invariants.test.ts` rejects an inline
+selector passed to `useLibrarySelect`.
 
 A hook that returns a list subscribes to the maps it's built from and
 derives the list with `useMemo`, never inside the getter. Only
@@ -142,6 +162,17 @@ also reads `useRecipeSharedBy`.
 Event handlers may read stores directly, since they run at the moment they
 need the value.
 
+`scripts/invariants.test.ts` checks this per file:
+- a file in `src/screens`, `src/components` or `src/agent` that calls
+  `recipeStore.isShared`, `.access` or `.sharedBy` must also call
+  `useRecipes`;
+- one that calls the `collectionStore` versions must also call
+  `useCollections`.
+
+Because the check works per file, a file that only makes these reads in
+handlers is held to it too. Such a file subscribes, or reads through a selector
+hook instead.
+
 **Why:** narrowing subscriptions (Principle 4) removes the accidental
 re-renders that used to hide these reads. Once `useRecipe` stopped
 re-rendering on every store change, RecipeView's Edit control would have
@@ -156,6 +187,9 @@ one sheet is open. Each sheet kind carries what its workflow needs:
 - the move's recipe id;
 - the collection that a create which failed partway already made, so a retry
   reuses it instead of making a second one;
+- the create's `saving` flag, set by `submitting` and cleared only by a
+  failure. It disables the submit, so a second click can't start a second
+  create before the first has recorded its collection;
 - the leave sheet's collection name, so it can still title itself after the
   collection drops out of the list.
 
@@ -183,18 +217,26 @@ Keeping the reducer pure lets the transitions be unit-tested without a DOM.
 As the root `AGENTS.md` requires, tests for these rules run in the node
 environment with no DOM testing library:
 
-- store contracts through the exported subscribe and getter pairs
+- store contracts through the exported subscribe and getter pairs, including
+  "an unchanged refetch or status keeps the same object"
   (`sessionStore.test.ts`, `syncEngine.test.ts`);
-- copy-only-what-changes identity and immutability for every write
-  (`libraryMemory.test.ts`);
-- reducer transitions, including stale tokens (`libraryFlow.test.ts`);
-- the grep checks in `scripts/invariants.test.ts`.
+- for every write in `libraryMemory.ts`: which maps keep their identity, that
+  it never changes an already published snapshot, and that a write which
+  changes nothing publishes nothing (`libraryMemory.test.ts`);
+- selector stability for every export of `librarySelectors.ts`
+  (`librarySelectors.test.ts`);
+- reducer transitions, including stale tokens and the create's `saving` flag
+  (`libraryFlow.test.ts`);
+- the checks in `scripts/invariants.test.ts`.
 
 Anything that depends on how React re-renders is checked in the browser.
 
-## Known exception
+## Known exceptions
 
-`RecipeView` keeps a `revision` counter that it bumps after its own translate
+Both predate this document and sit outside its scope. Neither is a
+precedent.
+
+**RecipeView's translation counter.** `RecipeView` keeps a `revision` counter that it bumps after its own translate
 or show-original actions, so the memoized `recipeForDisplay` rereads
 `translationStore`'s cache. That cache has no subscribe function, and
 RecipeView is the only component that reads it. This is the one counter left
@@ -202,6 +244,12 @@ in the client. It is governed by `docs/constitutions/i18n.md` and predates
 this document. If another component starts reading or writing that cache,
 give `translationStore` a subscribe function and a getter per Principle 3,
 and delete the counter.
+
+**`SaveToCollectionSheet`.** It runs the same create-then-retry workflow as
+Library's create sheet, in separate `useState` values (`name`, `error`,
+`pending`, `created`). It already disables its buttons while `pending`, so it
+doesn't have the double-submit problem. The next change to that workflow moves
+it onto a reducer per Principle 6. Don't copy its shape into a new sheet.
 
 ## Non-goals (a PR that adds one of these amends this document)
 

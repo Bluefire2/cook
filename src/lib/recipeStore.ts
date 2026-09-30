@@ -22,11 +22,11 @@ import {
   isSharedCollection,
   isSharedRecipe,
   listCollections,
-  originAccess,
   recipeAccess,
   upsertCollection,
   type LibraryAccess,
 } from './libraryMemory';
+import { selectRecipe, selectRecipeAccess, selectRecipeSharedBy } from './librarySelectors';
 import { useLibrarySelect, useLibrarySlice } from './useLibrary';
 import { fetchPhotoBlobOutcome, postPhoto, pushOps } from './remote';
 import { photoStore } from './photoStore';
@@ -771,28 +771,15 @@ export function useRecipes(): Recipe[] | undefined {
 
 /** Reactive single recipe. `undefined` while loading, `null` if not found. */
 export function useRecipe(id: string | undefined): Recipe | null | undefined {
-  return useLibrarySelect((snap) => {
-    if (!snap.loaded) {
-      return undefined;
-    }
-    if (!id) {
-      return null;
-    }
-    return snap.recipes.get(id) ?? null;
-  });
+  return useLibrarySelect(selectRecipe(id));
 }
 
 /** Reactive email of whoever shared this recipe with you, when known. */
 export function useRecipeSharedBy(id: string | undefined): string | undefined {
-  return useLibrarySelect((snap) => {
-    const origin = id === undefined ? undefined : snap.recipeOrigins.get(id);
-    return origin?.kind === 'shared' ? origin.ownerEmail : undefined;
-  });
+  return useLibrarySelect(selectRecipeSharedBy(id));
 }
 
 /** Reactive access to one recipe; `undefined` when it is not in the library. */
 export function useRecipeAccess(id: string | undefined): LibraryAccess | undefined {
-  return useLibrarySelect((snap) =>
-    id === undefined ? undefined : originAccess(snap.recipeOrigins.get(id)),
-  );
+  return useLibrarySelect(selectRecipeAccess(id));
 }

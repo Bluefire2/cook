@@ -59,18 +59,40 @@ function recipe(id: string): Recipe {
 }
 
 describe('session store', () => {
-  it('returns the same snapshot until something is published', async () => {
+  it('keeps the same snapshot and stays quiet when a refetch returns the same session', async () => {
     respond(200, { user });
     await fetchSession();
     const first = getSessionSnapshot();
-    expect(getSessionSnapshot()).toBe(first);
+    expect(first).toEqual({ user, status: 'signedIn' });
+
+    const listener = vi.fn();
+    const unsubscribe = subscribeSession(listener);
+    respond(200, { user: { ...user } });
     await fetchSession();
-    const second = getSessionSnapshot();
-    expect(second).not.toBe(first);
-    expect(second).toEqual({ user, status: 'signedIn' });
+    unsubscribe();
+    expect(getSessionSnapshot()).toBe(first);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('publishes a new snapshot when a user field changes', async () => {
+    respond(200, { user });
+    await fetchSession();
+    const first = getSessionSnapshot();
+
+    const listener = vi.fn();
+    const unsubscribe = subscribeSession(listener);
+    respond(200, { user: { ...user, name: 'Me' } });
+    await fetchSession();
+    unsubscribe();
+    expect(getSessionSnapshot()).not.toBe(first);
+    expect(getSessionSnapshot().user?.name).toBe('Me');
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it('notifies subscribers on each published status and stops after unsubscribe', async () => {
+    // Start signed out, whatever an earlier test left behind.
+    respond(401);
+    await fetchSession();
     const listener = vi.fn();
     const unsubscribe = subscribeSession(listener);
 

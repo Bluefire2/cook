@@ -28,6 +28,25 @@ function emit(): void {
   }
 }
 
+function sameUser(a: SessionUser | null, b: SessionUser | null): boolean {
+  if (a === null || b === null) {
+    return a === b;
+  }
+  return a.sub === b.sub && a.email === b.email && a.name === b.name && a.isOwner === b.isOwner;
+}
+
+/**
+ * Replaces the snapshot only when status or user changed, so a refetch that
+ * returns the same session does not re-render every useSession reader.
+ */
+function publish(next: SessionSnapshot): void {
+  if (next.status === snapshot.status && sameUser(next.user, snapshot.user)) {
+    return;
+  }
+  snapshot = next;
+  emit();
+}
+
 function readCachedUser(): SessionUser | null {
   try {
     const raw = localStorage.getItem(SESSION_CACHE_KEY);
@@ -64,8 +83,7 @@ function notifySessionReset(): void {
 
 export function invalidateSession(): void {
   localStorage.removeItem(SESSION_CACHE_KEY);
-  snapshot = { user: null, status: 'signedOut' };
-  emit();
+  publish({ user: null, status: 'signedOut' });
   clearLibrary();
   clearPersistedLibraryView();
   notifySessionReset();
@@ -83,23 +101,20 @@ export async function fetchSession(): Promise<FetchSessionResult> {
     }
     if (!response.ok) {
       const cached = readCachedUser();
-      snapshot = { user: cached, status: 'offline' };
-      emit();
+      publish({ user: cached, status: 'offline' });
       return { status: 'offline', user: cached };
     }
     const data = (await response.json()) as { user: SessionUser | null };
     if (data.user) {
       localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(data.user));
-      snapshot = { user: data.user, status: 'signedIn' };
-      emit();
+      publish({ user: data.user, status: 'signedIn' });
       return { status: 'signedIn', user: data.user };
     }
     invalidateSession();
     return { status: 'signedOut' };
   } catch {
     const cached = readCachedUser();
-    snapshot = { user: cached, status: 'offline' };
-    emit();
+    publish({ user: cached, status: 'offline' });
     return { status: 'offline', user: cached };
   }
 }

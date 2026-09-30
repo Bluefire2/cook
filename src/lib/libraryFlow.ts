@@ -19,6 +19,11 @@ export type LibrarySheet =
       name: string;
       /** A collection an earlier attempt already created; retries reuse it. */
       created?: { id: string; name: string };
+      /**
+       * True from `submitting` until the attempt fails or the sheet closes.
+       * A second submit before `created` lands would make a second collection.
+       */
+      saving: boolean;
       error?: string;
     }
   | { kind: 'rename'; collectionId: string; name: string; error?: string }
@@ -70,6 +75,7 @@ export function libraryFlowReducer(
       return open(state, {
         kind: 'create',
         name: '',
+        saving: false,
         ...(sheet.kind === 'move' ? { moveRecipeId: sheet.recipeId } : {}),
       });
     case 'openRename':
@@ -100,9 +106,10 @@ export function libraryFlowReducer(
         return state;
       }
       switch (sheet.kind) {
+        case 'create':
+          return { ...state, sheet: { ...sheet, saving: true, error: undefined } };
         case 'leave':
         case 'move':
-        case 'create':
         case 'rename':
         case 'deleteCollection':
           return { ...state, sheet: { ...sheet, error: undefined } };
@@ -119,9 +126,10 @@ export function libraryFlowReducer(
         return state;
       }
       switch (sheet.kind) {
+        case 'create':
+          return { ...state, sheet: { ...sheet, saving: false, error: action.error } };
         case 'leave':
         case 'move':
-        case 'create':
         case 'rename':
         case 'deleteCollection':
           return { ...state, sheet: { ...sheet, error: action.error } };

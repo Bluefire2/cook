@@ -14,12 +14,12 @@ function run(...actions: LibraryFlowAction[]): LibraryFlow {
 describe('libraryFlowReducer', () => {
   it('carries the moved recipe into a new-collection create', () => {
     const state = run({ type: 'openMove', recipeId: 'r1' }, { type: 'startCreate' });
-    expect(state.sheet).toEqual({ kind: 'create', name: '', moveRecipeId: 'r1' });
+    expect(state.sheet).toEqual({ kind: 'create', name: '', saving: false, moveRecipeId: 'r1' });
   });
 
   it('creates without a move when started from the switcher', () => {
     const state = run({ type: 'startCreate' });
-    expect(state.sheet).toEqual({ kind: 'create', name: '' });
+    expect(state.sheet).toEqual({ kind: 'create', name: '', saving: false });
   });
 
   it('keeps the created collection through a failed move so a retry reuses it', () => {
@@ -41,6 +41,7 @@ describe('libraryFlowReducer', () => {
       name: 'Soups',
       moveRecipeId: 'r1',
       created: { id: 'c1', name: 'Soups' },
+      saving: false,
       error: 'move failed',
     });
 
@@ -52,12 +53,38 @@ describe('libraryFlowReducer', () => {
     });
   });
 
+  it('marks a create as saving from submit until it fails, so it cannot run twice', () => {
+    let state = run({ type: 'startCreate' }, { type: 'setName', name: 'Soups' });
+    const token = state.token;
+    state = libraryFlowReducer(state, { type: 'submitting', token });
+    expect(state.sheet.kind === 'create' && state.sheet.saving).toBe(true);
+    // The collection exists but the move is still running: still saving.
+    state = libraryFlowReducer(state, {
+      type: 'created',
+      token,
+      created: { id: 'c1', name: 'Soups' },
+    });
+    expect(state.sheet.kind === 'create' && state.sheet.saving).toBe(true);
+    state = libraryFlowReducer(state, { type: 'failed', token, error: 'x' });
+    expect(state.sheet.kind === 'create' && state.sheet.saving).toBe(false);
+  });
+
+  it('a stale submit does not mark a newer create sheet as saving', () => {
+    let state = run({ type: 'startCreate' });
+    const stale = state.token;
+    state = libraryFlowReducer(state, { type: 'close' });
+    state = libraryFlowReducer(state, { type: 'startCreate' });
+    const fresh = state;
+    expect(libraryFlowReducer(state, { type: 'submitting', token: stale })).toBe(fresh);
+    expect(state.sheet.kind === 'create' && state.sheet.saving).toBe(false);
+  });
+
   it('clears the name and error when a sheet is closed and reopened', () => {
     let state = run({ type: 'startCreate' }, { type: 'setName', name: 'Soups' });
     state = libraryFlowReducer(state, { type: 'failed', token: state.token, error: 'nope' });
     state = libraryFlowReducer(state, { type: 'close' });
     state = libraryFlowReducer(state, { type: 'startCreate' });
-    expect(state.sheet).toEqual({ kind: 'create', name: '' });
+    expect(state.sheet).toEqual({ kind: 'create', name: '', saving: false });
   });
 
   it('ignores completions from a sheet that was closed, replaced or reset', () => {

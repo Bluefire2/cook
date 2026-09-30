@@ -1303,7 +1303,7 @@ describe('sync status store', () => {
     }
   });
 
-  it('keeps one snapshot between publications and removes listeners on unsubscribe', async () => {
+  it('keeps one snapshot between publications and skips an unchanged status', async () => {
     globalThis.localStorage = {
       getItem: () => null,
       setItem: () => {},
@@ -1325,8 +1325,11 @@ describe('sync status store', () => {
     expect(after).not.toBe(before);
     expect(after.status).toBe('signedOut');
 
-    unsubscribe();
+    // Signed out again: nothing changed, so nothing is published.
     await sync();
     expect(calls).toBe(1);
+    expect(getSyncStatusSnapshot()).toBe(after);
+
+    unsubscribe();
   });
 });

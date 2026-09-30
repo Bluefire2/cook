@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { getCook, upsertCook } from './libraryMemory';
+import { selectCookRow } from './librarySelectors';
 import { useLibrarySelect } from './useLibrary';
 import { pushOps } from './remote';
 import type { Recipe } from './types';
@@ -83,9 +84,7 @@ const cookStateStore = {
 /** Persisted per recipe. Resets when the recipe's shape changes. */
 export function useCookState(recipe: Recipe | null | undefined): CookStateApi {
   const recipeId = recipe?.id;
-  const row = useLibrarySelect((snap) =>
-    recipeId ? snap.cook.get(recipeId) : undefined,
-  );
+  const row = useLibrarySelect(selectCookRow(recipeId));
 
   const { servings, currentStep, checkedKeys } = progressFor(row, recipe);
   const checkedSet = useMemo(() => new Set(checkedKeys), [checkedKeys]);

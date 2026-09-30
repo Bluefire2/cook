@@ -150,7 +150,7 @@ export default function Library() {
   const closeSheets = () => dispatch({ type: 'close' });
 
   const submitCreate = async () => {
-    if (sheet.kind !== 'create') {
+    if (sheet.kind !== 'create' || sheet.saving) {
       return;
     }
     const { token } = flow;
@@ -929,7 +929,7 @@ export default function Library() {
             )}
             <button
               type="submit"
-              disabled={collectionName.trim() === ''}
+              disabled={collectionName.trim() === '' || sheet.saving}
               className={`${primaryBtn} mt-3 w-full py-3`}
             >
               {t('library.create')}

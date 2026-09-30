@@ -101,7 +101,12 @@ export function onSyncFinished(listener: SyncFinishedListener): () => void {
   };
 }
 
+/** Publishes only a real change, so a repeated status does not re-render readers. */
 function setSnapshot(partial: Partial<SyncStatusSnapshot>): void {
+  const keys = Object.keys(partial) as (keyof SyncStatusSnapshot)[];
+  if (keys.every((key) => Object.is(partial[key], snapshot[key]))) {
+    return;
+  }
   snapshot = { ...snapshot, ...partial };
   emit();
 }

@@ -7,6 +7,7 @@ import {
   getSnapshot,
   photoOwnerSub,
 } from './libraryMemory';
+import { selectPendingBlob } from './librarySelectors';
 import { useLibrarySelect } from './useLibrary';
 import { fetchPhotoBlob, pushOps } from './remote';
 
@@ -89,9 +90,7 @@ export function useObjectUrl(blob: Blob | undefined): string | undefined {
  * or when there is no photo.
  */
 export function usePhotoUrl(id: string | undefined): string | undefined {
-  const blob = useLibrarySelect((snap) =>
-    id ? snap.pendingBlobs.get(id) : undefined,
-  );
+  const blob = useLibrarySelect(selectPendingBlob(id));
   useEffect(() => {
     if (id) void photoStore.ensureLocal(id);
   }, [id]);

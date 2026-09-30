@@ -14,6 +14,7 @@ import {
   getSnapshot,
   isSharedRecipe,
   listCookLogs,
+  markLoaded,
   markPhotoRemote,
   originAccess,
   ownedBackupGraphIds,
@@ -529,6 +530,34 @@ describe('copy-on-write writes', () => {
       () => dropPhoto('photo-1'),
       () => upsertCollection(collection('c2', 'D')),
       () => removeCollectionLocal('c1'),
+      () => clearLibrary(),
+      () =>
+        replaceFromPull({
+          recipes: new Map([['r9', recipe('r9', 'Pulled')]]),
+          collections: new Map(),
+          chat: new Map(),
+          cook: new Map(),
+          cookLogs: new Map(),
+          remotePhotoIds: new Set(),
+        }),
+      () =>
+        replaceFromPullWithShared(
+          {
+            recipes: new Map([['r9', recipe('r9', 'Pulled')]]),
+            collections: new Map(),
+            chat: new Map(),
+            cook: new Map(),
+            cookLogs: new Map(),
+            remotePhotoIds: new Set(),
+          },
+          {
+            recipes: new Map([['s1', recipe('s1', 'Shared')]]),
+            collections: new Map(),
+            remotePhotoIds: new Set(),
+            recipeOrigins: new Map([['s1', { kind: 'shared', ownerSub: 'alice' }]]),
+            collectionOrigins: new Map(),
+          },
+        ),
     ];
     for (const write of writes) {
       seed();
@@ -539,6 +568,91 @@ describe('copy-on-write writes', () => {
       expect(getSnapshot()).not.toBe(before);
       expect(contents(before)).toEqual(expected);
     }
+  });
+
+  it('restoring a captured snapshot leaves both the current and the captured one untouched', () => {
+    seed();
+    const captured = captureSnapshot();
+    const capturedContents = contents(captured);
+    upsertRecipe(recipe('r2', 'Two'));
+    const before = getSnapshot();
+    const beforeContents = contents(before);
+    restoreSnapshot(captured);
+    expect(getSnapshot()).not.toBe(before);
+    expect(contents(before)).toEqual(beforeContents);
+    expect(contents(captured)).toEqual(capturedContents);
+    expect(contents(getSnapshot())).toEqual(capturedContents);
+  });
+
+  it('marking an unloaded library loaded leaves the unloaded snapshot untouched', () => {
+    seed();
+    restoreSnapshot({ ...getSnapshot(), loaded: false });
+    const before = getSnapshot();
+    markLoaded();
+    expect(getSnapshot()).not.toBe(before);
+    expect(before.loaded).toBe(false);
+    expect(getSnapshot().loaded).toBe(true);
+  });
+
+  it('a write that changes nothing keeps the snapshot and notifies no one', () => {
+    const blob = new Blob(['y']);
+    const noOps: Array<[string, () => void]> = [
+      ['clearChatLocal with no messages', () => clearChatLocal('absent')],
+      ['dropPhoto of an unknown photo', () => dropPhoto('absent')],
+      ['removeCookLogLocal of an unknown log', () => removeCookLogLocal('absent')],
+      ['removeCollectionLocal of an unknown collection', () => removeCollectionLocal('absent')],
+      ['removeRecipeLocal of an unknown recipe', () => removeRecipeLocal('absent')],
+      ['addPendingBlob of the same blob', () => addPendingBlob('photo-3', blob)],
+      ['dropPendingBlob of an unknown blob', () => dropPendingBlob('absent')],
+      ['markPhotoRemote of a remote photo', () => markPhotoRemote('photo-1')],
+      ['cachePhotoBlob of the cached blob', () => cachePhotoBlob('photo-3', blob)],
+      ['upsertRecipe of the same recipe', () => upsertRecipe(getSnapshot().recipes.get('r1')!)],
+      ['upsertChat of the same message', () => upsertChat(getSnapshot().chat.get('m1')!)],
+      ['upsertCook of the same row', () => upsertCook(getSnapshot().cook.get('r1')!)],
+      ['upsertCookLog of the same log', () => upsertCookLog(getSnapshot().cookLogs.get('log-1')!)],
+      [
+        'upsertCollection of the same collection',
+        () => upsertCollection(getSnapshot().collections.get('c1')!),
+      ],
+      ['markLoaded when loaded', () => markLoaded()],
+    ];
+    for (const [name, write] of noOps) {
+      seed();
+      cachePhotoBlob('photo-3', blob);
+      const before = getSnapshot();
+      let calls = 0;
+      const unsubscribe = subscribe(() => {
+        calls += 1;
+      });
+      write();
+      unsubscribe();
+      expect({ name, same: getSnapshot() === before, calls }).toEqual({ name, same: true, calls: 0 });
+    }
+  });
+
+  it('clearing an already empty library notifies no one', () => {
+    clearLibrary();
+    const before = getSnapshot();
+    let calls = 0;
+    const unsubscribe = subscribe(() => {
+      calls += 1;
+    });
+    clearLibrary();
+    unsubscribe();
+    expect(getSnapshot()).toBe(before);
+    expect(calls).toBe(0);
+  });
+
+  it('chat and cook writes on an owned recipe keep the parent-origin sidecars', () => {
+    seed();
+    const before = getSnapshot();
+    upsertChat(message('m2', 'r1'));
+    upsertCook({ ...cookRow('r1'), currentStep: 1 });
+    const after = getSnapshot();
+    expect(after.chat).not.toBe(before.chat);
+    expect(after.cook).not.toBe(before.cook);
+    expect(after.chatParentOrigins).toBe(before.chatParentOrigins);
+    expect(after.cookParentOrigins).toBe(before.cookParentOrigins);
   });
 
   it('an origin-only recipe change replaces recipeOrigins', () => {

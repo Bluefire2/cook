@@ -11,6 +11,7 @@ import {
   removeCookLogLocal,
   upsertCookLog,
 } from './libraryMemory';
+import { selectCookLog } from './librarySelectors';
 import { useLibrarySelect, useLibrarySlice } from './useLibrary';
 import { postPhoto, pushOps, type RemoteResult } from './remote';
 import { SessionExpiredError } from './sessionExpired';
@@ -170,13 +171,5 @@ export function useCookLogs(recipeId?: string): CookLog[] | undefined {
 
 /** Reactive single cook log. `undefined` while loading, `null` if not found. */
 export function useCookLog(id: string | undefined): CookLog | null | undefined {
-  return useLibrarySelect((snap) => {
-    if (!snap.loaded) {
-      return undefined;
-    }
-    if (!id) {
-      return null;
-    }
-    return snap.cookLogs.get(id) ?? null;
-  });
+  return useLibrarySelect(selectCookLog(id));
 }
