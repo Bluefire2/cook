@@ -132,6 +132,40 @@ describe('serverErrorText', () => {
     ).toBe('This collection already has 20 people');
   });
 
+  it('maps link-cap to a plural catalog message driven by max', () => {
+    const body = {
+      code: 'link-cap',
+      error: 'This collection already has 20 live links. Revoke one first.',
+      max: 20,
+    };
+    settings.setLocale('en');
+    expect(serverErrorText(body, 'error.sharingUpdate')).toBe(
+      'This collection already has 20 live links. Revoke one first.',
+    );
+    settings.setLocale('uk');
+    expect(serverErrorText(body, 'error.sharingUpdate')).toBe(
+      'У цій колекції вже 20 активних посилань. Відкличте одне, щоб створити нове.',
+    );
+    settings.setLocale('ru');
+    expect(serverErrorText({ ...body, max: 2 }, 'error.sharingUpdate')).toBe(
+      'В этой коллекции уже 2 активные ссылки. Отзовите одну, чтобы создать новую.',
+    );
+    settings.setLocale('zh-Hans');
+    expect(serverErrorText(body, 'error.sharingUpdate')).toBe(
+      '这个合集已经有 20 条有效链接。请先撤销一条。',
+    );
+  });
+
+  it('falls back to the English link-cap error when max is missing', () => {
+    settings.setLocale('uk');
+    expect(
+      serverErrorText(
+        { code: 'link-cap', error: 'This collection already has 20 live links. Revoke one first.' },
+        'error.sharingUpdate',
+      ),
+    ).toBe('This collection already has 20 live links. Revoke one first.');
+  });
+
   it('maps translate failures to catalog text', () => {
     settings.setLocale('uk');
     expect(

@@ -3,6 +3,7 @@ import { mailFrom, ownerNotifyEmail, resendApiKey } from './env.ts';
 export interface MailMessage {
   subject: string;
   text: string;
+  to?: string;
 }
 
 let loggedResendDisabled = false;
@@ -12,8 +13,13 @@ export async function sendMail(msg: MailMessage): Promise<boolean> {
   if (key === null) {
     if (!loggedResendDisabled) {
       loggedResendDisabled = true;
-      console.log('RESEND_API_KEY unset — access-request notifications are disabled');
+      console.log('RESEND_API_KEY unset — access-request and approval emails are disabled');
     }
+    return false;
+  }
+
+  if (msg.to !== undefined && approvalRecipientProblem(msg.to) !== null) {
+    console.log('resend send skipped: invalid recipient');
     return false;
   }
 
@@ -21,7 +27,7 @@ export async function sendMail(msg: MailMessage): Promise<boolean> {
   let to: string;
   try {
     from = mailFrom();
-    to = ownerNotifyEmail();
+    to = msg.to === undefined ? ownerNotifyEmail() : msg.to;
   } catch {
     return false;
   }
@@ -51,4 +57,25 @@ export async function sendMail(msg: MailMessage): Promise<boolean> {
     console.log(`resend send failed: ${name}`);
     return false;
   }
+}
+
+export function approvalRecipientProblem(
+  email: string,
+): 'missing' | 'invalid' | null {
+  if (email.trim() === '') {
+    return 'missing';
+  }
+  const atCount = email.split('@').length - 1;
+  if (/[\s,]/.test(email) || atCount !== 1) {
+    return 'invalid';
+  }
+  return null;
+}
+
+// The Resend sandbox sender (onboarding@resend.dev) only delivers to the
+// Resend account's own address. Mail to anyone else is refused with a 403.
+export function isResendSandboxSender(from: string): boolean {
+  const bracketed = /<([^>]*)>\s*$/.exec(from);
+  const address = (bracketed === null ? from : bracketed[1]).trim().toLowerCase();
+  return address.endsWith('@resend.dev');
 }

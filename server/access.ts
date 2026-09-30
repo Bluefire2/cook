@@ -121,22 +121,21 @@ export function invitationOnlyPage(
     identity.name !== undefined && identity.name !== ''
       ? `You signed in as ${escapeHtml(identity.name)} (${escapeHtml(identity.email)}).`
       : `You signed in as ${escapeHtml(identity.email)}.`;
-  // With or without the form, the page keeps D14's substance: nobody is
-  // emailed back, and signing in again works once they are approved. The
-  // no-form copy says the request could not be started and that retrying
-  // sign-in will offer it again — a mint failure is transient.
+  // Approval emails the requester, and signing in again works once they
+  // are approved. The no-form copy says the request could not be started
+  // and that retrying sign-in will offer it again — a mint failure is
+  // transient.
   const requestBlock =
     requestToken === null
       ? '<p class="muted">Your request could not be started right now — ' +
-        'signing in again will offer it once more. Nobody will email you ' +
-        'back; once you have been approved, you can try signing in again.</p>'
+        'signing in again will offer it once more. Once you have been ' +
+        "approved, we'll email you, and you can try signing in again.</p>"
       : '<form method="POST" action="/api/access-request">' +
         `<input type="hidden" name="t" value="${escapeHtml(requestToken)}">` +
         '<button type="submit">Request access</button>' +
         '</form>' +
         '<p class="muted">Your request goes to the owner of this app. ' +
-        'Nobody will email you back — once it is approved, you can try ' +
-        'signing in again.</p>';
+        "Once it is approved, we'll email you, and you can sign in again.</p>";
   return pageHtml(
     'Invitation only',
     '<h1>Sous is invitation-only</h1>' +
@@ -156,12 +155,21 @@ function expiredPage(): Response {
   );
 }
 
-function recordedPage(): Response {
-  return htmlPage(
+// A declined request is not re-sent to the owner, so its page keeps the
+// pre-approval-email copy and promises nothing.
+export function recordedPageHtml(promiseEmail: boolean): string {
+  const promise = promiseEmail ? " Once it is approved, we'll email you." : '';
+  return pageHtml(
     'Request sent',
-    '<h1>Request sent</h1><p>Your request was recorded.</p>',
-    200,
+    `<h1>Request sent</h1><p>Your request was recorded.${promise}</p>`,
   );
+}
+
+function recordedPage(promiseEmail: boolean): Response {
+  return new Response(recordedPageHtml(promiseEmail), {
+    status: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
 }
 
 function alreadyApprovedPage(): Response {
@@ -229,6 +237,73 @@ function unavailablePage(): Response {
   });
 }
 
+const LEGAL_FOOTER =
+  '<footer><a href="/about">About</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></footer>';
+
+// Shareable collection links (`/c/...`). Unknown, revoked, expired, and a
+// deleted collection all render this one page: do not say which it was.
+export function collectionLinkDeadPageHtml(): string {
+  return pageHtml(
+    'Link not valid',
+    '<h1>This link is not valid</h1>' +
+      '<p>Ask the person who shared it for a new link.</p>' +
+      '<p><a href="/">Home</a></p>',
+  );
+}
+
+// Signed-out visitor. Names nothing about the collection: the visitor has not
+// shown that they are a member yet.
+export function collectionLinkSignInPageHtml(): string {
+  return pageHtml(
+    'Shared collection',
+    '<h1>Someone shared a collection with you</h1>' +
+      '<p>Sign in with Google to open it. Sous is invitation-only: this link ' +
+      'works for people who already have access.</p>' +
+      `<p><a class="action" href="/api/auth/start?returnTo=${encodeURIComponent('/c/join')}">` +
+      'Sign in with Google</a></p>' +
+      LEGAL_FOOTER,
+  );
+}
+
+// Signed-in member. Joining is an explicit same-origin POST: opening a link
+// never grants by itself, and the owner sees this person's email once they
+// join. `linkId` is the sha256 id, not the token; it pins the POST to the
+// collection this page named.
+export function collectionLinkConfirmPageHtml(input: {
+  linkId: string;
+  collectionName: string;
+  ownerEmail: string;
+  role: 'viewer' | 'editor';
+}): string {
+  const sharer = input.ownerEmail === '' ? 'The owner' : escapeHtml(input.ownerEmail);
+  const roleLine =
+    input.role === 'editor'
+      ? 'As an editor you can see these recipes and their photos, and edit their details but not their photos. Only the owner can delete them or change who has access.'
+      : 'As a viewer you can see these recipes and their photos.';
+  return pageHtml(
+    'Join collection',
+    `<h1>Join “${escapeHtml(input.collectionName)}”</h1>` +
+      `<p>${sharer} shared this collection. ${roleLine}</p>` +
+      '<p class="muted">Once you join, they will see your email address.</p>' +
+      '<form method="POST" action="/c/join">' +
+      `<input type="hidden" name="link" value="${escapeHtml(input.linkId)}">` +
+      '<button type="submit">Join collection</button>' +
+      '</form>' +
+      '<p><a href="/">Not now</a></p>' +
+      LEGAL_FOOTER,
+  );
+}
+
+export function collectionLinkFullPageHtml(): string {
+  return pageHtml(
+    'Collection full',
+    '<h1>This collection is full</h1>' +
+      '<p>It is already shared with as many people as it can be. Ask the ' +
+      'person who shared it to make room.</p>' +
+      '<p><a href="/">Home</a></p>',
+  );
+}
+
 export async function accessRequestPost(req: Request): Promise<Response> {
   const contentType = req.headers.get('content-type');
   if (contentType === null || !contentType.toLowerCase().startsWith('application/x-www-form-urlencoded')) {
@@ -272,7 +347,7 @@ export async function accessRequestPost(req: Request): Promise<Response> {
     if (result.outcome === 'already-approved') {
       return alreadyApprovedPage();
     }
-    return recordedPage();
+    return recordedPage(result.outcome !== 'declined');
   } catch (err) {
     console.error('accessRequestPost failed:', err);
     return unavailablePage();
