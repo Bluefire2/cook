@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useT } from '../i18n';
 import LibraryInviteToast, {
@@ -13,6 +13,7 @@ import { FolderIcon, PlusIcon, SettingsIcon, SharedIcon } from '../lib/icons';
 import { importHref, libraryHref, newRecipeHref } from '../lib/collectionHref';
 import { collectionStore, useCollections } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
+import { initialLibraryFlow, libraryFlowReducer, sheetError } from '../lib/libraryFlow';
 import {
   readPersistedLibraryView,
   writePersistedLibraryView,
@@ -72,29 +73,22 @@ export default function Library() {
     writePersistedLibraryView({ query, browseAll });
   }, [query, browseAll]);
   const [menuId, setMenuId] = useState<string | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [moveRecipeId, setMoveRecipeId] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [deleteCollectionOpen, setDeleteCollectionOpen] = useState(false);
-  const [leaveOpen, setLeaveOpen] = useState(false);
-  const [leaveBusy, setLeaveBusy] = useState(false);
-  const [collectionName, setCollectionName] = useState('');
-  const [collectionError, setCollectionError] = useState<string | null>(null);
-  const [shareOpen, setShareOpen] = useState(false);
+  const [flow, dispatch] = useReducer(libraryFlowReducer, initialLibraryFlow);
+  const { sheet } = flow;
+  // The flow as last rendered. An async submit compares its starting token
+  // with this after each await, so a sheet the user closed or replaced
+  // neither closes again nor navigates.
+  const flowRef = useRef(flow);
+  useLayoutEffect(() => {
+    flowRef.current = flow;
+  }, [flow]);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [invitePending, setInvitePending] = useState(false);
-  const [inviteConfirmOpen, setInviteConfirmOpen] = useState(false);
   const [revealedUrl, setRevealedUrl] = useState<string | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [inviteNotice, setInviteNotice] = useState<LibraryInviteNotice | null>(null);
   const [inviteQuota, setInviteQuota] = useState<{ id: number; message: string } | null>(null);
   const inviteMountedRef = useRef(true);
-  const [createdCollection, setCreatedCollection] = useState<{
-    id: string;
-    name: string;
-  } | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLAnchorElement>(null);
 
@@ -113,8 +107,16 @@ export default function Library() {
     browseAll,
   });
 
-  const pendingDelete = allRecipes?.find((r) => r.id === pendingDeleteId);
-  const moveRecipe = allRecipes?.find((r) => r.id === moveRecipeId);
+  const pendingDelete =
+    sheet.kind === 'deleteRecipe'
+      ? allRecipes?.find((r) => r.id === sheet.recipeId)
+      : undefined;
+  const moveRecipe =
+    sheet.kind === 'move' ? allRecipes?.find((r) => r.id === sheet.recipeId) : undefined;
+  const collectionName = sheet.kind === 'create' || sheet.kind === 'rename' ? sheet.name : '';
+  const collectionError = sheetError(sheet);
+  const setCollectionName = (name: string) => dispatch({ type: 'setName', name });
+  const isCurrent = (token: number) => flowRef.current.token === token;
   const namedIsShared = named ? collectionStore.isShared(named.id) : false;
   const showSwitcher = (collections?.length ?? 0) > 0;
   const addCollectionId =
@@ -123,7 +125,7 @@ export default function Library() {
     collections?.filter((collection) => !collectionStore.isShared(collection.id)) ?? [];
 
   const remove = async (id: string) => {
-    setPendingDeleteId(null);
+    dispatch({ type: 'close' });
     setDeleteError(null);
     try {
       await recipeStore.remove(id);
@@ -132,116 +134,127 @@ export default function Library() {
     }
   };
 
-  const closeSheets = () => {
-    setAddOpen(false);
-    setPendingDeleteId(null);
-    setMoveRecipeId(null);
-    setCreateOpen(false);
-    setRenameOpen(false);
-    setDeleteCollectionOpen(false);
-    setLeaveOpen(false);
-    setShareOpen(false);
-    setInviteConfirmOpen(false);
-    setCollectionName('');
-    setCollectionError(null);
-    setCreatedCollection(null);
-  };
+  const closeSheets = () => dispatch({ type: 'close' });
 
   const submitCreate = async () => {
-    const trimmed = collectionName.trim();
-    setCollectionError(null);
+    if (sheet.kind !== 'create') {
+      return;
+    }
+    const { token } = flow;
+    const { name, created, moveRecipeId } = sheet;
+    const trimmed = name.trim();
+    dispatch({ type: 'submitting', token });
     try {
       // Reuse the collection a failed attempt already created, so retrying
       // does not leave two folders with the same name behind.
       let id: string;
-      if (createdCollection === null) {
-        id = (await collectionStore.create(collectionName)).id;
-        setCreatedCollection({ id, name: trimmed });
+      if (created === undefined) {
+        id = (await collectionStore.create(name)).id;
+        dispatch({ type: 'created', token, created: { id, name: trimmed } });
       } else {
-        id = createdCollection.id;
-        if (createdCollection.name !== trimmed) {
-          await collectionStore.rename(id, collectionName);
-          setCreatedCollection({ id, name: trimmed });
+        id = created.id;
+        if (created.name !== trimmed) {
+          await collectionStore.rename(id, name);
+          dispatch({ type: 'created', token, created: { id, name: trimmed } });
         }
       }
       if (moveRecipeId) {
         await collectionStore.moveRecipe(moveRecipeId, id);
       }
+      if (!isCurrent(token)) return;
       closeSheets();
       navigate(libraryHref(id));
     } catch (err) {
-      setCollectionError(err instanceof Error ? err.message : t('error.collectionSave'));
+      dispatch({
+        type: 'failed',
+        token,
+        error: err instanceof Error ? err.message : t('error.collectionSave'),
+      });
     }
   };
 
   const submitMove = async (dest: 'default' | string) => {
-    if (!moveRecipeId) {
+    if (sheet.kind !== 'move') {
       return;
     }
-    setCollectionError(null);
+    const { token } = flow;
+    dispatch({ type: 'submitting', token });
     try {
-      await collectionStore.moveRecipe(moveRecipeId, dest);
+      await collectionStore.moveRecipe(sheet.recipeId, dest);
+      if (!isCurrent(token)) return;
       closeSheets();
       navigate(dest === 'default' ? '/' : libraryHref(dest));
     } catch (err) {
-      setCollectionError(err instanceof Error ? err.message : t('error.collectionMove'));
+      dispatch({
+        type: 'failed',
+        token,
+        error: err instanceof Error ? err.message : t('error.collectionMove'),
+      });
     }
   };
 
   const submitRename = async () => {
-    if (!currentId) {
+    if (sheet.kind !== 'rename') {
       return;
     }
+    const { token } = flow;
     const startedOn = shownCollectionId.current;
-    setCollectionError(null);
+    dispatch({ type: 'submitting', token });
     try {
-      await collectionStore.rename(currentId, collectionName);
-      if (shownCollectionId.current !== startedOn) return;
+      await collectionStore.rename(sheet.collectionId, sheet.name);
+      if (shownCollectionId.current !== startedOn || !isCurrent(token)) return;
       closeSheets();
     } catch (err) {
       if (shownCollectionId.current !== startedOn) return;
-      setCollectionError(err instanceof Error ? err.message : t('error.collectionSave'));
+      dispatch({
+        type: 'failed',
+        token,
+        error: err instanceof Error ? err.message : t('error.collectionSave'),
+      });
     }
   };
 
   const submitDeleteCollection = async () => {
-    if (!currentId) {
+    if (sheet.kind !== 'deleteCollection') {
       return;
     }
+    const { token } = flow;
     const startedOn = shownCollectionId.current;
-    setCollectionError(null);
+    dispatch({ type: 'submitting', token });
     try {
-      await collectionStore.remove(currentId);
-      if (shownCollectionId.current !== startedOn) return;
+      await collectionStore.remove(sheet.collectionId);
+      if (shownCollectionId.current !== startedOn || !isCurrent(token)) return;
       closeSheets();
       navigate('/');
     } catch (err) {
       if (shownCollectionId.current !== startedOn) return;
-      setCollectionError(
-        err instanceof Error ? err.message : t('error.collectionDelete'),
-      );
+      dispatch({
+        type: 'failed',
+        token,
+        error: err instanceof Error ? err.message : t('error.collectionDelete'),
+      });
     }
   };
 
   const submitLeave = async () => {
-    if (!currentId) {
+    if (sheet.kind !== 'leave') {
       return;
     }
+    const { token } = flow;
     const startedOn = shownCollectionId.current;
-    setCollectionError(null);
-    setLeaveBusy(true);
+    dispatch({ type: 'submitting', token });
     try {
-      await collectionStore.leave(currentId);
-      if (shownCollectionId.current !== startedOn) return;
+      await collectionStore.leave(sheet.collectionId);
+      if (shownCollectionId.current !== startedOn || !isCurrent(token)) return;
       closeSheets();
       navigate('/');
     } catch (err) {
       if (shownCollectionId.current !== startedOn) return;
-      setCollectionError(
-        err instanceof Error ? err.message : t('error.leaveCollection'),
-      );
-    } finally {
-      setLeaveBusy(false);
+      dispatch({
+        type: 'failed',
+        token,
+        error: err instanceof Error ? err.message : t('error.leaveCollection'),
+      });
     }
   };
 
@@ -312,7 +325,7 @@ export default function Library() {
       if (!inviteMountedRef.current) {
         return;
       }
-      setInviteConfirmOpen(false);
+      dispatch({ type: 'closeInviteConfirm' });
       if (copied) {
         setRevealedUrl(null);
         setInviteCopied(false);
@@ -327,7 +340,7 @@ export default function Library() {
         return;
       }
       const message = err instanceof Error ? err.message : t('common.somethingWentWrong');
-      setInviteConfirmOpen(false);
+      dispatch({ type: 'closeInviteConfirm' });
       if (isInviteQuotaError(err)) {
         setInviteQuota((prev) => ({ id: (prev?.id ?? 0) + 1, message }));
         return;
@@ -388,33 +401,15 @@ export default function Library() {
         menuTriggerRef.current?.focus();
         return;
       }
-      if (
-        pendingDeleteId !== null ||
-        addOpen ||
-        moveRecipeId !== null ||
-        createOpen ||
-        renameOpen ||
-        deleteCollectionOpen ||
-        leaveOpen ||
-        inviteConfirmOpen
-      ) {
+      // The share sheet handles its own Escape.
+      if (sheet.kind !== 'closed' && sheet.kind !== 'share') {
         event.preventDefault();
         closeSheets();
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [
-    menuId,
-    pendingDeleteId,
-    addOpen,
-    moveRecipeId,
-    createOpen,
-    renameOpen,
-    deleteCollectionOpen,
-    leaveOpen,
-    inviteConfirmOpen,
-  ]);
+  }, [menuId, sheet.kind]);
 
   const emptyCopy = () => {
     if (q !== '') {
@@ -442,10 +437,10 @@ export default function Library() {
             <button
               type="button"
               className={`${ghostBtn} disabled:opacity-40`}
-              disabled={invitePending || inviteConfirmOpen}
+              disabled={invitePending || sheet.kind === 'inviteConfirm'}
               onClick={() => {
                 if (inviteMintClient(user) === 'member') {
-                  setInviteConfirmOpen(true);
+                  dispatch({ type: 'openInviteConfirm' });
                   return;
                 }
                 void mint();
@@ -530,11 +525,7 @@ export default function Library() {
             })}
             <button
               type="button"
-              onClick={() => {
-                setCollectionName('');
-                setCollectionError(null);
-                setCreateOpen(true);
-              }}
+              onClick={() => dispatch({ type: 'startCreate' })}
               className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
             >
               {t('library.new')}
@@ -543,25 +534,25 @@ export default function Library() {
               <>
                 <button
                   type="button"
-                  onClick={() => setShareOpen(true)}
+                  onClick={() => dispatch({ type: 'openShare' })}
                   className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
                 >
                   {t('common.share')}
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setCollectionName(named.name);
-                    setCollectionError(null);
-                    setRenameOpen(true);
-                  }}
+                  onClick={() =>
+                    dispatch({ type: 'openRename', collectionId: named.id, name: named.name })
+                  }
                   className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
                 >
                   {t('library.rename')}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setDeleteCollectionOpen(true)}
+                  onClick={() =>
+                    dispatch({ type: 'openDeleteCollection', collectionId: named.id })
+                  }
                   className="rounded-full px-3 py-1.5 text-sm text-danger hover:text-ink"
                 >
                   {t('common.delete')}
@@ -589,10 +580,7 @@ export default function Library() {
           </span>
           <button
             type="button"
-            onClick={() => {
-              setCollectionError(null);
-              setLeaveOpen(true);
-            }}
+            onClick={() => dispatch({ type: 'openLeave', collectionId: named.id })}
             className="shrink-0 text-sm text-danger hover:underline"
           >
             {t('library.leave')}
@@ -706,7 +694,7 @@ export default function Library() {
                     type="button"
                     onClick={() => {
                       setMenuId(null);
-                      setMoveRecipeId(recipe.id);
+                      dispatch({ type: 'openMove', recipeId: recipe.id });
                     }}
                     className={`${menuItem} border-t border-line`}
                   >
@@ -716,7 +704,7 @@ export default function Library() {
                     type="button"
                     onClick={() => {
                       setMenuId(null);
-                      setPendingDeleteId(recipe.id);
+                      dispatch({ type: 'openDeleteRecipe', recipeId: recipe.id });
                     }}
                     className={`${menuItemDanger} border-t border-line`}
                   >
@@ -743,15 +731,15 @@ export default function Library() {
         <button
           type="button"
           aria-label={t('library.addRecipe')}
-          onClick={() => setAddOpen(true)}
+          onClick={() => dispatch({ type: 'openAdd' })}
           className="fixed right-5 bottom-8 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-page shadow-lg hover:opacity-90 active:opacity-90"
         >
           <PlusIcon className="block h-8 w-8" />
         </button>
       )}
 
-      {addOpen && (
-        <Sheet onClose={() => setAddOpen(false)}>
+      {sheet.kind === 'add' && (
+        <Sheet onClose={() => closeSheets()}>
           <h2 className="text-lg font-semibold">{t('library.addRecipeTitle')}</h2>
           <Link
             to={importHref(addCollectionId)}
@@ -767,7 +755,7 @@ export default function Library() {
           </Link>
           <button
             type="button"
-            onClick={() => setAddOpen(false)}
+            onClick={() => closeSheets()}
             className="mt-2 w-full py-2.5 text-sm text-ink-muted hover:text-ink"
           >
             {t('common.cancel')}
@@ -776,7 +764,7 @@ export default function Library() {
       )}
 
       {pendingDelete && (
-        <Sheet onClose={() => setPendingDeleteId(null)}>
+        <Sheet onClose={() => closeSheets()}>
           <h2 className="text-lg font-semibold">
             {t('library.deleteRecipeTitle', { title: pendingDelete.title })}
           </h2>
@@ -792,7 +780,7 @@ export default function Library() {
           </button>
           <button
             type="button"
-            onClick={() => setPendingDeleteId(null)}
+            onClick={() => closeSheets()}
             className={`${secondaryBtn} mt-2 w-full py-3`}
           >
             {t('common.cancel')}
@@ -800,7 +788,7 @@ export default function Library() {
         </Sheet>
       )}
 
-      {moveRecipe && !createOpen && (
+      {moveRecipe && (
         <Sheet onClose={() => closeSheets()}>
           <h2 className="text-lg font-semibold">{t('library.moveTitle', { title: moveRecipe.title })}</h2>
           <button
@@ -825,11 +813,7 @@ export default function Library() {
           )}
           <button
             type="button"
-            onClick={() => {
-              setCollectionName('');
-              setCollectionError(null);
-              setCreateOpen(true);
-            }}
+            onClick={() => dispatch({ type: 'startCreate' })}
             className={`${primaryBtn} mt-2 w-full py-3`}
           >
             {t('common.newCollection')}
@@ -844,7 +828,7 @@ export default function Library() {
         </Sheet>
       )}
 
-      {createOpen && (
+      {sheet.kind === 'create' && (
         <Sheet onClose={() => closeSheets()}>
           <h2 className="text-lg font-semibold">{t('common.newCollection')}</h2>
           <form
@@ -881,7 +865,7 @@ export default function Library() {
         </Sheet>
       )}
 
-      {renameOpen && named && (
+      {sheet.kind === 'rename' && named && (
         <Sheet onClose={() => closeSheets()}>
           <h2 className="text-lg font-semibold">{t('library.renameCollection')}</h2>
           <form
@@ -916,7 +900,7 @@ export default function Library() {
         </Sheet>
       )}
 
-      {deleteCollectionOpen && named && (
+      {sheet.kind === 'deleteCollection' && named && (
         <Sheet onClose={() => closeSheets()}>
           <h2 className="text-lg font-semibold">{t('library.deleteCollectionTitle', { name: named.name })}</h2>
           <p className="mt-1 text-sm text-ink-muted">
@@ -942,7 +926,7 @@ export default function Library() {
         </Sheet>
       )}
 
-      {leaveOpen && named && namedIsShared && (
+      {sheet.kind === 'leave' && named && namedIsShared && (
         <Sheet onClose={() => closeSheets()}>
           <h2 className="text-lg font-semibold">{t('library.leaveTitle', { name: named.name })}</h2>
           <p className="mt-1 text-sm text-ink-muted">{t('library.leaveBody')}</p>
@@ -952,10 +936,10 @@ export default function Library() {
           <button
             type="button"
             onClick={() => void submitLeave()}
-            disabled={leaveBusy}
+            disabled={sheet.busy}
             className={`${dangerBtn} mt-3 w-full py-3`}
           >
-            {leaveBusy ? t('library.leaving') : t('library.leaveCollection')}
+            {sheet.busy ? t('library.leaving') : t('library.leaveCollection')}
           </button>
           <button
             type="button"
@@ -967,14 +951,14 @@ export default function Library() {
         </Sheet>
       )}
 
-      {shareOpen && named && !namedIsShared && (
+      {sheet.kind === 'share' && named && !namedIsShared && (
         <ShareCollectionSheet
           collection={named}
-          onClose={() => setShareOpen(false)}
+          onClose={() => closeSheets()}
         />
       )}
 
-      {inviteConfirmOpen && user !== null && inviteMintClient(user) === 'member' && (
+      {sheet.kind === 'inviteConfirm' && user !== null && inviteMintClient(user) === 'member' && (
         <Sheet
           dismissible={!invitePending}
           onClose={() => {
@@ -998,7 +982,7 @@ export default function Library() {
             disabled={invitePending}
             className={`${secondaryBtn} mt-2 w-full py-3`}
             onClick={() => {
-              if (!invitePending) setInviteConfirmOpen(false);
+              if (!invitePending) dispatch({ type: 'closeInviteConfirm' });
             }}
           >
             {t('common.cancel')}
