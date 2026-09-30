@@ -59,7 +59,11 @@ export default function ShoppingListCard({
   const tr = useT();
   const copyAsText = () => {
     try {
-      void navigator.clipboard.writeText(buildPlainText(data, tr('assistant.recipesHeading')));
+      navigator.clipboard
+        .writeText(buildPlainText(data, tr('assistant.recipesHeading')))
+        .catch(() => {
+          // ignore clipboard failures
+        });
     } catch {
       // ignore clipboard failures
     }
@@ -75,9 +79,9 @@ export default function ShoppingListCard({
       </div>
       {data.recipes.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {data.recipes.map((recipe) => (
+          {data.recipes.map((recipe, index) => (
             <Link
-              key={recipe.id}
+              key={`${recipe.id}-${index}`}
               to={`/recipe/${recipe.id}`}
               className="rounded-full border border-line bg-page px-2.5 py-0.5 text-sm text-ink hover:bg-surface-muted"
             >

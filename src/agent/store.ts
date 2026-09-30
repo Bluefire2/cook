@@ -64,6 +64,18 @@ function updateLastAssistant(
   return { ...state, messages: next };
 }
 
+/**
+ * A turn that ends on interim narration keeps it as the reply. Replay skips
+ * interim messages, so otherwise the next request would carry two user turns.
+ */
+function settleInterim(state: AgentState): AgentState {
+  const last = lastAssistant(state);
+  if (!last?.interim) {
+    return state;
+  }
+  return updateLastAssistant(state, (msg) => ({ ...msg, interim: false }));
+}
+
 export function applyEvent(state: AgentState, event: AgentServerEvent): AgentState {
   switch (event.t) {
     case 'text': {
@@ -115,10 +127,10 @@ export function applyEvent(state: AgentState, event: AgentServerEvent): AgentSta
         event.code === ASSISTANT_UNAVAILABLE_CODE
           ? t('assistant.couldntAnswer')
           : event.message;
-      return { ...state, error: message, streaming: false };
+      return { ...settleInterim(state), error: message, streaming: false };
     }
     case 'done':
-      return { ...state, streaming: false };
+      return { ...settleInterim(state), streaming: false };
     default:
       return state;
   }

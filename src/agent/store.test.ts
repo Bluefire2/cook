@@ -151,6 +151,18 @@ describe('applyEvent', () => {
     state = applyEvent(state, { t: 'done' });
     expect(state.streaming).toBe(false);
   });
+
+  it('keeps interim narration as the reply when the turn errors', () => {
+    let state = beginTurn(initialAgentState, 'q1');
+    state = applyEvent(state, { t: 'text', step: 1, d: 'Let me look.' });
+    state = applyEvent(state, { t: 'interim', step: 1 });
+    state = applyEvent(state, { t: 'error', code: 'assistant_unavailable', message: 'x' });
+    state = applyEvent(state, { t: 'done' });
+    state = beginTurn(state, 'q2');
+    const replay = messagesForReplay(state);
+    expect(replay.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+    expect(replay[1]?.content).toBe('Let me look.');
+  });
 });
 
 describe('toggleChecked', () => {

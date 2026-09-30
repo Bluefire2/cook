@@ -88,7 +88,10 @@ export function parseAgentRequest(body: unknown): ParseAgentRequestResult {
   if (typeof body.clientNow !== 'string') {
     return { ok: false, status: 400 };
   }
-  if (Number.isNaN(Date.parse(body.clientNow))) {
+  // Date.parse accepts a timestamp followed by a NUL and any text, and this
+  // value goes into the system prompt, so only the canonical form is kept.
+  const clientNowMs = Date.parse(body.clientNow);
+  if (Number.isNaN(clientNowMs)) {
     return { ok: false, status: 400 };
   }
 
@@ -119,7 +122,7 @@ export function parseAgentRequest(body: unknown): ParseAgentRequestResult {
     ok: true,
     value: {
       messages,
-      clientNow: body.clientNow,
+      clientNow: new Date(clientNowMs).toISOString(),
       timeZone,
     },
   };
@@ -129,11 +132,32 @@ function findCardSpec(type: string, version: number) {
   return CARD_SPECS.find((spec) => spec.type === type && spec.version === version);
 }
 
+/**
+ * Gemini wants user and model turns to alternate. A turn that failed before
+ * any reply leaves two user messages in a row, so adjacent messages with the
+ * same role are joined, and an assistant message with no text is dropped.
+ */
+function coalesceTurns(messages: AgentMessage[]): AgentMessage[] {
+  const out: AgentMessage[] = [];
+  for (const message of messages) {
+    if (message.role === 'assistant' && message.text.trim() === '') {
+      continue;
+    }
+    const last = out[out.length - 1];
+    if (last && last.role === message.role) {
+      out[out.length - 1] = { role: last.role, text: `${last.text}\n\n${message.text}` };
+      continue;
+    }
+    out.push(message);
+  }
+  return out;
+}
+
 export function replayCards(
   messages: AgentRequestMessage[],
   library: AgentLibrary,
 ): AgentMessage[] {
-  return messages.map((message) => {
+  return coalesceTurns(messages.map((message) => {
     let text = message.content;
     if (message.role === 'assistant' && message.cards !== undefined) {
       for (const raw of message.cards) {
@@ -158,5 +182,5 @@ export function replayCards(
       }
     }
     return { role: message.role, text };
-  });
+  }));
 }
