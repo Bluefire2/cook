@@ -481,6 +481,183 @@ describe('optimistic writes vs an in-flight pull', () => {
     await flight.pending;
   });
 
+  it('keeps a failed cook tap when a later write touches another row', async () => {
+    setRereadQuietForTests(300);
+    const base = recipe();
+    const side = { ...recipe('Side'), id: OTHER_RECIPE_ID };
+    const sideCook = { ...cook(0), recipeId: side.id };
+    replaceFromPull({
+      recipes: new Map([
+        [base.id, base],
+        [side.id, side],
+      ]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map([
+        [base.id, cook(0)],
+        [side.id, sideCook],
+      ]),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    let pushes = 0;
+    vi.mocked(pushOps).mockImplementation(async () => {
+      pushes += 1;
+      return pushes === 1 ? 'error' : 'ok';
+    });
+    const flight = startSync(
+      ownedPage(
+        ownedChanges({
+          recipes: [pullDoc(base), pullDoc(side)],
+          cookState: [pullDoc(cook(0)), pullDoc(sideCook)],
+        }),
+      ),
+      ownedPage(
+        ownedChanges({
+          recipes: [pullDoc(base), pullDoc({ ...side, title: 'From another device' })],
+          cookState: [pullDoc(cook(0)), pullDoc({ ...sideCook, currentStep: 4 })],
+        }),
+      ),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    await updateCookState(base, (prev) => ({ ...prev, currentStep: 1 }));
+    await updateCookState(side, (prev) => ({ ...prev, currentStep: 4 }));
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+    expect(getCook(OTHER_RECIPE_ID)?.currentStep).toBe(4);
+    expect(pullPage).toHaveBeenCalledOnce();
+
+    flight.releaseFirst();
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledTimes(2));
+    flight.releaseSecond();
+    await vi.waitFor(() => expect(getRecipe(OTHER_RECIPE_ID)?.title).toBe('From another device'));
+
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+    expect(getCook(OTHER_RECIPE_ID)?.currentStep).toBe(4);
+    expect(localWritesOpen()).toBe(0);
+    await flight.pending;
+  });
+
+  it('keeps the later failed cook tap when an earlier one also failed', async () => {
+    setRereadQuietForTests(300);
+    const base = recipe();
+    seed(base, cook(0));
+    vi.mocked(pushOps).mockResolvedValue('error');
+    const flight = startSync(
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    await updateCookState(base, (prev) => ({ ...prev, currentStep: 1 }));
+    await updateCookState(base, (prev) => ({ ...prev, currentStep: 2 }));
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(2);
+    expect(pullPage).toHaveBeenCalledOnce();
+
+    flight.releaseFirst();
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledTimes(2));
+    flight.releaseSecond();
+    await flight.pending;
+
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(2);
+  });
+
+  it('does not put a failed cook tap back over a later successful one', async () => {
+    setRereadQuietForTests(300);
+    const base = recipe();
+    seed(base, cook(0));
+    let pushes = 0;
+    vi.mocked(pushOps).mockImplementation(async () => {
+      pushes += 1;
+      return pushes === 1 ? 'error' : 'ok';
+    });
+    const flight = startSync(
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(2))] })),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    await updateCookState(base, (prev) => ({ ...prev, currentStep: 1 }));
+    await updateCookState(base, (prev) => ({ ...prev, currentStep: 2 }));
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(2);
+
+    flight.releaseFirst();
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledTimes(2));
+    flight.releaseSecond();
+    await flight.pending;
+
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(2);
+  });
+
+  it('keeps a failed cook tap when the follow-up pull is superseded', async () => {
+    const base = recipe();
+    const side = { ...recipe('Side'), id: OTHER_RECIPE_ID };
+    const sideCook = { ...cook(0), recipeId: side.id };
+    replaceFromPull({
+      recipes: new Map([
+        [base.id, base],
+        [side.id, side],
+      ]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map([
+        [base.id, cook(0)],
+        [side.id, sideCook],
+      ]),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    const releases: Array<(result: 'ok' | 'error') => void> = [];
+    vi.mocked(pushOps).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+    const outcomes: string[] = [];
+    const stop = onSyncFinished((result) => {
+      outcomes.push(result.outcome);
+    });
+    try {
+      const flight = startSync(
+        ownedPage(
+          ownedChanges({
+            recipes: [pullDoc(base), pullDoc(side)],
+            cookState: [pullDoc(cook(0)), pullDoc(sideCook)],
+          }),
+        ),
+        ownedPage(
+          ownedChanges({
+            recipes: [pullDoc(base), pullDoc(side)],
+            cookState: [pullDoc(cook(0)), pullDoc({ ...sideCook, currentStep: 4 })],
+          }),
+        ),
+      );
+      await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+      const failed = updateCookState(base, (prev) => ({ ...prev, currentStep: 1 }));
+      await vi.waitFor(() => expect(pushOps).toHaveBeenCalledOnce());
+      flight.releaseFirst();
+      releases[0]?.('error');
+      await failed;
+      await vi.waitFor(() => expect(pullPage).toHaveBeenCalledTimes(2));
+
+      const sideTap = updateCookState(side, (prev) => ({ ...prev, currentStep: 4 }));
+      await vi.waitFor(() => expect(pushOps).toHaveBeenCalledTimes(2));
+      flight.releaseSecond();
+      releases[1]?.('ok');
+      await sideTap;
+      await vi.waitFor(() => expect(outcomes).toEqual(['superseded', 'superseded', 'ok']));
+
+      expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+      expect(getCook(OTHER_RECIPE_ID)?.currentStep).toBe(4);
+      expect(localWritesOpen()).toBe(0);
+      await flight.pending;
+    } finally {
+      stop();
+    }
+  });
+
   it('shares one follow-up pull across a burst of cook taps', async () => {
     setRereadQuietForTests(200);
     const base = recipe();

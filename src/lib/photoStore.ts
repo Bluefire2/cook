@@ -83,7 +83,21 @@ export const photoStore = {
               }
             : undefined;
         restore?.();
-        return { value: undefined, reconcile: false, preserve: restore };
+        const stillCurrent = pending
+          ? () => {
+              const snap = getSnapshot();
+              return snap.pendingBlobs.get(id) === pending && snap.remotePhotoIds.has(id);
+            }
+          : () => {
+              const snap = getSnapshot();
+              return snap.remotePhotoIds.has(id) && !snap.pendingBlobs.has(id);
+            };
+        return {
+          value: undefined,
+          reconcile: false,
+          preserve: restore,
+          stillCurrent: restore ? stillCurrent : undefined,
+        };
       }
       return { value: undefined, reconcile: true };
     });

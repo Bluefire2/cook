@@ -75,12 +75,13 @@ const cookStateStore = {
       ]);
       // A failed push keeps the optimistic row. An overlapping pull is reread
       // and would otherwise paint the pre-tap row back, so put this one back
-      // when that read publishes.
+      // when that read publishes, unless a later tap already replaced it.
+      const failed = result !== 'ok' && result !== 'signedOut';
       return {
         value: undefined,
         reconcile: result === 'ok',
-        preserve:
-          result !== 'ok' && result !== 'signedOut' ? () => upsertCook(next) : undefined,
+        preserve: failed ? () => upsertCook(next) : undefined,
+        stillCurrent: failed ? () => getCook(recipe.id) === next : undefined,
       };
     });
   },

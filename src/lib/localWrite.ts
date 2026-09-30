@@ -1,9 +1,4 @@
-import {
-  beginLocalWrite,
-  endLocalWrite,
-  libraryEpoch,
-  localWritesOpen,
-} from './libraryMemory';
+import { beginLocalWrite, endLocalWrite, localWritesOpen } from './libraryMemory';
 import {
   localWriteOverlapsPull,
   pullAfterLocalWrite,
@@ -36,13 +31,22 @@ export type LocalWriteResult<T> = {
   reread?: RereadChoice;
   /** Rethrown after the follow-up read is scheduled. */
   error?: unknown;
-  /** Re-applies an optimistic row after a reread publishes, if no later write began. */
+  /**
+   * Re-applies an optimistic row after a reread publishes. Skipped when
+   * `stillCurrent` is false: a later write replaced that same row.
+   */
   preserve?: () => void;
+  /**
+   * Sampled immediately before the follow-up pull. False when a later write
+   * replaced this row, so `preserve` must not paint it back over that write.
+   */
+  stillCurrent?: () => boolean;
 };
 
 type Waiter = {
   epoch: number;
   preserve?: () => void;
+  stillCurrent?: () => boolean;
   resolve: (outcome: SyncOutcome) => void;
 };
 
@@ -83,6 +87,19 @@ function queueFlush(): void {
   rereadChain = rereadChain.then(() => flushReread());
 }
 
+/** Puts the batch back. A later flush samples `stillCurrent` again. */
+function deferReread(batch: Waiter[]): void {
+  rereadWaiters = batch.concat(rereadWaiters);
+  if (rereadTimer !== null) {
+    return;
+  }
+  const delay = rereadQuietMs > 0 ? rereadQuietMs : 0;
+  rereadTimer = setTimeout(() => {
+    rereadTimer = null;
+    queueFlush();
+  }, delay);
+}
+
 async function flushReread(): Promise<void> {
   const batch = rereadWaiters;
   rereadWaiters = [];
@@ -92,27 +109,30 @@ async function flushReread(): Promise<void> {
   if (localWritesOpen() > 0) {
     // The open write schedules its own read when it finishes. Resolving now
     // would drop a reread that write might decline (`reread: 'no'`).
-    rereadWaiters = batch.concat(rereadWaiters);
-    if (rereadTimer === null) {
-      const delay = rereadQuietMs > 0 ? rereadQuietMs : 0;
-      rereadTimer = setTimeout(() => {
-        rereadTimer = null;
-        queueFlush();
-      }, delay);
-    }
+    deferReread(batch);
     return;
   }
   const epoch = batch[batch.length - 1].epoch;
+  // Sample before the pull. The pull replaces row objects, so a check after
+  // it publishes cannot tell a later write from the server snapshot.
+  const keep = batch.map(
+    (waiter) => waiter.preserve !== undefined && (waiter.stillCurrent?.() ?? true),
+  );
   let outcome: SyncOutcome = 'error';
   try {
     outcome = await pullAfterLocalWrite(epoch);
   } catch {
     outcome = 'error';
   }
+  if (outcome === 'superseded') {
+    // The pull did not publish. Keep every callback for the read that does.
+    deferReread(batch);
+    return;
+  }
   if (outcome === 'ok' || outcome === 'error') {
-    for (const waiter of batch) {
-      if (waiter.preserve && libraryEpoch() === waiter.epoch) {
-        waiter.preserve();
+    for (let i = 0; i < batch.length; i += 1) {
+      if (keep[i]) {
+        batch[i].preserve?.();
       }
     }
   }
@@ -142,10 +162,11 @@ function kickReread(immediate: boolean): void {
 function scheduleReread(
   epoch: number,
   preserve: (() => void) | undefined,
+  stillCurrent: (() => boolean) | undefined,
   immediate: boolean,
 ): Promise<SyncOutcome> {
   return new Promise((resolve) => {
-    rereadWaiters.push({ epoch, preserve, resolve });
+    rereadWaiters.push({ epoch, preserve, stillCurrent, resolve });
     kickReread(immediate);
   });
 }
@@ -164,8 +185,9 @@ export type LocalWriteOptions = {
  * When that pull overlapped — including one that already finished superseded —
  * the server is read again so the discarded snapshot is not the last word.
  * A failed push still schedules that read, then `preserve` puts its optimistic
- * row back if nothing newer has started. Quiet writes share one read. The
- * read is not awaited, so Save and the first Ask message are not held for it.
+ * row back unless a later write replaced that same row. Quiet writes share
+ * one read. The read is not awaited, so Save and the first Ask message are
+ * not held for it.
  *
  * `error` is rethrown after the read is scheduled, which is before it
  * publishes. A throw from `body` does not schedule a read.
@@ -186,7 +208,13 @@ export async function withLocalWrite<T>(
   }
   if (outcome && shouldReread(epoch, outcome)) {
     const preserve = outcome.reconcile ? undefined : outcome.preserve;
-    const pending = scheduleReread(epoch, preserve, options?.awaitReread === true);
+    const stillCurrent = outcome.reconcile ? undefined : outcome.stillCurrent;
+    const pending = scheduleReread(
+      epoch,
+      preserve,
+      stillCurrent,
+      options?.awaitReread === true,
+    );
     if (options?.awaitReread) {
       const pull = await pending;
       options.onReread?.(pull);

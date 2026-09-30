@@ -12,6 +12,7 @@ import {
   listRecipes,
   replaceFromPull,
   upsertChat,
+  upsertCollection,
   upsertCook,
   upsertCookLog,
   upsertRecipe,
@@ -793,6 +794,40 @@ describe('importLibrary', () => {
       expect.objectContaining({ id: seedId, title: 'Edited during import' }),
     ]);
     expect(listCollections()).toEqual([]);
+  });
+
+  it('keeps a newer chat and drops the recipe id from a newer collection when import fails', async () => {
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    const askedDuringImport = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    vi.mocked(postPhoto).mockImplementation(async (_id, recipeId) => {
+      upsertChat({
+        id: askedDuringImport,
+        recipeId,
+        role: 'user',
+        content: 'asked during import',
+        createdAt: 9,
+      });
+      const imported = listCollections().find((collection) =>
+        collection.recipeIds.includes(recipeId),
+      );
+      if (!imported) {
+        throw new Error('expected the imported collection');
+      }
+      upsertCollection({ ...imported, name: 'Renamed during import' });
+      return 'error';
+    });
+
+    await expect(importLibrary(backupFile('alice-sub'), 'carol-sub')).rejects.toThrow(
+      "Couldn't upload a photo from the backup.",
+    );
+
+    expect(listRecipes()).toEqual([]);
+    expect(listAllChat()).toEqual([
+      expect.objectContaining({ id: askedDuringImport, content: 'asked during import' }),
+    ]);
+    expect(listCollections()).toEqual([
+      expect.objectContaining({ name: 'Renamed during import', recipeIds: [] }),
+    ]);
   });
 
   it('same-account preserve mode remains overwrite-by-id and idempotent', async () => {

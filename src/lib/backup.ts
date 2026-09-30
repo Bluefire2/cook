@@ -30,7 +30,7 @@ import {
   removeCollectionLocal,
   removeCookLocal,
   removeCookLogLocal,
-  removeRecipeLocal,
+  removeRecipeRowLocal,
   upsertChat,
   upsertCollection,
   upsertCook,
@@ -252,8 +252,9 @@ function importPushError(result: Exclude<RemoteResult, 'ok'>): Error {
 
 /**
  * Drops only the rows this import upserted. An id whose current object is a
- * newer write is left alone. Dependents go first so removing a new recipe
- * does not cascade a row that was already restored.
+ * newer write is left alone. A new recipe drops its row only, so a chat, cook,
+ * or log a newer write replaced is not cascaded away. Its id is then removed
+ * from any collection that still lists it.
  */
 function undoImportedLibrary(
   previous: LibrarySnapshot,
@@ -319,11 +320,24 @@ function undoImportedLibrary(
     if (prior) {
       upsertRecipe(prior, previous.recipeOrigins.get(recipe.id) ?? { kind: 'own' });
     } else {
-      removeRecipeLocal(recipe.id);
+      removeRecipeRowLocal(recipe.id);
+      forgetRecipeId(recipe.id);
     }
   }
   for (const photo of imported.photos) {
     undoImportedPhoto(previous, photo, imported.markedRemote);
+  }
+}
+
+function forgetRecipeId(recipeId: string): void {
+  for (const collection of listCollections()) {
+    if (!collection.recipeIds.includes(recipeId)) {
+      continue;
+    }
+    upsertCollection({
+      ...collection,
+      recipeIds: collection.recipeIds.filter((id) => id !== recipeId),
+    });
   }
 }
 

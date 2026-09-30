@@ -354,6 +354,17 @@ export function removeRecipeLocal(id: string): void {
   emit({ ...snapshot, ...next });
 }
 
+/** Drops the recipe row only. Chat, cook, logs, and photos stay for the caller. */
+export function removeRecipeRowLocal(id: string): void {
+  if (!snapshot.recipes.has(id)) {
+    return;
+  }
+  const next = cloneMaps(snapshot);
+  next.recipes.delete(id);
+  next.recipeOrigins.delete(id);
+  emit({ ...snapshot, ...next });
+}
+
 /**
  * Optimistic writes copy a live shared recipe origin into the sidecar so
  * export is safe before the next pull. A live owned origin clears it. A
