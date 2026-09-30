@@ -128,6 +128,12 @@ No refresh tokens, no extra Google APIs, no Auth.js.
   cookie is not dependably attached to an extension-initiated request. Do not
   extend header auth to any other route, and do not add
   `Access-Control-Allow-Credentials` to this one.
+- **Other cookies**, all HttpOnly, SameSite=Lax, HMAC-signed with
+  `SESSION_SECRET`, 10 minutes, each its own `v` family so one never verifies
+  as another: `sous_oauth` (oauth transaction), `sous_invite` (app invite
+  hop), `sous_collection_link` (collection link hop, `v: 'clink'`,
+  **`Path=/c`**, carries the link's sha256 id, never the token). A new flow
+  gets a new cookie name and family; do not reuse one.
 - OAuth callback **must not** use `Response.redirect()` (immutable Headers;
   `Set-Cookie` would be dropped). Build a `Response` with a `Location` header
   and always clear `sous_oauth`.
@@ -193,6 +199,29 @@ session with no own row that reaches the id through a share is `invalid`.
 Client role is in-memory `access` on the shared origin, never a `Recipe`
 field. Editors get Edit and Ask Apply (photos always kept), no photo, delete,
 move, or cook-log controls.
+
+**Collection links** (`server/collectionLinks.ts`, `collectionLinksHttp.ts`)
+attach an already admitted member to one collection; they never create a
+member (that is `/invite`). The owner mints, lists, and revokes under
+`/api/collections/:id/links` (`GET`, `POST { role? }`, `POST …/revoke
+{ id }`), cookie session, collection owner only, 404 for anyone else. Firestore
+`collectionLinks/{sha256(token)}` holds owner, collection, role, and expiry;
+the raw token is only in the mint response. Multi-use until revoked or 7 days,
+at most 20 live per collection. `/c/<token>` is server HTML (Vite proxies
+`^/c/`, PWA denylist): it swaps the token for the `sous_collection_link` hop
+cookie and 303s to `/c/join`, so the token never reaches a rendered page,
+Referer, or the OAuth round trip. `GET /c/join` only renders: signed out ⇒ sign
+in with `returnTo=/c/join`; signed-in non-member ⇒ the invitation-only 403;
+member ⇒ a confirm form. Only the same-origin `POST /c/join` redeems
+(`Origin` must be exactly ours, never `null`, so `/c/join` pages send
+`Referrer-Policy: same-origin`, not `no-referrer`; the posted id must match
+the hop cookie), through `orchestrateGrantAdd`,
+the same code path as add-by-email but with `onExisting: 'keepRole'`:
+unlike add-by-email, already granted keeps its role (a link never upgrades
+or downgrades anyone; the owner's row switch does), the
+20-grant cap shows a "full" page and leaves the link valid, the owner's own
+link writes nothing. Unknown, revoked, expired, deleted collection, and
+unadmitted owner are one generic 404 page. The OAuth callback is unchanged.
 
 Collection delete tombstones live grants in the same transaction. Forward
 grants carry an internal `active` flag, and the cascade time is

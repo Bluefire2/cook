@@ -9,6 +9,8 @@ export default defineConfig({
       // Local stand-in for Vercel functions; see scripts/dev-api-server.ts
       '/api': 'http://localhost:3001',
       '/invite': 'http://localhost:3001',
+      // Regex key: a plain '/c' prefix would also catch the SPA's /cooks.
+      '^/c/': 'http://localhost:3001',
     },
   },
   plugins: [
@@ -38,6 +40,7 @@ export default defineConfig({
           /^\/terms$/,
           /^\/about$/,
           /^\/invite\//,
+          /^\/c\//,
         ],
       },
       manifest: {

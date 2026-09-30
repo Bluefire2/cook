@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  COLLECTION_LINK_COOKIE_NAME,
+  INVITE_COOKIE_NAME,
+  OAUTH_COOKIE_NAME,
+  clearedCollectionLinkCookie,
   clearedSessionCookie,
+  collectionLinkCookie,
   inviteCookie,
   oauthCookie,
   readCookie,
@@ -11,10 +16,12 @@ import {
   sessionFromHeader,
   signAccessRequestTx,
   signAuthTx,
+  signCollectionLinkTx,
   signInviteTx,
   signSession,
   verifyAccessRequestTx,
   verifyAuthTx,
+  verifyCollectionLinkTx,
   verifyInviteTx,
   verifySession,
 } from './session.ts';
@@ -394,5 +401,51 @@ describe('signInviteTx / verifyInviteTx', () => {
   it('sets the invite cookie Max-Age to 10 minutes', () => {
     expect(inviteCookie('tok', { secure: true })).toContain('Max-Age=600');
     expect(inviteCookie('tok', { secure: true })).toContain('HttpOnly');
+  });
+});
+
+describe('signCollectionLinkTx / verifyCollectionLinkTx', () => {
+  it('round-trips the link document id for 10 minutes', () => {
+    const now = nowMs();
+    const id = 'e'.repeat(64);
+    const token = signCollectionLinkTx({ id }, now);
+    expect(verifyCollectionLinkTx(token, now)).toEqual({ id, iat: now, exp: now + 10 * 60 * 1000 });
+    expect(verifyCollectionLinkTx(token, now + 11 * 60 * 1000)).toBeNull();
+  });
+
+  it('refuses to sign anything but a sha256 hex id', () => {
+    expect(() => signCollectionLinkTx({ id: 'raw-token' }, nowMs())).toThrow();
+  });
+
+  it('is its own family: invite, oauth, session, and accessreq do not cross', () => {
+    const now = nowMs();
+    const id = 'f'.repeat(64);
+    const link = signCollectionLinkTx({ id }, now);
+    expect(verifyInviteTx(link, now)).toBeNull();
+    expect(verifyAuthTx(link, now)).toBeNull();
+    expect(verifySession(link, now)).toBeNull();
+    expect(verifyAccessRequestTx(link, now)).toBeNull();
+    expect(verifyCollectionLinkTx(signInviteTx({ id }, now), now)).toBeNull();
+    expect(verifyCollectionLinkTx(signSession({ sub: 's', email: 'a@b.c' }, now), now)).toBeNull();
+    expect(
+      verifyCollectionLinkTx(
+        signAuthTx({ state: 's', nonce: 'n', verifier: 'v', returnTo: '/' }, now),
+        now,
+      ),
+    ).toBeNull();
+  });
+
+  it('scopes the hop cookie to /c, HttpOnly, Lax, 10 minutes', () => {
+    const cookie = collectionLinkCookie('tok', { secure: true });
+    expect(cookie.startsWith(`${COLLECTION_LINK_COOKIE_NAME}=tok;`)).toBe(true);
+    expect(cookie).toContain('Path=/c');
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('SameSite=Lax');
+    expect(cookie).toContain('Max-Age=600');
+    expect(cookie).toContain('Secure');
+    expect(clearedCollectionLinkCookie({ secure: false })).toContain('Max-Age=0');
+    expect(clearedCollectionLinkCookie({ secure: false })).toContain('Path=/c');
+    expect(COLLECTION_LINK_COOKIE_NAME).not.toBe(INVITE_COOKIE_NAME);
+    expect(COLLECTION_LINK_COOKIE_NAME).not.toBe(OAUTH_COOKIE_NAME);
   });
 });
