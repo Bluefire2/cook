@@ -1,0 +1,36 @@
+import { beginLocalWrite, endLocalWrite } from './libraryMemory';
+import { localWriteOverlapsPull, pullAfterLocalWrite } from './syncEngine';
+
+/**
+ * Holds the library against an in-flight pull for one optimistic write.
+ *
+ * `body` mutates the library, then pushes. A pull that already started (the
+ * sign-in pull, most often) captured an older epoch and must not publish:
+ * its snapshot does not contain this write. When `body` returns
+ * `reconcile: true` and such a pull overlapped, the server is read again
+ * so that discarded snapshot is not the last word.
+ *
+ * `reconcile: false`, or a throw, leaves the library as `body` left it. A
+ * failed push can keep its optimistic row, or a rollback, without a follow-up
+ * read painting the server's older copy back on top.
+ */
+export async function withLocalWrite<T>(
+  body: () => Promise<{ value: T; reconcile: boolean }>,
+): Promise<T> {
+  const epoch = beginLocalWrite();
+  let reconcile = false;
+  try {
+    const outcome = await body();
+    reconcile = outcome.reconcile;
+    return outcome.value;
+  } finally {
+    endLocalWrite();
+    if (reconcile && localWriteOverlapsPull(epoch)) {
+      try {
+        await pullAfterLocalWrite(epoch);
+      } catch {
+        // The next pull reconciles.
+      }
+    }
+  }
+}

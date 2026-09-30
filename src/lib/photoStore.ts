@@ -8,6 +8,7 @@ import {
   photoOwnerSub,
   subscribe,
 } from './libraryMemory';
+import { withLocalWrite } from './localWrite';
 import { fetchPhotoBlob, pushOps } from './remote';
 
 const ensureLocalInFlight = new Map<string, Promise<void>>();
@@ -60,8 +61,11 @@ export const photoStore = {
 
   async remove(id: string): Promise<void> {
     const at = Date.now();
-    dropPhoto(id);
-    await pushOps([{ kind: 'photo.delete', payload: { id, updatedAt: at } }]);
+    await withLocalWrite(async () => {
+      dropPhoto(id);
+      const result = await pushOps([{ kind: 'photo.delete', payload: { id, updatedAt: at } }]);
+      return { value: undefined, reconcile: result === 'ok' };
+    });
   },
 };
 

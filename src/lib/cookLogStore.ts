@@ -13,6 +13,7 @@ import {
   subscribe,
   upsertCookLog,
 } from './libraryMemory';
+import { withLocalWrite } from './localWrite';
 import { postPhoto, pushOps, type RemoteResult } from './remote';
 import {
   appendLessonToNotes,
@@ -77,22 +78,25 @@ async function putCookLog(next: CookLog, previous: CookLog | undefined): Promise
   if (!isUsableCookLog(next)) {
     throw new Error(t('error.cookLogSave'));
   }
-  upsertCookLog(next);
-  try {
-    await uploadCookLogPhotos(next);
-    const result = await pushOps([{ kind: 'cookLog.put', payload: next }]);
-    if (result !== 'ok') {
-      throw pushError(result, t('error.cookLogSave'));
+  await withLocalWrite(async () => {
+    upsertCookLog(next);
+    try {
+      await uploadCookLogPhotos(next);
+      const result = await pushOps([{ kind: 'cookLog.put', payload: next }]);
+      if (result !== 'ok') {
+        throw pushError(result, t('error.cookLogSave'));
+      }
+    } catch (err) {
+      if (previous) {
+        upsertCookLog(previous);
+      } else {
+        removeCookLogLocal(next.id);
+      }
+      throw err;
     }
-  } catch (err) {
-    if (previous) {
-      upsertCookLog(previous);
-    } else {
-      removeCookLogLocal(next.id);
-    }
-    throw err;
-  }
-  await deleteRemovedPhotos(previous, next);
+    await deleteRemovedPhotos(previous, next);
+    return { value: undefined, reconcile: true };
+  });
 }
 
 export const cookLogStore = {
@@ -119,21 +123,24 @@ export const cookLogStore = {
     const previous = getCookLog(id);
     const at = Date.now();
     const photoIds = previous?.photoIds ?? [];
-    removeCookLogLocal(id);
-    const ops: PushOp[] = [{ kind: 'cookLog.delete', payload: { id, updatedAt: at } }];
-    for (const photoId of photoIds) {
-      ops.push({ kind: 'photo.delete', payload: { id: photoId, updatedAt: at } });
-    }
-    const result = await pushOps(ops);
-    if (result !== 'ok') {
-      if (previous) {
-        upsertCookLog(previous);
+    await withLocalWrite(async () => {
+      removeCookLogLocal(id);
+      const ops: PushOp[] = [{ kind: 'cookLog.delete', payload: { id, updatedAt: at } }];
+      for (const photoId of photoIds) {
+        ops.push({ kind: 'photo.delete', payload: { id: photoId, updatedAt: at } });
       }
-      throw pushError(result, t('error.cookLogDelete'));
-    }
-    for (const photoId of photoIds) {
-      dropPhoto(photoId);
-    }
+      const result = await pushOps(ops);
+      if (result !== 'ok') {
+        if (previous) {
+          upsertCookLog(previous);
+        }
+        throw pushError(result, t('error.cookLogDelete'));
+      }
+      for (const photoId of photoIds) {
+        dropPhoto(photoId);
+      }
+      return { value: undefined, reconcile: true };
+    });
   },
 
   /** Reads the latest recipe so a concurrent edit is not overwritten with a stale copy. */

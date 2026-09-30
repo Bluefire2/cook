@@ -31,6 +31,7 @@ vi.mock('./remote', () => ({
 }));
 
 vi.mock('./syncEngine', () => ({
+  localWriteOverlapsPull: vi.fn(() => false),
   pullAfterLocalWrite: vi.fn(),
 }));
 

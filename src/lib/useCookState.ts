@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { getCook, getSnapshot, subscribe, upsertCook } from './libraryMemory';
+import { withLocalWrite } from './localWrite';
 import { pushOps } from './remote';
 import type { Recipe } from './types';
 
@@ -67,17 +68,25 @@ const cookStateStore = {
       recipeId: recipe.id,
       recipeUpdatedAt: recipe.updatedAt,
     };
-    upsertCook(next);
-    const result = await pushOps([
-      { kind: 'cookState.put', payload: { ...next, updatedAt: Date.now() } },
-    ]);
-    if (result !== 'ok') {
-      if (getCook(recipe.id) === next) {
-        // leave optimistic row; refresh will reconcile
-      }
-    }
+    await withLocalWrite(async () => {
+      upsertCook(next);
+      const result = await pushOps([
+        { kind: 'cookState.put', payload: { ...next, updatedAt: Date.now() } },
+      ]);
+      // A failed push keeps the optimistic row; the next refresh reconciles.
+      // An overlapping pull must not paint the pre-tap row back either way.
+      return { value: undefined, reconcile: result === 'ok' };
+    });
   },
 };
+
+/** Persisted cook progress. The recipe screen calls this on each tap. */
+export function updateCookState(
+  recipe: Recipe,
+  change: (prev: Progress) => Progress,
+): Promise<void> {
+  return cookStateStore.update(recipe, change);
+}
 
 /** Persisted per recipe. Resets when the recipe's shape changes. */
 export function useCookState(recipe: Recipe | null | undefined): CookStateApi {
@@ -91,7 +100,7 @@ export function useCookState(recipe: Recipe | null | undefined): CookStateApi {
   const setServings = useCallback(
     (n: number) => {
       if (!recipe) return;
-      void cookStateStore.update(recipe, (prev) => ({ ...prev, servings: n }));
+      void updateCookState(recipe, (prev) => ({ ...prev, servings: n }));
     },
     [recipe],
   );
@@ -99,7 +108,7 @@ export function useCookState(recipe: Recipe | null | undefined): CookStateApi {
   const setCurrentStep = useCallback(
     (i: number) => {
       if (!recipe) return;
-      void cookStateStore.update(recipe, (prev) => ({
+      void updateCookState(recipe, (prev) => ({
         ...prev,
         currentStep: i,
       }));
@@ -110,7 +119,7 @@ export function useCookState(recipe: Recipe | null | undefined): CookStateApi {
   const toggleChecked = useCallback(
     (key: string) => {
       if (!recipe) return;
-      void cookStateStore.update(recipe, (prev) => ({
+      void updateCookState(recipe, (prev) => ({
         ...prev,
         checkedKeys: prev.checkedKeys.includes(key)
           ? prev.checkedKeys.filter((k) => k !== key)

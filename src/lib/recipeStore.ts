@@ -28,6 +28,7 @@ import {
 } from './libraryMemory';
 import { fetchPhotoBlobOutcome, postPhoto, pushOps } from './remote';
 import { photoStore } from './photoStore';
+import { withLocalWrite } from './localWrite';
 import { localWriteOverlapsPull, pullAfterLocalWrite } from './syncEngine';
 import { compactRecipe } from './compactRecipe';
 import { compactCollection } from './compactCollection';
@@ -197,16 +198,19 @@ async function saveShared(recipe: Recipe): Promise<void> {
   if (!samePhotoIds(previous, next)) {
     throw new Error(t('error.sharedPhotos'));
   }
-  upsertRecipe(next, origin);
-  try {
-    const result = await pushOps([{ kind: 'recipe.put', payload: next, shared: true }]);
-    if (result !== 'ok') {
-      throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
+  await withLocalWrite(async () => {
+    upsertRecipe(next, origin);
+    try {
+      const result = await pushOps([{ kind: 'recipe.put', payload: next, shared: true }]);
+      if (result !== 'ok') {
+        throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
+      }
+      return { value: undefined, reconcile: true };
+    } catch (err) {
+      upsertRecipe(previous, origin);
+      throw err;
     }
-  } catch (err) {
-    upsertRecipe(previous, origin);
-    throw err;
-  }
+  });
 }
 
 /** Bytes a new recipe's photos are waiting to upload, captured before any upload. */
@@ -332,22 +336,25 @@ export const recipeStore = {
     }
     const previous = getRecipe(recipe.id);
     const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
-    upsertRecipe(next);
-    try {
-      await uploadRecipePhotos(next);
-      const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
-      if (result !== 'ok') {
-        throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
+    await withLocalWrite(async () => {
+      upsertRecipe(next);
+      try {
+        await uploadRecipePhotos(next);
+        const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
+        if (result !== 'ok') {
+          throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
+        }
+        await deleteRemovedPhotos(previous, next);
+        return { value: undefined, reconcile: true };
+      } catch (err) {
+        if (previous) {
+          upsertRecipe(previous);
+        } else {
+          removeRecipeLocal(next.id);
+        }
+        throw err;
       }
-      await deleteRemovedPhotos(previous, next);
-    } catch (err) {
-      if (previous) {
-        upsertRecipe(previous);
-      } else {
-        removeRecipeLocal(next.id);
-      }
-      throw err;
-    }
+    });
   },
 
   /**
@@ -452,22 +459,26 @@ export const recipeStore = {
       // would save a recipe pointing at a photo that never exists.
       throw new Error(t('error.photoSave'));
     }
-    upsertRecipe(recipe);
-    if (nextCollection) {
-      upsertCollection(nextCollection);
-    }
     // The server stores a photo only under a live recipe, so the recipe row
-    // goes first and the photos follow.
+    // goes first and the photos follow. The discard below opens its own
+    // write epoch, so this one closes before that runs.
     try {
-      const ops: PushOp[] = [{ kind: 'recipe.put', payload: recipe }];
-      if (nextCollection) {
-        ops.push({ kind: 'collection.put', payload: nextCollection });
-      }
-      const result = await pushOps(ops);
-      if (result !== 'ok') {
-        throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
-      }
-      await uploadRecipePhotos(recipe);
+      return await withLocalWrite(async () => {
+        upsertRecipe(recipe);
+        if (nextCollection) {
+          upsertCollection(nextCollection);
+        }
+        const ops: PushOp[] = [{ kind: 'recipe.put', payload: recipe }];
+        if (nextCollection) {
+          ops.push({ kind: 'collection.put', payload: nextCollection });
+        }
+        const result = await pushOps(ops);
+        if (result !== 'ok') {
+          throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
+        }
+        await uploadRecipePhotos(recipe);
+        return { value: recipe, reconcile: true };
+      });
     } catch (err) {
       if (err instanceof SessionExpiredError) {
         // The 401 cleared the library already; write nothing back into it.
@@ -478,7 +489,6 @@ export const recipeStore = {
       const remap = await discardCreatedRecipe(recipe.id, staged);
       throw remap === 'signedOut' ? new SessionExpiredError() : new CreateRollbackError(err, remap);
     }
-    return recipe;
   },
 
   async remove(id: string): Promise<void> {

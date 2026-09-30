@@ -107,7 +107,8 @@ let snapshot: LibrarySnapshot = empty(false);
 /**
  * Bumped when a local write starts. A pull that began at an older epoch, or
  * while a write was still open, must not replace the library: its snapshot
- * can still contain a recipe the write already deleted.
+ * can still contain a recipe the write already deleted, or omit a row the
+ * write just saved.
  */
 let epoch = 0;
 let openWrites = 0;

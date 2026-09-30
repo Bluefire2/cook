@@ -9,6 +9,7 @@ import {
   getPendingBlob,
   markPhotoRemote,
 } from './libraryMemory';
+import { withLocalWrite } from './localWrite';
 import { postPhoto, pushOps } from './remote';
 import type { ChatMessage } from './types';
 
@@ -42,40 +43,45 @@ export const chatStore = {
       id: crypto.randomUUID(),
       createdAt: Date.now(),
     };
-    upsertChat(message);
-    try {
-      await uploadMessagePhotos(message);
-      const result = await pushOps([{ kind: 'chat.put', payload: message }]);
-      if (result !== 'ok') {
-        throw new Error(
-          result === 'signedOut' ? t('error.sessionExpired') : t('error.messageSave'),
-        );
+    return withLocalWrite(async () => {
+      upsertChat(message);
+      try {
+        await uploadMessagePhotos(message);
+        const result = await pushOps([{ kind: 'chat.put', payload: message }]);
+        if (result !== 'ok') {
+          throw new Error(
+            result === 'signedOut' ? t('error.sessionExpired') : t('error.messageSave'),
+          );
+        }
+        return { value: message, reconcile: true };
+      } catch (err) {
+        clearChatLocal(data.recipeId);
+        for (const existing of previous) {
+          upsertChat(existing);
+        }
+        throw err;
       }
-    } catch (err) {
-      clearChatLocal(data.recipeId);
-      for (const existing of previous) {
-        upsertChat(existing);
-      }
-      throw err;
-    }
-    return message;
+    });
   },
 
   async clearForRecipe(recipeId: string): Promise<void> {
     const previous = listChat(recipeId);
     const at = Date.now();
-    clearChatLocal(recipeId);
-    const result = await pushOps([
-      { kind: 'chat.clearForRecipe', payload: { recipeId, at } },
-    ]);
-    if (result !== 'ok') {
-      for (const message of previous) {
-        upsertChat(message);
+    await withLocalWrite(async () => {
+      clearChatLocal(recipeId);
+      const result = await pushOps([
+        { kind: 'chat.clearForRecipe', payload: { recipeId, at } },
+      ]);
+      if (result !== 'ok') {
+        for (const message of previous) {
+          upsertChat(message);
+        }
+        throw new Error(
+          result === 'signedOut' ? t('error.sessionExpired') : t('error.chatClear'),
+        );
       }
-      throw new Error(
-        result === 'signedOut' ? t('error.sessionExpired') : t('error.chatClear'),
-      );
-    }
+      return { value: undefined, reconcile: true };
+    });
   },
 };
 

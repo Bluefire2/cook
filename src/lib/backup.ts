@@ -28,6 +28,7 @@ import {
 import { compactRecipe } from './compactRecipe';
 import { compactCollection, compactCollectionName } from './compactCollection';
 import { recipePhotoIds } from './recipePhotos';
+import { withLocalWrite } from './localWrite';
 import { fetchPhotoBlob, postPhoto, pushOps, type RemoteResult } from './remote';
 import type { PushOp } from './pushOps';
 import { SHARED_PARENT_OWNER_SUB_FIELD } from './pushReasons';
@@ -312,80 +313,82 @@ export async function importLibrary(
   );
 
   const previous = captureSnapshot();
-  try {
-    for (const photo of photos) {
-      addPendingBlob(photo.id, photo.blob);
-    }
-    for (const recipe of importRecipes) {
-      upsertRecipe(recipe);
-    }
-    for (const collection of importCollections) {
-      upsertCollection(collection);
-    }
-    for (const message of importChat) {
-      upsertChat(message);
-    }
-    for (const row of importCook) {
-      upsertCook(row);
-    }
-    for (const log of importCookLogs) {
-      upsertCookLog(log);
-    }
-
-    // Remote import is best-effort across requests. Recipe puts are
-    // acknowledged before photo bytes and dependent puts. A failure after
-    // the recipe phase can leave accepted server rows; the next refresh
-    // reveals them. restoreSnapshot undoes this local copy.
-    const recipeOps: PushOp[] = importRecipes.map((recipe) => ({
-      kind: 'recipe.put',
-      payload: recipe,
-    }));
-    const recipeResult = await pushOps(recipeOps);
-    if (recipeResult !== 'ok') {
-      throw importPushError(recipeResult);
-    }
-
-    for (const [photoId, recipeId] of photoAttribution) {
-      const photo = photos.find((p) => p.id === photoId);
-      if (!photo) {
-        continue;
+  return withLocalWrite(async () => {
+    try {
+      for (const photo of photos) {
+        addPendingBlob(photo.id, photo.blob);
       }
-      const uploaded = await postPhoto(
-        photoId,
-        recipeId,
-        photo.createdAt,
-        photo.blob,
-      );
-      if (uploaded !== 'ok') {
-        throw new Error(t('error.backupPhotoUpload'));
+      for (const recipe of importRecipes) {
+        upsertRecipe(recipe);
       }
-      markPhotoRemote(photoId);
-    }
+      for (const collection of importCollections) {
+        upsertCollection(collection);
+      }
+      for (const message of importChat) {
+        upsertChat(message);
+      }
+      for (const row of importCook) {
+        upsertCook(row);
+      }
+      for (const log of importCookLogs) {
+        upsertCookLog(log);
+      }
 
-    const dependentOps: PushOp[] = [];
-    for (const collection of importCollections) {
-      dependentOps.push({ kind: 'collection.put', payload: collection });
-    }
-    for (const message of importChat) {
-      dependentOps.push({ kind: 'chat.put', payload: message });
-    }
-    for (const row of importCook) {
-      dependentOps.push({
-        kind: 'cookState.put',
-        payload: { ...row, updatedAt: Date.now() },
-      });
-    }
-    for (const log of importCookLogs) {
-      dependentOps.push({ kind: 'cookLog.put', payload: log });
-    }
-    const dependentResult = await pushOps(dependentOps);
-    if (dependentResult !== 'ok') {
-      throw importPushError(dependentResult);
-    }
+      // Remote import is best-effort across requests. Recipe puts are
+      // acknowledged before photo bytes and dependent puts. A failure after
+      // the recipe phase can leave accepted server rows; the next refresh
+      // reveals them. restoreSnapshot undoes this local copy.
+      const recipeOps: PushOp[] = importRecipes.map((recipe) => ({
+        kind: 'recipe.put',
+        payload: recipe,
+      }));
+      const recipeResult = await pushOps(recipeOps);
+      if (recipeResult !== 'ok') {
+        throw importPushError(recipeResult);
+      }
 
-    return { imported: importRecipes.length, skipped };
-  } catch (err) {
-    restoreSnapshot(previous);
-    throw err;
-  }
+      for (const [photoId, recipeId] of photoAttribution) {
+        const photo = photos.find((p) => p.id === photoId);
+        if (!photo) {
+          continue;
+        }
+        const uploaded = await postPhoto(
+          photoId,
+          recipeId,
+          photo.createdAt,
+          photo.blob,
+        );
+        if (uploaded !== 'ok') {
+          throw new Error(t('error.backupPhotoUpload'));
+        }
+        markPhotoRemote(photoId);
+      }
+
+      const dependentOps: PushOp[] = [];
+      for (const collection of importCollections) {
+        dependentOps.push({ kind: 'collection.put', payload: collection });
+      }
+      for (const message of importChat) {
+        dependentOps.push({ kind: 'chat.put', payload: message });
+      }
+      for (const row of importCook) {
+        dependentOps.push({
+          kind: 'cookState.put',
+          payload: { ...row, updatedAt: Date.now() },
+        });
+      }
+      for (const log of importCookLogs) {
+        dependentOps.push({ kind: 'cookLog.put', payload: log });
+      }
+      const dependentResult = await pushOps(dependentOps);
+      if (dependentResult !== 'ok') {
+        throw importPushError(dependentResult);
+      }
+
+      return { value: { imported: importRecipes.length, skipped }, reconcile: true };
+    } catch (err) {
+      restoreSnapshot(previous);
+      throw err;
+    }
+  });
 }

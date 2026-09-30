@@ -35,6 +35,7 @@ import {
   type LeaveSharedResult,
   type RemoteResult,
 } from './remote';
+import { withLocalWrite } from './localWrite';
 import { pullAfterLocalWrite } from './syncEngine';
 import type { Collection } from './types';
 
@@ -63,20 +64,23 @@ async function pushCollection(
   previous: Collection | undefined,
   created = false,
 ): Promise<void> {
-  upsertCollection(next);
-  try {
-    const result = await pushOps([{ kind: 'collection.put', payload: next }]);
-    if (result !== 'ok') {
-      throw saveError(result, created);
+  await withLocalWrite(async () => {
+    upsertCollection(next);
+    try {
+      const result = await pushOps([{ kind: 'collection.put', payload: next }]);
+      if (result !== 'ok') {
+        throw saveError(result, created);
+      }
+      return { value: undefined, reconcile: true };
+    } catch (err) {
+      if (previous) {
+        upsertCollection(previous);
+      } else {
+        removeCollectionLocal(next.id);
+      }
+      throw err;
     }
-  } catch (err) {
-    if (previous) {
-      upsertCollection(previous);
-    } else {
-      removeCollectionLocal(next.id);
-    }
-    throw err;
-  }
+  });
 }
 
 export const collectionStore = {
@@ -152,14 +156,17 @@ export const collectionStore = {
     rejectShared(id);
     const previous = getCollection(id);
     const at = Date.now();
-    removeCollectionLocal(id);
-    const result = await pushOps([{ kind: 'collection.delete', payload: { id, updatedAt: at } }]);
-    if (result !== 'ok') {
-      if (previous) {
-        upsertCollection(previous);
+    await withLocalWrite(async () => {
+      removeCollectionLocal(id);
+      const result = await pushOps([{ kind: 'collection.delete', payload: { id, updatedAt: at } }]);
+      if (result !== 'ok') {
+        if (previous) {
+          upsertCollection(previous);
+        }
+        throw saveError(result);
       }
-      throw saveError(result);
-    }
+      return { value: undefined, reconcile: true };
+    });
   },
 
   async listGrants(id: string): Promise<CollectionGrant[]> {
@@ -277,22 +284,25 @@ export const collectionStore = {
     const previous = changed
       .map((next) => current.find((c) => c.id === next.id))
       .filter((c): c is Collection => c !== undefined);
-    for (const next of changed) {
-      upsertCollection(next);
-    }
-    try {
-      const result = await pushOps(
-        changed.map((payload) => ({ kind: 'collection.put' as const, payload })),
-      );
-      if (result !== 'ok') {
-        throw saveError(result);
+    await withLocalWrite(async () => {
+      for (const next of changed) {
+        upsertCollection(next);
       }
-    } catch (err) {
-      for (const collection of previous) {
-        upsertCollection(collection);
+      try {
+        const result = await pushOps(
+          changed.map((payload) => ({ kind: 'collection.put' as const, payload })),
+        );
+        if (result !== 'ok') {
+          throw saveError(result);
+        }
+        return { value: undefined, reconcile: true };
+      } catch (err) {
+        for (const collection of previous) {
+          upsertCollection(collection);
+        }
+        throw err;
       }
-      throw err;
-    }
+    });
   },
 };
 
