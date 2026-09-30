@@ -313,19 +313,29 @@ export function normalizeChatChange(raw: Record<string, unknown>): ChatMessage |
   return message;
 }
 
+/** A finite cook-progress clock, or `undefined` when the wire value cannot be compared. */
+export function finiteCookUpdatedAt(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
 export function normalizeCookChange(
   raw: Record<string, unknown>,
 ): CookStateRow | 'tombstone' {
   if (raw.deletedAt !== undefined && raw.deletedAt !== null) {
     return 'tombstone';
   }
-  return {
+  const row: CookStateRow = {
     recipeId: raw.recipeId as string,
     servings: raw.servings as number,
     currentStep: raw.currentStep as number,
     checkedKeys: raw.checkedKeys as string[],
     recipeUpdatedAt: raw.recipeUpdatedAt as number,
   };
+  const updatedAt = finiteCookUpdatedAt(raw.updatedAt);
+  if (updatedAt !== undefined) {
+    row.updatedAt = updatedAt;
+  }
+  return row;
 }
 
 /**
