@@ -7,6 +7,7 @@ import {
   type DecisionAction,
 } from './members.ts';
 import { publicOrigin } from './env.ts';
+import { approvalRecipientProblem, sendMail } from './mail.ts';
 import {
   INVITE_UNUSED_CAP,
   listUnusedInvites,
@@ -228,6 +229,33 @@ export async function adminRequestsGet(req: Request): Promise<Response> {
   }
 }
 
+async function notifyApproval(email: string): Promise<void> {
+  const problem = approvalRecipientProblem(email);
+  if (problem === 'missing') {
+    console.log('approval email skipped: missing recipient');
+    return;
+  }
+  if (problem === 'invalid') {
+    console.log('approval email skipped: invalid recipient');
+    return;
+  }
+
+  const subject = 'Your Sous access was approved';
+  let text: string;
+  try {
+    const origin = publicOrigin();
+    text = `Your request for Sous was approved.\nSign in again at ${origin}`;
+  } catch {
+    text = 'Your request for Sous was approved.\nSign in again.';
+  }
+
+  try {
+    await sendMail({ to: email, subject, text });
+  } catch {
+    console.log('approval email failed');
+  }
+}
+
 export async function adminDecisionPost(req: Request): Promise<Response> {
   const owner = requireOwner(req);
   if (owner.kind === 'unauthenticated') {
@@ -269,6 +297,9 @@ export async function adminDecisionPost(req: Request): Promise<Response> {
         return errorJson('self', SELF_ERROR, 409);
       }
       return errorJson('unknown-request', UNKNOWN_REQUEST_ERROR, 404);
+    }
+    if (body.action === 'approve' && result.kind === 'ok') {
+      await notifyApproval(result.request.email);
     }
     clearMembershipCache(body.sub);
     const lists = await listAccessRequests();

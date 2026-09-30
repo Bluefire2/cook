@@ -13,6 +13,7 @@ import {
 } from './admin.ts';
 import { INVITE_UNUSED_CAP, MEMBER_INVITE_LIMIT } from './invites.ts';
 import * as invites from './invites.ts';
+import * as mail from './mail.ts';
 import * as members from './members.ts';
 import * as membership from './membership.ts';
 import type { AccessRequestLists, AccessRequestRecord } from './members.ts';
@@ -41,6 +42,15 @@ vi.mock('./members.ts', async (importOriginal) => {
   return {
     ...actual,
     applyDecision: vi.fn(actual.applyDecision),
+    listAccessRequests: vi.fn(actual.listAccessRequests),
+  };
+});
+
+vi.mock('./mail.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./mail.ts')>();
+  return {
+    ...actual,
+    sendMail: vi.fn(),
   };
 });
 
@@ -380,5 +390,191 @@ describe('memberInvitesPost', () => {
     );
     expect(response.status).toBe(503);
     expect(invites.mintMemberInvite).not.toHaveBeenCalled();
+  });
+});
+
+describe('adminDecisionPost approval email', () => {
+  const prev = {
+    secret: process.env.SESSION_SECRET,
+    allowed: process.env.ALLOWED_EMAILS,
+    origin: process.env.PUBLIC_ORIGIN,
+  };
+  const emptyLists: AccessRequestLists = {
+    pending: { rows: [], nextCursor: null },
+    approved: { rows: [], nextCursor: null },
+    denied: { rows: [], nextCursor: null },
+  };
+
+  function ownerPost(url: string, body: unknown): Request {
+    const token = signSession({ sub: 'owner-sub', email: 'allowed@example.com' }, Date.now());
+    return new Request(url, {
+      method: 'POST',
+      headers: {
+        cookie: `${SESSION_COOKIE_NAME}=${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  function approvedRequest(email: string): AccessRequestRecord {
+    return {
+      sub: 'other-user',
+      email,
+      name: 'Nadya Petrova',
+      status: 'approved',
+      createdAt: 1,
+      updatedAt: 2,
+      requestCount: 1,
+    };
+  }
+
+  function restore(name: 'SESSION_SECRET' | 'ALLOWED_EMAILS' | 'PUBLIC_ORIGIN', value: string | undefined) {
+    if (value === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = value;
+    }
+  }
+
+  beforeEach(() => {
+    process.env.SESSION_SECRET = 'test-secret-for-session-hmac';
+    process.env.ALLOWED_EMAILS = 'allowed@example.com';
+    process.env.PUBLIC_ORIGIN = 'https://sous.example';
+    vi.mocked(members.applyDecision).mockReset();
+    vi.mocked(members.listAccessRequests).mockReset();
+    vi.mocked(members.listAccessRequests).mockResolvedValue(emptyLists);
+    vi.mocked(mail.sendMail).mockReset();
+    vi.mocked(mail.sendMail).mockResolvedValue(true);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    restore('SESSION_SECRET', prev.secret);
+    restore('ALLOWED_EMAILS', prev.allowed);
+    restore('PUBLIC_ORIGIN', prev.origin);
+    vi.mocked(console.log).mockRestore();
+  });
+
+  function decision(body: unknown): Promise<Response> {
+    return adminDecisionPost(ownerPost('http://localhost/api/admin/decision', body));
+  }
+
+  it('emails the stored address after a committed approve and ignores a body email', async () => {
+    vi.mocked(members.applyDecision).mockResolvedValue({
+      kind: 'ok',
+      request: approvedRequest('person@example.com'),
+      member: { status: 'active' },
+    });
+    const response = await decision({
+      sub: 'other-user',
+      action: 'approve',
+      email: 'other@example.com',
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(serializeAccessRequestLists(emptyLists));
+    expect(mail.sendMail).toHaveBeenCalledTimes(1);
+    expect(mail.sendMail).toHaveBeenCalledWith({
+      to: 'person@example.com',
+      subject: 'Your Sous access was approved',
+      text: 'Your request for Sous was approved.\nSign in again at https://sous.example',
+    });
+    const text = vi.mocked(mail.sendMail).mock.calls[0]?.[0].text ?? '';
+    expect(text).toContain('https://sous.example');
+    expect(text).not.toContain('person@example.com');
+    expect(text).not.toContain('Nadya Petrova');
+  });
+
+  it('sends the no-url body when PUBLIC_ORIGIN is unset', async () => {
+    delete process.env.PUBLIC_ORIGIN;
+    vi.mocked(members.applyDecision).mockResolvedValue({
+      kind: 'ok',
+      request: approvedRequest('person@example.com'),
+      member: { status: 'active' },
+    });
+    const response = await decision({ sub: 'other-user', action: 'approve' });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(serializeAccessRequestLists(emptyLists));
+    expect(mail.sendMail).toHaveBeenCalledTimes(1);
+    const text = vi.mocked(mail.sendMail).mock.calls[0]?.[0].text ?? '';
+    expect(text).toBe('Your request for Sous was approved.\nSign in again.');
+    expect(text).not.toContain('http');
+  });
+
+  it('keeps the 200 JSON when sendMail returns false', async () => {
+    vi.mocked(mail.sendMail).mockResolvedValue(false);
+    vi.mocked(members.applyDecision).mockResolvedValue({
+      kind: 'ok',
+      request: approvedRequest('person@example.com'),
+      member: { status: 'active' },
+    });
+    const response = await decision({ sub: 'other-user', action: 'approve' });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(serializeAccessRequestLists(emptyLists));
+    expect(mail.sendMail).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the 200 JSON when sendMail rejects', async () => {
+    vi.mocked(mail.sendMail).mockRejectedValue(new Error('resend down'));
+    vi.mocked(members.applyDecision).mockResolvedValue({
+      kind: 'ok',
+      request: approvedRequest('person@example.com'),
+      member: { status: 'active' },
+    });
+    const response = await decision({ sub: 'other-user', action: 'approve' });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(serializeAccessRequestLists(emptyLists));
+    expect(mail.sendMail).toHaveBeenCalledTimes(1);
+    expect(console.log).toHaveBeenCalledWith('approval email failed');
+  });
+
+  it.each(['', 'person @example.com', 'a@b.com,c@d.com'])(
+    'skips sendMail for stored email %j and logs a fixed line',
+    async (email) => {
+      vi.mocked(members.applyDecision).mockResolvedValue({
+        kind: 'ok',
+        request: approvedRequest(email),
+        member: { status: 'active' },
+      });
+      const response = await decision({ sub: 'other-user', action: 'approve' });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual(serializeAccessRequestLists(emptyLists));
+      expect(mail.sendMail).not.toHaveBeenCalled();
+      const line =
+        email.trim() === ''
+          ? 'approval email skipped: missing recipient'
+          : 'approval email skipped: invalid recipient';
+      expect(vi.mocked(console.log).mock.calls).toEqual([[line]]);
+    },
+  );
+
+  it.each(['deny', 'revoke'] as const)('does not email on %s', async (action) => {
+    vi.mocked(members.applyDecision).mockResolvedValue({
+      kind: 'ok',
+      request: approvedRequest('person@example.com'),
+      member: action === 'revoke' ? { status: 'revoked' } : null,
+    });
+    const response = await decision({ sub: 'other-user', action });
+    expect(response.status).toBe(200);
+    expect(mail.sendMail).not.toHaveBeenCalled();
+  });
+
+  it('does not email on an unknown-request refusal', async () => {
+    vi.mocked(members.applyDecision).mockResolvedValue({
+      kind: 'refusal',
+      reason: 'unknown-request',
+    });
+    const response = await decision({ sub: 'other-user', action: 'approve' });
+    expect(response.status).toBe(404);
+    expect(mail.sendMail).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 and does not email when applyDecision rejects', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(members.applyDecision).mockRejectedValue(new Error('firestore down'));
+    const response = await decision({ sub: 'other-user', action: 'approve' });
+    expect(response.status).toBe(503);
+    expect(mail.sendMail).not.toHaveBeenCalled();
+    vi.mocked(console.error).mockRestore();
   });
 });

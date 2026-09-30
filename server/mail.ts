@@ -3,6 +3,7 @@ import { mailFrom, ownerNotifyEmail, resendApiKey } from './env.ts';
 export interface MailMessage {
   subject: string;
   text: string;
+  to?: string;
 }
 
 let loggedResendDisabled = false;
@@ -21,7 +22,7 @@ export async function sendMail(msg: MailMessage): Promise<boolean> {
   let to: string;
   try {
     from = mailFrom();
-    to = ownerNotifyEmail();
+    to = msg.to === undefined ? ownerNotifyEmail() : msg.to;
   } catch {
     return false;
   }
@@ -51,4 +52,17 @@ export async function sendMail(msg: MailMessage): Promise<boolean> {
     console.log(`resend send failed: ${name}`);
     return false;
   }
+}
+
+export function approvalRecipientProblem(
+  email: string,
+): 'missing' | 'invalid' | null {
+  if (email.trim() === '') {
+    return 'missing';
+  }
+  const atCount = email.split('@').length - 1;
+  if (/[\s,]/.test(email) || atCount !== 1) {
+    return 'invalid';
+  }
+  return null;
 }
