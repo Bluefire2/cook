@@ -122,15 +122,55 @@ describe('deploy', () => {
   });
 });
 
+/** Full docs/plans/*.md links, plus bare `name.md` links in the plans section. */
+function planPathsIn(agentsMd: string): string[] {
+  const full = [...agentsMd.matchAll(/docs\/plans\/([\w.-]+\.md)/g)].map((m) => `docs/plans/${m[1]}`);
+  const lines = agentsMd.split('\n');
+  const start = lines.findIndex((line) => line.startsWith('## Plans'));
+  const section: string[] = [];
+  if (start !== -1) {
+    for (const line of lines.slice(start + 1)) {
+      if (line.startsWith('## ')) break;
+      section.push(line);
+    }
+  }
+  const bare = [...section.join('\n').matchAll(/`([\w.-]+\.md)`/g)].map((m) => `docs/plans/${m[1]}`);
+  return [...new Set([...full, ...bare])].sort();
+}
+
 describe('AGENTS.md plan table', () => {
+  it('counts bare filenames in the plans section as docs/plans paths', () => {
+    const sample = [
+      'See `docs/plans/elsewhere.md`.',
+      '## Plans (source of truth for unfinished work)',
+      '| `docs/plans/full.md`, `bare-name.md` |',
+      '## Tests and verification',
+      'Ignore `not-a-plan.md`.',
+    ].join('\n');
+    expect(planPathsIn(sample)).toEqual([
+      'docs/plans/bare-name.md',
+      'docs/plans/elsewhere.md',
+      'docs/plans/full.md',
+    ]);
+  });
+
   it('every docs/plans path in AGENTS.md exists', () => {
-    const referenced = [
-      ...new Set([...read('AGENTS.md').matchAll(/docs\/plans\/[\w.-]+\.md/g)].map((m) => m[0])),
-    ].sort();
-    const missing = referenced.filter((path) => !existsSync(join(repoRoot, path)));
+    const missing = planPathsIn(read('AGENTS.md')).filter((path) => !existsSync(join(repoRoot, path)));
     expect(missing).toEqual([]);
   });
 });
+
+/** Static `from './x'`, `import './x'`, and `import('./x')`. Skips comments. */
+function relativeImportSpecifiers(text: string): string[] {
+  const specifier = /(?:\bfrom\s+|\bimport\s*(?:\(\s*)?)['"](\.\.?\/[^'"]+)['"]/g;
+  return text
+    .split('\n')
+    .filter((line) => {
+      const trimmed = line.trim();
+      return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*');
+    })
+    .flatMap((line) => [...line.matchAll(specifier)].map((match) => match[1]));
+}
 
 describe('extension/', () => {
   const manifest = JSON.parse(read('extension/manifest.json')) as {
@@ -165,5 +205,33 @@ describe('extension/', () => {
       return result.status === 0 ? [] : [`${path}: ${result.stderr.trim()}`];
     });
     expect(failures).toEqual([]);
+  });
+
+  it('reads static relative imports from non-comment lines', () => {
+    const text = [
+      "import { grabPageSource } from './extract-page.js';",
+      "import './side.js';",
+      "const loaded = import('./dyn.js');",
+      'import.meta.url;',
+      "// from './comment.js'",
+      "export { a } from '../lib/a.js';",
+    ].join('\n');
+    expect(relativeImportSpecifiers(text)).toEqual([
+      './extract-page.js',
+      './side.js',
+      './dyn.js',
+      '../lib/a.js',
+    ]);
+  });
+
+  it('every relative import resolves to a file', () => {
+    // node --check parses syntax and does not resolve specifiers.
+    const missing = filesUnder('extension', ['.js']).flatMap((path) =>
+      relativeImportSpecifiers(read(path)).flatMap((spec) => {
+        const resolved = join(repoRoot, dirname(path), spec);
+        return existsSync(resolved) ? [] : [`${path}: ${spec}`];
+      }),
+    );
+    expect(missing).toEqual([]);
   });
 });
