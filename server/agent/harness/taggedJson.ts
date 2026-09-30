@@ -10,7 +10,7 @@ function escapeRegExp(value: string): string {
  */
 export function wrapTaggedJson(tag: string, value: unknown): string {
   const closer = new RegExp(`<(\\s*/\\s*${escapeRegExp(tag)}\\s*>)`, 'gi');
-  const json = JSON.stringify(value).replace(closer, '<\\$1');
+  const json = JSON.stringify(value).replace(closer, '\\u003c$1');
   return `<${tag}>\n${json}\n</${tag}>`;
 }
 

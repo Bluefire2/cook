@@ -236,7 +236,20 @@ export function startAgent<Ctx>(opts: StartAgentOptions<Ctx>): Promise<StartAgen
 
     return {
       run(emit: (event: AgentEvent) => void): Promise<AgentRunSummary> {
-        return runLoop(emit);
+        const summary: AgentRunSummary = {
+          steps: 0,
+          calls: 0,
+          resultBytes: 0,
+          finish: 'text',
+        };
+        // Stop or the deadline can abort a model stream mid-read, which
+        // throws. That is an abort, not a failure.
+        return runLoop(emit, summary).catch((err: unknown) => {
+          if (opts.signal.aborted) {
+            return finishOnAbort(emit, summary);
+          }
+          throw err;
+        });
       },
     };
 
@@ -264,14 +277,10 @@ export function startAgent<Ctx>(opts: StartAgentOptions<Ctx>): Promise<StartAgen
       return summary;
     }
 
-    async function runLoop(emit: (event: AgentEvent) => void): Promise<AgentRunSummary> {
-      const summary: AgentRunSummary = {
-        steps: 0,
-        calls: 0,
-        resultBytes: 0,
-        finish: 'text',
-      };
-
+    async function runLoop(
+      emit: (event: AgentEvent) => void,
+      summary: AgentRunSummary,
+    ): Promise<AgentRunSummary> {
       const priorTurns: import('./types.ts').OpaqueTurn[] = [];
       let step = 1;
       let forceNext = false;

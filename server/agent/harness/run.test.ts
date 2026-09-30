@@ -5,7 +5,7 @@ import { encodeAgentEvent } from './ndjson.ts';
 import { googleModel } from './google.ts';
 import { startAgent } from './run.ts';
 import { toolResultBytes, unwrapTaggedJson, wrapTaggedJson } from './taggedJson.ts';
-import { ASSISTANT_UNAVAILABLE_CODE, ASSISTANT_UNAVAILABLE_MESSAGE, type AgentEvent, type CardSpec, type ToolSpec } from './types.ts';
+import { ASSISTANT_UNAVAILABLE_CODE, ASSISTANT_UNAVAILABLE_MESSAGE, type AgentEvent, type CardSpec, type ModelClient, type ToolSpec } from './types.ts';
 import {
   callChunk,
   chunkResponse,
@@ -728,6 +728,88 @@ describe('startAgent', () => {
       }
     });
     expect(summary.finish).toBe('aborted');
+  });
+
+  /** A model whose stream yields one text chunk, then throws the way the SDK does on abort. */
+  function modelThatThrowsAfterText(error: unknown): ModelClient {
+    return {
+      async step() {
+        async function* events() {
+          yield { kind: 'text' as const, d: 'partial' };
+          throw error;
+        }
+        return {
+          events: events(),
+          continueWith: async () => {
+            throw new Error('unused');
+          },
+          blocked: () => false,
+        };
+      },
+    };
+  }
+
+  it('finishes aborted when Stop aborts the model stream mid-read', async () => {
+    const ac = new AbortController();
+    const agent = await startAgent({
+      model: modelThatThrowsAfterText(new DOMException('This operation was aborted', 'AbortError')),
+      systemInstruction: 'sys',
+      messages: baseMessages,
+      tools: [],
+      cards: [],
+      ctx,
+      limits: defaultAgentLimits(),
+      signal: ac.signal,
+    });
+    const events: AgentEvent[] = [];
+    const summary = await agent.run((e) => {
+      events.push(e);
+      if (e.t === 'text') {
+        ac.abort();
+      }
+    });
+    expect(summary).toMatchObject({ finish: 'aborted', steps: 1 });
+    expect(events.some((e) => e.t === 'error' || e.t === 'done')).toBe(false);
+  });
+
+  it('emits the canned error when the deadline aborts the model stream mid-read', async () => {
+    const ac = new AbortController();
+    const agent = await startAgent({
+      model: modelThatThrowsAfterText(new DOMException('This operation was aborted', 'AbortError')),
+      systemInstruction: 'sys',
+      messages: baseMessages,
+      tools: [],
+      cards: [],
+      ctx,
+      limits: defaultAgentLimits(),
+      signal: ac.signal,
+    });
+    const events: AgentEvent[] = [];
+    const summary = await agent.run((e) => {
+      events.push(e);
+      if (e.t === 'text') {
+        ac.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+      }
+    });
+    expect(summary.finish).toBe('error');
+    expect(events.slice(-2)).toEqual([
+      { t: 'error', code: ASSISTANT_UNAVAILABLE_CODE, message: ASSISTANT_UNAVAILABLE_MESSAGE },
+      { t: 'done' },
+    ]);
+  });
+
+  it('still rejects when the model stream fails without an abort', async () => {
+    const agent = await startAgent({
+      model: modelThatThrowsAfterText(new Error('upstream 500')),
+      systemInstruction: 'sys',
+      messages: baseMessages,
+      tools: [],
+      cards: [],
+      ctx,
+      limits: defaultAgentLimits(),
+      signal: new AbortController().signal,
+    });
+    await expect(agent.run(() => {})).rejects.toThrow('upstream 500');
   });
 
   it('emits the canned error when the deadline fires between steps', async () => {
