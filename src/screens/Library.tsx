@@ -10,7 +10,12 @@ import { createInvite } from '../lib/adminApi';
 import { createMemberInvite } from '../lib/inviteApi';
 import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
 import { FolderIcon, PlusIcon, SettingsIcon, SharedIcon } from '../lib/icons';
-import { importHref, libraryHref, newRecipeHref } from '../lib/collectionHref';
+import {
+  importHref,
+  libraryHref,
+  missingCollectionAction,
+  newRecipeHref,
+} from '../lib/collectionHref';
 import { collectionStore, useCollections } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
 import {
@@ -80,6 +85,7 @@ export default function Library() {
   const [deleteCollectionOpen, setDeleteCollectionOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [leaveBusy, setLeaveBusy] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [collectionName, setCollectionName] = useState('');
   const [collectionError, setCollectionError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
@@ -210,6 +216,9 @@ export default function Library() {
     }
     const startedOn = shownCollectionId.current;
     setCollectionError(null);
+    // The collection leaves the list before the server answers. Hold the
+    // missing-collection redirect so a failed delete can still show its error.
+    setDeleteBusy(true);
     try {
       await collectionStore.remove(currentId);
       if (shownCollectionId.current !== startedOn) return;
@@ -220,6 +229,8 @@ export default function Library() {
       setCollectionError(
         err instanceof Error ? err.message : t('error.collectionDelete'),
       );
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -373,6 +384,39 @@ export default function Library() {
     setDeleteError(null);
     closeSheets();
   }, [collectionId]);
+
+  // A loaded library that no longer contains this id is not that collection.
+  // After a successful sync, leave the URL. Until then, and while an owned
+  // delete is still in flight, stay so a slow or failed pull is not treated
+  // as "gone". Rename, delete, leave, and share close when the id drops out
+  // of the loaded list; the delete hold keeps a rolled-back delete's error.
+  useLayoutEffect(() => {
+    const action = missingCollectionAction({
+      collectionId,
+      collectionIds: collections?.map((collection) => collection.id),
+      syncStatus: syncStatus.status,
+      lastSyncedAt: syncStatus.lastSyncedAt,
+      deleteInFlight: deleteBusy,
+    });
+    if (action.resetCollectionSheets) {
+      setRenameOpen(false);
+      setDeleteCollectionOpen(false);
+      setLeaveOpen(false);
+      setShareOpen(false);
+      setCollectionName('');
+      setCollectionError(null);
+    }
+    if (action.redirectTo !== null) {
+      navigate(action.redirectTo, { replace: true });
+    }
+  }, [
+    collectionId,
+    collections,
+    syncStatus.status,
+    syncStatus.lastSyncedAt,
+    deleteBusy,
+    navigate,
+  ]);
 
   useEffect(() => {
     if (!menuId) return;

@@ -33,10 +33,21 @@ the other plans that still say `/?c=`).
    `vite.config.ts` already excludes `/api/` and does not match
    `/collections/`; leave it alone. `/collections/:collectionId` stays
    on the SPA fallback.
-3. `Library` reads `useParams().collectionId` as `requestedId`. An
-   unknown or missing id still shows the default unfiled list and does
-   not redirect away. `currentId` is still set only when the id matches
-   a loaded collection.
+3. `Library` reads `useParams().collectionId` as the requested id.
+   `currentId` is set only when the id matches a loaded collection.
+   Once that load came from a successful sync and the id is not among
+   the collections, `Library` `replace`-navigates to `/`. The client
+   signal for that success is sync status `idle` with `lastSyncedAt`
+   set (`missingCollectionAction` in `src/lib/collectionHref.ts`).
+   Status `loading`, `error`, or `signedOut`, or `lastSyncedAt === null`,
+   stays on the URL and shows the unfiled list, so a slow or failed
+   first pull does not send a still-valid collection home. An owned
+   delete removes the collection locally before the server answers;
+   while that request is in flight the redirect waits, so a failed
+   delete can still show its error in the sheet. Amended for issue #58.
+   The earlier rule (unknown id stays on the URL and shows the unfiled
+   list, with no redirect) made revocation and stale Back look like the
+   default library.
 4. There are no legacy `?c=` redirects. The first version of this plan
    redirected `/?c=`, `/import?c=`, and `/recipe/new?c=`; that was
    removed on purpose. `Library`, `ImportScreen`, and `RecipeEdit` take
@@ -57,6 +68,12 @@ the other plans that still say `/?c=`).
    error in them, or navigate; it compares against `shownCollectionId`.
    The reset runs in `useLayoutEffect` so the old sheet never paints over
    the new collection.
+   Rename, delete, leave, and share also reset when the loaded library
+   no longer contains the path's id, even though the URL has not changed
+   yet. Without that, the sheet is only hidden by its `named &&` guard:
+   the flag still swallows Escape, and the sheet reappears if the
+   collection comes back. The in-flight owned delete in Decision 3 is
+   the exception, so its error still has a sheet if the delete rolls back.
 8. Search text and the All collections scope are kept in
    `sessionStorage` under `cook.librarySearch`
    (`src/lib/librarySearchMemory.ts`) so they also survive leaving
@@ -151,8 +168,9 @@ do not sign out.
   Clear the box, open a recipe, press Back: the box stays empty.
 - Open Rename on collection A, then Back to collection B: no sheet is
   open. Sign out: the stored search is gone.
-- `/collections/<unknown id>` stays on that URL and shows the unfiled
-  list after collections load.
+- `/collections/<unknown id>` `replace`-navigates to `/` after a
+  successful sync. While that pull is still loading, or if it fails,
+  the URL stays and the unfiled list shows.
 - From a named collection, Add → Import and Add → New recipe open
   `/collections/<id>/import` and `/collections/<id>/recipe/new`. Back
   links go to `/collections/<id>`. `/import?c=<id>` opens the plain
