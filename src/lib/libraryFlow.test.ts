@@ -80,6 +80,33 @@ describe('libraryFlowReducer', () => {
     expect(state.sheet.kind === 'create' && state.sheet.saving).toBe(false);
   });
 
+  it.each([
+    ['move', { type: 'openMove', recipeId: 'r1' }],
+    ['rename', { type: 'openRename', collectionId: 'c1', name: 'Old' }],
+  ] as const)('marks a %s as saving from submit until it fails', (_kind, openAction) => {
+    let state = run(openAction);
+    expect('saving' in state.sheet && state.sheet.saving).toBe(false);
+    const token = state.token;
+    state = libraryFlowReducer(state, { type: 'submitting', token });
+    expect('saving' in state.sheet && state.sheet.saving).toBe(true);
+    state = libraryFlowReducer(state, { type: 'failed', token, error: 'x' });
+    expect('saving' in state.sheet && state.sheet.saving).toBe(false);
+    expect(sheetError(state.sheet)).toBe('x');
+  });
+
+  it.each([
+    ['move', { type: 'openMove', recipeId: 'r1' }],
+    ['rename', { type: 'openRename', collectionId: 'c1', name: 'Old' }],
+  ] as const)('a stale submit does not mark a newer %s sheet as saving', (_kind, openAction) => {
+    let state = run(openAction);
+    const stale = state.token;
+    state = libraryFlowReducer(state, { type: 'close' });
+    state = libraryFlowReducer(state, openAction);
+    const fresh = state;
+    expect(libraryFlowReducer(state, { type: 'submitting', token: stale })).toBe(fresh);
+    expect(libraryFlowReducer(state, { type: 'failed', token: stale, error: 'x' })).toBe(fresh);
+  });
+
   it('clears the name and error when a sheet is closed and reopened', () => {
     let state = run({ type: 'startCreate' }, { type: 'setName', name: 'Soups' });
     state = libraryFlowReducer(state, { type: 'failed', token: state.token, error: 'nope' });

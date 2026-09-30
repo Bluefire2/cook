@@ -187,9 +187,11 @@ one sheet is open. Each sheet kind carries what its workflow needs:
 - the move's recipe id;
 - the collection that a create which failed partway already made, so a retry
   reuses it instead of making a second one;
-- the create's `saving` flag, set by `submitting` and cleared only by a
-  failure. It disables the submit, so a second click can't start a second
-  create before the first has recorded its collection;
+- a `saving` flag on create, move and rename, set by `submitting` and cleared
+  only by a failure. It disables the sheet's inputs and submit controls, so
+  one submit runs at a time and what lands is what was submitted: a second
+  click can't start a second create before the first has recorded its
+  collection, move the recipe somewhere else, or push a different name;
 - the leave sheet's collection name, so it can still title itself after the
   collection drops out of the list.
 
@@ -200,7 +202,12 @@ requires the screen to still be mounted, so leaving Library ends every
 workflow. A late result can't navigate away from the screen the user went to,
 and a cancelled create can't go on to move a recipe the user has since put
 elsewhere (`runCreate` in `libraryFlow.ts`). The reducer ignores completions
-whose token doesn't match. Side effects (store calls, navigation, clipboard) stay in
+whose token doesn't match.
+
+A result shown outside a sheet has no sheet token to check, such as the
+recipe-delete error, whose sheet closes before the request. It is written
+only if Library is still mounted and still on the collection where the
+request started. Side effects (store calls, navigation, clipboard) stay in
 handlers, never in the reducer.
 
 State that belongs to a request rather than a dialog, and must outlive the
@@ -229,8 +236,9 @@ environment with no DOM testing library:
   changes nothing publishes nothing (`libraryMemory.test.ts`);
 - selector stability for every export of `librarySelectors.ts`
   (`librarySelectors.test.ts`);
-- reducer transitions, including stale tokens and the create's `saving` flag,
-  and `runCreate`'s token checks between steps (`libraryFlow.test.ts`);
+- reducer transitions, including stale tokens and the `saving` flag on create,
+  move and rename, and `runCreate`'s token checks between steps
+  (`libraryFlow.test.ts`);
 - the checks in `scripts/invariants.test.ts`.
 
 Anything that depends on how React re-renders is checked in the browser.

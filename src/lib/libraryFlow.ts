@@ -6,12 +6,18 @@
  * `token` changes whenever a sheet opens or closes. An async submit captures
  * it at the start; completions from an older token are ignored, so a late
  * result cannot close or overwrite a sheet the user opened since.
+ *
+ * `saving` on create, move and rename is true from `submitting` until the
+ * attempt fails or the sheet closes. It disables the sheet's inputs and
+ * submit controls, so one submit runs at a time and what lands is what was
+ * submitted. A second create before `created` lands would make a second
+ * collection; a second move or rename could land a different choice.
  */
 export type LibrarySheet =
   | { kind: 'closed' }
   | { kind: 'add' }
   | { kind: 'deleteRecipe'; recipeId: string }
-  | { kind: 'move'; recipeId: string; error?: string }
+  | { kind: 'move'; recipeId: string; saving: boolean; error?: string }
   | {
       kind: 'create';
       /** Set when the new collection is the destination of a move. */
@@ -19,14 +25,10 @@ export type LibrarySheet =
       name: string;
       /** A collection an earlier attempt already created; retries reuse it. */
       created?: { id: string; name: string };
-      /**
-       * True from `submitting` until the attempt fails or the sheet closes.
-       * A second submit before `created` lands would make a second collection.
-       */
       saving: boolean;
       error?: string;
     }
-  | { kind: 'rename'; collectionId: string; name: string; error?: string }
+  | { kind: 'rename'; collectionId: string; name: string; saving: boolean; error?: string }
   | { kind: 'deleteCollection'; collectionId: string; error?: string }
   /** `name` is kept so the sheet can still title itself once the collection has left the list. */
   | { kind: 'leave'; collectionId: string; name: string; error?: string }
@@ -70,7 +72,7 @@ export function libraryFlowReducer(
     case 'openDeleteRecipe':
       return open(state, { kind: 'deleteRecipe', recipeId: action.recipeId });
     case 'openMove':
-      return open(state, { kind: 'move', recipeId: action.recipeId });
+      return open(state, { kind: 'move', recipeId: action.recipeId, saving: false });
     case 'startCreate':
       return open(state, {
         kind: 'create',
@@ -83,6 +85,7 @@ export function libraryFlowReducer(
         kind: 'rename',
         collectionId: action.collectionId,
         name: action.name,
+        saving: false,
       });
     case 'openDeleteCollection':
       return open(state, { kind: 'deleteCollection', collectionId: action.collectionId });
@@ -107,10 +110,10 @@ export function libraryFlowReducer(
       }
       switch (sheet.kind) {
         case 'create':
-          return { ...state, sheet: { ...sheet, saving: true, error: undefined } };
-        case 'leave':
         case 'move':
         case 'rename':
+          return { ...state, sheet: { ...sheet, saving: true, error: undefined } };
+        case 'leave':
         case 'deleteCollection':
           return { ...state, sheet: { ...sheet, error: undefined } };
         default:
@@ -127,10 +130,10 @@ export function libraryFlowReducer(
       }
       switch (sheet.kind) {
         case 'create':
-          return { ...state, sheet: { ...sheet, saving: false, error: action.error } };
-        case 'leave':
         case 'move':
         case 'rename':
+          return { ...state, sheet: { ...sheet, saving: false, error: action.error } };
+        case 'leave':
         case 'deleteCollection':
           return { ...state, sheet: { ...sheet, error: action.error } };
         default:

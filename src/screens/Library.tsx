@@ -127,6 +127,11 @@ export default function Library() {
     sheet.kind === 'move' ? allRecipes?.find((r) => r.id === sheet.recipeId) : undefined;
   const collectionName = sheet.kind === 'create' || sheet.kind === 'rename' ? sheet.name : '';
   const collectionError = sheetError(sheet);
+  // While a create, move or rename is saving, its inputs and submit controls
+  // are disabled, so one submit runs at a time and what lands is what was sent.
+  const sheetSaving =
+    (sheet.kind === 'create' || sheet.kind === 'move' || sheet.kind === 'rename') &&
+    sheet.saving;
   const setCollectionName = (name: string) => dispatch({ type: 'setName', name });
   // A workflow is current while its sheet is the one open and Library is
   // still mounted: after unmount, a late result must not navigate away from
@@ -143,9 +148,14 @@ export default function Library() {
   const remove = async (id: string) => {
     dispatch({ type: 'close' });
     setDeleteError(null);
+    // The sheet is already closed, so there is no sheet token to check. The
+    // error belongs to the collection the delete started on, and only while
+    // Library is still showing it.
+    const startedOn = shownCollectionId.current;
     try {
       await recipeStore.remove(id);
     } catch (err) {
+      if (!mountedRef.current || shownCollectionId.current !== startedOn) return;
       setDeleteError(err instanceof Error ? err.message : t('error.recipeDelete'));
     }
   };
@@ -184,7 +194,7 @@ export default function Library() {
   };
 
   const submitMove = async (dest: 'default' | string) => {
-    if (sheet.kind !== 'move') {
+    if (sheet.kind !== 'move' || sheet.saving) {
       return;
     }
     const { token } = flow;
@@ -204,7 +214,7 @@ export default function Library() {
   };
 
   const submitRename = async () => {
-    if (sheet.kind !== 'rename') {
+    if (sheet.kind !== 'rename' || sheet.saving) {
       return;
     }
     const { token } = flow;
@@ -870,8 +880,9 @@ export default function Library() {
           <h2 className="text-lg font-semibold">{t('library.moveTitle', { title: moveRecipe.title })}</h2>
           <button
             type="button"
+            disabled={sheetSaving}
             onClick={() => void submitMove('default')}
-            className={`${secondaryBtn} mt-3 w-full py-3`}
+            className={`${secondaryBtn} mt-3 w-full py-3 disabled:opacity-40`}
           >
             {t('library.recipes')}
           </button>
@@ -879,8 +890,9 @@ export default function Library() {
             <button
               key={collection.id}
               type="button"
+              disabled={sheetSaving}
               onClick={() => void submitMove(collection.id)}
-              className={`${secondaryBtn} mt-2 w-full py-3`}
+              className={`${secondaryBtn} mt-2 w-full py-3 disabled:opacity-40`}
             >
               {collection.name}
             </button>
@@ -890,6 +902,7 @@ export default function Library() {
           )}
           <button
             type="button"
+            disabled={sheetSaving}
             onClick={() => dispatch({ type: 'startCreate' })}
             className={`${primaryBtn} mt-2 w-full py-3`}
           >
@@ -917,16 +930,17 @@ export default function Library() {
             <input
               autoFocus
               value={collectionName}
+              disabled={sheetSaving}
               onChange={(e) => setCollectionName(e.target.value)}
               placeholder={t('common.name')}
-              className={`${inputClass} mt-3`}
+              className={`${inputClass} mt-3 disabled:opacity-60`}
             />
             {collectionError && (
               <p className="mt-2 text-sm text-danger">{collectionError}</p>
             )}
             <button
               type="submit"
-              disabled={collectionName.trim() === '' || sheet.saving}
+              disabled={collectionName.trim() === '' || sheetSaving}
               className={`${primaryBtn} mt-3 w-full py-3`}
             >
               {t('library.create')}
@@ -954,14 +968,16 @@ export default function Library() {
             <input
               autoFocus
               value={collectionName}
+              disabled={sheetSaving}
               onChange={(e) => setCollectionName(e.target.value)}
-              className={`${inputClass} mt-3`}
+              className={`${inputClass} mt-3 disabled:opacity-60`}
             />
             {collectionError && (
               <p className="mt-2 text-sm text-danger">{collectionError}</p>
             )}
             <button
               type="submit"
+              disabled={sheetSaving}
               className={`${primaryBtn} mt-3 w-full py-3`}
             >
               {t('common.save')}
