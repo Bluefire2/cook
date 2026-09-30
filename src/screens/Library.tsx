@@ -495,6 +495,27 @@ export default function Library() {
         </div>
       )}
 
+      {collections !== undefined && collections.length === 0 && sessionStatus === 'signedIn' && (
+        // Nothing shared by you or with you yet: say where sharing starts.
+        <div className="mb-3 flex items-start gap-1.5">
+          <FolderIcon className="mt-2 block h-4 w-4 shrink-0 text-ink-muted" />
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-muted">
+            <span>{t('library.collectionsEmpty')}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setCollectionName('');
+                setCollectionError(null);
+                setCreateOpen(true);
+              }}
+              className="rounded-full px-3 py-1.5 text-sm text-ink-muted underline hover:text-ink"
+            >
+              {t('common.newCollection')}
+            </button>
+          </div>
+        </div>
+      )}
+
       {showSwitcher && (
         <nav aria-label={t('library.collectionsNav')} className="mb-3 flex items-start gap-1.5">
           <FolderIcon className="mt-2 block h-4 w-4 shrink-0 text-ink-muted" />
@@ -593,7 +614,7 @@ export default function Library() {
               setCollectionError(null);
               setLeaveOpen(true);
             }}
-            className="shrink-0 text-sm text-danger hover:underline"
+            className="-my-1.5 -mr-2 shrink-0 rounded-full px-3 py-2 text-sm text-danger hover:bg-danger-bg active:bg-danger-bg"
           >
             {t('library.leave')}
           </button>

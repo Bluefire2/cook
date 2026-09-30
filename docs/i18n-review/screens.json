@@ -6,6 +6,12 @@
     "needsData": true
   },
   {
+    "id": "library-collections-empty",
+    "route": "/",
+    "setup": "Signed in on the Recipes list in an account that has no collections at all (yours or shared with you), so a folder icon, the sentence about putting recipes in a collection to share them, and a \"New collection\" link show above the search box and there is no collection chip row. Do not press New collection and do not create a collection. If the account already has any collection, mark skipped: needs data. A signed-in header shows Invite before Cooks. Do not click Invite.",
+    "needsData": true
+  },
+  {
     "id": "library-populated",
     "route": "/",
     "setup": "Signed in on the Recipes list (/) or an own named collection (/collections/<id>) that already shows at least one recipe card. Prefer / when it has cards. Do not create a recipe. If nothing is listed, mark skipped: needs data. A signed-in header shows Invite before Cooks. Do not click Invite.",
@@ -194,13 +200,19 @@
   {
     "id": "share-collection-sheet",
     "route": "/collections/:collectionId",
-    "setup": "Open one of your own named collections (not a shared-with-you folder) and tap Share. The sheet explains viewers and editors, and the email row has a role menu (Viewer / Editor). Opening the sheet only reads the grant list. Prefer a collection whose sheet says \"Nobody else can see this yet.\" Do not type an email, and do not add, change a role, or remove a person. If every own collection already lists grantees, redact those emails before judging, or mark skipped: shows another member's data. If you have no own named collection, mark skipped: needs data. Do not create one.",
+    "setup": "Open one of your own named collections (not a shared-with-you folder) and tap Share. The sheet shows a two-sentence intro about editors and who can delete, the email row with a role menu (Viewer / Editor) and the Share button, then a \"People with access\" heading. The first row is your own email with an Owner badge. Each other row shows an email, a role menu (Viewer / Editor) and Remove; on a phone the email is on its own line above the controls. With nobody else added the list says \"Nobody else can see this yet.\" below the Owner row. Opening the sheet only reads the grant list. Prefer a collection whose sheet says \"Nobody else can see this yet.\" Do not type an email, and do not add, change a role, or remove a person. If every own collection already lists grantees, redact those emails before judging (your own email on the Owner row is fine), or mark skipped: shows another member's data. If you have no own named collection, mark skipped: needs data. Do not create one.",
     "needsData": true
   },
   {
     "id": "share-collection-sheet-links",
     "route": "/collections/:collectionId",
     "setup": "In the Share sheet of one of your own named collections, scroll to \"Share by link\": heading, the sentence about joining until you revoke the link or 7 days pass, the role menu (Viewer / Editor) for people who join by link, the Copy link button, and the live-link list. Opening the sheet only reads the link list. With no live links the list says \"No live links.\"; if the collection already has live links, each row shows Viewer link or Editor link, an \"expires in …\" line, and Revoke, and one sentence under the list says someone you remove can still rejoin with a live link until it is revoked; capture that too. Link errors (for example the live-link cap) show under the Copy link row, not under the email field. Do not press Copy link (it creates a link) and do not press Revoke. Same grantee-email rule as share-collection-sheet: redact emails in the people list above, or mark skipped: shows another member's data. If you have no own named collection, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "share-collection-sheet-offline",
+    "route": "/collections/:collectionId",
+    "setup": "The Share sheet of one of your own named collections opened while the browser is offline (DevTools Network: Offline, or switch the network off after the collection screen has loaded, then tap Share). Neither list can load, so the \"People with access\" list shows the Owner row and then \"You're offline. Try again when you're back online.\" with a Try again button, and the live-link list under \"Share by link\" shows the same line with its own Try again. Neither list says \"Nobody else can see this yet.\" or \"No live links.\". Then type a placeholder address (for example someone@example.invalid) and press Share: while offline no request reaches the server, so nothing is written, and the same offline sentence shows under the email field. Do not go back online while the address is typed, and do not press Try again online. Nothing else is pressed. If the run cannot go offline, mark skipped: needs data.",
     "needsData": true
   },
   {
@@ -242,7 +254,13 @@
   {
     "id": "recipe-view-shared",
     "route": "/recipe/:id",
-    "setup": "Open a recipe from a viewer share (no Edit link). The translate chip works the same as on an owned recipe. Do not change servings, checks, or steps. Do not tap the translate chip. If there is no viewer share, mark skipped: needs data. Recipe content is another member's data: redact it before judging, or mark skipped: shows another member's data. The review never creates a share.",
+    "setup": "Open a recipe from a viewer share (no Edit link). Under the Library / Edit row a muted strip says who shared it and \"View only.\" (\"Shared with you by … View only.\", or \"Shared with you. View only.\" when the owner's email is unknown). The translate chip works the same as on an owned recipe. Do not change servings, checks, or steps. Do not tap the translate chip. If there is no viewer share, mark skipped: needs data. Recipe content and the owner's email are another member's data: redact them before judging, or mark skipped: shows another member's data. The review never creates a share.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-shared-editor",
+    "route": "/recipe/:id",
+    "setup": "Open a recipe from a collection shared with you as an editor. Under the Library / Edit row the muted strip says who shared it and \"You can edit this recipe.\" (or \"Shared with you. You can edit this recipe.\" when the owner's email is unknown), and the Edit link is showing. Do not tap Edit, do not change servings, checks, or steps, and do not tap the translate chip. If there is no editor share, mark skipped: needs data. Recipe content and the owner's email are another member's data: redact them before judging, or mark skipped: shows another member's data. The review never creates a share.",
     "needsData": true
   },
   {

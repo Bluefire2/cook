@@ -318,6 +318,12 @@ export const recipeStore = {
     return isSharedRecipe(id);
   },
 
+  /** Email of whoever shared this recipe with you, when known. */
+  sharedBy(id: string): string | undefined {
+    const origin = getRecipeOrigin(id);
+    return origin?.kind === 'shared' ? origin.ownerEmail : undefined;
+  },
+
   /** `editor` when a shared recipe may be edited here (text only, not photos). */
   access(id: string): LibraryAccess | undefined {
     return recipeAccess(id);

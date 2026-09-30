@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocale, useT } from '../i18n';
 import Sheet from './Sheet';
 import {
@@ -8,6 +8,14 @@ import {
 } from '../lib/collectionStore';
 import { relativeExpiryLabel } from '../lib/relativeTime';
 import type { CollectionGrant, CollectionLink, GrantRole } from '../lib/remote';
+import { useSession } from '../lib/session';
+import {
+  deriveGrantRows,
+  withGrant,
+  withGrantRole,
+  withoutGrant,
+  type GrantPending,
+} from '../lib/shareRows';
 import {
   cellClass,
   dangerBtn,
@@ -26,13 +34,22 @@ export default function ShareCollectionSheet({
 }) {
   const t = useT();
   const locale = useLocale();
+  const { user } = useSession();
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<GrantRole>('viewer');
+  // `undefined` until a load succeeds. A failed load leaves it `undefined`
+  // (with `grantsLoadError` set) instead of showing an empty list, which
+  // would claim nobody has access.
   const [grants, setGrants] = useState<CollectionGrant[] | undefined>(undefined);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [grantsLoadError, setGrantsLoadError] = useState<string | null>(null);
+  // Add failures show under the email field; row failures show above the list.
+  const [formError, setFormError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [pending, setPending] = useState<GrantPending | null>(null);
   const [links, setLinks] = useState<CollectionLink[] | undefined>(undefined);
-  // Link list/mint/revoke errors show in the link block, not under the email form.
+  const [linksLoadError, setLinksLoadError] = useState<string | null>(null);
+  const [linkBusy, setLinkBusy] = useState(false);
+  // Link mint/revoke errors show in the link block, not under the email form.
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkRole, setLinkRole] = useState<GrantRole>('viewer');
   // The raw link is only in this state: the server never returns it again.
@@ -40,39 +57,78 @@ export default function ShareCollectionSheet({
   const [copied, setCopied] = useState(false);
   // Hidden as soon as its link is revoked or drops out of a refreshed list.
   const mintedUrl = visibleMintedUrl(minted, links);
+  const busy = pending !== null || linkBusy;
+  // One request at a time. State alone cannot stop a second submit that lands
+  // before the re-render that disables the controls.
+  const inFlight = useRef(false);
+  // Only the newest load or write result may set a list. A slow first load
+  // must not overwrite a list an add has already updated.
+  const grantsSeq = useRef(0);
+  const linksSeq = useRef(0);
+  // Focusing the email field on a phone raises the keyboard over the people list.
+  const [finePointer] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches === true,
+  );
+
+  const applyGrants = useCallback((rows: CollectionGrant[]) => {
+    grantsSeq.current += 1;
+    setGrants(rows);
+    setGrantsLoadError(null);
+  }, []);
+
+  const applyLinks = useCallback((rows: CollectionLink[]) => {
+    linksSeq.current += 1;
+    setLinks(rows);
+    setLinksLoadError(null);
+  }, []);
+
+  // `quiet` keeps the list on screen when the read fails (a reconcile after a
+  // write); otherwise a failure is shown as a load error with Try again.
+  const loadGrants = useCallback(
+    async (quiet: boolean) => {
+      const seq = ++grantsSeq.current;
+      try {
+        const rows = await collectionStore.listGrants(collection.id);
+        if (seq === grantsSeq.current) {
+          setGrants(rows);
+          setGrantsLoadError(null);
+        }
+      } catch (err) {
+        if (seq === grantsSeq.current && !quiet) {
+          setGrantsLoadError(err instanceof Error ? err.message : t('error.sharingLoad'));
+        }
+      }
+    },
+    [collection.id],
+  );
+
+  const loadLinks = useCallback(
+    async () => {
+      const seq = ++linksSeq.current;
+      try {
+        const rows = await collectionStore.listLinks(collection.id);
+        if (seq === linksSeq.current) {
+          setLinks(rows);
+          setLinksLoadError(null);
+        }
+      } catch (err) {
+        if (seq === linksSeq.current) {
+          setLinksLoadError(err instanceof Error ? err.message : t('error.sharingLoad'));
+        }
+      }
+    },
+    [collection.id],
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    void collectionStore
-      .listGrants(collection.id)
-      .then((rows) => {
-        if (!cancelled) {
-          setGrants(rows);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : t('error.sharingLoad'));
-          setGrants([]);
-        }
-      });
-    void collectionStore
-      .listLinks(collection.id)
-      .then((rows) => {
-        if (!cancelled) {
-          setLinks(rows);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setLinkError(err instanceof Error ? err.message : t('error.sharingLoad'));
-          setLinks([]);
-        }
-      });
+    void loadGrants(false);
+    void loadLinks();
     return () => {
-      cancelled = true;
+      // A result that lands after the sheet closed is stale.
+      grantsSeq.current += 1;
+      linksSeq.current += 1;
     };
-  }, [collection.id]);
+  }, [loadGrants, loadLinks]);
 
   const copyUrl = async (url: string) => {
     try {
@@ -85,76 +141,111 @@ export default function ShareCollectionSheet({
   };
 
   const createLink = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setLinkError(null);
-    setBusy(true);
+    setLinkBusy(true);
     setCopied(false);
     try {
       const created = await collectionStore.createLink(collection.id, linkRole);
-      setLinks(created.links);
+      applyLinks(created.links);
       setMinted({ url: created.url, id: created.linkId });
       await copyUrl(created.url);
     } catch (err) {
       setLinkError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
-      setBusy(false);
+      inFlight.current = false;
+      setLinkBusy(false);
     }
   };
 
   const revokeLink = async (linkId: string) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setLinkError(null);
-    setBusy(true);
+    setLinkBusy(true);
     try {
-      setLinks(await collectionStore.revokeLink(collection.id, linkId, links ?? []));
+      applyLinks(await collectionStore.revokeLink(collection.id, linkId, links ?? []));
       if (minted?.id === linkId) {
         setMinted(null);
       }
     } catch (err) {
       setLinkError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
-      setBusy(false);
+      inFlight.current = false;
+      setLinkBusy(false);
     }
   };
 
   const add = async () => {
-    setError(null);
-    setBusy(true);
+    const target = email.trim();
+    if (inFlight.current || target === '') return;
+    inFlight.current = true;
+    setFormError(null);
+    setListError(null);
+    setPending({ kind: 'add', email: target, role });
     try {
-      await collectionStore.addGrant(collection.id, email, role);
+      const grant = await collectionStore.addGrant(collection.id, target, role);
       setEmail('');
       setRole('viewer');
-      setGrants(await collectionStore.listGrants(collection.id));
+      if (grants === undefined) {
+        // The list never loaded, so a merge would present a partial list as whole.
+        void loadGrants(false);
+      } else {
+        // The server accepted the grant and sent it back: show that row now,
+        // then reconcile quietly (a failed read must not undo a saved add).
+        applyGrants(withGrant(grants, grant));
+        void loadGrants(true);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
+      setFormError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
-      setBusy(false);
+      inFlight.current = false;
+      setPending(null);
     }
   };
 
   const changeRole = async (sub: string, next: GrantRole) => {
-    setError(null);
-    setBusy(true);
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setListError(null);
+    setPending({ kind: 'role', sub, role: next });
     try {
       await collectionStore.setGrantRole(collection.id, sub, next);
-      setGrants(await collectionStore.listGrants(collection.id));
+      if (grants !== undefined) {
+        applyGrants(withGrantRole(grants, sub, next));
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
+      setListError(err instanceof Error ? err.message : t('error.sharingUpdate'));
+      // The row snaps back to the server's role; reread in case it changed elsewhere.
+      void loadGrants(true);
     } finally {
-      setBusy(false);
+      inFlight.current = false;
+      setPending(null);
     }
   };
 
   const revoke = async (sub: string) => {
-    setError(null);
-    setBusy(true);
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setListError(null);
+    setPending({ kind: 'remove', sub });
     try {
       await collectionStore.revokeGrant(collection.id, sub);
-      setGrants(await collectionStore.listGrants(collection.id));
+      if (grants !== undefined) {
+        applyGrants(withoutGrant(grants, sub));
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
+      setListError(err instanceof Error ? err.message : t('error.sharingUpdate'));
+      void loadGrants(true);
     } finally {
-      setBusy(false);
+      inFlight.current = false;
+      setPending(null);
     }
   };
+
+  const rows = deriveGrantRows(grants ?? [], pending);
+  const addingNew = pending?.kind === 'add';
 
   return (
     <Sheet onClose={onClose} dismissible={!busy}>
@@ -168,52 +259,113 @@ export default function ShareCollectionSheet({
       >
         <div className="mt-3 flex gap-2">
           <input
-            autoFocus
+            autoFocus={finePointer}
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setFormError(null);
+            }}
             placeholder={t('share.emailPlaceholder')}
+            aria-label={t('share.emailPlaceholder')}
+            autoCapitalize="none"
+            spellCheck={false}
             disabled={busy}
             className={`${inputClass} min-w-0 flex-1`}
           />
-          <RoleSelect value={role} onChange={setRole} disabled={busy} />
+          <RoleSelect
+            value={role}
+            onChange={(next) => {
+              setRole(next);
+              setFormError(null);
+            }}
+            disabled={busy}
+          />
         </div>
-        {error && <p className="mt-2 text-sm text-danger">{error}</p>}
+        {formError && (
+          <p role="alert" className="mt-2 text-sm text-danger">
+            {formError}
+          </p>
+        )}
         <button
           type="submit"
           disabled={busy || email.trim() === ''}
           className={`${primaryBtn} mt-3 w-full py-3`}
         >
-          {t('common.share')}
+          {addingNew ? t('common.saving') : t('common.share')}
         </button>
       </form>
-      <ul className="mt-4 flex flex-col gap-2">
-        {grants === undefined && (
+      <h3 className="mt-5 text-sm font-semibold">{t('share.peopleTitle')}</h3>
+      {listError && (
+        <p role="alert" className="mt-2 text-sm text-danger">
+          {listError}
+        </p>
+      )}
+      <ul className="mt-2 flex flex-col gap-2.5">
+        {user !== null && (
+          <li className="flex items-center justify-between gap-2 text-sm">
+            <span className="min-w-0 flex-1 truncate" title={user.email}>
+              {user.email}
+            </span>
+            <span className="shrink-0 rounded-full bg-surface-muted px-2.5 py-1 text-xs text-ink-muted">
+              {t('share.owner')}
+            </span>
+          </li>
+        )}
+        {grants === undefined && grantsLoadError === null && (
           <li className="text-sm text-ink-muted">{t('common.loading')}</li>
         )}
-        {grants?.length === 0 && (
+        {grants === undefined && grantsLoadError !== null && (
+          <LoadFailed message={grantsLoadError} onRetry={() => void loadGrants(false)} />
+        )}
+        {grants !== undefined && rows.length === 0 && (
           <li className="text-sm text-ink-muted">{t('share.nobodyYet')}</li>
         )}
-        {grants?.map((grant) => (
+        {rows.map((row) => (
           <li
-            key={grant.sub}
-            className="flex items-center justify-between gap-2 text-sm"
+            key={row.key}
+            aria-busy={row.state !== 'saved'}
+            className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-sm ${
+              row.state === 'saved' ? '' : 'opacity-60'
+            }`}
           >
-            <span className="min-w-0 flex-1 truncate">{grant.email}</span>
-            <RoleSelect
-              value={grant.role ?? 'viewer'}
-              onChange={(next) => void changeRole(grant.sub, next)}
-              disabled={busy}
-              label={t('share.roleFor', { email: grant.email })}
-            />
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void revoke(grant.sub)}
-              className={`${dangerBtn} px-3 py-1.5 text-xs`}
-            >
-              {t('common.remove')}
-            </button>
+            {/* Phone: the whole email on its own line, controls below it. */}
+            <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
+              <span className="block truncate" title={row.email}>
+                {row.email}
+              </span>
+              {row.state !== 'saved' && (
+                <span className="block text-xs text-ink-muted" role="status">
+                  {t('common.saving')}
+                </span>
+              )}
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              {row.sub === undefined ? (
+                // Not saved yet, so no controls: there is nothing to change or remove.
+                <span className="rounded-full bg-surface-muted px-2.5 py-1 text-xs text-ink-muted">
+                  {row.role === 'editor' ? t('share.editor') : t('share.viewer')}
+                </span>
+              ) : (
+                <>
+                  <RoleSelect
+                    value={row.role}
+                    onChange={(next) => void changeRole(row.sub!, next)}
+                    disabled={busy}
+                    label={t('share.roleFor', { email: row.email })}
+                  />
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void revoke(row.sub!)}
+                    aria-label={t('share.removeFor', { email: row.email })}
+                    className={`${dangerBtn} px-3 py-1.5 text-xs disabled:opacity-40`}
+                  >
+                    {t('common.remove')}
+                  </button>
+                </>
+              )}
+            </div>
           </li>
         ))}
       </ul>
@@ -230,12 +382,16 @@ export default function ShareCollectionSheet({
           type="button"
           disabled={busy}
           onClick={() => void createLink()}
-          className={`${secondaryBtn} min-w-0 flex-1 py-2`}
+          className={`${secondaryBtn} min-w-0 flex-1 py-2 disabled:opacity-40`}
         >
           {t('share.copyLink')}
         </button>
       </div>
-      {linkError && <p className="mt-2 text-sm text-danger">{linkError}</p>}
+      {linkError && (
+        <p role="alert" className="mt-2 text-sm text-danger">
+          {linkError}
+        </p>
+      )}
       {mintedUrl !== null && (
         <div className="mt-3">
           <label className="text-xs text-ink-muted" htmlFor="minted-collection-link">
@@ -260,8 +416,11 @@ export default function ShareCollectionSheet({
         </div>
       )}
       <ul className="mt-3 flex flex-col gap-2">
-        {links === undefined && (
+        {links === undefined && linksLoadError === null && (
           <li className="text-sm text-ink-muted">{t('common.loading')}</li>
+        )}
+        {links === undefined && linksLoadError !== null && (
+          <LoadFailed message={linksLoadError} onRetry={() => void loadLinks()} />
         )}
         {links?.length === 0 && (
           <li className="text-sm text-ink-muted">{t('share.noLinks')}</li>
@@ -285,7 +444,7 @@ export default function ShareCollectionSheet({
                   ? t('share.revokeEditorLink')
                   : t('share.revokeViewerLink')
               }
-              className={`${dangerBtn} shrink-0 px-3 py-1.5 text-xs`}
+              className={`${dangerBtn} shrink-0 px-3 py-1.5 text-xs disabled:opacity-40`}
             >
               {t('share.revoke')}
             </button>
@@ -307,6 +466,25 @@ export default function ShareCollectionSheet({
   );
 }
 
+/** A list that could not be read: the server's reason and a retry, never an empty list. */
+function LoadFailed({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const t = useT();
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 text-sm">
+      <span role="alert" className="min-w-0 flex-1 text-danger">
+        {message}
+      </span>
+      <button
+        type="button"
+        onClick={onRetry}
+        className={`${secondaryBtn} shrink-0 px-3 py-1.5 text-xs`}
+      >
+        {t('common.tryAgain')}
+      </button>
+    </li>
+  );
+}
+
 function RoleSelect({
   value,
   onChange,
@@ -325,7 +503,7 @@ function RoleSelect({
       value={value}
       disabled={disabled}
       onChange={(e) => onChange(e.target.value === 'editor' ? 'editor' : 'viewer')}
-      className={`${cellClass} shrink-0 bg-surface text-sm`}
+      className={`${cellClass} shrink-0 bg-surface text-sm disabled:opacity-60`}
     >
       <option value="viewer">{t('share.viewer')}</option>
       <option value="editor">{t('share.editor')}</option>

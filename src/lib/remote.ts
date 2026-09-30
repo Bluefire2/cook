@@ -538,7 +538,11 @@ async function sharingRequest(
       ...init,
     });
   } catch {
-    return { kind: 'error', message: t('error.sharingUpdate') };
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    return {
+      kind: 'error',
+      message: t(offline ? 'error.sharingOffline' : 'error.sharingUpdate'),
+    };
   }
   if (response.status === 401 || response.status === 403) {
     invalidateSession();
