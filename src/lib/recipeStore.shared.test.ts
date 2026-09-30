@@ -144,7 +144,7 @@ describe('shared recipe access', () => {
       ]),
       new Map([[VIEW_COLLECTION, collection(VIEW_COLLECTION, [EDITABLE_ID])]]),
       new Map<string, ItemOrigin>([
-        [VIEW_COLLECTION, { ...shared(), ownerEmail: 'owner@example.com' }],
+        [VIEW_COLLECTION, { kind: 'shared', ownerSub: 'owner', ownerEmail: 'owner@example.com' }],
       ]),
     );
     expect(next.get(EDITABLE_ID)).toMatchObject({ ownerEmail: 'owner@example.com' });
