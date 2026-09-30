@@ -92,7 +92,7 @@ async function putCookLog(next: CookLog, previous: CookLog | undefined): Promise
       } else {
         removeCookLogLocal(next.id);
       }
-      throw err;
+      return { value: undefined, reconcile: false, error: err };
     }
     await deleteRemovedPhotos(previous, next);
     return { value: undefined, reconcile: true };
@@ -134,7 +134,11 @@ export const cookLogStore = {
         if (previous) {
           upsertCookLog(previous);
         }
-        throw pushError(result, t('error.cookLogDelete'));
+        return {
+          value: undefined,
+          reconcile: false,
+          error: pushError(result, t('error.cookLogDelete')),
+        };
       }
       for (const photoId of photoIds) {
         dropPhoto(photoId);

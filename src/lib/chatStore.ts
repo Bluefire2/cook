@@ -59,7 +59,7 @@ export const chatStore = {
         for (const existing of previous) {
           upsertChat(existing);
         }
-        throw err;
+        return { value: message, reconcile: false, error: err };
       }
     });
   },
@@ -76,9 +76,13 @@ export const chatStore = {
         for (const message of previous) {
           upsertChat(message);
         }
-        throw new Error(
-          result === 'signedOut' ? t('error.sessionExpired') : t('error.chatClear'),
-        );
+        return {
+          value: undefined,
+          reconcile: false,
+          error: new Error(
+            result === 'signedOut' ? t('error.sessionExpired') : t('error.chatClear'),
+          ),
+        };
       }
       return { value: undefined, reconcile: true };
     });

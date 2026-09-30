@@ -5,10 +5,18 @@ import type { ChatMessage, Collection, CookLog, Recipe } from './types';
 import { compactCookLog, isUsableCookLog } from './cookLogShape';
 import {
   addPendingBlob,
+  cachePhotoBlob,
   captureSnapshot,
   chatParentIsShared,
   cookParentIsShared,
+  dropPendingBlob,
+  dropPhoto,
+  getCollection,
+  getCook,
+  getCookLog,
   getPendingBlob,
+  getRecipe,
+  getSnapshot,
   isSharedCollection,
   isSharedRecipe,
   listAllChat,
@@ -18,12 +26,17 @@ import {
   listRecipes,
   markPhotoRemote,
   ownedBackupGraphIds,
-  restoreSnapshot,
+  removeChatLocal,
+  removeCollectionLocal,
+  removeCookLocal,
+  removeCookLogLocal,
+  removeRecipeLocal,
   upsertChat,
   upsertCollection,
   upsertCook,
   upsertCookLog,
   upsertRecipe,
+  type LibrarySnapshot,
 } from './libraryMemory';
 import { compactRecipe } from './compactRecipe';
 import { compactCollection, compactCollectionName } from './compactCollection';
@@ -237,6 +250,112 @@ function importPushError(result: Exclude<RemoteResult, 'ok'>): Error {
   );
 }
 
+/**
+ * Drops only the rows this import upserted. An id whose current object is a
+ * newer write is left alone. Dependents go first so removing a new recipe
+ * does not cascade a row that was already restored.
+ */
+function undoImportedLibrary(
+  previous: LibrarySnapshot,
+  imported: {
+    recipes: Recipe[];
+    collections: Collection[];
+    chat: ChatMessage[];
+    cook: CookStateRow[];
+    cookLogs: CookLog[];
+    photos: { id: string; blob: Blob }[];
+    markedRemote: ReadonlySet<string>;
+  },
+): void {
+  for (const message of imported.chat) {
+    if (getSnapshot().chat.get(message.id) !== message) {
+      continue;
+    }
+    const prior = previous.chat.get(message.id);
+    if (prior) {
+      upsertChat(prior);
+    } else {
+      removeChatLocal(message.id);
+    }
+  }
+  for (const row of imported.cook) {
+    if (getCook(row.recipeId) !== row) {
+      continue;
+    }
+    const prior = previous.cook.get(row.recipeId);
+    if (prior) {
+      upsertCook(prior);
+    } else {
+      removeCookLocal(row.recipeId);
+    }
+  }
+  for (const log of imported.cookLogs) {
+    if (getCookLog(log.id) !== log) {
+      continue;
+    }
+    const prior = previous.cookLogs.get(log.id);
+    if (prior) {
+      upsertCookLog(prior);
+    } else {
+      removeCookLogLocal(log.id);
+    }
+  }
+  for (const collection of imported.collections) {
+    if (getCollection(collection.id) !== collection) {
+      continue;
+    }
+    const prior = previous.collections.get(collection.id);
+    if (prior) {
+      upsertCollection(prior);
+    } else {
+      removeCollectionLocal(collection.id);
+    }
+  }
+  for (const recipe of imported.recipes) {
+    if (getRecipe(recipe.id) !== recipe) {
+      continue;
+    }
+    const prior = previous.recipes.get(recipe.id);
+    if (prior) {
+      upsertRecipe(prior, previous.recipeOrigins.get(recipe.id) ?? { kind: 'own' });
+    } else {
+      removeRecipeLocal(recipe.id);
+    }
+  }
+  for (const photo of imported.photos) {
+    undoImportedPhoto(previous, photo, imported.markedRemote);
+  }
+}
+
+function undoImportedPhoto(
+  previous: LibrarySnapshot,
+  photo: { id: string; blob: Blob },
+  markedRemote: ReadonlySet<string>,
+): void {
+  if (getPendingBlob(photo.id) === photo.blob) {
+    const prior = previous.pendingBlobs.get(photo.id);
+    if (prior && prior !== photo.blob) {
+      addPendingBlob(photo.id, prior);
+    } else if (!prior) {
+      dropPendingBlob(photo.id);
+    }
+  }
+  if (!markedRemote.has(photo.id) || getPendingBlob(photo.id) !== undefined) {
+    return;
+  }
+  const priorPending = previous.pendingBlobs.get(photo.id);
+  if (!previous.remotePhotoIds.has(photo.id)) {
+    dropPhoto(photo.id);
+    if (priorPending) {
+      addPendingBlob(photo.id, priorPending);
+    }
+    return;
+  }
+  if (priorPending) {
+    cachePhotoBlob(photo.id, priorPending);
+  }
+}
+
 /** Merges a backup, preserving the whole graph only when provenance or owned overlap says it is local. */
 export async function importLibrary(
   file: Blob,
@@ -313,14 +432,14 @@ export async function importLibrary(
   );
 
   const previous = captureSnapshot();
-  // A throw inside the callback skips the follow-up read. A recipe phase that
-  // already returned ok has to return `reconcile: true` instead, then the
-  // import rejects after that read. Otherwise an overlapping pull is discarded
-  // and the restored snapshot hides rows the server accepted.
-  let failure: unknown;
-  const outcome = await withLocalWrite(async () => {
+  // The import rejects before the follow-up read publishes. A recipe phase
+  // that already returned ok still asks for that read, so an overlapping pull
+  // is not the last word. Rows this import wrote are undone first, except ones
+  // a newer write has replaced. A signed-out session is left cleared.
+  return withLocalWrite(async () => {
     let recipesLanded = false;
     let signedOut = false;
+    const markedRemote = new Set<string>();
     try {
       for (const photo of photos) {
         addPendingBlob(photo.id, photo.blob);
@@ -343,9 +462,9 @@ export async function importLibrary(
 
       // Remote import is best-effort across requests. Recipe puts are
       // acknowledged before photo bytes and dependent puts. A failure after
-      // the recipe phase can leave accepted server rows. restoreSnapshot
-      // undoes the optimistic tail so chat and cook rows the server never
-      // stored are not shown when nothing is in flight to reread.
+      // the recipe phase can leave accepted server rows. Undoing the rows
+      // this import wrote hides chat and cook the server never stored, when
+      // nothing is in flight to reread, without wiping a concurrent edit.
       const recipeOps: PushOp[] = importRecipes.map((recipe) => ({
         kind: 'recipe.put',
         payload: recipe,
@@ -375,6 +494,7 @@ export async function importLibrary(
           );
         }
         markPhotoRemote(photoId);
+        markedRemote.add(photoId);
       }
 
       const dependentOps: PushOp[] = [];
@@ -401,17 +521,25 @@ export async function importLibrary(
 
       return { value: { imported: importRecipes.length, skipped }, reconcile: true };
     } catch (err) {
-      // A 401 already cleared the library. Restoring the previous snapshot
+      // A 401 already cleared the library. Putting the previous rows back
       // would hand a signed-out client the pre-import library.
       if (!signedOut) {
-        restoreSnapshot(previous);
+        undoImportedLibrary(previous, {
+          recipes: importRecipes,
+          collections: importCollections,
+          chat: importChat,
+          cook: importCook,
+          cookLogs: importCookLogs,
+          photos,
+          markedRemote,
+        });
       }
-      failure = err;
-      return { value: { imported: 0, skipped }, reconcile: recipesLanded && !signedOut };
+      return {
+        value: { imported: 0, skipped },
+        reconcile: recipesLanded && !signedOut,
+        reread: signedOut ? 'no' : undefined,
+        error: err,
+      };
     }
   });
-  if (failure) {
-    throw failure;
-  }
-  return outcome;
 }

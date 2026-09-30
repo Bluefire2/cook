@@ -27,6 +27,7 @@ import {
 } from './remote';
 import { recipeStore } from './recipeStore';
 import { onSyncFinished, pullAll, resetDiscardedPullForTests, sync } from './syncEngine';
+import { resetRereadScheduleForTests, setRereadQuietForTests } from './localWrite';
 import { invalidateSession } from './session';
 import type { Collection, Recipe } from './types';
 import { updateCookState, type CookStateRow } from './useCookState';
@@ -184,9 +185,11 @@ beforeEach(() => {
       return store.size;
     },
   };
+  setRereadQuietForTests(0);
 });
 
 afterEach(() => {
+  resetRereadScheduleForTests();
   clearLibrary();
   resetDiscardedPullForTests();
   vi.mocked(pushOps).mockReset();
@@ -446,26 +449,68 @@ describe('optimistic writes vs an in-flight pull', () => {
     await flight.pending;
   });
 
-  it('does not reread a failed cook tap over the optimistic step', async () => {
+  it('rereads a failed cook tap and keeps the optimistic step', async () => {
     const base = recipe();
     seed(base, cook(0));
+    const other = { ...recipe('From another device'), id: OTHER_RECIPE_ID };
     vi.mocked(pushOps).mockResolvedValue('error');
     const flight = startSync(
       ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
-      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+      ownedPage(
+        ownedChanges({
+          recipes: [pullDoc(base), pullDoc(other)],
+          cookState: [pullDoc(cook(0))],
+        }),
+      ),
     );
     await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
 
     const writing = updateCookState(base, (prev) => ({ ...prev, currentStep: 1 }));
     await vi.waitFor(() => expect(pushOps).toHaveBeenCalled());
-    flight.releaseFirst();
-    flight.releaseSecond();
     await writing;
-    await flight.pending;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(pullPage).toHaveBeenCalledOnce();
     expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+    expect(pullPage).toHaveBeenCalledOnce();
+
+    flight.releaseFirst();
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledTimes(2));
+    flight.releaseSecond();
+    await vi.waitFor(() => expect(getRecipe(OTHER_RECIPE_ID)?.title).toBe('From another device'));
+
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+    expect(localWritesOpen()).toBe(0);
+    await flight.pending;
+  });
+
+  it('shares one follow-up pull across a burst of cook taps', async () => {
+    setRereadQuietForTests(200);
+    const base = recipe();
+    seed(base, cook(0));
+    const other = { ...recipe('From another device'), id: OTHER_RECIPE_ID };
+    const flight = startSync(
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+      ownedPage(
+        ownedChanges({
+          recipes: [pullDoc(base), pullDoc(other)],
+          cookState: [pullDoc(cook(3))],
+        }),
+      ),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    await updateCookState(base, (prev) => ({ ...prev, currentStep: prev.currentStep + 1 }));
+    await updateCookState(base, (prev) => ({ ...prev, currentStep: prev.currentStep + 1 }));
+    await updateCookState(base, (prev) => ({ ...prev, currentStep: prev.currentStep + 1 }));
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(3);
+    expect(pullPage).toHaveBeenCalledOnce();
+
+    flight.releaseFirst();
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledTimes(2));
+    flight.releaseSecond();
+    await vi.waitFor(() => expect(getRecipe(OTHER_RECIPE_ID)?.title).toBe('From another device'));
+
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(3);
+    expect(localWritesOpen()).toBe(0);
+    await flight.pending;
   });
 
   it('rereads when the cook push outlasts the pull it superseded', async () => {
@@ -638,23 +683,27 @@ describe('optimistic writes vs an in-flight pull', () => {
       cookLogs: new Map(),
       remotePhotoIds: new Set([PHOTO_ID]),
     });
+    const other = { ...recipe('From another device'), id: OTHER_RECIPE_ID };
     vi.mocked(pushOps).mockResolvedValue('error');
     const flight = startSync(
       ownedPage(ownedChanges({ photos: [{ id: PHOTO_ID }], recipes: [pullDoc(recipe())] })),
-      ownedPage(ownedChanges({ recipes: [pullDoc(recipe())] })),
+      ownedPage(ownedChanges({ recipes: [pullDoc(recipe()), pullDoc(other)] })),
     );
     await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
 
     const removing = photoStore.remove(PHOTO_ID);
     await vi.waitFor(() => expect(pushOps).toHaveBeenCalled());
-    flight.releaseFirst();
-    flight.releaseSecond();
     await removing;
-    await flight.pending;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
     expect(pullPage).toHaveBeenCalledOnce();
     expect(getSnapshot().remotePhotoIds.has(PHOTO_ID)).toBe(true);
+
+    flight.releaseFirst();
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledTimes(2));
+    flight.releaseSecond();
+    await vi.waitFor(() => expect(getRecipe(OTHER_RECIPE_ID)?.title).toBe('From another device'));
+
+    expect(getSnapshot().remotePhotoIds.has(PHOTO_ID)).toBe(true);
+    await flight.pending;
   });
 
   it('does not put a photo back after the delete signs out', async () => {
@@ -795,7 +844,7 @@ describe('optimistic writes vs an in-flight pull', () => {
     expect(listChat(OTHER_RECIPE_ID)).toEqual([]);
   });
 
-  it('does not reread a backup whose recipe push never landed', async () => {
+  it('rereads a backup whose recipe push never landed and keeps the seed', async () => {
     const base = recipe('Already here');
     seed(base);
     const imported = { ...recipe('Imported'), id: OTHER_RECIPE_ID };
@@ -819,21 +868,23 @@ describe('optimistic writes vs an in-flight pull', () => {
     vi.mocked(pushOps).mockResolvedValue('error');
     const flight = startSync(
       ownedPage(ownedChanges({ recipes: [pullDoc(base), pullDoc(imported)] })),
-      ownedPage(ownedChanges({ recipes: [pullDoc(imported)] })),
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)] })),
     );
     await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
 
     const importing = importLibrary(file, 'me');
     const rejected = expect(importing).rejects.toThrow("Couldn't import the backup.");
     await vi.waitFor(() => expect(pushOps).toHaveBeenCalled());
-    flight.releaseFirst();
-    flight.releaseSecond();
-
     await rejected;
-    await flight.pending;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
     expect(pullPage).toHaveBeenCalledOnce();
+    expect(getRecipe(OTHER_RECIPE_ID)).toBeUndefined();
+    expect(getRecipe(RECIPE_ID)?.title).toBe('Already here');
+
+    flight.releaseFirst();
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledTimes(2));
+    flight.releaseSecond();
+    await flight.pending;
+
     expect(getRecipe(OTHER_RECIPE_ID)).toBeUndefined();
     expect(getRecipe(RECIPE_ID)?.title).toBe('Already here');
   });

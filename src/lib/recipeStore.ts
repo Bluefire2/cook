@@ -2,10 +2,8 @@ import { useMemo, useSyncExternalStore } from 'react';
 import { t } from '../i18n';
 import {
   addPendingBlob,
-  beginLocalWrite,
   captureSnapshot,
   dropPhoto,
-  endLocalWrite,
   getPendingBlob,
   getRecipe,
   getSnapshot,
@@ -26,10 +24,10 @@ import {
   upsertCollection,
   type LibraryAccess,
 } from './libraryMemory';
-import { fetchPhotoBlobOutcome, postPhoto, pushOps } from './remote';
+import { fetchPhotoBlobOutcome, postPhoto, pushOps, type RemoteResult } from './remote';
 import { photoStore } from './photoStore';
 import { withLocalWrite } from './localWrite';
-import { localWriteOverlapsPull, pullAfterLocalWrite } from './syncEngine';
+import { localWriteOverlapsPull, type SyncOutcome } from './syncEngine';
 import { compactRecipe } from './compactRecipe';
 import { compactCollection } from './compactCollection';
 import { wouldExceedRecipeIdCap } from './collectionMembership';
@@ -375,7 +373,7 @@ async function saveShared(recipe: Recipe): Promise<void> {
       if (getRecipe(next.id) === next) {
         upsertRecipe(previous, origin);
       }
-      throw err;
+      return { value: undefined, reconcile: false, error: err };
     }
   });
 }
@@ -441,38 +439,39 @@ async function discardCreatedRecipe(
       }),
     );
   // A pull that read the live row before the delete landed must not paint it
-  // back; hold the library as `remove` does.
-  const writeEpoch = beginLocalWrite();
-  removeRecipeLocal(id);
-  for (const collection of scrubbed) {
-    upsertCollection(collection);
-  }
+  // back; hold the library as `remove` does. A failed discard must not reread:
+  // that would republish the recipe this attempt is trying to drop. Create
+  // throws out of its own write so that read is not scheduled before this one.
   const ops: PushOp[] = [{ kind: 'recipe.delete', payload: { id, updatedAt: at } }];
   for (const collection of scrubbed) {
     ops.push({ kind: 'collection.put', payload: collection });
   }
-  let result: Awaited<ReturnType<typeof pushOps>> = 'error';
-  try {
-    result = await pushOps(ops);
-  } catch {
-    // Best effort; the caller surfaces the original error.
-  } finally {
-    endLocalWrite();
-  }
+  const result = await withLocalWrite(
+    async ({ epoch }) => {
+      removeRecipeLocal(id);
+      for (const collection of scrubbed) {
+        upsertCollection(collection);
+      }
+      let pushed: RemoteResult = 'error';
+      try {
+        pushed = await pushOps(ops);
+      } catch {
+        // Best effort; the caller surfaces the original error.
+      }
+      return {
+        value: pushed,
+        reconcile: pushed === 'ok',
+        reread: pushed === 'ok' && localWriteOverlapsPull(epoch) ? 'always' : 'no',
+      };
+    },
+    { awaitReread: true },
+  );
   if (result === 'signedOut') {
     // The 401 cleared the library; keep nothing.
     return 'signedOut';
   }
   // Anything but 'ok' leaves the failed recipe possibly live on the server.
-  const remap = restageBlobs(staged, result === 'ok');
-  if (result === 'ok' && localWriteOverlapsPull(writeEpoch)) {
-    try {
-      await pullAfterLocalWrite(writeEpoch);
-    } catch {
-      // The next pull reconciles.
-    }
-  }
-  return remap;
+  return restageBlobs(staged, result === 'ok');
 }
 
 export const recipeStore = {
@@ -568,7 +567,7 @@ export const recipeStore = {
         await discardOrphanUploads(takePhotosLeftForLastHolder(held));
       }
       if (failure !== undefined) {
-        throw failure;
+        return { value: undefined, reconcile: false, error: failure };
       }
       return { value: undefined, reconcile: true };
     });
@@ -724,37 +723,45 @@ export const recipeStore = {
         updatedAt: at,
       }),
     );
-    // The server tombstones the recipe before the rest of the delete finishes.
-    // A failed response can still mean the recipe is gone. A pull that started
-    // before this write can also paint the old card back. Hold the library
-    // until the push settles, then read the server instead of restoring blindly.
-    const writeEpoch = beginLocalWrite();
-    removeRecipeLocal(id);
-    for (const collection of scrubbed) {
-      upsertCollection(collection);
-    }
     const ops: PushOp[] = [{ kind: 'recipe.delete', payload: { id, updatedAt: at } }];
     for (const collection of scrubbed) {
       ops.push({ kind: 'collection.put', payload: collection });
     }
-    let result: Awaited<ReturnType<typeof pushOps>>;
-    try {
-      result = await pushOps(ops);
-    } finally {
-      endLocalWrite();
-    }
-    const overlaps = localWriteOverlapsPull(writeEpoch);
-    if (result === 'ok' && !overlaps) {
-      return;
-    }
-    const outcome = await pullAfterLocalWrite(writeEpoch);
+    // The server tombstones the recipe before the rest of the delete finishes.
+    // A failed response can still mean the recipe is gone. A pull that started
+    // before this write can also paint the old card back. Hold the library
+    // until the push settles, then read the server instead of restoring blindly.
+    // A successful delete that overlapped nothing does not pull.
+    let writeEpoch = 0;
+    let pullOutcome: SyncOutcome | undefined;
+    const result = await withLocalWrite(
+      async ({ epoch }) => {
+        writeEpoch = epoch;
+        removeRecipeLocal(id);
+        for (const collection of scrubbed) {
+          upsertCollection(collection);
+        }
+        const pushed = await pushOps(ops);
+        const overlaps = localWriteOverlapsPull(epoch);
+        if (pushed === 'ok' && !overlaps) {
+          return { value: pushed, reconcile: true, reread: 'no' };
+        }
+        return { value: pushed, reconcile: pushed === 'ok', reread: 'always' };
+      },
+      {
+        awaitReread: true,
+        onReread(outcome) {
+          pullOutcome = outcome;
+        },
+      },
+    );
     if (result === 'ok') {
       return;
     }
-    if (outcome === 'signedOut') {
+    if (pullOutcome === 'signedOut') {
       throw new Error(t('error.sessionExpired'));
     }
-    if (outcome === 'ok') {
+    if (pullOutcome === 'ok') {
       if (getRecipe(id) === undefined) {
         return;
       }
@@ -764,9 +771,7 @@ export const recipeStore = {
       restoreSnapshot(previous);
     }
     throw new Error(
-      result === 'signedOut'
-        ? t('error.sessionExpired')
-        : t('error.recipeDelete'),
+      result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeDelete'),
     );
   },
 };

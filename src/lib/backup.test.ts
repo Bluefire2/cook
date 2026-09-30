@@ -728,7 +728,7 @@ describe('importLibrary', () => {
   it('rolls back locally when a photo upload fails after the recipe push', async () => {
     // Remote import stays best-effort across requests. The recipe put already
     // returned ok, and this failure does not delete that server row; the next
-    // refresh would reveal it. Only the optimistic local snapshot is restored.
+    // refresh would reveal it. The rows this import wrote are removed locally.
     vi.mocked(pushOps).mockResolvedValue('ok');
     vi.mocked(postPhoto).mockResolvedValue('error');
 
@@ -766,6 +766,33 @@ describe('importLibrary', () => {
 
     expect(listRecipes()).toEqual([]);
     expect(postPhoto).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a concurrent edit when a photo upload fails', async () => {
+    const seedId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const seed = { ...RECIPE, id: seedId, title: 'Already here' };
+    replaceFromPull({
+      recipes: new Map([[seedId, seed]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    vi.mocked(postPhoto).mockImplementation(async () => {
+      upsertRecipe({ ...seed, title: 'Edited during import' });
+      return 'error';
+    });
+
+    await expect(importLibrary(backupFile('alice-sub'), 'carol-sub')).rejects.toThrow(
+      "Couldn't upload a photo from the backup.",
+    );
+
+    expect(listRecipes()).toEqual([
+      expect.objectContaining({ id: seedId, title: 'Edited during import' }),
+    ]);
+    expect(listCollections()).toEqual([]);
   });
 
   it('same-account preserve mode remains overwrite-by-id and idempotent', async () => {

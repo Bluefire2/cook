@@ -70,16 +70,20 @@ export const photoStore = {
       if (result !== 'ok') {
         // A 401 already cleared the library. Putting the id back would
         // repopulate a signed-out session. Any other failure still has the
-        // photo on the server, and the pull that overlapped this write was
-        // discarded, so it cannot put the id back itself.
-        if (result !== 'signedOut' && remote) {
-          if (pending) {
-            cachePhotoBlob(id, pending);
-          } else {
-            markPhotoRemote(id);
-          }
-        }
-        return { value: undefined, reconcile: false };
+        // photo on the server. The reread of an overlapping pull publishes
+        // without this id, so put it back again after that read.
+        const restore =
+          result !== 'signedOut' && remote
+            ? () => {
+                if (pending) {
+                  cachePhotoBlob(id, pending);
+                } else {
+                  markPhotoRemote(id);
+                }
+              }
+            : undefined;
+        restore?.();
+        return { value: undefined, reconcile: false, preserve: restore };
       }
       return { value: undefined, reconcile: true };
     });

@@ -73,9 +73,15 @@ const cookStateStore = {
       const result = await pushOps([
         { kind: 'cookState.put', payload: { ...next, updatedAt: Date.now() } },
       ]);
-      // A failed push keeps the optimistic row; the next refresh reconciles.
-      // An overlapping pull must not paint the pre-tap row back either way.
-      return { value: undefined, reconcile: result === 'ok' };
+      // A failed push keeps the optimistic row. An overlapping pull is reread
+      // and would otherwise paint the pre-tap row back, so put this one back
+      // when that read publishes.
+      return {
+        value: undefined,
+        reconcile: result === 'ok',
+        preserve:
+          result !== 'ok' && result !== 'signedOut' ? () => upsertCook(next) : undefined,
+      };
     });
   },
 };

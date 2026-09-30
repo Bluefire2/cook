@@ -389,6 +389,17 @@ export function upsertChat(message: ChatMessage): void {
   emit({ ...snapshot, ...next });
 }
 
+/** Drops one message. Photos stay; the caller decides whether they are still referenced. */
+export function removeChatLocal(id: string): void {
+  if (!snapshot.chat.has(id)) {
+    return;
+  }
+  const next = cloneMaps(snapshot);
+  next.chat.delete(id);
+  next.chatParentOrigins.delete(id);
+  emit({ ...snapshot, ...next });
+}
+
 export function clearChatLocal(recipeId: string): void {
   const next = cloneMaps(snapshot);
   for (const [messageId, message] of next.chat) {
@@ -413,6 +424,17 @@ export function upsertCook(row: CookStateRow): void {
     row.recipeId,
     next.recipeOrigins,
   );
+  emit({ ...snapshot, ...next });
+}
+
+/** Drops cook progress for one recipe. Does not touch the recipe or its photos. */
+export function removeCookLocal(recipeId: string): void {
+  if (!snapshot.cook.has(recipeId)) {
+    return;
+  }
+  const next = cloneMaps(snapshot);
+  next.cook.delete(recipeId);
+  next.cookParentOrigins.delete(recipeId);
   emit({ ...snapshot, ...next });
 }
 
