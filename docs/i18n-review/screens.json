@@ -2,37 +2,37 @@
   {
     "id": "library-empty",
     "route": "/",
-    "setup": "Signed in on the Recipes list with no recipes in the account, so the empty-library sentence is showing. Do not type a search to fake this. If the account already has recipes, do not delete them; mark skipped: needs data. A signed-in header shows Invite before Cooks. Do not click Invite.",
+    "setup": "Signed in on the Recipes list with no recipes in the account, so the empty-library sentence is showing. Do not type a search to fake this. If the account already has recipes, do not delete them; mark skipped: needs data. A signed-in header shows the Ask (chat bubble) and Invite (person with a plus) icons before Cooks; their names are aria-labels. Do not click Invite.",
     "needsData": true
   },
   {
     "id": "library-populated",
     "route": "/",
-    "setup": "Signed in on the Recipes list (/) or an own named collection (/collections/<id>) that already shows at least one recipe card. Prefer / when it has cards. Do not create a recipe. If nothing is listed, mark skipped: needs data. A signed-in header shows Invite before Cooks. Do not click Invite.",
+    "setup": "Signed in on the Recipes list (/) or an own named collection (/collections/<id>) that already shows at least one recipe card. Prefer / when it has cards. Do not create a recipe. If nothing is listed, mark skipped: needs data. A signed-in header shows the Ask (chat bubble) and Invite (person with a plus) icons before Cooks; their names are aria-labels. Do not click Invite.",
     "needsData": true
   },
   {
     "id": "library-invite-confirm",
     "route": "/",
-    "setup": "Signed in as a non-owner, Invite opened the sheet, the invite intro is showing, Create link and Cancel are showing, and the review must not click Create link (it writes an invite).",
+    "setup": "Signed in as a non-owner, the header Invite icon (person with a plus) opened the sheet, the invite intro is showing, Create link and Cancel are showing, and the review must not click Create link (it writes an invite).",
     "needsData": true
   },
   {
     "id": "library-invite-copied",
     "route": "/",
-    "setup": "Signed in, with the “Invite link copied” toast showing. A member reaches it by tapping Create link in the confirm sheet (POST /api/invites, which replaces that member’s previous unused link). An owner reaches it by tapping the header Invite button (POST /api/admin/invites). If the review must not write, mark skipped: needs data.",
+    "setup": "Signed in, with the “Invite link copied” toast showing. A member reaches it by tapping Create link in the confirm sheet (POST /api/invites, which replaces that member’s previous unused link). An owner reaches it by tapping the header Invite icon (POST /api/admin/invites). If the review must not write, mark skipped: needs data.",
     "needsData": true
   },
   {
     "id": "library-invite-copy-failed",
     "route": "/",
-    "setup": "Signed in, clipboard write failed, so the created-but-not-copied toast, the readonly URL, and Copy are showing. A member reaches it via Create link in the sheet. An owner reaches it via the header Invite button. Reaching it writes an invite. If the clipboard accepts the write, mark skipped: needs data. Do not mint again to force it.",
+    "setup": "Signed in, clipboard write failed, so the created-but-not-copied toast, the readonly URL, and Copy are showing. A member reaches it via Create link in the sheet. An owner reaches it via the header Invite icon. Reaching it writes an invite. If the clipboard accepts the write, mark skipped: needs data. Do not mint again to force it.",
     "needsData": true
   },
   {
     "id": "library-invite-quota",
     "route": "/",
-    "setup": "Signed in, the refusal sentence under the header (role=\"alert\"), no toast and no URL panel. A member reaches it by tapping Create link in the confirm sheet when the response is 409 member-invite-limit or member-invite-cap. An owner reaches it by tapping the header Invite button when the response is 409 invite-cap. Nothing was created. Do not mint a real invite to force it. If that state is not available, mark skipped: needs data.",
+    "setup": "Signed in, the refusal sentence under the header (role=\"alert\"), no toast and no URL panel. A member reaches it by tapping Create link in the confirm sheet when the response is 409 member-invite-limit or member-invite-cap. An owner reaches it by tapping the header Invite icon when the response is 409 invite-cap. Nothing was created. Do not mint a real invite to force it. If that state is not available, mark skipped: needs data.",
     "needsData": true
   },
   {
@@ -279,6 +279,42 @@
     "id": "cook-log-edit-delete",
     "route": "/recipe/:id/cooks/:logId/edit",
     "setup": "Open an existing cook log's edit form and open the delete dialog (\"Delete this cook?\"). Do not confirm delete and do not save. Dismiss the dialog when the capture is done. If there is no cook log, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "assistant-signed-out",
+    "route": "/assistant",
+    "setup": "Signed out. The screen shows the sign-in sentence linking to Settings and a link back to the library. Do not sign in.",
+    "needsData": false
+  },
+  {
+    "id": "assistant-empty",
+    "route": "/assistant",
+    "setup": "Signed in with an empty assistant thread, so the two starter prompts, the note that only your own recipes are searched, the composer, Send, and Clear are showing. Do not send a message.",
+    "needsData": true
+  },
+  {
+    "id": "assistant-stopped",
+    "route": "/assistant",
+    "setup": "Signed in, with a stopped assistant reply already on screen (the Stopped line). If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "assistant-shopping-list",
+    "route": "/assistant",
+    "setup": "Signed in, with a shopping-list card already on screen. If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "assistant-couldnt-answer",
+    "route": "/assistant",
+    "setup": "Signed in, with the assistant error line already showing (the assistant could not answer). If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "assistant-tool-chip",
+    "route": "/assistant",
+    "setup": "Signed in, with a reply in progress and a tool chip under the question, such as Searching recipes… or Reading collections…. If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
     "needsData": true
   }
 ]

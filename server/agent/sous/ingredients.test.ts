@@ -1,0 +1,163 @@
+import { describe, expect, it } from 'vitest';
+import { buildAgentLibrary, type AgentRecipe } from './library.ts';
+import {
+  baseToDisplayQuantity,
+  combineIngredients,
+  normalizeItemName,
+} from './ingredients.ts';
+
+function recipe(overrides: Partial<AgentRecipe> & { id: string; title: string }): AgentRecipe {
+  return {
+    servings: 4,
+    ingredientSections: [],
+    steps: [],
+    tags: [],
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+function lib(...recipes: AgentRecipe[]) {
+  return buildAgentLibrary(recipes, [], {
+    truncated: false,
+    maxIndexEntries: 500,
+    maxIndexChars: 40_000,
+  });
+}
+
+describe('normalizeItemName', () => {
+  it('lowercases, trims, collapses space, drops parentheticals', () => {
+    expect(normalizeItemName('  Red Onion (diced)  ')).toBe('red onion');
+  });
+});
+
+describe('baseToDisplayQuantity', () => {
+  it('picks tbsp when total is at least 1 tbsp in US volume', () => {
+    expect(baseToDisplayQuantity('us_volume', '', 10)).toEqual({ quantity: 3.33, unit: 'tbsp' });
+  });
+
+  it('keeps tsp when largest unit would be below 1', () => {
+    expect(baseToDisplayQuantity('us_volume', '', 2)).toEqual({ quantity: 2, unit: 'tsp' });
+  });
+});
+
+describe('combineIngredients', () => {
+  it('scales by requested servings', () => {
+    const library = lib(
+      recipe({
+        id: 'r1',
+        title: 'R',
+        servings: 4,
+        ingredientSections: [{ items: [{ item: 'salt', quantity: 4, unit: 'tsp' }] }],
+      }),
+    );
+    const { lines } = combineIngredients(library, [{ id: 'r1', servings: 8 }]);
+    expect(lines[0]?.quantity).toBe(2.67);
+    expect(lines[0]?.unit).toBe('tbsp');
+  });
+
+  it('merges US volume within a family', () => {
+    const library = lib(
+      recipe({
+        id: 'r1',
+        title: 'A',
+        ingredientSections: [
+          {
+            items: [
+              { item: 'vanilla', quantity: 4, unit: 'tsp' },
+              { item: 'Vanilla', quantity: 2, unit: 'tbsp' },
+            ],
+          },
+        ],
+      }),
+    );
+    const { lines } = combineIngredients(library, [{ id: 'r1' }]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.quantity).toBe(3.33);
+    expect(lines[0]?.unit).toBe('tbsp');
+  });
+
+  it('does not merge across unit families', () => {
+    const library = lib(
+      recipe({
+        id: 'r1',
+        title: 'A',
+        ingredientSections: [
+          {
+            items: [
+              { item: 'milk', quantity: 1, unit: 'cup' },
+              { item: 'milk', quantity: 100, unit: 'ml' },
+            ],
+          },
+        ],
+      }),
+    );
+    const { lines } = combineIngredients(library, [{ id: 'r1' }]);
+    expect(lines).toHaveLength(2);
+  });
+
+  it('merges count and unitless quantities', () => {
+    const library = lib(
+      recipe({
+        id: 'r1',
+        title: 'A',
+        ingredientSections: [
+          {
+            items: [
+              { item: 'egg', quantity: 2 },
+              { item: 'egg', quantity: 1, unit: 'piece' },
+            ],
+          },
+        ],
+      }),
+    );
+    const { lines } = combineIngredients(library, [{ id: 'r1' }]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.quantity).toBe(3);
+    expect(lines[0]?.unit).toBe('piece');
+  });
+
+  it('merges no-quantity lines as asNeeded', () => {
+    const library = lib(
+      recipe({
+        id: 'r1',
+        title: 'A',
+        ingredientSections: [{ items: [{ item: 'salt' }, { item: 'Salt' }] }],
+      }),
+      recipe({
+        id: 'r2',
+        title: 'B',
+        ingredientSections: [{ items: [{ item: 'salt' }] }],
+      }),
+    );
+    const { lines } = combineIngredients(library, [{ id: 'r1' }, { id: 'r2' }]);
+    const salt = lines.find((l) => l.asNeeded);
+    expect(salt?.sourceRecipeIds.sort()).toEqual(['r1', 'r2']);
+  });
+
+  it('keeps different unknown units separate', () => {
+    const library = lib(
+      recipe({
+        id: 'r1',
+        title: 'A',
+        ingredientSections: [
+          {
+            items: [
+              { item: 'pepper', quantity: 1, unit: 'pinch' },
+              { item: 'pepper', quantity: 1, unit: 'dash' },
+            ],
+          },
+        ],
+      }),
+    );
+    const { lines } = combineIngredients(library, [{ id: 'r1' }]);
+    expect(lines).toHaveLength(2);
+  });
+
+  it('reports missing recipe ids', () => {
+    const library = lib(recipe({ id: 'r1', title: 'A' }));
+    const { missingIds } = combineIngredients(library, [{ id: 'missing' }]);
+    expect(missingIds).toEqual(['missing']);
+  });
+});

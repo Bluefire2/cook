@@ -9,7 +9,7 @@ import Sheet from '../components/Sheet';
 import { createInvite } from '../lib/adminApi';
 import { createMemberInvite } from '../lib/inviteApi';
 import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
-import { FolderIcon, PlusIcon, SettingsIcon, SharedIcon } from '../lib/icons';
+import { FolderIcon, InviteIcon, PlusIcon, SettingsIcon, SharedIcon, SpinnerIcon } from '../lib/icons';
 import { importHref, libraryHref, newRecipeHref } from '../lib/collectionHref';
 import { collectionStore, useCollections } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
@@ -22,9 +22,11 @@ import { recipeStore, useRecipes } from '../lib/recipeStore';
 import { visibleLibraryRecipes } from '../lib/visibleLibraryRecipes';
 import { useSession } from '../lib/session';
 import { useSyncStatus } from '../lib/syncEngine';
+import { AssistantEntryLink } from '../agent/index';
 import {
   dangerBtn,
   ghostBtn,
+  ghostIconBtn,
   inputClass,
   menuItem,
   menuItemDanger,
@@ -438,10 +440,13 @@ export default function Library() {
       <header className="flex items-center justify-between py-4">
         <h1 className="text-2xl font-bold">Sous</h1>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+          <AssistantEntryLink />
           {user !== null && (
             <button
               type="button"
-              className={`${ghostBtn} disabled:opacity-40`}
+              className={`${ghostIconBtn} disabled:opacity-40`}
+              aria-label={invitePending ? t('admin.creating') : t('library.inviteLink')}
+              aria-busy={invitePending}
               disabled={invitePending || inviteConfirmOpen}
               onClick={() => {
                 if (inviteMintClient(user) === 'member') {
@@ -451,7 +456,11 @@ export default function Library() {
                 void mint();
               }}
             >
-              {invitePending ? t('admin.creating') : t('library.inviteLink')}
+              {invitePending ? (
+                <SpinnerIcon className="block h-5 w-5 animate-spin" />
+              ) : (
+                <InviteIcon className="block h-5 w-5" />
+              )}
             </button>
           )}
           <Link to="/cooks" className={ghostBtn}>
@@ -459,7 +468,7 @@ export default function Library() {
           </Link>
           <Link
             to="/settings"
-            className={`${ghostBtn} inline-flex items-center justify-center px-2 py-2`}
+            className={ghostIconBtn}
             aria-label={t('settings.title')}
           >
             <SettingsIcon className="block h-5 w-5" />
