@@ -370,7 +370,14 @@ invent other OAuth workarounds.
 
 Unit tests cover **pure** logic only. There is no fake-indexeddb, no Firestore
 emulator in CI, no GCS mock, no DOM testing library — do not add them for one
-feature. `.github/workflows/ci.yml` stays `tsc -b` + `npm test` on push/PR.
+feature. `.github/workflows/ci.yml` runs on PRs and pushes to `main`:
+`npm run build` + `npm test`, a Docker image build booted with no cloud
+credentials and checked by `.github/scripts/smoke-server.sh`, and dependency
+review. None of it needs secrets, ADC, or production.
+`scripts/invariants.test.ts` turns rules in this file into failing tests; follow
+the rule rather than loosening the check. `evals/pageFixtures.test.ts` runs the
+offline extraction step over every cached page and needs an entry for each new
+page fixture.
 
 Live paste-to-recipe evals are `npm run test:import` (`evals/**/*.eval.ts`,
 `vitest.eval.config.ts`). They call Gemini against fixtures in `evals/import/`
