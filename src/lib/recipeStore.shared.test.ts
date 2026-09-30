@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { t } from '../i18n';
 import { recipeStore } from './recipeStore';
 import {
   clearLibrary,
@@ -173,6 +174,20 @@ describe('recipeStore on a shared recipe', () => {
     }
     expect(pushOps).not.toHaveBeenCalled();
     expect(getRecipe(EDITABLE_ID)).toEqual(recipe(EDITABLE_ID));
+  });
+
+  it('does not restore a shared recipe after sign-out', async () => {
+    publishShared();
+    vi.mocked(pushOps).mockImplementation(async () => {
+      clearLibrary();
+      return 'signedOut';
+    });
+
+    await expect(
+      recipeStore.save({ ...recipe(EDITABLE_ID), title: 'Better soup' }),
+    ).rejects.toThrow(t('error.sessionExpired'));
+
+    expect(getRecipe(EDITABLE_ID)).toBeUndefined();
   });
 
   it('rolls back an editor save the server discards, keeping the shared origin', async () => {

@@ -488,11 +488,11 @@ export default function RecipeForm({
           ]),
         );
       } catch (e) {
-        // The recipe kept pointing at the old photos, so these new ids are
-        // already unreachable; the store drops replaced ones only on a save
-        // that stuck.
-        if (stored) await photoStore.remove(stored);
-        for (const id of storedGallery) await photoStore.remove(id);
+        // A retry stages the picked files onto fresh ids, so forget these
+        // bytes. Local only: `recipeStore.save` decides whether an uploaded id
+        // is safe to tombstone on the server.
+        if (stored) photoStore.discardLocal(stored);
+        for (const id of storedGallery) photoStore.discardLocal(id);
         throw e;
       }
     } finally {

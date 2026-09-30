@@ -35,6 +35,7 @@ import { wouldExceedRecipeIdCap } from './collectionMembership';
 import { recipePhotoIds } from './recipePhotos';
 import type { Recipe, RecipeDraft } from './types';
 import type { PushOp } from './pushOps';
+import { isDiscardedPushReason } from './pushReasons';
 
 export { compactRecipe };
 
@@ -64,10 +65,72 @@ export class CreateRollbackError extends Error {
   }
 }
 
+/**
+ * Photo ids listed by saves that have not finished. Overlapping saves of the
+ * same recipe (an edit still in flight while a lesson is promoted) both count,
+ * so the one that fails does not tombstone an id the other still lists.
+ */
+const photosHeldBySaves = new Map<string, number>();
+
+/**
+ * Ids a `recipe.put` accepted. A later failed save must not tombstone them:
+ * the live recipe lists them even after this save releases its hold.
+ */
+const photosCommittedByPut = new Set<string>();
+
+function holdPhotoIds(ids: readonly string[]): void {
+  for (const id of ids) {
+    photosHeldBySaves.set(id, (photosHeldBySaves.get(id) ?? 0) + 1);
+  }
+}
+
+function releasePhotoIds(ids: readonly string[]): void {
+  for (const id of ids) {
+    const next = (photosHeldBySaves.get(id) ?? 0) - 1;
+    if (next <= 0) {
+      photosHeldBySaves.delete(id);
+    } else {
+      photosHeldBySaves.set(id, next);
+    }
+  }
+}
+
+/** Ids this save made remote that no other in-flight or committed save still needs. */
+function orphanedUploads(uploaded: readonly string[]): string[] {
+  const orphans: string[] = [];
+  for (const id of uploaded) {
+    if (photosCommittedByPut.has(id)) {
+      continue;
+    }
+    // Count includes this save. 1 means nobody else is holding the id.
+    if ((photosHeldBySaves.get(id) ?? 0) !== 1) {
+      continue;
+    }
+    orphans.push(id);
+  }
+  return orphans;
+}
+
+/** Clears the in-flight accounting. Tests reuse photo ids across cases. */
+export function resetRecipePhotoSaveTracking(): void {
+  photosHeldBySaves.clear();
+  photosCommittedByPut.clear();
+}
+
+/**
+ * Uploads a staged blob that is not already on the server. A remote id's
+ * pending bytes are the view cache (`cachePhotoBlob`); a replacement photo
+ * is a new id, so this does not POST those bytes again.
+ *
+ * A fresh id is recorded in `uploaded` before the POST. A response that is
+ * lost after the server stored the bytes still throws, and the failed save
+ * can tombstone that id.
+ */
 async function uploadPhotoIfNeeded(
   photoId: string | undefined,
   recipeId: string,
   updatedAt: number,
+  uploaded: string[],
 ): Promise<void> {
   if (photoId === undefined) {
     return;
@@ -76,6 +139,10 @@ async function uploadPhotoIfNeeded(
   if (!blob) {
     return;
   }
+  if (getSnapshot().remotePhotoIds.has(photoId)) {
+    return;
+  }
+  uploaded.push(photoId);
   const result = await postPhoto(photoId, recipeId, updatedAt, blob);
   if (result !== 'ok') {
     throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.photoSave'));
@@ -116,7 +183,7 @@ async function copyParentPhotos(parent: Recipe): Promise<{
   const slots = parentPhotoSlots(parent);
   const loaded = await Promise.all(slots.map((slot) => loadParentPhoto(slot.id)));
   if (loaded.some((item) => item === 'signedOut')) {
-    throw new Error(t('error.sessionExpired'));
+    throw new SessionExpiredError();
   }
   if (loaded.some((item) => item === 'unavailable')) {
     throw new Error(t('error.photosCopy'));
@@ -142,10 +209,23 @@ async function copyParentPhotos(parent: Recipe): Promise<{
   };
 }
 
-async function uploadRecipePhotos(recipe: Recipe): Promise<void> {
+/** `uploaded` collects fresh ids, including when a later upload throws. */
+async function uploadRecipePhotos(recipe: Recipe, uploaded: string[] = []): Promise<void> {
   for (const photoId of recipePhotoIds(recipe)) {
-    await uploadPhotoIfNeeded(photoId, recipe.id, recipe.updatedAt);
+    await uploadPhotoIfNeeded(photoId, recipe.id, recipe.updatedAt, uploaded);
   }
+}
+
+/** Tombstone one photo. Local bytes drop only when the server accepts it. */
+async function deletePhoto(photoId: string): Promise<Awaited<ReturnType<typeof pushOps>>> {
+  const at = Date.now();
+  const result = await pushOps([
+    { kind: 'photo.delete', payload: { id: photoId, updatedAt: at } },
+  ]);
+  if (result === 'ok') {
+    dropPhoto(photoId);
+  }
+  return result;
 }
 
 async function deleteRemovedPhotos(
@@ -157,13 +237,31 @@ async function deleteRemovedPhotos(
     if (keep.has(photoId)) {
       continue;
     }
-    const at = Date.now();
-    const result = await pushOps([
-      { kind: 'photo.delete', payload: { id: photoId, updatedAt: at } },
-    ]);
+    await deletePhoto(photoId);
+  }
+}
+
+/**
+ * Photos this save uploaded and then failed to attach. One push for the whole
+ * list, so a failed edit does not wait on a round trip per photo. Best effort:
+ * a failed delete must not replace the save error.
+ */
+async function discardOrphanUploads(photoIds: readonly string[]): Promise<void> {
+  if (photoIds.length === 0) {
+    return;
+  }
+  const at = Date.now();
+  try {
+    const result = await pushOps(
+      photoIds.map((id) => ({ kind: 'photo.delete' as const, payload: { id, updatedAt: at } })),
+    );
     if (result === 'ok') {
-      dropPhoto(photoId);
+      for (const id of photoIds) {
+        dropPhoto(id);
+      }
     }
+  } catch {
+    // Best effort; the caller surfaces the original error.
   }
 }
 
@@ -201,9 +299,13 @@ async function saveShared(recipe: Recipe): Promise<void> {
   try {
     const result = await pushOps([{ kind: 'recipe.put', payload: next, shared: true }]);
     if (result !== 'ok') {
-      throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
+      throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
     }
   } catch (err) {
+    if (err instanceof SessionExpiredError) {
+      // The 401 cleared the library already; write nothing back into it.
+      throw err;
+    }
     upsertRecipe(previous, origin);
     throw err;
   }
@@ -332,21 +434,47 @@ export const recipeStore = {
     }
     const previous = getRecipe(recipe.id);
     const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
-    upsertRecipe(next);
+    const held = recipePhotoIds(next);
+    holdPhotoIds(held);
+    const uploaded: string[] = [];
+    // Unset until the put is sent.
+    let putResult: Awaited<ReturnType<typeof pushOps>> | undefined;
     try {
-      await uploadRecipePhotos(next);
-      const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
-      if (result !== 'ok') {
-        throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
+      upsertRecipe(next);
+      await uploadRecipePhotos(next, uploaded);
+      putResult = await pushOps([{ kind: 'recipe.put', payload: next }]);
+      if (putResult !== 'ok') {
+        throw putResult === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
+      }
+      for (const id of held) {
+        photosCommittedByPut.add(id);
       }
       await deleteRemovedPhotos(previous, next);
     } catch (err) {
-      if (previous) {
-        upsertRecipe(previous);
-      } else {
-        removeRecipeLocal(next.id);
+      if (err instanceof SessionExpiredError) {
+        // The 401 cleared the library already; write nothing back into it.
+        // The session also cannot authorize a tombstone.
+        throw err;
+      }
+      // A put that returned ok is on the server. A newer in-flight save has
+      // replaced this row in memory; restoring `previous` would wipe it.
+      if (putResult !== 'ok' && getRecipe(next.id) === next) {
+        if (previous) {
+          upsertRecipe(previous);
+        } else {
+          removeRecipeLocal(next.id);
+        }
+      }
+      // Tombstone only when the put certainly did not land: it was never sent,
+      // or the server answered that it discarded it. A plain 'error' can be a
+      // dropped response after the live recipe started listing these ids, and
+      // deleting them would break it; an orphan is the cheaper mistake.
+      if (putResult === undefined || isDiscardedPushReason(putResult)) {
+        await discardOrphanUploads(orphanedUploads(uploaded));
       }
       throw err;
+    } finally {
+      releasePhotoIds(held);
     }
   },
 
