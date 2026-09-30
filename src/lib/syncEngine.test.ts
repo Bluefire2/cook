@@ -1,11 +1,15 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fetchSession, setupSessionTriggers } from './session';
 import {
   decideSyncToast,
   getSyncStatusSnapshot,
   MAX_SHARED_PULL_ATTEMPTS,
+  onSyncFinished,
   pullAll,
+  setupSyncTriggers,
   subscribeSyncStatus,
   sync,
+  triggerSyncAfterSession,
 } from './syncEngine';
 import {
   addPendingBlob,
@@ -1331,5 +1335,110 @@ describe('sync status store', () => {
     expect(getSyncStatusSnapshot()).toBe(after);
 
     unsubscribe();
+  });
+});
+
+describe('sign-in boot', () => {
+  const store = new Map<string, string>();
+  const originalStorage = globalThis.localStorage;
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    store.clear();
+    clearLibrary();
+    if (originalStorage === undefined) {
+      delete (globalThis as { localStorage?: Storage }).localStorage;
+    } else {
+      globalThis.localStorage = originalStorage;
+    }
+  });
+
+  it('pulls the owned library once when visibility and online do not fire', async () => {
+    globalThis.localStorage = {
+      getItem: (key) => store.get(key) ?? null,
+      setItem: (key, value) => {
+        store.set(key, value);
+      },
+      removeItem: (key) => {
+        store.delete(key);
+      },
+      clear: () => {
+        store.clear();
+      },
+      key: (index) => [...store.keys()][index] ?? null,
+      get length() {
+        return store.size;
+      },
+    };
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        urls.push(url);
+        if (url.startsWith('/api/auth/session')) {
+          return new Response(
+            JSON.stringify({ user: { sub: 'sub-1', email: 'a@example.com' } }),
+            { status: 200 },
+          );
+        }
+        if (url.startsWith('/api/sync/pull')) {
+          return new Response(
+            JSON.stringify({
+              changes: {
+                recipes: [],
+                chatMessages: [],
+                cookState: [],
+                photos: [],
+                collections: [],
+                cookLogs: [],
+              },
+              cursor: {},
+              hasMore: false,
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.startsWith('/api/sync/shared')) {
+          return new Response(
+            JSON.stringify({
+              changes: { collections: [], recipes: [], photos: [] },
+              cursorToken: '',
+              hasMore: false,
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response('{}', { status: 500 });
+      }),
+    );
+    vi.stubGlobal('document', {
+      visibilityState: 'visible',
+      addEventListener() {},
+      removeEventListener() {},
+    });
+    vi.stubGlobal('window', {
+      addEventListener() {},
+    });
+
+    setupSyncTriggers();
+    setupSessionTriggers();
+    const session = await fetchSession();
+    if (session.status !== 'signedIn') {
+      throw new Error('expected a signed-in session');
+    }
+
+    const finished = new Promise<void>((resolve) => {
+      const unsubscribe = onSyncFinished(() => {
+        unsubscribe();
+        resolve();
+      });
+    });
+    triggerSyncAfterSession(session.user.sub);
+    await finished;
+
+    expect(urls.filter((url) => url.startsWith('/api/auth/session'))).toHaveLength(1);
+    expect(urls.filter((url) => url.startsWith('/api/sync/pull'))).toHaveLength(1);
+    expect(urls.filter((url) => url.startsWith('/api/sync/shared'))).toHaveLength(1);
   });
 });
