@@ -9,7 +9,7 @@ import Sheet from '../components/Sheet';
 import { createInvite } from '../lib/adminApi';
 import { createMemberInvite } from '../lib/inviteApi';
 import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
-import { FolderIcon, PlusIcon, SettingsIcon, SharedIcon } from '../lib/icons';
+import { FolderIcon, InviteIcon, PlusIcon, SettingsIcon, SharedIcon, SpinnerIcon } from '../lib/icons';
 import { importHref, libraryHref, newRecipeHref } from '../lib/collectionHref';
 import { collectionStore, useCollections } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
@@ -443,7 +443,9 @@ export default function Library() {
           {user !== null && (
             <button
               type="button"
-              className={`${ghostBtn} disabled:opacity-40`}
+              className={`${ghostBtn} inline-flex items-center justify-center px-2 py-2 disabled:opacity-40`}
+              aria-label={invitePending ? t('admin.creating') : t('library.inviteLink')}
+              aria-busy={invitePending}
               disabled={invitePending || inviteConfirmOpen}
               onClick={() => {
                 if (inviteMintClient(user) === 'member') {
@@ -453,7 +455,11 @@ export default function Library() {
                 void mint();
               }}
             >
-              {invitePending ? t('admin.creating') : t('library.inviteLink')}
+              {invitePending ? (
+                <SpinnerIcon className="block h-5 w-5 animate-spin" />
+              ) : (
+                <InviteIcon className="block h-5 w-5" />
+              )}
             </button>
           )}
           <Link to="/cooks" className={ghostBtn}>

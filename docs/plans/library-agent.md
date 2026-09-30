@@ -1,6 +1,6 @@
 # Library assistant agent (v1: read-only tools + modular cards)
 
-Implementing on `cursor/library-agent-336b`. App-level assistant at `/assistant`:
+Built on `cursor/library-agent-336b` (PR #34), not deployed. App-level assistant at `/assistant`:
 read-only tools over the signed-in user's own library, plus modular cards
 starting with a shopping list. Conversations are ephemeral. Write tools are v2
 proposal cards, documented below and not built.
@@ -223,7 +223,7 @@ A card is emitted when the model calls a card's `toolName`. The server validates
 
 - `src/agent/api.ts` sends the request and parses NDJSON. The parser is pure and unit-tested for UTF-8 characters split across chunks, lines split across chunks, malformed lines (skipped), missing `done` (truncated), deliberate abort (not an error), and an oversized-line guard (1 MB). A 401 calls `invalidateSession()`.
 - `src/agent/store.ts` is a module-level store read through `useSyncExternalStore`. It holds messages, cards, interim text, tool chips, and checked items. Its transitions are pure reducer functions with unit tests. It survives route changes, not reloads. It clears on Clear and through `onSessionReset`. Nothing is synced, and `ChatMessage` and the other schema-locked types are not touched.
-- `AssistantScreen` at `/assistant` shows messages, cards, tool chips ("Searching recipes..."), a Stop button, Clear, and 2–3 starter prompts. `AssistantEntryLink` is the "Ask" link in the Library header.
+- `AssistantScreen` at `/assistant` shows messages, cards, tool chips ("Searching recipes..."), a Stop button, Clear, and 2–3 starter prompts. `AssistantEntryLink` is the Ask link in the Library header: a chat-bubble icon with the translated "Ask" as its accessible name, like the settings cog. With a word there, the header wrapped onto two rows in `uk` and `ru`; even the icon left `ru` 22 px over at 390 px, so the Library's Invite control became a person-plus icon in the same change.
 
 ## v2: write tools and trust boundary (documented, not built)
 
