@@ -155,15 +155,18 @@ function expiredPage(): Response {
   );
 }
 
-export function recordedPageHtml(): string {
+// A declined request is not re-sent to the owner, so its page keeps the
+// pre-approval-email copy and promises nothing.
+export function recordedPageHtml(promiseEmail: boolean): string {
+  const promise = promiseEmail ? " Once it is approved, we'll email you." : '';
   return pageHtml(
     'Request sent',
-    "<h1>Request sent</h1><p>Your request was recorded. Once it is approved, we'll email you.</p>",
+    `<h1>Request sent</h1><p>Your request was recorded.${promise}</p>`,
   );
 }
 
-function recordedPage(): Response {
-  return new Response(recordedPageHtml(), {
+function recordedPage(promiseEmail: boolean): Response {
+  return new Response(recordedPageHtml(promiseEmail), {
     status: 200,
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
   });
@@ -277,7 +280,7 @@ export async function accessRequestPost(req: Request): Promise<Response> {
     if (result.outcome === 'already-approved') {
       return alreadyApprovedPage();
     }
-    return recordedPage();
+    return recordedPage(result.outcome !== 'declined');
   } catch (err) {
     console.error('accessRequestPost failed:', err);
     return unavailablePage();

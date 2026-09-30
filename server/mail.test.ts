@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { approvalRecipientProblem, sendMail } from './mail.ts';
+import { approvalRecipientProblem, isResendSandboxSender, sendMail } from './mail.ts';
 
 describe('approvalRecipientProblem', () => {
   it('accepts a single at-sign with no whitespace or comma', () => {
@@ -18,6 +18,18 @@ describe('approvalRecipientProblem', () => {
     expect(approvalRecipientProblem('a@b.com,c@d.com')).toBe('invalid');
     expect(approvalRecipientProblem('nodomain')).toBe('invalid');
     expect(approvalRecipientProblem('a@b@c.com')).toBe('invalid');
+  });
+});
+
+describe('isResendSandboxSender', () => {
+  it('recognises the resend.dev sandbox address, bare or bracketed', () => {
+    expect(isResendSandboxSender('onboarding@resend.dev')).toBe(true);
+    expect(isResendSandboxSender('Sous <Onboarding@Resend.dev>')).toBe(true);
+  });
+
+  it('accepts a verified-domain sender', () => {
+    expect(isResendSandboxSender('Sous <sous@kyrylo.lol>')).toBe(false);
+    expect(isResendSandboxSender('sous@notresend.dev.example')).toBe(false);
   });
 });
 

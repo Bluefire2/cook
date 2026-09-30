@@ -6,8 +6,8 @@ import {
   type AccessRequestRecord,
   type DecisionAction,
 } from './members.ts';
-import { publicOrigin } from './env.ts';
-import { approvalRecipientProblem, sendMail } from './mail.ts';
+import { mailFrom, publicOrigin } from './env.ts';
+import { approvalRecipientProblem, isResendSandboxSender, sendMail } from './mail.ts';
 import {
   INVITE_UNUSED_CAP,
   listUnusedInvites,
@@ -229,6 +229,19 @@ export async function adminRequestsGet(req: Request): Promise<Response> {
   }
 }
 
+// How long Approve waits on the approval email before answering. The send
+// runs beside the list reread, so a healthy Resend adds nothing; a slow one
+// is left to finish (or hit sendMail's own timeout) after the response.
+const APPROVAL_MAIL_WAIT_MS = 3_000;
+
+function sandboxSender(): boolean {
+  try {
+    return isResendSandboxSender(mailFrom());
+  } catch {
+    return false;
+  }
+}
+
 async function notifyApproval(email: string): Promise<void> {
   const problem = approvalRecipientProblem(email);
   if (problem === 'missing') {
@@ -237,6 +250,10 @@ async function notifyApproval(email: string): Promise<void> {
   }
   if (problem === 'invalid') {
     console.log('approval email skipped: invalid recipient');
+    return;
+  }
+  if (sandboxSender()) {
+    console.log('approval email skipped: MAIL_FROM is the Resend sandbox sender');
     return;
   }
 
@@ -254,6 +271,16 @@ async function notifyApproval(email: string): Promise<void> {
   } catch {
     console.log('approval email failed');
   }
+}
+
+function settleWithin(promise: Promise<void>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    void promise.finally(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
 
 export async function adminDecisionPost(req: Request): Promise<Response> {
@@ -298,11 +325,15 @@ export async function adminDecisionPost(req: Request): Promise<Response> {
       }
       return errorJson('unknown-request', UNKNOWN_REQUEST_ERROR, 404);
     }
-    if (body.action === 'approve' && result.kind === 'ok') {
-      await notifyApproval(result.request.email);
-    }
+    const approvalMail =
+      body.action === 'approve' && result.kind === 'ok'
+        ? settleWithin(notifyApproval(result.request.email), APPROVAL_MAIL_WAIT_MS)
+        : null;
     clearMembershipCache(body.sub);
     const lists = await listAccessRequests();
+    if (approvalMail !== null) {
+      await approvalMail;
+    }
     return jsonResponse(serializeAccessRequestLists(lists));
   } catch (err) {
     console.error('adminDecisionPost store error:', err);

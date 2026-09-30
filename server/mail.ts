@@ -66,3 +66,11 @@ export function approvalRecipientProblem(
   }
   return null;
 }
+
+// The Resend sandbox sender (onboarding@resend.dev) only delivers to the
+// Resend account's own address. Mail to anyone else is refused with a 403.
+export function isResendSandboxSender(from: string): boolean {
+  const bracketed = /<([^>]*)>\s*$/.exec(from);
+  const address = (bracketed === null ? from : bracketed[1]).trim().toLowerCase();
+  return address.endsWith('@resend.dev');
+}

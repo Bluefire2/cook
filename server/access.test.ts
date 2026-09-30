@@ -92,10 +92,17 @@ describe('invitationOnlyPage', () => {
 
 describe('recordedPageHtml', () => {
   it('says the request was recorded and that approval will email them', () => {
-    const html = recordedPageHtml();
+    const html = recordedPageHtml(true);
     expect(html).toContain('<h1>Request sent</h1>');
     expect(html).toContain('Your request was recorded.');
     expect(html).toContain("Once it is approved, we'll email you.");
+  });
+
+  it('promises no email for a declined request', () => {
+    const html = recordedPageHtml(false);
+    expect(html).toContain('<h1>Request sent</h1>');
+    expect(html).toContain('Your request was recorded.');
+    expect(html).not.toContain('email');
   });
 });
 

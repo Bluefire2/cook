@@ -398,6 +398,7 @@ describe('adminDecisionPost approval email', () => {
     secret: process.env.SESSION_SECRET,
     allowed: process.env.ALLOWED_EMAILS,
     origin: process.env.PUBLIC_ORIGIN,
+    from: process.env.MAIL_FROM,
   };
   const emptyLists: AccessRequestLists = {
     pending: { rows: [], nextCursor: null },
@@ -429,7 +430,9 @@ describe('adminDecisionPost approval email', () => {
     };
   }
 
-  function restore(name: 'SESSION_SECRET' | 'ALLOWED_EMAILS' | 'PUBLIC_ORIGIN', value: string | undefined) {
+  function restore(
+    name: 'SESSION_SECRET' | 'ALLOWED_EMAILS' | 'PUBLIC_ORIGIN' | 'MAIL_FROM',
+    value: string | undefined) {
     if (value === undefined) {
       delete process.env[name];
     } else {
@@ -441,6 +444,7 @@ describe('adminDecisionPost approval email', () => {
     process.env.SESSION_SECRET = 'test-secret-for-session-hmac';
     process.env.ALLOWED_EMAILS = 'allowed@example.com';
     process.env.PUBLIC_ORIGIN = 'https://sous.example';
+    process.env.MAIL_FROM = 'Sous <sous@example.com>';
     vi.mocked(members.applyDecision).mockReset();
     vi.mocked(members.listAccessRequests).mockReset();
     vi.mocked(members.listAccessRequests).mockResolvedValue(emptyLists);
@@ -453,7 +457,9 @@ describe('adminDecisionPost approval email', () => {
     restore('SESSION_SECRET', prev.secret);
     restore('ALLOWED_EMAILS', prev.allowed);
     restore('PUBLIC_ORIGIN', prev.origin);
+    restore('MAIL_FROM', prev.from);
     vi.mocked(console.log).mockRestore();
+    vi.useRealTimers();
   });
 
   function decision(body: unknown): Promise<Response> {
@@ -547,6 +553,64 @@ describe('adminDecisionPost approval email', () => {
       expect(vi.mocked(console.log).mock.calls).toEqual([[line]]);
     },
   );
+
+  it('skips the send when MAIL_FROM is the Resend sandbox sender', async () => {
+    process.env.MAIL_FROM = 'onboarding@resend.dev';
+    vi.mocked(members.applyDecision).mockResolvedValue({
+      kind: 'ok',
+      request: approvedRequest('person@example.com'),
+      member: { status: 'active' },
+    });
+    const response = await decision({ sub: 'other-user', action: 'approve' });
+    expect(response.status).toBe(200);
+    expect(mail.sendMail).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log).mock.calls).toEqual([
+      ['approval email skipped: MAIL_FROM is the Resend sandbox sender'],
+    ]);
+  });
+
+  it('reads the lists while the email is in flight', async () => {
+    let finishSend: (sent: boolean) => void = () => {};
+    vi.mocked(mail.sendMail).mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        finishSend = resolve;
+      }),
+    );
+    vi.mocked(members.listAccessRequests).mockImplementation(async () => {
+      expect(mail.sendMail).toHaveBeenCalledTimes(1);
+      finishSend(true);
+      return emptyLists;
+    });
+    vi.mocked(members.applyDecision).mockResolvedValue({
+      kind: 'ok',
+      request: approvedRequest('person@example.com'),
+      member: { status: 'active' },
+    });
+    const response = await decision({ sub: 'other-user', action: 'approve' });
+    expect(response.status).toBe(200);
+    expect(members.listAccessRequests).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers after 3 s when the email is still pending', async () => {
+    vi.useFakeTimers();
+    vi.mocked(mail.sendMail).mockReturnValue(new Promise<boolean>(() => {}));
+    vi.mocked(members.applyDecision).mockResolvedValue({
+      kind: 'ok',
+      request: approvedRequest('person@example.com'),
+      member: { status: 'active' },
+    });
+    let settled = false;
+    const pending = decision({ sub: 'other-user', action: 'approve' }).then((r) => {
+      settled = true;
+      return r;
+    });
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const response = await pending;
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(serializeAccessRequestLists(emptyLists));
+  });
 
   it.each(['deny', 'revoke'] as const)('does not email on %s', async (action) => {
     vi.mocked(members.applyDecision).mockResolvedValue({

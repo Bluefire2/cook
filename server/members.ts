@@ -313,10 +313,18 @@ function notificationsMetaRef() {
   return getStoreFirestore().collection('accessRequestMeta').doc(NOTIFICATIONS_META_ID);
 }
 
+// 'declined' is a quiet outcome whose stored request was denied: nothing is
+// written, and no owner is told, so the page must not promise an email.
+export type AccessRequestOutcome = 'recorded' | 'quiet' | 'declined' | 'already-approved';
+
+export function quietOutcome(current: AccessRequestRecord | null): 'quiet' | 'declined' {
+  return current !== null && current.status === 'denied' ? 'declined' : 'quiet';
+}
+
 export async function recordAccessRequest(
   identity: AccessRequestIdentity,
   now: number,
-): Promise<{ outcome: 'recorded' | 'quiet' | 'already-approved'; notify: boolean }> {
+): Promise<{ outcome: AccessRequestOutcome; notify: boolean }> {
   const ref = accessRequestsRef(identity.sub);
   const initialSnap = await ref.get();
   let existing: AccessRequestRecord | null = null;
@@ -330,11 +338,11 @@ export async function recordAccessRequest(
 
   const phase1 = nextRequestState(existing, identity, now);
   if (!phase1.write) {
-    return { outcome: 'quiet', notify: false };
+    return { outcome: quietOutcome(existing), notify: false };
   }
 
   const result = {
-    outcome: 'recorded' as 'recorded' | 'quiet' | 'already-approved',
+    outcome: 'recorded' as AccessRequestOutcome,
     notify: false,
   };
 
@@ -352,7 +360,7 @@ export async function recordAccessRequest(
 
     const state = nextRequestState(current, identity, now);
     if (!state.write || state.doc === null) {
-      result.outcome = 'quiet';
+      result.outcome = quietOutcome(current);
       result.notify = false;
       return;
     }

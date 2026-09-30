@@ -360,7 +360,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/i18n.md` | Built and verified on `cursor/i18n-implement-5489` (PR #42; constitution `docs/constitutions/i18n.md`). Not deployed. UI language with `src/i18n/` catalogs, `Recipe.lang`, translation at import and on the recipe screen, dictation language. |
 | `docs/plans/i18n-follow-ups.md` | Open. Post-deploy owner steps (Cloud Run translate p95, dictation clips, `lang` backfill `--write`), unrun checks, and review nits left after PR #42. |
 | `docs/plans/collection-path.md` | Built on `cursor/collection-path-2d3d`. Named collections open at `/collections/<id>`. Legacy `?c=` redirects removed. Not deployed. |
-| `docs/plans/approval-email.md` | Built on `cursor/approval-email-420a`. Email the requester after an admin approves an access request. Not deployed. |
+| `docs/plans/approval-email.md` | Built on `cursor/approval-email-420a`. Email the requester after an admin approves an access request. Not deployed; before deploying, set `MAIL_FROM` to a sender on a Resend-verified domain (the sandbox sender skips the send). |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not

@@ -119,6 +119,27 @@ the response `adminDecisionPost` already returns.
    the Dockerfile, `0x1E` chat framing, or the `Recipe` schema. No enums
    and no constructor parameter properties (`erasableSyntaxOnly`).
 
+10. **Review fixes (2026-09-30).**
+    - *Sender.* The Resend sandbox sender (`onboarding@resend.dev`,
+      `docs/plans/invitation-flow.md`) delivers only to the Resend
+      account's own inbox, so every approval email would 403. Production
+      `MAIL_FROM` must be on a domain verified in Resend before deploy.
+      Until then `notifyApproval` skips the send and logs the fixed line
+      `approval email skipped: MAIL_FROM is the Resend sandbox sender`
+      (`isResendSandboxSender` in `server/mail.ts`), instead of a bare
+      `resend send failed: 403`.
+    - *Declined requests.* A quiet request whose stored status is
+      `denied` is its own outcome, `declined` (`quietOutcome` in
+      `server/members.ts`). Nothing is written and no owner is told, so
+      its recorded page keeps the old copy, `Your request was recorded.`,
+      with no email promise (`recordedPageHtml(false)`).
+    - *Latency.* Approve no longer waits on Resend before the list reread.
+      The send starts beside `listAccessRequests`, and the response waits
+      on it for at most 3 s (`APPROVAL_MAIL_WAIT_MS`). A send still
+      pending then finishes, or hits `sendMail`'s 10 s timeout, after the
+      response. This supersedes the "before `clearMembershipCache` and
+      `listAccessRequests`" ordering in Decision 1 and step 2.
+
 ## Steps
 
 ### 1. [core] Optional recipient on `sendMail`
