@@ -387,14 +387,38 @@ function recipeJsonLdHasBody(node: object): boolean {
 }
 
 /**
+ * Recipe JSON-LD fields that say nothing about how to make the dish: reader
+ * reviews and comments, ratings, and media. Dropped only when a node is over
+ * the cap, where a site's review list would otherwise push the recipe's own
+ * fields out and leave Gemini an unterminated object.
+ */
+const NON_RECIPE_JSON_LD_KEYS = [
+  'review',
+  'comment',
+  'aggregateRating',
+  'interactionStatistic',
+  'video',
+];
+
+function recipeNodeSource(node: object): string {
+  const full = JSON.stringify(node);
+  if (full.length <= MAX_SOURCE_CHARS) return full;
+  const trimmed: Record<string, unknown> = { ...node };
+  for (const key of NON_RECIPE_JSON_LD_KEYS) delete trimmed[key];
+  return JSON.stringify(trimmed).slice(0, MAX_SOURCE_CHARS);
+}
+
+/**
  * Prefers the schema.org/Recipe JSON-LD block most recipe sites embed
  * (compact and unambiguous); falls back to the page's stripped text,
  * preferring `<article>` / `<main>` so a news-article recipe is not lost
- * behind nav chrome. An empty Recipe block does not count.
+ * behind nav chrome. An empty Recipe block does not count. The `type`
+ * attribute may be unquoted (`type=application/ld+json`), which HTML allows
+ * and minifiers emit.
  */
 export function extractRecipeSource(html: string): string {
   const ldBlocks = html.matchAll(
-    /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi,
+    /<script[^>]*type=["']?application\/ld\+json(?=["'\s>])[^>]*>([\s\S]*?)<\/script>/gi,
   );
   for (const match of ldBlocks) {
     try {
@@ -407,7 +431,7 @@ export function extractRecipeSource(html: string): string {
         const type = (node as { '@type'?: string | string[] })['@type'];
         const isRecipe = type === 'Recipe' || (Array.isArray(type) && type.includes('Recipe'));
         if (isRecipe && recipeJsonLdHasBody(node)) {
-          return JSON.stringify(node).slice(0, MAX_SOURCE_CHARS);
+          return recipeNodeSource(node);
         }
       }
     } catch {

@@ -16,10 +16,9 @@ type Expected = { path: 'jsonld' } | { path: 'text'; mustContain: string[] };
 
 /**
  * Which branch of extractRecipeSource each page takes. `jsonld` means the
- * function returned a Recipe object, including one sliced at
- * MAX_SOURCE_CHARS so the slice no longer parses. A page that moves between
- * that branch and stripped text is a behaviour change worth a look, so
- * update this map deliberately. A new page fixture needs an entry.
+ * function returned a whole Recipe object that parses. A page that moves
+ * between that branch and stripped text is a behaviour change worth a look,
+ * so update this map deliberately. A new page fixture needs an entry.
  */
 const EXPECTED: Record<string, Expected> = {
   'import/beef-noodle-soup': { path: 'jsonld' },
@@ -29,20 +28,15 @@ const EXPECTED: Record<string, Expected> = {
   'import-sites/bbcgoodfood-bolognese': { path: 'jsonld' },
   'import-sites/cookpad-bbq-chicken': { path: 'jsonld' },
   'import-sites/delish-marry-me-chicken': { path: 'jsonld' },
-  // Longer than MAX_SOURCE_CHARS, so the returned Recipe slice does not parse.
+  // Over MAX_SOURCE_CHARS with its 150 reviews; the extractor drops them.
   'import-sites/foodcom-banana-bread': { path: 'jsonld' },
   'import-sites/giallozafferano-carbonara': { path: 'jsonld' },
   'import-sites/hebbarskitchen-paneer-butter-masala': { path: 'jsonld' },
   'import-sites/indianhealthyrecipes-chicken-biryani': { path: 'jsonld' },
   'import-sites/justonecookbook-okonomiyaki': { path: 'jsonld' },
   'import-sites/kingarthur-sandwich-bread': { path: 'jsonld' },
-  // Recipe JSON-LD is present, in `<script type=application/ld+json>` with no
-  // quotes. The extractor only matches a quoted type attribute, so this page
-  // stays on the text branch.
-  'import-sites/loveandlemons-guacamole': {
-    path: 'text',
-    mustContain: ['avocado', 'lime', 'cilantro'],
-  },
+  // `<script type=application/ld+json>`, with the type attribute unquoted.
+  'import-sites/loveandlemons-guacamole': { path: 'jsonld' },
   'import-sites/marmiton-boeuf-bourguignon': { path: 'jsonld' },
   'import-sites/natashaskitchen-borscht': { path: 'jsonld' },
   'import-sites/nytcooking-chocolate-chip-cookies': { path: 'jsonld' },
@@ -83,19 +77,6 @@ function isRecipeType(type: unknown): boolean {
   return type === 'Recipe' || (Array.isArray(type) && type.includes('Recipe'));
 }
 
-/** `"@type":"Recipe"` or `"@type":[...,"Recipe"]`, including inside a sliced object. */
-function sourceMarksRecipe(source: string): boolean {
-  return /"@type"\s*:\s*(?:"Recipe"|\[[^\]]*"Recipe")/.test(source);
-}
-
-describe('sourceMarksRecipe', () => {
-  it('matches a Recipe type and an array that includes Recipe', () => {
-    expect(sourceMarksRecipe('{"@type":"Recipe","name":"x"')).toBe(true);
-    expect(sourceMarksRecipe('{"@type": ["Recipe"], "name": "x"')).toBe(true);
-    expect(sourceMarksRecipe('Best Guacamole')).toBe(false);
-  });
-});
-
 describe('extractRecipeSource over cached page fixtures', () => {
   it('every page fixture has an expected entry, and every entry has a page', () => {
     expect(pageFixtures()).toEqual(Object.keys(EXPECTED).sort());
@@ -111,18 +92,12 @@ describe('extractRecipeSource over cached page fixtures', () => {
 
       const node = parsedRecipeNode(source);
       if (expected.path === 'jsonld') {
-        // A sliced Recipe object still starts with `{`. Stripped text does not.
-        expect(source.trimStart().startsWith('{')).toBe(true);
-        if (node) {
-          expect(isRecipeType(node['@type'])).toBe(true);
-          expect(typeof node.name).toBe('string');
-        } else {
-          expect(source.length).toBe(MAX_SOURCE_CHARS);
-          expect(sourceMarksRecipe(source)).toBe(true);
-          expect(source).toMatch(/"name"\s*:\s*"/);
-        }
+        expect(node, 'JSON-LD source should be a whole Recipe object').not.toBeNull();
+        expect(isRecipeType(node?.['@type'])).toBe(true);
+        expect(typeof node?.name).toBe('string');
+        expect(node).toHaveProperty('recipeIngredient');
+        expect(node).toHaveProperty('recipeInstructions');
       } else {
-        expect(source.trimStart().startsWith('{')).toBe(false);
         expect(node).toBeNull();
         expect(source).not.toMatch(/<script|<style/i);
         const lower = source.toLowerCase();
