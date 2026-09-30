@@ -238,6 +238,39 @@ describe('extractRecipeSource', () => {
     expect(text).toContain('beets and cabbage');
     expect(text).not.toContain('See also');
   });
+
+  it('reads a JSON-LD script whose earlier attribute contains >', () => {
+    const node = { ...RECIPE, recipeIngredient: ['200 g pecorino'] };
+    const html =
+      `<script data-note="Say 'heat > 180'" type="application/ld+json">${JSON.stringify(node)}</script>` +
+      '<p>Plain page</p>';
+    expect(JSON.parse(extractRecipeSource(html))).toEqual(node);
+  });
+
+  it('ignores a Recipe script that exists only inside a comment', () => {
+    const decoy = { ...RECIPE, name: 'Decoy Stew', recipeIngredient: ['secret sauce'] };
+    const html = `<!-- ${ldBlock(JSON.stringify(decoy))} --><p>Real ingredients: beets</p>`;
+    const text = extractRecipeSource(html);
+    expect(text).toContain('beets');
+    expect(text).not.toContain('Decoy Stew');
+  });
+
+  it('keeps the article when an unclosed quote would stop a tag scan', () => {
+    const nav = `<nav>${'Menu item '.repeat(8000)}</nav>`;
+    const html = `${nav}<article><div data-x="foo><span>nope</span></div><p>Ingredients: beets</p></article>`;
+    const text = extractRecipeSource(html);
+    expect(text).toContain('beets');
+    expect(text).not.toContain('Menu item');
+  });
+
+  it('uses an unclosed article instead of the whole page', () => {
+    const nav = `<nav>${'Menu item '.repeat(8000)}</nav>`;
+    const html = `${nav}<article><h1>Borscht</h1><p>Ingredients: beets`;
+    const text = extractRecipeSource(html);
+    expect(text).toContain('Borscht');
+    expect(text).toContain('beets');
+    expect(text).not.toContain('Menu item');
+  });
 });
 
 const MINIMAL = {
