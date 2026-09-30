@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { decideSyncToast, MAX_SHARED_PULL_ATTEMPTS, pullAll } from './syncEngine';
+import {
+  decideSyncToast,
+  getSyncStatusSnapshot,
+  MAX_SHARED_PULL_ATTEMPTS,
+  pullAll,
+  subscribeSyncStatus,
+  sync,
+} from './syncEngine';
 import {
   addPendingBlob,
   beginLocalWrite,
@@ -1282,5 +1289,44 @@ describe('decideSyncToast', () => {
     expect(decideSyncToast({ outcome: 'signedOut', pushed: 1, applied: 0 })).toBeNull();
     expect(decideSyncToast({ outcome: 'skipped', pushed: 0, applied: 0 })).toBeNull();
     expect(decideSyncToast({ outcome: 'superseded', pushed: 0, applied: 0 })).toBeNull();
+  });
+});
+
+describe('sync status store', () => {
+  const originalStorage = globalThis.localStorage;
+
+  afterEach(() => {
+    if (originalStorage === undefined) {
+      delete (globalThis as { localStorage?: Storage }).localStorage;
+    } else {
+      globalThis.localStorage = originalStorage;
+    }
+  });
+
+  it('keeps one snapshot between publications and removes listeners on unsubscribe', async () => {
+    globalThis.localStorage = {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+      clear: () => {},
+      key: () => null,
+      length: 0,
+    };
+    const before = getSyncStatusSnapshot();
+    expect(getSyncStatusSnapshot()).toBe(before);
+
+    let calls = 0;
+    const unsubscribe = subscribeSyncStatus(() => {
+      calls += 1;
+    });
+    await sync();
+    expect(calls).toBe(1);
+    const after = getSyncStatusSnapshot();
+    expect(after).not.toBe(before);
+    expect(after.status).toBe('signedOut');
+
+    unsubscribe();
+    await sync();
+    expect(calls).toBe(1);
   });
 });

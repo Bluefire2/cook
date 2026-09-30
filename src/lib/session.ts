@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { clearLibrary } from './libraryMemory';
 import { clearPersistedLibraryView } from './librarySearchMemory';
 
@@ -13,7 +13,7 @@ export type FetchSessionResult =
   | { status: 'signedOut' }
   | { status: 'offline'; user: SessionUser | null };
 
-type SessionSnapshot = {
+export type SessionSnapshot = {
   user: SessionUser | null;
   status: SessionStatus;
 };
@@ -98,21 +98,23 @@ export async function signOut(): Promise<void> {
   invalidateSession();
 }
 
+export function subscribeSession(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function getSessionSnapshot(): SessionSnapshot {
+  return snapshot;
+}
+
 export function useSession(): {
   user: SessionUser | null;
   status: SessionStatus;
   refresh: () => Promise<void>;
 } {
-  const [, tick] = useState(0);
-  useEffect(() => {
-    const listener = () => {
-      tick((n) => n + 1);
-    };
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  }, []);
+  const current = useSyncExternalStore(subscribeSession, getSessionSnapshot);
 
   const refresh = useCallback(async () => {
     await fetchSession();
@@ -135,5 +137,5 @@ export function useSession(): {
     };
   }, []);
 
-  return { user: snapshot.user, status: snapshot.status, refresh };
+  return { user: current.user, status: current.status, refresh };
 }
