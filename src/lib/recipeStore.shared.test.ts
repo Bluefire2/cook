@@ -135,6 +135,24 @@ describe('shared recipe access', () => {
     expect(next.get('own')).toEqual({ kind: 'own' });
   });
 
+  it('gives a shared recipe the owner email from a collection that lists it', () => {
+    const next = withSharedRecipeAccess(
+      new Map<string, ItemOrigin>([
+        [EDITABLE_ID, shared()],
+        [VIEW_ONLY_ID, shared()],
+        ['own', { kind: 'own' }],
+      ]),
+      new Map([[VIEW_COLLECTION, collection(VIEW_COLLECTION, [EDITABLE_ID])]]),
+      new Map<string, ItemOrigin>([
+        [VIEW_COLLECTION, { ...shared(), ownerEmail: 'owner@example.com' }],
+      ]),
+    );
+    expect(next.get(EDITABLE_ID)).toMatchObject({ ownerEmail: 'owner@example.com' });
+    // Not listed by any collection with an email: no email, never a guess.
+    expect(next.get(VIEW_ONLY_ID)).not.toHaveProperty('ownerEmail');
+    expect(next.get('own')).toEqual({ kind: 'own' });
+  });
+
   it('is published with the shared pull and is not a Recipe field', () => {
     publishShared();
     expect(recipeAccess(EDITABLE_ID)).toBe('editor');
