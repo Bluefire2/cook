@@ -95,6 +95,11 @@ function DialogFrame({
 
   const restoreOpener = (event: Event) => {
     event.preventDefault();
+    // StrictMode replays the mount effect. FocusScope defers this handler
+    // with a timeout, and that replay runs while the sheet is still open.
+    // Focusing the opener then leaves Tab on the page underneath. A real
+    // close has already detached the panel, or cleared this ref.
+    if (panelRef.current?.isConnected) return;
     const opener = openerRef.current;
     if (opener?.isConnected) opener.focus();
   };

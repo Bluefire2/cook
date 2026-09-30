@@ -71,9 +71,16 @@ amended.
 
    **What restores it.** `onCloseAutoFocus` calls `preventDefault` (so
    Radix does not focus the empty trigger and does not also focus
-   whatever `FocusScope` saved) and then `focus()` on the captured
-   element when `isConnected`. `FocusScope` runs that handler from a
-   timeout on unmount, after the parent has removed the shell and after
+   whatever `FocusScope` saved). If the panel is still connected,
+   return without focusing. `StrictMode` replays the mount effect, and
+   `FocusScope` runs this handler from a `setTimeout(0)` in that
+   replay's cleanup while the sheet is still open. Focusing the opener
+   then leaves Tab on the page underneath an autofocus sheet, because
+   the trap's last-focused element was never recorded for the replay.
+   A real close has already detached the panel, or cleared the ref, so
+   the check does not skip it. Then `focus()` the captured element when
+   it `isConnected`. `FocusScope` runs that handler from a timeout on
+   unmount, after the parent has removed the shell and after
    `hideOthers` has cleared `aria-hidden`. Parents do not stay mounted
    with `open={false}`.
 
