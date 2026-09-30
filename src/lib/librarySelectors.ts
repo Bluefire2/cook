@@ -1,0 +1,64 @@
+import { originAccess, type LibraryAccess, type LibrarySnapshot } from './libraryMemory';
+import type { CookLog, Recipe } from './types';
+import type { CookStateRow } from './useCookState';
+
+/**
+ * Selectors for `useLibrarySelect`. Each returns a value the snapshot already
+ * holds, or a primitive, never a new object: React compares results with
+ * `Object.is`, and a fresh object would re-render forever.
+ * `librarySelectors.test.ts` checks every export for that.
+ */
+
+/** `undefined` while loading, `null` if not found. */
+export function selectRecipe(
+  id: string | undefined,
+): (snapshot: LibrarySnapshot) => Recipe | null | undefined {
+  return (snapshot) => {
+    if (!snapshot.loaded) {
+      return undefined;
+    }
+    return id ? (snapshot.recipes.get(id) ?? null) : null;
+  };
+}
+
+/** `undefined` when the recipe is not in the library. */
+export function selectRecipeAccess(
+  id: string | undefined,
+): (snapshot: LibrarySnapshot) => LibraryAccess | undefined {
+  return (snapshot) =>
+    id === undefined ? undefined : originAccess(snapshot.recipeOrigins.get(id));
+}
+
+/** Email of whoever shared this recipe, when known. */
+export function selectRecipeSharedBy(
+  id: string | undefined,
+): (snapshot: LibrarySnapshot) => string | undefined {
+  return (snapshot) => {
+    const origin = id === undefined ? undefined : snapshot.recipeOrigins.get(id);
+    return origin?.kind === 'shared' ? origin.ownerEmail : undefined;
+  };
+}
+
+/** `undefined` while loading, `null` if not found. */
+export function selectCookLog(
+  id: string | undefined,
+): (snapshot: LibrarySnapshot) => CookLog | null | undefined {
+  return (snapshot) => {
+    if (!snapshot.loaded) {
+      return undefined;
+    }
+    return id ? (snapshot.cookLogs.get(id) ?? null) : null;
+  };
+}
+
+export function selectCookRow(
+  recipeId: string | undefined,
+): (snapshot: LibrarySnapshot) => CookStateRow | undefined {
+  return (snapshot) => (recipeId ? snapshot.cook.get(recipeId) : undefined);
+}
+
+export function selectPendingBlob(
+  id: string | undefined,
+): (snapshot: LibrarySnapshot) => Blob | undefined {
+  return (snapshot) => (id ? snapshot.pendingBlobs.get(id) : undefined);
+}

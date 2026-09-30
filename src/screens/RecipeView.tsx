@@ -7,7 +7,7 @@ import CookLogCard from '../components/CookLogCard';
 import { useCookLogs } from '../lib/cookLogStore';
 import { SpinnerIcon, TranslateIcon } from '../lib/icons';
 import { usePhotoUrl } from '../lib/photoStore';
-import { recipeStore, useRecipe } from '../lib/recipeStore';
+import { useRecipe, useRecipeAccess, useRecipeSharedBy } from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
 import { sync } from '../lib/syncEngine';
 import { translateChipMode, type TranslateChipMode } from '../lib/translateChip';
@@ -141,6 +141,8 @@ export default function RecipeView() {
   const locale = useLocale();
   const { id } = useParams<{ id: string }>();
   const recipe = useRecipe(id);
+  const access = useRecipeAccess(id);
+  const sharedByEmail = useRecipeSharedBy(id);
   const photoUrl = usePhotoUrl(recipe?.photoId);
   useWakeLock();
 
@@ -208,8 +210,19 @@ export default function RecipeView() {
     );
   }
 
-  const shared = recipeStore.isShared(recipe.id);
-  const canEdit = !shared || recipeStore.access(recipe.id) === 'editor';
+  const shared = access === 'viewer' || access === 'editor';
+  const canEdit = access !== 'viewer';
+  // One catalog sentence per case: joining two with a space breaks Chinese punctuation.
+  const sharedBy = shared ? sharedByEmail : undefined;
+  const sharedLine = !shared
+    ? undefined
+    : sharedBy
+      ? canEdit
+        ? t('recipe.sharedByEdit', { email: sharedBy })
+        : t('recipe.sharedByView', { email: sharedBy })
+      : canEdit
+        ? t('recipe.sharedEdit')
+        : t('recipe.sharedView');
   const scale = servings / recipe.servings;
   const source = sourceLink(recipe.sourceUrl);
   // A translation must not flow into chat or save, or it would overwrite the original (principle 1).
@@ -298,6 +311,11 @@ export default function RecipeView() {
             </Link>
           )}
         </div>
+        {sharedLine !== undefined && (
+          <p className="mt-2 rounded-xl bg-surface-muted px-3 py-2 text-sm break-words text-ink-muted">
+            {sharedLine}
+          </p>
+        )}
         {photoUrl && (
           <img
             src={photoUrl}

@@ -1,19 +1,19 @@
-import { useMemo, useSyncExternalStore } from 'react';
+import { useMemo } from 'react';
 import { t } from '../i18n';
 import {
+  cookLogsFor,
   dropPhoto,
   getCookLog,
   getPendingBlob,
   getRecipe,
-  getSnapshot,
   isSharedRecipe,
-  listCookLogs,
   markPhotoRemote,
   removeCookLogLocal,
-  subscribe,
   upsertCookLog,
 } from './libraryMemory';
+import { selectCookLog } from './librarySelectors';
 import { withLocalWrite } from './localWrite';
+import { useLibrarySelect, useLibrarySlice } from './useLibrary';
 import { postPhoto, pushOps, type RemoteResult } from './remote';
 import { SessionExpiredError } from './sessionExpired';
 import {
@@ -173,23 +173,15 @@ export const cookLogStore = {
 
 /** Reactive cook logs, newest cook first; all entries when `recipeId` is omitted. `undefined` while loading. */
 export function useCookLogs(recipeId?: string): CookLog[] | undefined {
-  const snap = useSyncExternalStore(subscribe, getSnapshot);
-  return useMemo(() => {
-    if (!snap.loaded) {
-      return undefined;
-    }
-    return listCookLogs(recipeId);
-  }, [snap, recipeId]);
+  const loaded = useLibrarySlice('loaded');
+  const cookLogs = useLibrarySlice('cookLogs');
+  return useMemo(
+    () => (loaded ? cookLogsFor(cookLogs, recipeId) : undefined),
+    [loaded, cookLogs, recipeId],
+  );
 }
 
 /** Reactive single cook log. `undefined` while loading, `null` if not found. */
 export function useCookLog(id: string | undefined): CookLog | null | undefined {
-  const snap = useSyncExternalStore(subscribe, getSnapshot);
-  if (!snap.loaded) {
-    return undefined;
-  }
-  if (!id) {
-    return null;
-  }
-  return snap.cookLogs.get(id) ?? null;
+  return useLibrarySelect(selectCookLog(id));
 }

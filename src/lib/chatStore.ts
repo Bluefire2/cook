@@ -1,15 +1,15 @@
-import { useMemo, useSyncExternalStore } from 'react';
+import { useMemo } from 'react';
 import { t } from '../i18n';
 import {
+  chatFor,
   clearChatLocal,
-  getSnapshot,
   listChat,
-  subscribe,
   upsertChat,
   getPendingBlob,
   markPhotoRemote,
 } from './libraryMemory';
 import { withLocalWrite } from './localWrite';
+import { useLibrarySlice } from './useLibrary';
 import { postPhoto, pushOps } from './remote';
 import { SessionExpiredError } from './sessionExpired';
 import type { ChatMessage } from './types';
@@ -101,11 +101,10 @@ export const chatStore = {
 
 /** Reactive chat thread for a recipe, oldest first. `undefined` while loading. */
 export function useChatMessages(recipeId: string): ChatMessage[] | undefined {
-  const snap = useSyncExternalStore(subscribe, getSnapshot);
-  return useMemo(() => {
-    if (!snap.loaded) {
-      return undefined;
-    }
-    return listChat(recipeId);
-  }, [snap, recipeId]);
+  const loaded = useLibrarySlice('loaded');
+  const chat = useLibrarySlice('chat');
+  return useMemo(
+    () => (loaded ? chatFor(chat, recipeId) : undefined),
+    [loaded, chat, recipeId],
+  );
 }

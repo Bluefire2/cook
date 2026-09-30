@@ -1,6 +1,8 @@
-import { useCallback, useMemo, useSyncExternalStore } from 'react';
-import { getCook, getSnapshot, subscribe, upsertCook } from './libraryMemory';
+import { useCallback, useMemo } from 'react';
+import { getCook, upsertCook } from './libraryMemory';
+import { selectCookRow } from './librarySelectors';
 import { withLocalWrite } from './localWrite';
+import { useLibrarySelect } from './useLibrary';
 import { pushOps } from './remote';
 import type { Recipe } from './types';
 
@@ -111,9 +113,8 @@ export function updateCookState(
 
 /** Persisted per recipe. Resets when the recipe's shape changes. */
 export function useCookState(recipe: Recipe | null | undefined): CookStateApi {
-  const snap = useSyncExternalStore(subscribe, getSnapshot);
   const recipeId = recipe?.id;
-  const row = recipeId ? snap.cook.get(recipeId) : undefined;
+  const row = useLibrarySelect(selectCookRow(recipeId));
 
   const { servings, currentStep, checkedKeys } = progressFor(row, recipe);
   const checkedSet = useMemo(() => new Set(checkedKeys), [checkedKeys]);

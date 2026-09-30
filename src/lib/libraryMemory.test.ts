@@ -1,17 +1,25 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   addPendingBlob,
+  cachePhotoBlob,
   captureSnapshot,
   chatParentIsShared,
   clearChatLocal,
   clearLibrary,
   cookParentIsShared,
   countOwnedNamedCollections,
+  dropPendingBlob,
+  dropPhoto,
   getRecipe,
   getSnapshot,
   isSharedRecipe,
   listCookLogs,
+  markLoaded,
+  markPhotoRemote,
+  originAccess,
   ownedBackupGraphIds,
+  removeCollectionLocal,
+  removeCookLogLocal,
   removeRecipeLocal,
   replaceFromPull,
   replaceFromPullWithShared,
@@ -20,6 +28,7 @@ import {
   upsertChat,
   upsertCollection,
   upsertCook,
+  upsertCookLog,
   upsertRecipe,
 } from './libraryMemory';
 import { installSharedRows } from './testLibrary';
@@ -428,5 +437,248 @@ describe('chat and cook parent sidecars', () => {
     expect(chatParentIsShared('orphan-chat', 'missing')).toBe(false);
     expect(cookParentIsShared('missing')).toBe(false);
     expect(chatParentIsShared('owned-chat', 'owned')).toBe(false);
+  });
+});
+
+describe('copy-on-write writes', () => {
+  function seed(): void {
+    replaceFromPull({
+      recipes: new Map([['r1', recipe('r1', 'One')]]),
+      collections: new Map([['c1', collection('c1', 'C')]]),
+      chat: new Map([['m1', message('m1', 'r1')]]),
+      cook: new Map([['r1', cookRow('r1')]]),
+      cookLogs: new Map([
+        ['log-1', { id: 'log-1', recipeId: 'r1', cookedOn: '2026-09-20', createdAt: 1, updatedAt: 2 }],
+      ]),
+      remotePhotoIds: new Set(['photo-1']),
+    });
+  }
+
+  function contents(snap: ReturnType<typeof getSnapshot>): unknown {
+    return Object.fromEntries(
+      Object.entries(snap).map(([key, value]) => [
+        key,
+        value instanceof Map || value instanceof Set ? [...value.entries()] : value,
+      ]),
+    );
+  }
+
+  it('caching a photo keeps every unrelated map', () => {
+    seed();
+    const before = getSnapshot();
+    cachePhotoBlob('photo-2', new Blob(['x']));
+    const after = getSnapshot();
+    expect(after).not.toBe(before);
+    expect(after.pendingBlobs).not.toBe(before.pendingBlobs);
+    expect(after.remotePhotoIds).not.toBe(before.remotePhotoIds);
+    for (const key of [
+      'recipes',
+      'collections',
+      'chat',
+      'cook',
+      'cookLogs',
+      'recipeOrigins',
+      'collectionOrigins',
+      'chatParentOrigins',
+      'cookParentOrigins',
+    ] as const) {
+      expect(after[key]).toBe(before[key]);
+    }
+  });
+
+  it('does not publish when a cached photo is already in place', () => {
+    seed();
+    const blob = new Blob(['x']);
+    cachePhotoBlob('photo-2', blob);
+    const before = getSnapshot();
+    let calls = 0;
+    const unsubscribe = subscribe(() => {
+      calls += 1;
+    });
+    cachePhotoBlob('photo-2', blob);
+    markPhotoRemote('photo-1');
+    unsubscribe();
+    expect(calls).toBe(0);
+    expect(getSnapshot()).toBe(before);
+  });
+
+  it('a cook log write keeps recipes and collections', () => {
+    seed();
+    const before = getSnapshot();
+    upsertCookLog({ id: 'log-2', recipeId: 'r1', cookedOn: '2026-09-21', createdAt: 3, updatedAt: 3 });
+    const after = getSnapshot();
+    expect(after.cookLogs).not.toBe(before.cookLogs);
+    expect(after.recipes).toBe(before.recipes);
+    expect(after.collections).toBe(before.collections);
+    expect(after.recipeOrigins).toBe(before.recipeOrigins);
+  });
+
+  it('never changes a snapshot that was already published', () => {
+    const writes: Array<() => void> = [
+      () => upsertRecipe(recipe('r2', 'Two')),
+      () => upsertRecipe(recipe('r1', 'Shared now'), { kind: 'shared', ownerSub: 'alice' }),
+      () => removeRecipeLocal('r1'),
+      () => upsertChat(message('m2', 'r1')),
+      () => clearChatLocal('r1'),
+      () => upsertCook(cookRow('r1')),
+      () => upsertCookLog({ id: 'log-3', recipeId: 'r1', cookedOn: '2026-09-22', createdAt: 4, updatedAt: 4 }),
+      () => removeCookLogLocal('log-1'),
+      () => addPendingBlob('photo-3', new Blob(['y'])),
+      () => dropPendingBlob('photo-3'),
+      () => markPhotoRemote('photo-4'),
+      () => cachePhotoBlob('photo-5', new Blob(['z'])),
+      () => dropPhoto('photo-1'),
+      () => upsertCollection(collection('c2', 'D')),
+      () => removeCollectionLocal('c1'),
+      () => clearLibrary(),
+      () =>
+        replaceFromPull({
+          recipes: new Map([['r9', recipe('r9', 'Pulled')]]),
+          collections: new Map(),
+          chat: new Map(),
+          cook: new Map(),
+          cookLogs: new Map(),
+          remotePhotoIds: new Set(),
+        }),
+      () =>
+        replaceFromPullWithShared(
+          {
+            recipes: new Map([['r9', recipe('r9', 'Pulled')]]),
+            collections: new Map(),
+            chat: new Map(),
+            cook: new Map(),
+            cookLogs: new Map(),
+            remotePhotoIds: new Set(),
+          },
+          {
+            recipes: new Map([['s1', recipe('s1', 'Shared')]]),
+            collections: new Map(),
+            remotePhotoIds: new Set(),
+            recipeOrigins: new Map([['s1', { kind: 'shared', ownerSub: 'alice' }]]),
+            collectionOrigins: new Map(),
+          },
+        ),
+    ];
+    for (const write of writes) {
+      seed();
+      addPendingBlob('photo-3', new Blob(['y']));
+      const before = getSnapshot();
+      const expected = contents(before);
+      write();
+      expect(getSnapshot()).not.toBe(before);
+      expect(contents(before)).toEqual(expected);
+    }
+  });
+
+  it('restoring a captured snapshot leaves both the current and the captured one untouched', () => {
+    seed();
+    const captured = captureSnapshot();
+    const capturedContents = contents(captured);
+    upsertRecipe(recipe('r2', 'Two'));
+    const before = getSnapshot();
+    const beforeContents = contents(before);
+    restoreSnapshot(captured);
+    expect(getSnapshot()).not.toBe(before);
+    expect(contents(before)).toEqual(beforeContents);
+    expect(contents(captured)).toEqual(capturedContents);
+    expect(contents(getSnapshot())).toEqual(capturedContents);
+  });
+
+  it('marking an unloaded library loaded leaves the unloaded snapshot untouched', () => {
+    seed();
+    restoreSnapshot({ ...getSnapshot(), loaded: false });
+    const before = getSnapshot();
+    markLoaded();
+    expect(getSnapshot()).not.toBe(before);
+    expect(before.loaded).toBe(false);
+    expect(getSnapshot().loaded).toBe(true);
+  });
+
+  it('a write that changes nothing keeps the snapshot and notifies no one', () => {
+    const blob = new Blob(['y']);
+    const noOps: Array<[string, () => void]> = [
+      ['clearChatLocal with no messages', () => clearChatLocal('absent')],
+      ['dropPhoto of an unknown photo', () => dropPhoto('absent')],
+      ['removeCookLogLocal of an unknown log', () => removeCookLogLocal('absent')],
+      ['removeCollectionLocal of an unknown collection', () => removeCollectionLocal('absent')],
+      ['removeRecipeLocal of an unknown recipe', () => removeRecipeLocal('absent')],
+      ['addPendingBlob of the same blob', () => addPendingBlob('photo-3', blob)],
+      ['dropPendingBlob of an unknown blob', () => dropPendingBlob('absent')],
+      ['markPhotoRemote of a remote photo', () => markPhotoRemote('photo-1')],
+      ['cachePhotoBlob of the cached blob', () => cachePhotoBlob('photo-3', blob)],
+      ['upsertRecipe of the same recipe', () => upsertRecipe(getSnapshot().recipes.get('r1')!)],
+      ['upsertChat of the same message', () => upsertChat(getSnapshot().chat.get('m1')!)],
+      ['upsertCook of the same row', () => upsertCook(getSnapshot().cook.get('r1')!)],
+      ['upsertCookLog of the same log', () => upsertCookLog(getSnapshot().cookLogs.get('log-1')!)],
+      [
+        'upsertCollection of the same collection',
+        () => upsertCollection(getSnapshot().collections.get('c1')!),
+      ],
+      ['markLoaded when loaded', () => markLoaded()],
+    ];
+    for (const [name, write] of noOps) {
+      seed();
+      cachePhotoBlob('photo-3', blob);
+      const before = getSnapshot();
+      let calls = 0;
+      const unsubscribe = subscribe(() => {
+        calls += 1;
+      });
+      write();
+      unsubscribe();
+      expect({ name, same: getSnapshot() === before, calls }).toEqual({ name, same: true, calls: 0 });
+    }
+  });
+
+  it('clearing an already empty library notifies no one', () => {
+    clearLibrary();
+    const before = getSnapshot();
+    let calls = 0;
+    const unsubscribe = subscribe(() => {
+      calls += 1;
+    });
+    clearLibrary();
+    unsubscribe();
+    expect(getSnapshot()).toBe(before);
+    expect(calls).toBe(0);
+  });
+
+  it('chat and cook writes on an owned recipe keep the parent-origin sidecars', () => {
+    seed();
+    const before = getSnapshot();
+    upsertChat(message('m2', 'r1'));
+    upsertCook({ ...cookRow('r1'), currentStep: 1 });
+    const after = getSnapshot();
+    expect(after.chat).not.toBe(before.chat);
+    expect(after.cook).not.toBe(before.cook);
+    expect(after.chatParentOrigins).toBe(before.chatParentOrigins);
+    expect(after.cookParentOrigins).toBe(before.cookParentOrigins);
+  });
+
+  it('an origin-only recipe change replaces recipeOrigins', () => {
+    seed();
+    const before = getSnapshot();
+    upsertRecipe(before.recipes.get('r1')!, { kind: 'shared', ownerSub: 'alice', access: 'editor' });
+    const after = getSnapshot();
+    expect(after.recipeOrigins).not.toBe(before.recipeOrigins);
+    expect(originAccess(after.recipeOrigins.get('r1'))).toBe('editor');
+  });
+
+  it('removing a recipe drops its cook, chat, cook logs, sidecars and photos together', () => {
+    seed();
+    upsertRecipe(recipe('r1', 'One'), { kind: 'shared', ownerSub: 'alice' });
+    upsertCook(cookRow('r1'));
+    upsertChat(message('m1', 'r1'));
+    removeRecipeLocal('r1');
+    const snap = getSnapshot();
+    expect(snap.recipes.has('r1')).toBe(false);
+    expect(snap.recipeOrigins.has('r1')).toBe(false);
+    expect(snap.cook.has('r1')).toBe(false);
+    expect(snap.cookParentOrigins.has('r1')).toBe(false);
+    expect(snap.chat.has('m1')).toBe(false);
+    expect(snap.chatParentOrigins.has('m1')).toBe(false);
+    expect(snap.cookLogs.size).toBe(0);
+    expect(snap.remotePhotoIds.has('photo-1')).toBe(false);
+    expect(snap.collections.has('c1')).toBe(true);
   });
 });

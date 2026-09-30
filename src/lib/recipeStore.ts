@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from 'react';
+import { useMemo } from 'react';
 import { t } from '../i18n';
 import {
   addPendingBlob,
@@ -13,7 +13,7 @@ import {
   photoOwnerSub,
   removeRecipeLocal,
   restoreSnapshot,
-  subscribe,
+  sortRecipes,
   upsertRecipe,
   getCollection,
   getRecipeOrigin,
@@ -24,6 +24,8 @@ import {
   upsertCollection,
   type LibraryAccess,
 } from './libraryMemory';
+import { selectRecipe, selectRecipeAccess, selectRecipeSharedBy } from './librarySelectors';
+import { useLibrarySelect, useLibrarySlice } from './useLibrary';
 import { fetchPhotoBlobOutcome, postPhoto, pushOps, type RemoteResult } from './remote';
 import { photoStore } from './photoStore';
 import { withLocalWrite } from './localWrite';
@@ -35,18 +37,9 @@ import { recipePhotoIds } from './recipePhotos';
 import type { Recipe, RecipeDraft } from './types';
 import type { PushOp } from './pushOps';
 import { isDiscardedPushReason } from './pushReasons';
+import { SessionExpiredError } from './sessionExpired';
 
 export { compactRecipe };
-
-/**
- * A 401/403 from the server. The message is the usual sign-in prompt; the type
- * lets a rollback tell sign-out apart without reading the text.
- */
-class SessionExpiredError extends Error {
-  constructor() {
-    super(t('error.sessionExpired'));
-  }
-}
 
 /**
  * A create that did not stick. The message is the error to show. Its staged
@@ -492,6 +485,12 @@ export const recipeStore = {
     return isSharedRecipe(id);
   },
 
+  /** Email of whoever shared this recipe with you, when known. */
+  sharedBy(id: string): string | undefined {
+    const origin = getRecipeOrigin(id);
+    return origin?.kind === 'shared' ? origin.ownerEmail : undefined;
+  },
+
   /** `editor` when a shared recipe may be edited here (text only, not photos). */
   access(id: string): LibraryAccess | undefined {
     return recipeAccess(id);
@@ -782,23 +781,28 @@ export const recipeStore = {
 
 /** Reactive list of all recipes, newest first. `undefined` while loading. */
 export function useRecipes(): Recipe[] | undefined {
-  const snap = useSyncExternalStore(subscribe, getSnapshot);
-  return useMemo(() => {
-    if (!snap.loaded) {
-      return undefined;
-    }
-    return listRecipes();
-  }, [snap]);
+  const loaded = useLibrarySlice('loaded');
+  const recipes = useLibrarySlice('recipes');
+  // Callers read shared/owned state beside the list, so an origin-only change
+  // must hand them a new list too.
+  const origins = useLibrarySlice('recipeOrigins');
+  return useMemo(
+    () => (loaded ? sortRecipes(recipes) : undefined),
+    [loaded, recipes, origins],
+  );
 }
 
 /** Reactive single recipe. `undefined` while loading, `null` if not found. */
 export function useRecipe(id: string | undefined): Recipe | null | undefined {
-  const snap = useSyncExternalStore(subscribe, getSnapshot);
-  if (!snap.loaded) {
-    return undefined;
-  }
-  if (!id) {
-    return null;
-  }
-  return snap.recipes.get(id) ?? null;
+  return useLibrarySelect(selectRecipe(id));
+}
+
+/** Reactive email of whoever shared this recipe with you, when known. */
+export function useRecipeSharedBy(id: string | undefined): string | undefined {
+  return useLibrarySelect(selectRecipeSharedBy(id));
+}
+
+/** Reactive access to one recipe; `undefined` when it is not in the library. */
+export function useRecipeAccess(id: string | undefined): LibraryAccess | undefined {
+  return useLibrarySelect(selectRecipeAccess(id));
 }
