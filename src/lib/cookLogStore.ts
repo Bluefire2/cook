@@ -15,6 +15,7 @@ import {
 } from './libraryMemory';
 import { withLocalWrite } from './localWrite';
 import { postPhoto, pushOps, type RemoteResult } from './remote';
+import { SessionExpiredError } from './sessionExpired';
 import {
   appendLessonToNotes,
   compactCookLog,
@@ -28,7 +29,7 @@ import type { PushOp } from './pushOps';
 export type CookLogInput = Omit<CookLog, 'id' | 'createdAt' | 'updatedAt'>;
 
 function pushError(result: RemoteResult | 'unavailable', fallback: string): Error {
-  return new Error(result === 'signedOut' ? t('error.sessionExpired') : fallback);
+  return result === 'signedOut' ? new SessionExpiredError() : new Error(fallback);
 }
 
 async function uploadCookLogPhotos(log: CookLog): Promise<void> {
@@ -87,6 +88,10 @@ async function putCookLog(next: CookLog, previous: CookLog | undefined): Promise
         throw pushError(result, t('error.cookLogSave'));
       }
     } catch (err) {
+      if (err instanceof SessionExpiredError) {
+        // The 401 cleared the library already; write nothing back into it.
+        throw err;
+      }
       if (previous) {
         upsertCookLog(previous);
       } else {
@@ -131,12 +136,14 @@ export const cookLogStore = {
       }
       const result = await pushOps(ops);
       if (result !== 'ok') {
-        if (previous) {
+        // After a 401 the library is already cleared; write nothing back into it.
+        if (previous && result !== 'signedOut') {
           upsertCookLog(previous);
         }
         return {
           value: undefined,
           reconcile: false,
+          reread: result === 'signedOut' ? 'no' : undefined,
           error: pushError(result, t('error.cookLogDelete')),
         };
       }

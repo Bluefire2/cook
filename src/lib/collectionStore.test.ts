@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { t } from '../i18n';
 import { MAX_NAMED_COLLECTIONS } from './compactCollection';
 import {
   collectionPushErrorMessage,
@@ -388,5 +389,69 @@ describe('collection links', () => {
       linkId: linkA.id,
       links: [linkA],
     });
+  });
+});
+
+describe('collectionStore after sign-out', () => {
+  /** `remote` clears the library before it reports a 401. */
+  async function signOut(): Promise<'signedOut'> {
+    clearLibrary();
+    return 'signedOut';
+  }
+
+  it('create does not leave the new collection behind', async () => {
+    vi.mocked(pushOps).mockImplementation(signOut);
+
+    await expect(collectionStore.create('Soups')).rejects.toThrow(t('error.sessionExpired'));
+
+    expect(listCollections()).toEqual([]);
+  });
+
+  it('rename does not restore the old collection', async () => {
+    upsertCollection(collection('c1', 'Soups'));
+    vi.mocked(pushOps).mockImplementation(signOut);
+
+    await expect(collectionStore.rename('c1', 'Stews')).rejects.toThrow(t('error.sessionExpired'));
+
+    expect(listCollections()).toEqual([]);
+  });
+
+  it('remove does not restore the collection', async () => {
+    upsertCollection(collection('c1', 'Soups'));
+    vi.mocked(pushOps).mockImplementation(signOut);
+
+    await expect(collectionStore.remove('c1')).rejects.toThrow(t('error.sessionExpired'));
+
+    expect(listCollections()).toEqual([]);
+  });
+
+  it('remove still restores the collection when the delete fails for another reason', async () => {
+    upsertCollection(collection('c1', 'Soups'));
+    vi.mocked(pushOps).mockResolvedValue('error');
+
+    await expect(collectionStore.remove('c1')).rejects.toThrow(t('error.collectionSave'));
+
+    expect(getCollection('c1')?.name).toBe('Soups');
+  });
+
+  it('moveRecipe does not restore the collections it changed', async () => {
+    upsertCollection({ ...collection('c1', 'Soups'), recipeIds: ['r1'] });
+    upsertCollection(collection('c2', 'Stews'));
+    vi.mocked(pushOps).mockImplementation(signOut);
+
+    await expect(collectionStore.moveRecipe('r1', 'c2')).rejects.toThrow(t('error.sessionExpired'));
+
+    expect(listCollections()).toEqual([]);
+  });
+
+  it('moveRecipe still restores the collections when the put fails for another reason', async () => {
+    upsertCollection({ ...collection('c1', 'Soups'), recipeIds: ['r1'] });
+    upsertCollection(collection('c2', 'Stews'));
+    vi.mocked(pushOps).mockResolvedValue('error');
+
+    await expect(collectionStore.moveRecipe('r1', 'c2')).rejects.toThrow(t('error.collectionSave'));
+
+    expect(getCollection('c1')?.recipeIds).toEqual(['r1']);
+    expect(getCollection('c2')?.recipeIds).toEqual([]);
   });
 });

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { t } from '../i18n';
 import { cookLogStore } from './cookLogStore';
 import {
   addPendingBlob,
@@ -110,16 +111,20 @@ describe('cookLogStore.create', () => {
     expect(listCookLogs()).toEqual([]);
   });
 
-  it('does not push when a photo upload fails', async () => {
+  it('does not push when a photo upload signs out', async () => {
     upsertRecipe(recipe);
     addPendingBlob(PHOTO_A, blob());
-    recordCalls('ok', 'signedOut');
+    vi.mocked(postPhoto).mockImplementation(async () => {
+      clearLibrary();
+      return 'signedOut';
+    });
 
     await expect(
       cookLogStore.create({ recipeId: RECIPE_ID, cookedOn: '2026-09-21', photoIds: [PHOTO_A] }),
-    ).rejects.toThrow('Please sign in again — your session expired.');
+    ).rejects.toThrow(t('error.sessionExpired'));
     expect(pushOps).not.toHaveBeenCalled();
     expect(listCookLogs()).toEqual([]);
+    expect(getRecipe(RECIPE_ID)).toBeUndefined();
   });
 
   it('refuses an entry for a recipe that is not in the library', async () => {
@@ -214,6 +219,62 @@ describe('cookLogStore.remove', () => {
     );
     expect(getCookLog(LOG_ID)).toEqual(existing);
     expect(getPendingBlob(PHOTO_A)).toBeDefined();
+  });
+});
+
+describe('cookLogStore after sign-out', () => {
+  /** `remote` clears the library before it reports a 401. */
+  async function signOut(): Promise<'signedOut'> {
+    clearLibrary();
+    return 'signedOut';
+  }
+
+  it('create does not leave the new entry behind when the put signs out', async () => {
+    upsertRecipe(recipe);
+    vi.mocked(pushOps).mockImplementation(signOut);
+
+    await expect(
+      cookLogStore.create({ recipeId: RECIPE_ID, cookedOn: '2026-09-21' }),
+    ).rejects.toThrow(t('error.sessionExpired'));
+
+    expect(listCookLogs()).toEqual([]);
+    expect(getRecipe(RECIPE_ID)).toBeUndefined();
+  });
+
+  it('save does not restore the old entry when a photo upload signs out', async () => {
+    upsertRecipe(recipe);
+    upsertCookLog(existing);
+    const photo = '99999999-9999-4999-8999-999999999999';
+    addPendingBlob(photo, blob());
+    vi.mocked(postPhoto).mockImplementation(signOut);
+
+    await expect(
+      cookLogStore.save({ ...existing, photoIds: [...(existing.photoIds ?? []), photo] }),
+    ).rejects.toThrow(t('error.sessionExpired'));
+
+    expect(pushOps).not.toHaveBeenCalled();
+    expect(getCookLog(LOG_ID)).toBeUndefined();
+  });
+
+  it('remove does not restore the entry when the delete signs out', async () => {
+    upsertRecipe(recipe);
+    upsertCookLog(existing);
+    vi.mocked(pushOps).mockImplementation(signOut);
+
+    await expect(cookLogStore.remove(LOG_ID)).rejects.toThrow(t('error.sessionExpired'));
+
+    expect(getCookLog(LOG_ID)).toBeUndefined();
+    expect(listCookLogs()).toEqual([]);
+  });
+
+  it('remove still restores the entry when the delete fails for another reason', async () => {
+    upsertRecipe(recipe);
+    upsertCookLog(existing);
+    vi.mocked(pushOps).mockResolvedValue('error');
+
+    await expect(cookLogStore.remove(LOG_ID)).rejects.toThrow(t('error.cookLogDelete'));
+
+    expect(getCookLog(LOG_ID)).toEqual(existing);
   });
 });
 

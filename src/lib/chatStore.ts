@@ -11,6 +11,7 @@ import {
 } from './libraryMemory';
 import { withLocalWrite } from './localWrite';
 import { postPhoto, pushOps } from './remote';
+import { SessionExpiredError } from './sessionExpired';
 import type { ChatMessage } from './types';
 
 async function uploadMessagePhotos(message: ChatMessage): Promise<void> {
@@ -21,9 +22,7 @@ async function uploadMessagePhotos(message: ChatMessage): Promise<void> {
     }
     const result = await postPhoto(photoId, message.recipeId, message.createdAt, blob);
     if (result !== 'ok') {
-      throw new Error(
-        result === 'signedOut' ? t('error.sessionExpired') : t('error.photoSave'),
-      );
+      throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.photoSave'));
     }
     markPhotoRemote(photoId);
   }
@@ -49,12 +48,16 @@ export const chatStore = {
         await uploadMessagePhotos(message);
         const result = await pushOps([{ kind: 'chat.put', payload: message }]);
         if (result !== 'ok') {
-          throw new Error(
-            result === 'signedOut' ? t('error.sessionExpired') : t('error.messageSave'),
-          );
+          throw result === 'signedOut'
+            ? new SessionExpiredError()
+            : new Error(t('error.messageSave'));
         }
         return { value: message, reconcile: true };
       } catch (err) {
+        if (err instanceof SessionExpiredError) {
+          // The 401 cleared the library already; write nothing back into it.
+          throw err;
+        }
         clearChatLocal(data.recipeId);
         for (const existing of previous) {
           upsertChat(existing);
@@ -72,6 +75,15 @@ export const chatStore = {
       const result = await pushOps([
         { kind: 'chat.clearForRecipe', payload: { recipeId, at } },
       ]);
+      if (result === 'signedOut') {
+        // The 401 cleared the library already; write nothing back into it.
+        return {
+          value: undefined,
+          reconcile: false,
+          reread: 'no',
+          error: new SessionExpiredError(),
+        };
+      }
       if (result !== 'ok') {
         for (const message of previous) {
           upsertChat(message);
@@ -79,9 +91,7 @@ export const chatStore = {
         return {
           value: undefined,
           reconcile: false,
-          error: new Error(
-            result === 'signedOut' ? t('error.sessionExpired') : t('error.chatClear'),
-          ),
+          error: new Error(t('error.chatClear')),
         };
       }
       return { value: undefined, reconcile: true };
