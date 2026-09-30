@@ -12,6 +12,7 @@ import {
   listRecipes,
   replaceFromPull,
   upsertChat,
+  upsertCollection,
   upsertCook,
   upsertCookLog,
   upsertRecipe,
@@ -699,7 +700,12 @@ describe('importLibrary', () => {
   it.each(['error', 'signedOut'] as const)(
     'a parent recipe %s performs zero photo uploads and zero dependent pushes',
     async (result) => {
-      vi.mocked(pushOps).mockResolvedValue(result);
+      vi.mocked(pushOps).mockImplementation(async () => {
+        if (result === 'signedOut') {
+          clearLibrary();
+        }
+        return result;
+      });
       vi.mocked(postPhoto).mockResolvedValue('ok');
 
       await expect(importLibrary(backupFile('alice-sub'), 'carol-sub')).rejects.toThrow(
@@ -723,7 +729,7 @@ describe('importLibrary', () => {
   it('rolls back locally when a photo upload fails after the recipe push', async () => {
     // Remote import stays best-effort across requests. The recipe put already
     // returned ok, and this failure does not delete that server row; the next
-    // refresh would reveal it. Only the optimistic local snapshot is restored.
+    // refresh would reveal it. The rows this import wrote are removed locally.
     vi.mocked(pushOps).mockResolvedValue('ok');
     vi.mocked(postPhoto).mockResolvedValue('error');
 
@@ -737,6 +743,91 @@ describe('importLibrary', () => {
     expect(postPhoto).toHaveBeenCalledTimes(1);
     const ops = vi.mocked(pushOps).mock.calls[0]?.[0] ?? [];
     expect(ops.every((op) => op.kind === 'recipe.put')).toBe(true);
+  });
+
+  it('does not restore the library when a photo upload signs out', async () => {
+    const seedId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    replaceFromPull({
+      recipes: new Map([[seedId, { ...RECIPE, id: seedId, title: 'Already here' }]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    vi.mocked(postPhoto).mockImplementation(async () => {
+      clearLibrary();
+      return 'signedOut';
+    });
+
+    await expect(importLibrary(backupFile('alice-sub'), 'carol-sub')).rejects.toThrow(
+      'Please sign in again — your session expired.',
+    );
+
+    expect(listRecipes()).toEqual([]);
+    expect(postPhoto).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a concurrent edit when a photo upload fails', async () => {
+    const seedId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const seed = { ...RECIPE, id: seedId, title: 'Already here' };
+    replaceFromPull({
+      recipes: new Map([[seedId, seed]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    vi.mocked(postPhoto).mockImplementation(async () => {
+      upsertRecipe({ ...seed, title: 'Edited during import' });
+      return 'error';
+    });
+
+    await expect(importLibrary(backupFile('alice-sub'), 'carol-sub')).rejects.toThrow(
+      "Couldn't upload a photo from the backup.",
+    );
+
+    expect(listRecipes()).toEqual([
+      expect.objectContaining({ id: seedId, title: 'Edited during import' }),
+    ]);
+    expect(listCollections()).toEqual([]);
+  });
+
+  it('keeps a newer chat and drops the recipe id from a newer collection when import fails', async () => {
+    vi.mocked(pushOps).mockResolvedValue('ok');
+    const askedDuringImport = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    vi.mocked(postPhoto).mockImplementation(async (_id, recipeId) => {
+      upsertChat({
+        id: askedDuringImport,
+        recipeId,
+        role: 'user',
+        content: 'asked during import',
+        createdAt: 9,
+      });
+      const imported = listCollections().find((collection) =>
+        collection.recipeIds.includes(recipeId),
+      );
+      if (!imported) {
+        throw new Error('expected the imported collection');
+      }
+      upsertCollection({ ...imported, name: 'Renamed during import' });
+      return 'error';
+    });
+
+    await expect(importLibrary(backupFile('alice-sub'), 'carol-sub')).rejects.toThrow(
+      "Couldn't upload a photo from the backup.",
+    );
+
+    expect(listRecipes()).toEqual([]);
+    expect(listAllChat()).toEqual([
+      expect.objectContaining({ id: askedDuringImport, content: 'asked during import' }),
+    ]);
+    expect(listCollections()).toEqual([
+      expect.objectContaining({ name: 'Renamed during import', recipeIds: [] }),
+    ]);
   });
 
   it('same-account preserve mode remains overwrite-by-id and idempotent', async () => {

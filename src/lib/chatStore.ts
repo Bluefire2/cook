@@ -8,6 +8,7 @@ import {
   getPendingBlob,
   markPhotoRemote,
 } from './libraryMemory';
+import { withLocalWrite } from './localWrite';
 import { useLibrarySlice } from './useLibrary';
 import { postPhoto, pushOps } from './remote';
 import { SessionExpiredError } from './sessionExpired';
@@ -41,44 +42,60 @@ export const chatStore = {
       id: crypto.randomUUID(),
       createdAt: Date.now(),
     };
-    upsertChat(message);
-    try {
-      await uploadMessagePhotos(message);
-      const result = await pushOps([{ kind: 'chat.put', payload: message }]);
-      if (result !== 'ok') {
-        throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.messageSave'));
+    return withLocalWrite(async () => {
+      upsertChat(message);
+      try {
+        await uploadMessagePhotos(message);
+        const result = await pushOps([{ kind: 'chat.put', payload: message }]);
+        if (result !== 'ok') {
+          throw result === 'signedOut'
+            ? new SessionExpiredError()
+            : new Error(t('error.messageSave'));
+        }
+        return { value: message, reconcile: true };
+      } catch (err) {
+        if (err instanceof SessionExpiredError) {
+          // The 401 cleared the library already; write nothing back into it.
+          throw err;
+        }
+        clearChatLocal(data.recipeId);
+        for (const existing of previous) {
+          upsertChat(existing);
+        }
+        return { value: message, reconcile: false, error: err };
       }
-    } catch (err) {
-      if (err instanceof SessionExpiredError) {
-        // The 401 cleared the library already; write nothing back into it.
-        throw err;
-      }
-      clearChatLocal(data.recipeId);
-      for (const existing of previous) {
-        upsertChat(existing);
-      }
-      throw err;
-    }
-    return message;
+    });
   },
 
   async clearForRecipe(recipeId: string): Promise<void> {
     const previous = listChat(recipeId);
     const at = Date.now();
-    clearChatLocal(recipeId);
-    const result = await pushOps([
-      { kind: 'chat.clearForRecipe', payload: { recipeId, at } },
-    ]);
-    if (result === 'signedOut') {
-      // The 401 cleared the library already; write nothing back into it.
-      throw new SessionExpiredError();
-    }
-    if (result !== 'ok') {
-      for (const message of previous) {
-        upsertChat(message);
+    await withLocalWrite(async () => {
+      clearChatLocal(recipeId);
+      const result = await pushOps([
+        { kind: 'chat.clearForRecipe', payload: { recipeId, at } },
+      ]);
+      if (result === 'signedOut') {
+        // The 401 cleared the library already; write nothing back into it.
+        return {
+          value: undefined,
+          reconcile: false,
+          reread: 'no',
+          error: new SessionExpiredError(),
+        };
       }
-      throw new Error(t('error.chatClear'));
-    }
+      if (result !== 'ok') {
+        for (const message of previous) {
+          upsertChat(message);
+        }
+        return {
+          value: undefined,
+          reconcile: false,
+          error: new Error(t('error.chatClear')),
+        };
+      }
+      return { value: undefined, reconcile: true };
+    });
   },
 };
 

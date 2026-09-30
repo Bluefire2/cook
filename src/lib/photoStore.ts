@@ -5,11 +5,14 @@ import {
   dropPhoto,
   getPendingBlob,
   getSnapshot,
+  markPhotoRemote,
   photoOwnerSub,
 } from './libraryMemory';
 import { selectPendingBlob } from './librarySelectors';
+import { withLocalWrite } from './localWrite';
 import { useLibrarySelect } from './useLibrary';
 import { fetchPhotoBlob, pushOps } from './remote';
+import { localWriteOverlapsPull } from './syncEngine';
 
 const ensureLocalInFlight = new Map<string, Promise<void>>();
 
@@ -61,8 +64,32 @@ export const photoStore = {
 
   async remove(id: string): Promise<void> {
     const at = Date.now();
-    dropPhoto(id);
-    await pushOps([{ kind: 'photo.delete', payload: { id, updatedAt: at } }]);
+    const remote = getSnapshot().remotePhotoIds.has(id);
+    const pending = getPendingBlob(id);
+    await withLocalWrite(async ({ epoch }) => {
+      dropPhoto(id);
+      const result = await pushOps([{ kind: 'photo.delete', payload: { id, updatedAt: at } }]);
+      if (result === 'ok') {
+        return { value: undefined, reconcile: true };
+      }
+      // A 401 already cleared the library. A follow-up pull is a full
+      // snapshot: an id it omits is gone, including when the delete committed
+      // and the response never arrived. Putting the id back after that read
+      // would resurrect it. Restore only when this failure will not reread.
+      const reread = result !== 'signedOut' && localWriteOverlapsPull(epoch);
+      if (!reread && result !== 'signedOut' && remote) {
+        if (pending) {
+          cachePhotoBlob(id, pending);
+        } else {
+          markPhotoRemote(id);
+        }
+      }
+      return {
+        value: undefined,
+        reconcile: false,
+        reread: reread ? 'always' : 'no',
+      };
+    });
   },
 };
 

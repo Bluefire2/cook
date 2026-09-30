@@ -79,9 +79,7 @@ describe('chatStore after sign-out', () => {
     upsertChat(earlier);
     vi.mocked(pushOps).mockImplementation(signOut);
 
-    await expect(chatStore.clearForRecipe(RECIPE_ID)).rejects.toThrow(
-      t('error.sessionExpired'),
-    );
+    await expect(chatStore.clearForRecipe(RECIPE_ID)).rejects.toThrow(t('error.sessionExpired'));
 
     expect(listChat(RECIPE_ID)).toEqual([]);
   });

@@ -133,7 +133,8 @@ let snapshot: LibrarySnapshot = empty(false);
 /**
  * Bumped when a local write starts. A pull that began at an older epoch, or
  * while a write was still open, must not replace the library: its snapshot
- * can still contain a recipe the write already deleted.
+ * can still contain a recipe the write already deleted, or omit a row the
+ * write just saved.
  */
 let epoch = 0;
 let openWrites = 0;
@@ -226,6 +227,14 @@ export function markLoaded(): void {
     return;
   }
   emit({ ...snapshot, loaded: true });
+}
+
+/** Test isolation. The app boots unloaded; `clearLibrary` leaves it loaded. */
+export function markUnloadedForTests(): void {
+  if (!snapshot.loaded) {
+    return;
+  }
+  emit({ ...snapshot, loaded: false });
 }
 
 export function clearLibrary(): void {
@@ -446,6 +455,14 @@ export function removeRecipeLocal(id: string): void {
   });
 }
 
+/** Drops the recipe row only. Chat, cook, logs, and photos stay for the caller. */
+export function removeRecipeRowLocal(id: string): void {
+  publishChanges({
+    recipes: without(snapshot.recipes, [id]),
+    recipeOrigins: without(snapshot.recipeOrigins, [id]),
+  });
+}
+
 /**
  * Optimistic writes copy a live shared recipe origin into the sidecar so
  * export is safe before the next pull. A live owned origin clears it. A
@@ -479,6 +496,14 @@ export function upsertChat(message: ChatMessage): void {
   });
 }
 
+/** Drops one message. Photos stay; the caller decides whether they are still referenced. */
+export function removeChatLocal(id: string): void {
+  publishChanges({
+    chat: without(snapshot.chat, [id]),
+    chatParentOrigins: without(snapshot.chatParentOrigins, [id]),
+  });
+}
+
 export function clearChatLocal(recipeId: string): void {
   const messages = [...snapshot.chat.values()].filter(
     (message) => message.recipeId === recipeId,
@@ -501,6 +526,14 @@ export function upsertCook(row: CookStateRow): void {
       row.recipeId,
       row.recipeId,
     ),
+  });
+}
+
+/** Drops cook progress for one recipe. Does not touch the recipe or its photos. */
+export function removeCookLocal(recipeId: string): void {
+  publishChanges({
+    cook: without(snapshot.cook, [recipeId]),
+    cookParentOrigins: without(snapshot.cookParentOrigins, [recipeId]),
   });
 }
 

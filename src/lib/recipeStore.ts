@@ -2,10 +2,8 @@ import { useMemo } from 'react';
 import { t } from '../i18n';
 import {
   addPendingBlob,
-  beginLocalWrite,
   captureSnapshot,
   dropPhoto,
-  endLocalWrite,
   getPendingBlob,
   getRecipe,
   getSnapshot,
@@ -28,9 +26,10 @@ import {
 } from './libraryMemory';
 import { selectRecipe, selectRecipeAccess, selectRecipeSharedBy } from './librarySelectors';
 import { useLibrarySelect, useLibrarySlice } from './useLibrary';
-import { fetchPhotoBlobOutcome, postPhoto, pushOps } from './remote';
+import { fetchPhotoBlobOutcome, postPhoto, pushOps, type RemoteResult } from './remote';
 import { photoStore } from './photoStore';
-import { localWriteOverlapsPull, pullAfterLocalWrite } from './syncEngine';
+import { withLocalWrite } from './localWrite';
+import { localWriteOverlapsPull, type SyncOutcome } from './syncEngine';
 import { compactRecipe } from './compactRecipe';
 import { compactCollection } from './compactCollection';
 import { wouldExceedRecipeIdCap } from './collectionMembership';
@@ -349,20 +348,27 @@ async function saveShared(recipe: Recipe): Promise<void> {
   if (!samePhotoIds(previous, next)) {
     throw new Error(t('error.sharedPhotos'));
   }
-  upsertRecipe(next, origin);
-  try {
-    const result = await pushOps([{ kind: 'recipe.put', payload: next, shared: true }]);
-    if (result !== 'ok') {
-      throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
+  await withLocalWrite(async () => {
+    upsertRecipe(next, origin);
+    try {
+      const result = await pushOps([{ kind: 'recipe.put', payload: next, shared: true }]);
+      if (result !== 'ok') {
+        throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
+      }
+      return { value: undefined, reconcile: true };
+    } catch (err) {
+      if (err instanceof SessionExpiredError) {
+        // The 401 cleared the library already; write nothing back into it.
+        throw err;
+      }
+      // A newer in-flight save has replaced this row. Restoring `previous`
+      // would wipe it. Same guard as an owned save.
+      if (getRecipe(next.id) === next) {
+        upsertRecipe(previous, origin);
+      }
+      return { value: undefined, reconcile: false, error: err };
     }
-  } catch (err) {
-    if (err instanceof SessionExpiredError) {
-      // The 401 cleared the library already; write nothing back into it.
-      throw err;
-    }
-    upsertRecipe(previous, origin);
-    throw err;
-  }
+  });
 }
 
 /** Bytes a new recipe's photos are waiting to upload, captured before any upload. */
@@ -426,38 +432,43 @@ async function discardCreatedRecipe(
       }),
     );
   // A pull that read the live row before the delete landed must not paint it
-  // back; hold the library as `remove` does.
-  const writeEpoch = beginLocalWrite();
-  removeRecipeLocal(id);
-  for (const collection of scrubbed) {
-    upsertCollection(collection);
-  }
+  // back; hold the library as `remove` does. Create throws out of its own
+  // write, so that read is not scheduled before this one. A failed discard
+  // still rereads when a pull overlapped: the first launch stays on "Loading
+  // recipes" until something publishes, and a recipe the server kept is the
+  // same truth `remove` already trusts a reread for. With no pull in flight,
+  // a failed discard does not reread. Sign-out has already cleared the library.
   const ops: PushOp[] = [{ kind: 'recipe.delete', payload: { id, updatedAt: at } }];
   for (const collection of scrubbed) {
     ops.push({ kind: 'collection.put', payload: collection });
   }
-  let result: Awaited<ReturnType<typeof pushOps>> = 'error';
-  try {
-    result = await pushOps(ops);
-  } catch {
-    // Best effort; the caller surfaces the original error.
-  } finally {
-    endLocalWrite();
-  }
+  const result = await withLocalWrite(
+    async ({ epoch }) => {
+      removeRecipeLocal(id);
+      for (const collection of scrubbed) {
+        upsertCollection(collection);
+      }
+      let pushed: RemoteResult = 'error';
+      try {
+        pushed = await pushOps(ops);
+      } catch {
+        // Best effort; the caller surfaces the original error.
+      }
+      const overlapped = pushed !== 'signedOut' && localWriteOverlapsPull(epoch);
+      return {
+        value: pushed,
+        reconcile: pushed === 'ok',
+        reread: overlapped ? 'always' : 'no',
+      };
+    },
+    { awaitReread: true },
+  );
   if (result === 'signedOut') {
     // The 401 cleared the library; keep nothing.
     return 'signedOut';
   }
   // Anything but 'ok' leaves the failed recipe possibly live on the server.
-  const remap = restageBlobs(staged, result === 'ok');
-  if (result === 'ok' && localWriteOverlapsPull(writeEpoch)) {
-    try {
-      await pullAfterLocalWrite(writeEpoch);
-    } catch {
-      // The next pull reconciles.
-    }
-  }
-  return remap;
+  return restageBlobs(staged, result === 'ok');
 }
 
 export const recipeStore = {
@@ -494,72 +505,75 @@ export const recipeStore = {
     }
     const previous = getRecipe(recipe.id);
     const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
-    const held = recipePhotoIds(next);
-    holdPhotoIds(held);
-    const uploaded: string[] = [];
-    // Unset until the put is sent.
-    let putResult: Awaited<ReturnType<typeof pushOps>> | undefined;
-    let failure: unknown;
-    try {
-      upsertRecipe(next);
-      await uploadRecipePhotos(next, uploaded);
-      putResult = await pushOps([{ kind: 'recipe.put', payload: next }]);
-      if (putResult !== 'ok') {
-        throw putResult === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
-      }
-      for (const id of held) {
-        photosCommittedByPut.add(id);
-      }
-      forgetPhotosLeftForLastHolder(held);
-      // The put landed. Each replaced photo is deleted on its own, so one
-      // failure neither fails this save nor skips the photos after it.
-      // Memory already lists the new ids, so a later save will not retry.
+    await withLocalWrite(async () => {
+      const held = recipePhotoIds(next);
+      holdPhotoIds(held);
+      const uploaded: string[] = [];
+      // Unset until the put is sent.
+      let putResult: Awaited<ReturnType<typeof pushOps>> | undefined;
+      let failure: unknown;
       try {
-        await deleteRemovedPhotos(previous, next);
-      } catch {
-        // Backstop. deleteRemovedPhotos already continues past one failure.
-      }
-    } catch (err) {
-      if (err instanceof SessionExpiredError) {
-        // The 401 cleared the library already; write nothing back into it.
-        // The session also cannot authorize a tombstone.
-        throw err;
-      }
-      // A put that returned ok is on the server. A newer in-flight save has
-      // replaced this row in memory; restoring `previous` would wipe it.
-      if (putResult !== 'ok' && getRecipe(next.id) === next) {
-        if (previous) {
-          upsertRecipe(previous);
-        } else {
-          removeRecipeLocal(next.id);
+        upsertRecipe(next);
+        await uploadRecipePhotos(next, uploaded);
+        putResult = await pushOps([{ kind: 'recipe.put', payload: next }]);
+        if (putResult !== 'ok') {
+          throw putResult === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
         }
-      }
-      // Tombstone only when the put certainly did not land: it was never sent,
-      // or the server answered that it discarded it. A plain 'error' can be a
-      // dropped response after the live recipe started listing these ids, and
-      // deleting them would break it; an orphan is the cheaper mistake.
-      // Own uploads only. Ids another save still holds are claimed after this
-      // hold is released, so a sibling that fails during the delete below can
-      // leave them for whoever drops the count to zero.
-      if (putResult === undefined || isDiscardedPushReason(putResult)) {
-        rememberUploadsHeldElsewhere(uploaded);
-        await discardOrphanUploads(orphanedUploads(uploaded));
-      } else if (putResult !== 'ok') {
+        for (const id of held) {
+          photosCommittedByPut.add(id);
+        }
         forgetPhotosLeftForLastHolder(held);
+        // The put landed. Each replaced photo is deleted on its own, so one
+        // failure neither fails this save nor skips the photos after it.
+        // Memory already lists the new ids, so a later save will not retry.
+        try {
+          await deleteRemovedPhotos(previous, next);
+        } catch {
+          // Backstop. deleteRemovedPhotos already continues past one failure.
+        }
+      } catch (err) {
+        if (err instanceof SessionExpiredError) {
+          // The 401 cleared the library already; write nothing back into it.
+          // The session also cannot authorize a tombstone.
+          throw err;
+        }
+        // A put that returned ok is on the server. A newer in-flight save has
+        // replaced this row in memory; restoring `previous` would wipe it.
+        if (putResult !== 'ok' && getRecipe(next.id) === next) {
+          if (previous) {
+            upsertRecipe(previous);
+          } else {
+            removeRecipeLocal(next.id);
+          }
+        }
+        // Tombstone only when the put certainly did not land: it was never sent,
+        // or the server answered that it discarded it. A plain 'error' can be a
+        // dropped response after the live recipe started listing these ids, and
+        // deleting them would break it; an orphan is the cheaper mistake.
+        // Own uploads only. Ids another save still holds are claimed after this
+        // hold is released, so a sibling that fails during the delete below can
+        // leave them for whoever drops the count to zero.
+        if (putResult === undefined || isDiscardedPushReason(putResult)) {
+          rememberUploadsHeldElsewhere(uploaded);
+          await discardOrphanUploads(orphanedUploads(uploaded));
+        } else if (putResult !== 'ok') {
+          forgetPhotosLeftForLastHolder(held);
+        }
+        failure = err;
+      } finally {
+        releasePhotoIds(held);
       }
-      failure = err;
-    } finally {
-      releasePhotoIds(held);
-    }
-    if (
-      failure !== undefined &&
-      (putResult === undefined || isDiscardedPushReason(putResult))
-    ) {
-      await discardOrphanUploads(takePhotosLeftForLastHolder(held));
-    }
-    if (failure !== undefined) {
-      throw failure;
-    }
+      if (
+        failure !== undefined &&
+        (putResult === undefined || isDiscardedPushReason(putResult))
+      ) {
+        await discardOrphanUploads(takePhotosLeftForLastHolder(held));
+      }
+      if (failure !== undefined) {
+        return { value: undefined, reconcile: false, error: failure };
+      }
+      return { value: undefined, reconcile: true };
+    });
   },
 
   /**
@@ -664,22 +678,26 @@ export const recipeStore = {
       // would save a recipe pointing at a photo that never exists.
       throw new Error(t('error.photoSave'));
     }
-    upsertRecipe(recipe);
-    if (nextCollection) {
-      upsertCollection(nextCollection);
-    }
     // The server stores a photo only under a live recipe, so the recipe row
-    // goes first and the photos follow.
+    // goes first and the photos follow. The discard below opens its own
+    // write epoch, so this one closes before that runs.
     try {
-      const ops: PushOp[] = [{ kind: 'recipe.put', payload: recipe }];
-      if (nextCollection) {
-        ops.push({ kind: 'collection.put', payload: nextCollection });
-      }
-      const result = await pushOps(ops);
-      if (result !== 'ok') {
-        throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
-      }
-      await uploadRecipePhotos(recipe);
+      return await withLocalWrite(async () => {
+        upsertRecipe(recipe);
+        if (nextCollection) {
+          upsertCollection(nextCollection);
+        }
+        const ops: PushOp[] = [{ kind: 'recipe.put', payload: recipe }];
+        if (nextCollection) {
+          ops.push({ kind: 'collection.put', payload: nextCollection });
+        }
+        const result = await pushOps(ops);
+        if (result !== 'ok') {
+          throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
+        }
+        await uploadRecipePhotos(recipe);
+        return { value: recipe, reconcile: true };
+      });
     } catch (err) {
       if (err instanceof SessionExpiredError) {
         // The 401 cleared the library already; write nothing back into it.
@@ -690,7 +708,6 @@ export const recipeStore = {
       const remap = await discardCreatedRecipe(recipe.id, staged);
       throw remap === 'signedOut' ? new SessionExpiredError() : new CreateRollbackError(err, remap);
     }
-    return recipe;
   },
 
   async remove(id: string): Promise<void> {
@@ -709,37 +726,45 @@ export const recipeStore = {
         updatedAt: at,
       }),
     );
-    // The server tombstones the recipe before the rest of the delete finishes.
-    // A failed response can still mean the recipe is gone. A pull that started
-    // before this write can also paint the old card back. Hold the library
-    // until the push settles, then read the server instead of restoring blindly.
-    const writeEpoch = beginLocalWrite();
-    removeRecipeLocal(id);
-    for (const collection of scrubbed) {
-      upsertCollection(collection);
-    }
     const ops: PushOp[] = [{ kind: 'recipe.delete', payload: { id, updatedAt: at } }];
     for (const collection of scrubbed) {
       ops.push({ kind: 'collection.put', payload: collection });
     }
-    let result: Awaited<ReturnType<typeof pushOps>>;
-    try {
-      result = await pushOps(ops);
-    } finally {
-      endLocalWrite();
-    }
-    const overlaps = localWriteOverlapsPull(writeEpoch);
-    if (result === 'ok' && !overlaps) {
-      return;
-    }
-    const outcome = await pullAfterLocalWrite(writeEpoch);
+    // The server tombstones the recipe before the rest of the delete finishes.
+    // A failed response can still mean the recipe is gone. A pull that started
+    // before this write can also paint the old card back. Hold the library
+    // until the push settles, then read the server instead of restoring blindly.
+    // A successful delete that overlapped nothing does not pull.
+    let writeEpoch = 0;
+    let pullOutcome: SyncOutcome | undefined;
+    const result = await withLocalWrite(
+      async ({ epoch }) => {
+        writeEpoch = epoch;
+        removeRecipeLocal(id);
+        for (const collection of scrubbed) {
+          upsertCollection(collection);
+        }
+        const pushed = await pushOps(ops);
+        const overlaps = localWriteOverlapsPull(epoch);
+        if (pushed === 'ok' && !overlaps) {
+          return { value: pushed, reconcile: true, reread: 'no' };
+        }
+        return { value: pushed, reconcile: pushed === 'ok', reread: 'always' };
+      },
+      {
+        awaitReread: true,
+        onReread(outcome) {
+          pullOutcome = outcome;
+        },
+      },
+    );
     if (result === 'ok') {
       return;
     }
-    if (outcome === 'signedOut') {
+    if (pullOutcome === 'signedOut') {
       throw new Error(t('error.sessionExpired'));
     }
-    if (outcome === 'ok') {
+    if (pullOutcome === 'ok') {
       if (getRecipe(id) === undefined) {
         return;
       }
@@ -749,9 +774,7 @@ export const recipeStore = {
       restoreSnapshot(previous);
     }
     throw new Error(
-      result === 'signedOut'
-        ? t('error.sessionExpired')
-        : t('error.recipeDelete'),
+      result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeDelete'),
     );
   },
 };

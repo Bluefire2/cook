@@ -8,10 +8,8 @@ import {
 } from './compactCollection';
 import { moveRecipe, wouldExceedRecipeIdCap } from './collectionMembership';
 import {
-  beginLocalWrite,
   collectionAccess,
   countOwnedNamedCollections,
-  endLocalWrite,
   getCollectionOrigin,
   getCollection,
   isSharedCollection,
@@ -38,11 +36,10 @@ import {
   type CollectionLinkHttpResult,
   type CollectionLinksBody,
   type GrantRole,
-  type LeaveSharedResult,
   type RemoteResult,
 } from './remote';
+import { withLocalWrite } from './localWrite';
 import { SessionExpiredError } from './sessionExpired';
-import { pullAfterLocalWrite } from './syncEngine';
 import type { Collection } from './types';
 
 function rejectShared(id: string): void {
@@ -114,24 +111,27 @@ async function pushCollection(
   previous: Collection | undefined,
   created = false,
 ): Promise<void> {
-  upsertCollection(next);
-  try {
-    const result = await pushOps([{ kind: 'collection.put', payload: next }]);
-    if (result !== 'ok') {
-      throw saveError(result, created);
+  await withLocalWrite(async () => {
+    upsertCollection(next);
+    try {
+      const result = await pushOps([{ kind: 'collection.put', payload: next }]);
+      if (result !== 'ok') {
+        throw saveError(result, created);
+      }
+      return { value: undefined, reconcile: true };
+    } catch (err) {
+      if (err instanceof SessionExpiredError) {
+        // The 401 cleared the library already; write nothing back into it.
+        throw err;
+      }
+      if (previous) {
+        upsertCollection(previous);
+      } else {
+        removeCollectionLocal(next.id);
+      }
+      return { value: undefined, reconcile: false, error: err };
     }
-  } catch (err) {
-    if (err instanceof SessionExpiredError) {
-      // The 401 cleared the library already; write nothing back into it.
-      throw err;
-    }
-    if (previous) {
-      upsertCollection(previous);
-    } else {
-      removeCollectionLocal(next.id);
-    }
-    throw err;
-  }
+  });
 }
 
 export const collectionStore = {
@@ -207,15 +207,23 @@ export const collectionStore = {
     rejectShared(id);
     const previous = getCollection(id);
     const at = Date.now();
-    removeCollectionLocal(id);
-    const result = await pushOps([{ kind: 'collection.delete', payload: { id, updatedAt: at } }]);
-    if (result !== 'ok') {
-      // After a 401 the library is already cleared; write nothing back into it.
-      if (previous && result !== 'signedOut') {
-        upsertCollection(previous);
+    await withLocalWrite(async () => {
+      removeCollectionLocal(id);
+      const result = await pushOps([{ kind: 'collection.delete', payload: { id, updatedAt: at } }]);
+      if (result !== 'ok') {
+        // After a 401 the library is already cleared; write nothing back into it.
+        if (previous && result !== 'signedOut') {
+          upsertCollection(previous);
+        }
+        return {
+          value: undefined,
+          reconcile: false,
+          reread: result === 'signedOut' ? 'no' : undefined,
+          error: saveError(result),
+        };
       }
-      throw saveError(result);
-    }
+      return { value: undefined, reconcile: true };
+    });
   },
 
   async listGrants(id: string): Promise<CollectionGrant[]> {
@@ -281,31 +289,42 @@ export const collectionStore = {
     // collection back onto the screen after we return. Hold the library
     // the same way recipe delete does, then read the server instead of
     // trusting that a concurrent pull already saw the tombstone.
-    const writeEpoch = beginLocalWrite();
-    let result: LeaveSharedResult;
-    try {
-      result = await leaveSharedCollection(origin.ownerSub, id);
-    } finally {
-      endLocalWrite();
-    }
-    if (result.kind === 'signedOut') {
-      throw new Error(t('error.sessionExpired'));
-    }
-    if (result.kind === 'error') {
-      throw new Error(result.message);
-    }
-    // Leave succeeded (or the grant was already gone). Do not drop the
-    // collection locally first: that would unmount the Leave sheet, so a failed
-    // refresh could not show its error. The epoch hold above keeps an
-    // overlapping pull from repainting, and a successful pull publishes state
-    // without the collection and its recipes.
-    const outcome = await pullAfterLocalWrite(writeEpoch);
-    if (outcome === 'signedOut') {
-      throw new Error(t('error.sessionExpired'));
-    }
-    if (outcome !== 'ok') {
-      throw new Error(t('error.leaveRefresh'));
-    }
+    // Do not drop the collection locally first: that would unmount the Leave
+    // sheet, so a failed refresh could not show its error. A successful pull
+    // publishes state without the collection and its recipes.
+    await withLocalWrite(
+      async () => {
+        const result = await leaveSharedCollection(origin.ownerSub, id);
+        if (result.kind === 'signedOut') {
+          return {
+            value: undefined,
+            reconcile: false,
+            reread: 'no',
+            error: new Error(t('error.sessionExpired')),
+          };
+        }
+        if (result.kind === 'error') {
+          return {
+            value: undefined,
+            reconcile: false,
+            reread: 'no',
+            error: new Error(result.message),
+          };
+        }
+        return { value: undefined, reconcile: true, reread: 'always' };
+      },
+      {
+        awaitReread: true,
+        onReread(outcome) {
+          if (outcome === 'signedOut') {
+            throw new Error(t('error.sessionExpired'));
+          }
+          if (outcome !== 'ok') {
+            throw new Error(t('error.leaveRefresh'));
+          }
+        },
+      },
+    );
   },
 
   async listLinks(id: string): Promise<CollectionLink[]> {
@@ -388,26 +407,29 @@ export const collectionStore = {
     const previous = changed
       .map((next) => current.find((c) => c.id === next.id))
       .filter((c): c is Collection => c !== undefined);
-    for (const next of changed) {
-      upsertCollection(next);
-    }
-    try {
-      const result = await pushOps(
-        changed.map((payload) => ({ kind: 'collection.put' as const, payload })),
-      );
-      if (result !== 'ok') {
-        throw saveError(result);
+    await withLocalWrite(async () => {
+      for (const next of changed) {
+        upsertCollection(next);
       }
-    } catch (err) {
-      if (err instanceof SessionExpiredError) {
-        // The 401 cleared the library already; write nothing back into it.
-        throw err;
+      try {
+        const result = await pushOps(
+          changed.map((payload) => ({ kind: 'collection.put' as const, payload })),
+        );
+        if (result !== 'ok') {
+          throw saveError(result);
+        }
+        return { value: undefined, reconcile: true };
+      } catch (err) {
+        if (err instanceof SessionExpiredError) {
+          // The 401 cleared the library already; write nothing back into it.
+          throw err;
+        }
+        for (const collection of previous) {
+          upsertCollection(collection);
+        }
+        return { value: undefined, reconcile: false, error: err };
       }
-      for (const collection of previous) {
-        upsertCollection(collection);
-      }
-      throw err;
-    }
+    });
   },
 };
 

@@ -12,6 +12,7 @@ import {
   upsertCookLog,
 } from './libraryMemory';
 import { selectCookLog } from './librarySelectors';
+import { withLocalWrite } from './localWrite';
 import { useLibrarySelect, useLibrarySlice } from './useLibrary';
 import { postPhoto, pushOps, type RemoteResult } from './remote';
 import { SessionExpiredError } from './sessionExpired';
@@ -78,26 +79,29 @@ async function putCookLog(next: CookLog, previous: CookLog | undefined): Promise
   if (!isUsableCookLog(next)) {
     throw new Error(t('error.cookLogSave'));
   }
-  upsertCookLog(next);
-  try {
-    await uploadCookLogPhotos(next);
-    const result = await pushOps([{ kind: 'cookLog.put', payload: next }]);
-    if (result !== 'ok') {
-      throw pushError(result, t('error.cookLogSave'));
+  await withLocalWrite(async () => {
+    upsertCookLog(next);
+    try {
+      await uploadCookLogPhotos(next);
+      const result = await pushOps([{ kind: 'cookLog.put', payload: next }]);
+      if (result !== 'ok') {
+        throw pushError(result, t('error.cookLogSave'));
+      }
+    } catch (err) {
+      if (err instanceof SessionExpiredError) {
+        // The 401 cleared the library already; write nothing back into it.
+        throw err;
+      }
+      if (previous) {
+        upsertCookLog(previous);
+      } else {
+        removeCookLogLocal(next.id);
+      }
+      return { value: undefined, reconcile: false, error: err };
     }
-  } catch (err) {
-    if (err instanceof SessionExpiredError) {
-      // The 401 cleared the library already; write nothing back into it.
-      throw err;
-    }
-    if (previous) {
-      upsertCookLog(previous);
-    } else {
-      removeCookLogLocal(next.id);
-    }
-    throw err;
-  }
-  await deleteRemovedPhotos(previous, next);
+    await deleteRemovedPhotos(previous, next);
+    return { value: undefined, reconcile: true };
+  });
 }
 
 export const cookLogStore = {
@@ -124,22 +128,30 @@ export const cookLogStore = {
     const previous = getCookLog(id);
     const at = Date.now();
     const photoIds = previous?.photoIds ?? [];
-    removeCookLogLocal(id);
-    const ops: PushOp[] = [{ kind: 'cookLog.delete', payload: { id, updatedAt: at } }];
-    for (const photoId of photoIds) {
-      ops.push({ kind: 'photo.delete', payload: { id: photoId, updatedAt: at } });
-    }
-    const result = await pushOps(ops);
-    if (result !== 'ok') {
-      // After a 401 the library is already cleared; write nothing back into it.
-      if (previous && result !== 'signedOut') {
-        upsertCookLog(previous);
+    await withLocalWrite(async () => {
+      removeCookLogLocal(id);
+      const ops: PushOp[] = [{ kind: 'cookLog.delete', payload: { id, updatedAt: at } }];
+      for (const photoId of photoIds) {
+        ops.push({ kind: 'photo.delete', payload: { id: photoId, updatedAt: at } });
       }
-      throw pushError(result, t('error.cookLogDelete'));
-    }
-    for (const photoId of photoIds) {
-      dropPhoto(photoId);
-    }
+      const result = await pushOps(ops);
+      if (result !== 'ok') {
+        // After a 401 the library is already cleared; write nothing back into it.
+        if (previous && result !== 'signedOut') {
+          upsertCookLog(previous);
+        }
+        return {
+          value: undefined,
+          reconcile: false,
+          reread: result === 'signedOut' ? 'no' : undefined,
+          error: pushError(result, t('error.cookLogDelete')),
+        };
+      }
+      for (const photoId of photoIds) {
+        dropPhoto(photoId);
+      }
+      return { value: undefined, reconcile: true };
+    });
   },
 
   /** Reads the latest recipe so a concurrent edit is not overwritten with a stale copy. */

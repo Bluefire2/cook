@@ -12,6 +12,8 @@ import {
   parseCollectionLinksBody,
   pullSharedPage,
   pushOps,
+  resetPushTimeoutForTests,
+  setPushTimeoutForTests,
   SHARED_PARENT_OWNER_SUB_FIELD,
 } from './remote';
 import type { PushOp } from './pushOps';
@@ -51,6 +53,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetPushTimeoutForTests();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -252,6 +255,28 @@ describe('pushOps', () => {
       }),
     );
     expect(await pushOps([op])).toBe('error');
+  });
+
+  it('returns error when the push hangs past the timeout', async () => {
+    setPushTimeoutForTests(20);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => {
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) {
+            return;
+          }
+          const abort = () => reject(signal.reason);
+          if (signal.aborted) {
+            abort();
+            return;
+          }
+          signal.addEventListener('abort', abort, { once: true });
+        });
+      }),
+    );
+    await expect(pushOps([op])).resolves.toBe('error');
   });
 
   it('returns error on a non-OK status other than 401/403', async () => {

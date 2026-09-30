@@ -130,6 +130,24 @@ export function firstPushRejection(body: unknown): DiscardedPushReason | null {
   return null;
 }
 
+/** A hung push holds the library epoch until it settles. Bound that wait. */
+const DEFAULT_PUSH_TIMEOUT_MS = 30_000;
+
+let pushTimeoutMs = DEFAULT_PUSH_TIMEOUT_MS;
+
+/** Test isolation. Production pushes abort after 30 seconds. */
+export function setPushTimeoutForTests(ms: number): void {
+  pushTimeoutMs = ms;
+}
+
+export function resetPushTimeoutForTests(): void {
+  pushTimeoutMs = DEFAULT_PUSH_TIMEOUT_MS;
+}
+
+function pushAbortSignal(): AbortSignal {
+  return AbortSignal.timeout(pushTimeoutMs);
+}
+
 export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
   for (let offset = 0; offset < ops.length; offset += MAX_PUSH_OPS) {
     const batch = ops.slice(offset, offset + MAX_PUSH_OPS);
@@ -140,6 +158,7 @@ export async function pushOps(ops: PushOp[]): Promise<RemoteResult> {
         credentials: 'same-origin',
         headers: jsonHeaders(),
         body: JSON.stringify({ ops: batch }),
+        signal: pushAbortSignal(),
       });
     } catch {
       return 'error';
@@ -211,6 +230,7 @@ export async function postPhoto(
         'x-recipe-id': recipeId,
       },
       body: blob,
+      signal: pushAbortSignal(),
     });
   } catch {
     return 'error';

@@ -43,6 +43,7 @@ vi.mock('./remote', () => ({
 }));
 
 vi.mock('./syncEngine', () => ({
+  localWriteOverlapsPull: vi.fn(() => false),
   pullAfterLocalWrite: vi.fn(),
 }));
 
@@ -401,9 +402,7 @@ describe('collectionStore after sign-out', () => {
   it('create does not leave the new collection behind', async () => {
     vi.mocked(pushOps).mockImplementation(signOut);
 
-    await expect(collectionStore.create('Soups')).rejects.toThrow(
-      t('error.sessionExpired'),
-    );
+    await expect(collectionStore.create('Soups')).rejects.toThrow(t('error.sessionExpired'));
 
     expect(listCollections()).toEqual([]);
   });
@@ -412,9 +411,7 @@ describe('collectionStore after sign-out', () => {
     upsertCollection(collection('c1', 'Soups'));
     vi.mocked(pushOps).mockImplementation(signOut);
 
-    await expect(collectionStore.rename('c1', 'Stews')).rejects.toThrow(
-      t('error.sessionExpired'),
-    );
+    await expect(collectionStore.rename('c1', 'Stews')).rejects.toThrow(t('error.sessionExpired'));
 
     expect(listCollections()).toEqual([]);
   });
@@ -442,9 +439,7 @@ describe('collectionStore after sign-out', () => {
     upsertCollection(collection('c2', 'Stews'));
     vi.mocked(pushOps).mockImplementation(signOut);
 
-    await expect(collectionStore.moveRecipe('r1', 'c2')).rejects.toThrow(
-      t('error.sessionExpired'),
-    );
+    await expect(collectionStore.moveRecipe('r1', 'c2')).rejects.toThrow(t('error.sessionExpired'));
 
     expect(listCollections()).toEqual([]);
   });
@@ -454,9 +449,7 @@ describe('collectionStore after sign-out', () => {
     upsertCollection(collection('c2', 'Stews'));
     vi.mocked(pushOps).mockResolvedValue('error');
 
-    await expect(collectionStore.moveRecipe('r1', 'c2')).rejects.toThrow(
-      t('error.collectionSave'),
-    );
+    await expect(collectionStore.moveRecipe('r1', 'c2')).rejects.toThrow(t('error.collectionSave'));
 
     expect(getCollection('c1')?.recipeIds).toEqual(['r1']);
     expect(getCollection('c2')?.recipeIds).toEqual([]);
