@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Boot smoke test for the production server (scripts/server.ts serving dist/).
+# CI runs it against the Docker image; locally it works against
+# `npm run build && PORT=8080 node scripts/server.ts`.
+#
+#   bash .github/scripts/smoke-server.sh http://localhost:8080
+#
+# Needs no credentials: every request here is public or is rejected before
+# Firestore is touched.
+
+BASE_URL="${1:-http://localhost:8080}"
+failures=0
+
+# Prints the HTTP status, or 000 when the server did not answer. Always returns
+# 0 so it is safe inside $(...) under `set -e`.
+status_of() {
+  curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${BASE_URL}$1" || true
+  return 0
+}
+
+content_type_of() {
+  curl -s -o /dev/null -w '%{content_type}' --max-time 10 "${BASE_URL}$1" || true
+  return 0
+}
+
+expect_status() {
+  local path="$1" want="$2" got
+  got="$(status_of "$path")"
+  if [[ "$got" == "$want" ]]; then
+    printf 'ok    %s %s\n' "$got" "$path"
+  else
+    printf 'FAIL  %s %s (want %s)\n' "$got" "$path" "$want"
+    failures=$((failures + 1))
+  fi
+}
+
+expect_html() {
+  local path="$1" type
+  type="$(content_type_of "$path")"
+  if [[ "$type" == text/html* ]]; then
+    printf 'ok    html %s\n' "$path"
+  else
+    printf 'FAIL  %s is %s, not text/html\n' "$path" "${type:-nothing}"
+    failures=$((failures + 1))
+  fi
+}
+
+printf 'Waiting for %s\n' "$BASE_URL"
+for _ in $(seq 1 30); do
+  if [[ "$(status_of /)" != "000" ]]; then
+    break
+  fi
+  sleep 1
+done
+if [[ "$(status_of /)" == "000" ]]; then
+  printf 'FAIL  server never answered at %s\n' "$BASE_URL"
+  exit 1
+fi
+
+# Static SPA and PWA files from dist/.
+expect_status / 200
+expect_html /
+expect_status /about 200
+expect_status /privacy 200
+expect_status /terms 200
+expect_status /manifest.webmanifest 200
+expect_status /sw.js 200
+# Client-side route falls back to index.html.
+expect_status /settings 200
+expect_html /settings
+
+# API routes load and reject an anonymous caller as denied (401), not as
+# unknown (503) or a crash (500).
+expect_status /api/sync/pull 401
+expect_status /api/sync/shared 401
+
+if (( failures > 0 )); then
+  printf '%d smoke check(s) failed\n' "$failures"
+  exit 1
+fi
+printf 'All smoke checks passed\n'

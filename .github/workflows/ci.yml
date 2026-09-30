@@ -2,18 +2,70 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          # scripts/dev-api-server.ts relies on native TypeScript type stripping.
+          # The engines floor. The image job covers the Node version the
+          # Dockerfile pins for production.
           node-version: '22.18'
           cache: npm
       - run: npm ci
-      - run: npx tsc -b
+      # tsc -b && vite build: the PWA and Tailwind build, not only types.
+      - run: npm run build
       - run: npm test
+
+  # Builds the production image and boots it with no cloud credentials.
+  # Catches what tsc cannot: Node type-stripping and import resolution
+  # failures, Dockerfile / .dockerignore mistakes, and runtime deps missing
+  # after `npm ci --omit=dev`.
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: sous:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Start container
+        run: |
+          docker run -d --name sous-ci -p 8080:8080 \
+            -e PORT=8080 \
+            -e PUBLIC_ORIGIN=http://localhost:8080 \
+            -e SESSION_SECRET=ci-smoke-not-a-secret \
+            sous:ci
+      - name: Smoke test
+        run: bash .github/scripts/smoke-server.sh http://localhost:8080
+      - name: Container logs
+        if: always()
+        run: docker logs sous-ci || true
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high

@@ -101,6 +101,48 @@ describe('extractRecipeSource', () => {
     expect(extractRecipeSource(html)).toHaveLength(60000);
   });
 
+  it('reads a JSON-LD block whose type attribute is unquoted', () => {
+    const html =
+      `<script type=application/ld+json class=yoast-schema-graph>${JSON.stringify(RECIPE)}</script>` +
+      '<article><h1>Page text</h1></article>';
+    expect(JSON.parse(extractRecipeSource(html))).toEqual(RECIPE);
+  });
+
+  it('does not read a script whose unquoted type only starts with application/ld+json', () => {
+    const html =
+      `<script type=application/ld+jsonp>${JSON.stringify(RECIPE)}</script>` +
+      '<p>Plain page</p>';
+    expect(extractRecipeSource(html).trim()).toBe('Plain page');
+  });
+
+  it('drops reviews and other non-recipe fields from a node over the cap, keeping it whole', () => {
+    const review = Array.from({ length: 200 }, (_, i) => ({
+      '@type': 'Review',
+      reviewBody: `Review ${i}: ${'lovely '.repeat(60)}`,
+    }));
+    const node = {
+      '@type': 'Recipe',
+      name: 'Banana Bread',
+      review,
+      aggregateRating: { ratingValue: 4.8 },
+      video: [{ '@type': 'VideoObject', name: 'How to' }],
+      recipeIngredient: ['3 bananas', '2 cups flour'],
+      recipeInstructions: [{ '@type': 'HowToStep', text: 'Bake at 350F.' }],
+    };
+    expect(JSON.stringify(node).length).toBeGreaterThan(60000);
+    expect(JSON.parse(extractRecipeSource(ldBlock(JSON.stringify(node))))).toEqual({
+      '@type': 'Recipe',
+      name: 'Banana Bread',
+      recipeIngredient: ['3 bananas', '2 cups flour'],
+      recipeInstructions: [{ '@type': 'HowToStep', text: 'Bake at 350F.' }],
+    });
+  });
+
+  it('leaves reviews on a node under the cap', () => {
+    const node = { ...RECIPE, review: [{ '@type': 'Review', reviewBody: 'Great.' }] };
+    expect(JSON.parse(extractRecipeSource(ldBlock(JSON.stringify(node))))).toEqual(node);
+  });
+
   it('caps the text path at 60,000 characters', () => {
     const html = `<p>${'word '.repeat(20000)}</p>`;
     expect(extractRecipeSource(html)).toHaveLength(60000);
