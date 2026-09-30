@@ -342,6 +342,19 @@ it exercises the real delete path.
 - Polling sync, Firestore listeners, WebSockets
 - Conflict-merge UI (LWW is the product)
 
+## Agent module
+
+The library assistant (`POST /api/agent`, screen `/assistant`) is a module.
+Public entry points are `agentPost` from `server/agent/index.ts` and
+`AssistantScreen` / `AssistantEntryLink` from `src/agent/index.ts`. Nothing
+outside those directories imports agent internals. Wiring outside the module
+is one route line in `scripts/server.ts`, one route in `src/App.tsx`,
+`<AssistantEntryLink />` in `src/screens/Library.tsx`, `listLiveDocs` in
+`server/store.ts`, and `onSessionReset` in `src/lib/session.ts`. The harness
+under `server/agent/harness/` knows nothing about recipes; only
+`server/agent/harness/google.ts` imports `@google/genai`. Domain tools live in
+`server/agent/sous/`. See `docs/plans/library-agent.md`.
+
 ## Feature constitutions
 
 A constitution records a feature's principles and why each exists. The index
@@ -392,6 +405,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/i18n.md` | Merged (#42; constitution `docs/constitutions/i18n.md`). Not deployed. UI language with `src/i18n/` catalogs, `Recipe.lang`, translation at import and on the recipe screen, dictation language. |
 | `docs/plans/i18n-follow-ups.md` | Open. Post-deploy owner steps (Cloud Run translate p95, dictation clips, `lang` backfill `--write`), unrun checks, and review nits left after PR #42. |
 | `docs/plans/collection-path.md` | Built on `cursor/collection-path-2d3d`. Named collections open at `/collections/<id>`. Legacy `?c=` redirects removed. Not deployed. |
+| `docs/plans/library-agent.md` | Built on `cursor/library-agent-336b` (PR #34), not deployed. App-level assistant: read-only tools over the user's own library, modular cards (shopping list first), ephemeral threads. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not

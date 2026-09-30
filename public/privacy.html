@@ -132,8 +132,13 @@
 
     <h2>Third parties</h2>
     <p>
-      Recipe text, your chat messages and any photo you send the assistant are
-      passed to Google's Gemini API at request time to produce a reply. Using
+      On a recipe, the text of that recipe, your chat messages on it, and any
+      photo you send the assistant are passed to Google's Gemini API at request
+      time to produce a reply. When you use the library assistant (Ask, at
+      /assistant), Sous sends many recipes from your library — titles, tags,
+      and the full text of recipes the assistant looks up — not only the recipe
+      you are viewing, to Google's Gemini API at request time to produce the
+      reply. Using
       Dictate uploads a short microphone recording to Sous, which sends it to
       Gemini to turn into text and does not store the audio. Recipe text is
       sent to Gemini, or the configured translation provider, for
