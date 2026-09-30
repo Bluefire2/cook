@@ -270,7 +270,7 @@ export function collectionLinkConfirmPageHtml(input: {
   const sharer = input.ownerEmail === '' ? 'The owner' : escapeHtml(input.ownerEmail);
   const roleLine =
     input.role === 'editor'
-      ? 'As an editor you can see these recipes and edit their details, but not their photos. Only the owner can delete them or change who has access.'
+      ? 'As an editor you can see these recipes and their photos, and edit their details but not their photos. Only the owner can delete them or change who has access.'
       : 'As a viewer you can see these recipes and their photos.';
   return pageHtml(
     'Join collection',

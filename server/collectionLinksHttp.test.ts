@@ -248,6 +248,16 @@ describe('GET /c/join', () => {
     expect(redeem).not.toHaveBeenCalled();
   });
 
+  it('the editor confirm line says editors see photos but cannot change them', async () => {
+    const { deps } = pageDeps({
+      resolve: async (id) => (id === linkId ? resolved({ link: link({ role: 'editor' }) }) : null),
+    });
+    const body = await (await handleCollectionLinkJoinGet(joinGet(hopCookie()), deps)).text();
+    expect(body).toContain(
+      'As an editor you can see these recipes and their photos, and edit their details but not their photos. Only the owner can delete them or change who has access.',
+    );
+  });
+
   it('confirm page is same-origin, not no-referrer, so its Join POST carries a real Origin', async () => {
     const { deps } = pageDeps();
     const response = await handleCollectionLinkJoinGet(joinGet(hopCookie()), deps);
