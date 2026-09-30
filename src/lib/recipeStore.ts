@@ -64,23 +64,31 @@ export class CreateRollbackError extends Error {
   }
 }
 
+/**
+ * Uploads a staged blob. Returns the id when this call is what made it
+ * remote, so a failed save can tombstone that orphan. An id that was already
+ * remote is uploaded again if its bytes are still staged, but it is not
+ * returned: deleting it would drop a photo the live recipe still lists.
+ */
 async function uploadPhotoIfNeeded(
   photoId: string | undefined,
   recipeId: string,
   updatedAt: number,
-): Promise<void> {
+): Promise<string | undefined> {
   if (photoId === undefined) {
-    return;
+    return undefined;
   }
   const blob = getPendingBlob(photoId);
   if (!blob) {
-    return;
+    return undefined;
   }
+  const alreadyRemote = getSnapshot().remotePhotoIds.has(photoId);
   const result = await postPhoto(photoId, recipeId, updatedAt, blob);
   if (result !== 'ok') {
     throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.photoSave'));
   }
   markPhotoRemote(photoId);
+  return alreadyRemote ? undefined : photoId;
 }
 
 type ParentPhotoSlot = { kind: 'cover' | 'gallery'; id: string };
@@ -142,10 +150,26 @@ async function copyParentPhotos(parent: Recipe): Promise<{
   };
 }
 
-async function uploadRecipePhotos(recipe: Recipe): Promise<void> {
+/** `uploaded` collects ids this attempt made remote, including when a later upload throws. */
+async function uploadRecipePhotos(recipe: Recipe, uploaded: string[] = []): Promise<void> {
   for (const photoId of recipePhotoIds(recipe)) {
-    await uploadPhotoIfNeeded(photoId, recipe.id, recipe.updatedAt);
+    const id = await uploadPhotoIfNeeded(photoId, recipe.id, recipe.updatedAt);
+    if (id !== undefined) {
+      uploaded.push(id);
+    }
   }
+}
+
+/** Tombstone one photo. Local bytes drop only when the server accepts it. */
+async function deletePhoto(photoId: string): Promise<Awaited<ReturnType<typeof pushOps>>> {
+  const at = Date.now();
+  const result = await pushOps([
+    { kind: 'photo.delete', payload: { id: photoId, updatedAt: at } },
+  ]);
+  if (result === 'ok') {
+    dropPhoto(photoId);
+  }
+  return result;
 }
 
 async function deleteRemovedPhotos(
@@ -157,12 +181,23 @@ async function deleteRemovedPhotos(
     if (keep.has(photoId)) {
       continue;
     }
-    const at = Date.now();
-    const result = await pushOps([
-      { kind: 'photo.delete', payload: { id: photoId, updatedAt: at } },
-    ]);
-    if (result === 'ok') {
-      dropPhoto(photoId);
+    await deletePhoto(photoId);
+  }
+}
+
+/**
+ * Photos this save uploaded and then failed to attach. Best effort: a failed
+ * delete must not replace the save error, and a 401 stops the rest.
+ */
+async function discardOrphanUploads(photoIds: readonly string[]): Promise<void> {
+  for (const photoId of photoIds) {
+    try {
+      const result = await deletePhoto(photoId);
+      if (result === 'signedOut') {
+        return;
+      }
+    } catch {
+      // Best effort; the caller surfaces the original error.
     }
   }
 }
@@ -333,18 +368,26 @@ export const recipeStore = {
     const previous = getRecipe(recipe.id);
     const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
     upsertRecipe(next);
+    const uploaded: string[] = [];
+    let putLanded = false;
     try {
-      await uploadRecipePhotos(next);
+      await uploadRecipePhotos(next, uploaded);
       const result = await pushOps([{ kind: 'recipe.put', payload: next }]);
       if (result !== 'ok') {
-        throw new Error(result === 'signedOut' ? t('error.sessionExpired') : t('error.recipeSave'));
+        throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
       }
+      putLanded = true;
       await deleteRemovedPhotos(previous, next);
     } catch (err) {
       if (previous) {
         upsertRecipe(previous);
       } else {
         removeRecipeLocal(next.id);
+      }
+      // The put never landed, so these ids are finalized and unreferenced.
+      // A signed-out session cannot authorize the tombstone.
+      if (!putLanded && !(err instanceof SessionExpiredError)) {
+        await discardOrphanUploads(uploaded);
       }
       throw err;
     }
