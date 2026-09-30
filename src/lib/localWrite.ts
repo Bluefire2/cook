@@ -191,6 +191,15 @@ export type LocalWriteOptions = {
  *
  * `error` is rethrown after the read is scheduled, which is before it
  * publishes. A throw from `body` does not schedule a read.
+ *
+ * A new caller names the row it touched and whether a failure keeps that row
+ * or rolls it back. Sign-out writes nothing back, a later write on that same
+ * row wins, and quiet writes share this one follow-up pull. Those three stay
+ * here. Do not add another `reread` or `preserve` switch for a one-row write.
+ * Delete, discard, leave, backup import, and photo-set membership are the
+ * exceptions already: a full snapshot, not one row, decides their outcome.
+ * A write that fits neither is the point to drop this follow-up read, not to
+ * grow the flags.
  */
 export async function withLocalWrite<T>(
   body: (ctx: { epoch: number }) => Promise<LocalWriteResult<T>>,
