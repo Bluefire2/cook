@@ -237,6 +237,73 @@ function unavailablePage(): Response {
   });
 }
 
+const LEGAL_FOOTER =
+  '<footer><a href="/about">About</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></footer>';
+
+// Shareable collection links (`/c/...`). Unknown, revoked, expired, and a
+// deleted collection all render this one page: do not say which it was.
+export function collectionLinkDeadPageHtml(): string {
+  return pageHtml(
+    'Link not valid',
+    '<h1>This link is not valid</h1>' +
+      '<p>Ask the person who shared it for a new link.</p>' +
+      '<p><a href="/">Home</a></p>',
+  );
+}
+
+// Signed-out visitor. Names nothing about the collection: the visitor has not
+// shown that they are a member yet.
+export function collectionLinkSignInPageHtml(): string {
+  return pageHtml(
+    'Shared collection',
+    '<h1>Someone shared a collection with you</h1>' +
+      '<p>Sign in with Google to open it. Sous is invitation-only: this link ' +
+      'works for people who already have access.</p>' +
+      `<p><a class="action" href="/api/auth/start?returnTo=${encodeURIComponent('/c/join')}">` +
+      'Sign in with Google</a></p>' +
+      LEGAL_FOOTER,
+  );
+}
+
+// Signed-in member. Joining is an explicit same-origin POST: opening a link
+// never grants by itself, and the owner sees this person's email once they
+// join. `linkId` is the sha256 id, not the token; it pins the POST to the
+// collection this page named.
+export function collectionLinkConfirmPageHtml(input: {
+  linkId: string;
+  collectionName: string;
+  ownerEmail: string;
+  role: 'viewer' | 'editor';
+}): string {
+  const sharer = input.ownerEmail === '' ? 'The owner' : escapeHtml(input.ownerEmail);
+  const roleLine =
+    input.role === 'editor'
+      ? 'As an editor you can see these recipes and their photos, and edit their details but not their photos. Only the owner can delete them or change who has access.'
+      : 'As a viewer you can see these recipes and their photos.';
+  return pageHtml(
+    'Join collection',
+    `<h1>Join “${escapeHtml(input.collectionName)}”</h1>` +
+      `<p>${sharer} shared this collection. ${roleLine}</p>` +
+      '<p class="muted">Once you join, they will see your email address.</p>' +
+      '<form method="POST" action="/c/join">' +
+      `<input type="hidden" name="link" value="${escapeHtml(input.linkId)}">` +
+      '<button type="submit">Join collection</button>' +
+      '</form>' +
+      '<p><a href="/">Not now</a></p>' +
+      LEGAL_FOOTER,
+  );
+}
+
+export function collectionLinkFullPageHtml(): string {
+  return pageHtml(
+    'Collection full',
+    '<h1>This collection is full</h1>' +
+      '<p>It is already shared with as many people as it can be. Ask the ' +
+      'person who shared it to make room.</p>' +
+      '<p><a href="/">Home</a></p>',
+  );
+}
+
 export async function accessRequestPost(req: Request): Promise<Response> {
   const contentType = req.headers.get('content-type');
   if (contentType === null || !contentType.toLowerCase().startsWith('application/x-www-form-urlencoded')) {

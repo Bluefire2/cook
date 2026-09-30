@@ -47,7 +47,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function errorJson(code: string, error: string, status: number, max?: number): Response {
+export function errorJson(code: string, error: string, status: number, max?: number): Response {
   const body: { error: string; code: string; max?: number } = { error, code };
   if (max !== undefined) {
     body.max = max;
@@ -119,7 +119,7 @@ export function collectionIdFromPath(pathname: string): string | null {
   return isUuid(id) ? id : null;
 }
 
-async function requireOwnedLiveCollection(
+export async function requireOwnedLiveCollection(
   req: Request,
   collectionId: string,
 ): Promise<
@@ -146,7 +146,7 @@ async function requireOwnedLiveCollection(
   }
 }
 
-function accessResponse(
+export function accessResponse(
   access: Awaited<ReturnType<typeof requireOwnedLiveCollection>>,
 ): Response | null {
   if (access.kind === 'denied') {
