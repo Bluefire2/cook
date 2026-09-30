@@ -41,6 +41,7 @@ import {
   type LeaveSharedResult,
   type RemoteResult,
 } from './remote';
+import { SessionExpiredError } from './sessionExpired';
 import { pullAfterLocalWrite } from './syncEngine';
 import type { Collection } from './types';
 
@@ -61,7 +62,9 @@ export function collectionPushErrorMessage(result: RemoteResult, created = false
 }
 
 function saveError(result: RemoteResult, created = false): Error {
-  return new Error(collectionPushErrorMessage(result, created));
+  return result === 'signedOut'
+    ? new SessionExpiredError()
+    : new Error(collectionPushErrorMessage(result, created));
 }
 
 /** A link the share sheet just minted: the one-time URL and its sha256 id. */
@@ -118,6 +121,10 @@ async function pushCollection(
       throw saveError(result, created);
     }
   } catch (err) {
+    if (err instanceof SessionExpiredError) {
+      // The 401 cleared the library already; write nothing back into it.
+      throw err;
+    }
     if (previous) {
       upsertCollection(previous);
     } else {
@@ -203,7 +210,8 @@ export const collectionStore = {
     removeCollectionLocal(id);
     const result = await pushOps([{ kind: 'collection.delete', payload: { id, updatedAt: at } }]);
     if (result !== 'ok') {
-      if (previous) {
+      // After a 401 the library is already cleared; write nothing back into it.
+      if (previous && result !== 'signedOut') {
         upsertCollection(previous);
       }
       throw saveError(result);
@@ -391,6 +399,10 @@ export const collectionStore = {
         throw saveError(result);
       }
     } catch (err) {
+      if (err instanceof SessionExpiredError) {
+        // The 401 cleared the library already; write nothing back into it.
+        throw err;
+      }
       for (const collection of previous) {
         upsertCollection(collection);
       }
