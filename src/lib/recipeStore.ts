@@ -439,9 +439,12 @@ async function discardCreatedRecipe(
       }),
     );
   // A pull that read the live row before the delete landed must not paint it
-  // back; hold the library as `remove` does. A failed discard must not reread:
-  // that would republish the recipe this attempt is trying to drop. Create
-  // throws out of its own write so that read is not scheduled before this one.
+  // back; hold the library as `remove` does. Create throws out of its own
+  // write, so that read is not scheduled before this one. A failed discard
+  // still rereads when a pull overlapped: the first launch stays on "Loading
+  // recipes" until something publishes, and a recipe the server kept is the
+  // same truth `remove` already trusts a reread for. With no pull in flight,
+  // a failed discard does not reread. Sign-out has already cleared the library.
   const ops: PushOp[] = [{ kind: 'recipe.delete', payload: { id, updatedAt: at } }];
   for (const collection of scrubbed) {
     ops.push({ kind: 'collection.put', payload: collection });
@@ -458,10 +461,11 @@ async function discardCreatedRecipe(
       } catch {
         // Best effort; the caller surfaces the original error.
       }
+      const overlapped = pushed !== 'signedOut' && localWriteOverlapsPull(epoch);
       return {
         value: pushed,
         reconcile: pushed === 'ok',
-        reread: pushed === 'ok' && localWriteOverlapsPull(epoch) ? 'always' : 'no',
+        reread: overlapped ? 'always' : 'no',
       };
     },
     { awaitReread: true },

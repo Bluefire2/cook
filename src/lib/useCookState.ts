@@ -53,6 +53,19 @@ function progressFor(
   };
 }
 
+/**
+ * Bumped only by a cook-progress write. A pull replaces the row object, so
+ * identity cannot tell a later tap from the server snapshot that arrived
+ * during the follow-up's quiet window.
+ */
+const cookWriteGeneration = new Map<string, number>();
+
+function bumpCookWrite(recipeId: string): number {
+  const generation = (cookWriteGeneration.get(recipeId) ?? 0) + 1;
+  cookWriteGeneration.set(recipeId, generation);
+  return generation;
+}
+
 const cookStateStore = {
   get(recipeId: string): CookStateRow | undefined {
     return getCook(recipeId);
@@ -68,6 +81,7 @@ const cookStateStore = {
       recipeId: recipe.id,
       recipeUpdatedAt: recipe.updatedAt,
     };
+    const generation = bumpCookWrite(recipe.id);
     await withLocalWrite(async () => {
       upsertCook(next);
       const result = await pushOps([
@@ -81,7 +95,7 @@ const cookStateStore = {
         value: undefined,
         reconcile: result === 'ok',
         preserve: failed ? () => upsertCook(next) : undefined,
-        stillCurrent: failed ? () => getCook(recipe.id) === next : undefined,
+        stillCurrent: failed ? () => cookWriteGeneration.get(recipe.id) === generation : undefined,
       };
     });
   },

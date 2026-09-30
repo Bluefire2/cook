@@ -205,6 +205,14 @@ export function markLoaded(): void {
   emit({ ...snapshot, loaded: true });
 }
 
+/** Test isolation. The app boots unloaded; `clearLibrary` leaves it loaded. */
+export function markUnloadedForTests(): void {
+  if (!snapshot.loaded) {
+    return;
+  }
+  emit({ ...snapshot, loaded: false });
+}
+
 export function clearLibrary(): void {
   emit(empty(true));
 }

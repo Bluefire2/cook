@@ -64,42 +64,29 @@ export const photoStore = {
     const at = Date.now();
     const remote = getSnapshot().remotePhotoIds.has(id);
     const pending = getPendingBlob(id);
-    await withLocalWrite(async () => {
+    await withLocalWrite(async ({ epoch }) => {
       dropPhoto(id);
       const result = await pushOps([{ kind: 'photo.delete', payload: { id, updatedAt: at } }]);
-      if (result !== 'ok') {
-        // A 401 already cleared the library. Putting the id back would
-        // repopulate a signed-out session. Any other failure still has the
-        // photo on the server. The reread of an overlapping pull publishes
-        // without this id, so put it back again after that read.
-        const restore =
-          result !== 'signedOut' && remote
-            ? () => {
-                if (pending) {
-                  cachePhotoBlob(id, pending);
-                } else {
-                  markPhotoRemote(id);
-                }
-              }
-            : undefined;
-        restore?.();
-        const stillCurrent = pending
-          ? () => {
-              const snap = getSnapshot();
-              return snap.pendingBlobs.get(id) === pending && snap.remotePhotoIds.has(id);
-            }
-          : () => {
-              const snap = getSnapshot();
-              return snap.remotePhotoIds.has(id) && !snap.pendingBlobs.has(id);
-            };
-        return {
-          value: undefined,
-          reconcile: false,
-          preserve: restore,
-          stillCurrent: restore ? stillCurrent : undefined,
-        };
+      if (result === 'ok') {
+        return { value: undefined, reconcile: true };
       }
-      return { value: undefined, reconcile: true };
+      // A 401 already cleared the library. A follow-up pull is a full
+      // snapshot: an id it omits is gone, including when the delete committed
+      // and the response never arrived. Putting the id back after that read
+      // would resurrect it. Restore only when this failure will not reread.
+      const reread = result !== 'signedOut' && localWriteOverlapsPull(epoch);
+      if (!reread && result !== 'signedOut' && remote) {
+        if (pending) {
+          cachePhotoBlob(id, pending);
+        } else {
+          markPhotoRemote(id);
+        }
+      }
+      return {
+        value: undefined,
+        reconcile: false,
+        reread: reread ? 'always' : 'no',
+      };
     });
   },
 };
