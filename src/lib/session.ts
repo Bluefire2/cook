@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { clearLibrary } from './libraryMemory';
 import { clearPersistedLibraryView } from './librarySearchMemory';
 
@@ -13,7 +13,7 @@ export type FetchSessionResult =
   | { status: 'signedOut' }
   | { status: 'offline'; user: SessionUser | null };
 
-type SessionSnapshot = {
+export type SessionSnapshot = {
   user: SessionUser | null;
   status: SessionStatus;
 };
@@ -26,6 +26,25 @@ function emit(): void {
   for (const listener of listeners) {
     listener();
   }
+}
+
+function sameUser(a: SessionUser | null, b: SessionUser | null): boolean {
+  if (a === null || b === null) {
+    return a === b;
+  }
+  return a.sub === b.sub && a.email === b.email && a.name === b.name && a.isOwner === b.isOwner;
+}
+
+/**
+ * Replaces the snapshot only when status or user changed, so a refetch that
+ * returns the same session does not re-render every useSession reader.
+ */
+function publish(next: SessionSnapshot): void {
+  if (next.status === snapshot.status && sameUser(next.user, snapshot.user)) {
+    return;
+  }
+  snapshot = next;
+  emit();
 }
 
 function readCachedUser(): SessionUser | null {
@@ -64,8 +83,7 @@ function notifySessionReset(): void {
 
 export function invalidateSession(): void {
   localStorage.removeItem(SESSION_CACHE_KEY);
-  snapshot = { user: null, status: 'signedOut' };
-  emit();
+  publish({ user: null, status: 'signedOut' });
   clearLibrary();
   clearPersistedLibraryView();
   notifySessionReset();
@@ -83,23 +101,20 @@ export async function fetchSession(): Promise<FetchSessionResult> {
     }
     if (!response.ok) {
       const cached = readCachedUser();
-      snapshot = { user: cached, status: 'offline' };
-      emit();
+      publish({ user: cached, status: 'offline' });
       return { status: 'offline', user: cached };
     }
     const data = (await response.json()) as { user: SessionUser | null };
     if (data.user) {
       localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(data.user));
-      snapshot = { user: data.user, status: 'signedIn' };
-      emit();
+      publish({ user: data.user, status: 'signedIn' });
       return { status: 'signedIn', user: data.user };
     }
     invalidateSession();
     return { status: 'signedOut' };
   } catch {
     const cached = readCachedUser();
-    snapshot = { user: cached, status: 'offline' };
-    emit();
+    publish({ user: cached, status: 'offline' });
     return { status: 'offline', user: cached };
   }
 }
@@ -117,21 +132,23 @@ export async function signOut(): Promise<void> {
   invalidateSession();
 }
 
+export function subscribeSession(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function getSessionSnapshot(): SessionSnapshot {
+  return snapshot;
+}
+
 export function useSession(): {
   user: SessionUser | null;
   status: SessionStatus;
   refresh: () => Promise<void>;
 } {
-  const [, tick] = useState(0);
-  useEffect(() => {
-    const listener = () => {
-      tick((n) => n + 1);
-    };
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  }, []);
+  const current = useSyncExternalStore(subscribeSession, getSessionSnapshot);
 
   const refresh = useCallback(async () => {
     await fetchSession();
@@ -154,5 +171,5 @@ export function useSession(): {
     };
   }, []);
 
-  return { user: snapshot.user, status: snapshot.status, refresh };
+  return { user: current.user, status: current.status, refresh };
 }

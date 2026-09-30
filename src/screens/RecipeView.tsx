@@ -7,7 +7,7 @@ import CookLogCard from '../components/CookLogCard';
 import { useCookLogs } from '../lib/cookLogStore';
 import { SpinnerIcon, TranslateIcon } from '../lib/icons';
 import { usePhotoUrl } from '../lib/photoStore';
-import { recipeStore, useRecipe } from '../lib/recipeStore';
+import { useRecipe, useRecipeAccess, useRecipeSharedBy } from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
 import { sync } from '../lib/syncEngine';
 import { translateChipMode, type TranslateChipMode } from '../lib/translateChip';
@@ -141,6 +141,8 @@ export default function RecipeView() {
   const locale = useLocale();
   const { id } = useParams<{ id: string }>();
   const recipe = useRecipe(id);
+  const access = useRecipeAccess(id);
+  const sharedByEmail = useRecipeSharedBy(id);
   const photoUrl = usePhotoUrl(recipe?.photoId);
   useWakeLock();
 
@@ -208,10 +210,10 @@ export default function RecipeView() {
     );
   }
 
-  const shared = recipeStore.isShared(recipe.id);
-  const canEdit = !shared || recipeStore.access(recipe.id) === 'editor';
+  const shared = access === 'viewer' || access === 'editor';
+  const canEdit = access !== 'viewer';
   // One catalog sentence per case: joining two with a space breaks Chinese punctuation.
-  const sharedBy = shared ? recipeStore.sharedBy(recipe.id) : undefined;
+  const sharedBy = shared ? sharedByEmail : undefined;
   const sharedLine = !shared
     ? undefined
     : sharedBy

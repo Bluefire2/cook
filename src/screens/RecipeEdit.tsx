@@ -7,7 +7,7 @@ import CreateRecipeForm from '../components/CreateRecipeForm';
 import { libraryHref } from '../lib/collectionHref';
 import { collectionStore, useCollections } from '../lib/collectionStore';
 import { blankDraft } from '../lib/recipeDraft';
-import { recipeStore, useRecipe } from '../lib/recipeStore';
+import { recipeStore, useRecipe, useRecipeAccess } from '../lib/recipeStore';
 import { backLink, primaryBtn } from '../lib/uiClasses';
 import type { RecipeDraft } from '../lib/types';
 
@@ -75,6 +75,7 @@ function EditRecipe({ id }: { id: string }) {
   const t = useT();
   const navigate = useNavigate();
   const recipe = useRecipe(id);
+  const access = useRecipeAccess(id);
   const [canSubmit, setCanSubmit] = useState(true);
   const onCanSubmitChange = useCallback((next: boolean) => {
     setCanSubmit((prev) => (prev === next ? prev : next));
@@ -87,8 +88,8 @@ function EditRecipe({ id }: { id: string }) {
   }
   // A shared recipe is editable only by an editor; for a viewer this route
   // looks exactly like a missing recipe.
-  const shared = recipeStore.isShared(id);
-  if (recipe === null || (shared && recipeStore.access(id) !== 'editor')) {
+  const shared = access === 'viewer' || access === 'editor';
+  if (recipe === null || access === 'viewer') {
     return (
       <div className="p-6 text-center text-ink-muted">
         {t('common.recipeNotFound')}{' '}

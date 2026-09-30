@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useState } from 'react';
 import {
   addPendingBlob,
   cachePhotoBlob,
@@ -6,8 +6,9 @@ import {
   getPendingBlob,
   getSnapshot,
   photoOwnerSub,
-  subscribe,
 } from './libraryMemory';
+import { selectPendingBlob } from './librarySelectors';
+import { useLibrarySelect } from './useLibrary';
 import { fetchPhotoBlob, pushOps } from './remote';
 
 const ensureLocalInFlight = new Map<string, Promise<void>>();
@@ -89,8 +90,7 @@ export function useObjectUrl(blob: Blob | undefined): string | undefined {
  * or when there is no photo.
  */
 export function usePhotoUrl(id: string | undefined): string | undefined {
-  const snap = useSyncExternalStore(subscribe, getSnapshot);
-  const blob = id ? snap.pendingBlobs.get(id) : undefined;
+  const blob = useLibrarySelect(selectPendingBlob(id));
   useEffect(() => {
     if (id) void photoStore.ensureLocal(id);
   }, [id]);

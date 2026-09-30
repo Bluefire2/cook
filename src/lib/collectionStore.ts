@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from 'react';
+import { useMemo } from 'react';
 import { t } from '../i18n';
 import {
   MAX_COLLECTION_NAME_LENGTH,
@@ -14,15 +14,15 @@ import {
   endLocalWrite,
   getCollectionOrigin,
   getCollection,
-  getSnapshot,
   isSharedCollection,
   isSharedRecipe,
   listCollections,
   removeCollectionLocal,
-  subscribe,
+  sortCollections,
   upsertCollection,
   type LibraryAccess,
 } from './libraryMemory';
+import { useLibrarySlice } from './useLibrary';
 import {
   addCollectionGrant,
   createCollectionLink,
@@ -412,21 +412,19 @@ export const collectionStore = {
 };
 
 export function useCollections(): Collection[] | undefined {
-  const snap = useSyncExternalStore(subscribe, getSnapshot);
-  return useMemo(() => {
-    if (!snap.loaded) {
-      return undefined;
-    }
-    return listCollections();
-  }, [snap]);
-}
-
-function readFullPull(): boolean {
-  return getSnapshot().fullPull;
+  const loaded = useLibrarySlice('loaded');
+  const collections = useLibrarySlice('collections');
+  // Callers filter by isShared/access beside the list, so an origin-only
+  // change must hand them a new list too.
+  const origins = useLibrarySlice('collectionOrigins');
+  return useMemo(
+    () => (loaded ? sortCollections(collections) : undefined),
+    [loaded, collections, origins],
+  );
 }
 
 /** True when the rows on screen came from a pull that included shared collections. */
 export function useFullPull(): boolean {
-  return useSyncExternalStore(subscribe, readFullPull);
+  return useLibrarySlice('fullPull');
 }
 
