@@ -26,6 +26,7 @@ import { AssistantEntryLink } from '../agent/index';
 import {
   dangerBtn,
   ghostBtn,
+  ghostIconBtn,
   inputClass,
   menuItem,
   menuItemDanger,
@@ -443,7 +444,7 @@ export default function Library() {
           {user !== null && (
             <button
               type="button"
-              className={`${ghostBtn} inline-flex items-center justify-center px-2 py-2 disabled:opacity-40`}
+              className={`${ghostIconBtn} disabled:opacity-40`}
               aria-label={invitePending ? t('admin.creating') : t('library.inviteLink')}
               aria-busy={invitePending}
               disabled={invitePending || inviteConfirmOpen}
@@ -467,7 +468,7 @@ export default function Library() {
           </Link>
           <Link
             to="/settings"
-            className={`${ghostBtn} inline-flex items-center justify-center px-2 py-2`}
+            className={ghostIconBtn}
             aria-label={t('settings.title')}
           >
             <SettingsIcon className="block h-5 w-5" />

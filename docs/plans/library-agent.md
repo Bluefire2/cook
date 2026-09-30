@@ -1,6 +1,6 @@
 # Library assistant agent (v1: read-only tools + modular cards)
 
-Built on `cursor/library-agent-336b` (PR #34), not deployed. App-level assistant at `/assistant`:
+Merged (#34), not deployed. App-level assistant at `/assistant`:
 read-only tools over the signed-in user's own library, plus modular cards
 starting with a shopping list. Conversations are ephemeral. Write tools are v2
 proposal cards, documented below and not built.

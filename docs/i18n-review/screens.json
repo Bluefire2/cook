@@ -310,5 +310,11 @@
     "route": "/assistant",
     "setup": "Signed in, with the assistant error line already showing (the assistant could not answer). If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
     "needsData": true
+  },
+  {
+    "id": "assistant-tool-chip",
+    "route": "/assistant",
+    "setup": "Signed in, with a reply in progress and a tool chip under the question, such as Searching recipes… or Reading collections…. If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
   }
 ]

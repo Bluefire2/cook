@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useT } from '../i18n';
-import { ghostBtn } from '../lib/uiClasses';
+import { ghostIconBtn } from '../lib/uiClasses';
 
 /** Chat bubble, drawn like the header cog. A word here wrapped the header in uk and ru. */
 function AskIcon({ className }: { className?: string }) {
@@ -25,7 +25,7 @@ export default function AssistantEntryLink() {
   return (
     <Link
       to="/assistant"
-      className={`${ghostBtn} inline-flex items-center justify-center px-2 py-2`}
+      className={ghostIconBtn}
       aria-label={tr('assistant.ask')}
     >
       <AskIcon className="block h-5 w-5" />

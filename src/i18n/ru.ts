@@ -480,6 +480,7 @@ export const ru: Messages = {
   'assistant.ownRecipesOnly': 'Помощник видит только ваши собственные рецепты, а не коллекции, которыми с вами поделились.',
   'assistant.searching': 'Ищу рецепты…',
   'assistant.reading': 'Читаю рецепты…',
+  'assistant.readingCollections': 'Просматриваю коллекции…',
   'assistant.combining': 'Объединяю ингредиенты…',
   'assistant.makingList': 'Составляю список покупок…',
   'assistant.working': 'Работаю…',

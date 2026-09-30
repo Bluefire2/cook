@@ -41,6 +41,8 @@ function toolChipLabel(
       return tr('assistant.searching');
     case 'get_recipes':
       return tr('assistant.reading');
+    case 'list_collections':
+      return tr('assistant.readingCollections');
     case 'combine_ingredients':
       return tr('assistant.combining');
     case 'show_shopping_list':
