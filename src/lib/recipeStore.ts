@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from 'react';
+import { useMemo } from 'react';
 import { t } from '../i18n';
 import {
   addPendingBlob,
@@ -8,24 +8,25 @@ import {
   endLocalWrite,
   getPendingBlob,
   getRecipe,
-  getSnapshot,
   libraryEpoch,
   listRecipes,
   markPhotoRemote,
   photoOwnerSub,
   removeRecipeLocal,
   restoreSnapshot,
-  subscribe,
+  sortRecipes,
   upsertRecipe,
   getCollection,
   getRecipeOrigin,
   isSharedCollection,
   isSharedRecipe,
   listCollections,
+  originAccess,
   recipeAccess,
   upsertCollection,
   type LibraryAccess,
 } from './libraryMemory';
+import { useLibrarySelect, useLibrarySlice } from './useLibrary';
 import { fetchPhotoBlobOutcome, postPhoto, pushOps } from './remote';
 import { photoStore } from './photoStore';
 import { localWriteOverlapsPull, pullAfterLocalWrite } from './syncEngine';
@@ -546,23 +547,33 @@ export const recipeStore = {
 
 /** Reactive list of all recipes, newest first. `undefined` while loading. */
 export function useRecipes(): Recipe[] | undefined {
-  const snap = useSyncExternalStore(subscribe, getSnapshot);
-  return useMemo(() => {
-    if (!snap.loaded) {
-      return undefined;
-    }
-    return listRecipes();
-  }, [snap]);
+  const loaded = useLibrarySlice('loaded');
+  const recipes = useLibrarySlice('recipes');
+  // Callers read shared/owned state beside the list, so an origin-only change
+  // must hand them a new list too.
+  const origins = useLibrarySlice('recipeOrigins');
+  return useMemo(
+    () => (loaded ? sortRecipes(recipes) : undefined),
+    [loaded, recipes, origins],
+  );
 }
 
 /** Reactive single recipe. `undefined` while loading, `null` if not found. */
 export function useRecipe(id: string | undefined): Recipe | null | undefined {
-  const snap = useSyncExternalStore(subscribe, getSnapshot);
-  if (!snap.loaded) {
-    return undefined;
-  }
-  if (!id) {
-    return null;
-  }
-  return snap.recipes.get(id) ?? null;
+  return useLibrarySelect((snap) => {
+    if (!snap.loaded) {
+      return undefined;
+    }
+    if (!id) {
+      return null;
+    }
+    return snap.recipes.get(id) ?? null;
+  });
+}
+
+/** Reactive access to one recipe; `undefined` when it is not in the library. */
+export function useRecipeAccess(id: string | undefined): LibraryAccess | undefined {
+  return useLibrarySelect((snap) =>
+    id === undefined ? undefined : originAccess(snap.recipeOrigins.get(id)),
+  );
 }

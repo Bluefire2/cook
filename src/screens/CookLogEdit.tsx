@@ -14,7 +14,7 @@ import {
 import { cookLogStore, useCookLog } from '../lib/cookLogStore';
 import { encodeImageForStorage } from '../lib/image';
 import { photoStore } from '../lib/photoStore';
-import { recipeStore, useRecipe } from '../lib/recipeStore';
+import { useRecipe, useRecipeAccess } from '../lib/recipeStore';
 import type { CookLog, Recipe } from '../lib/types';
 import {
   backLink,
@@ -329,6 +329,7 @@ export default function CookLogEdit() {
   const t = useT();
   const { id, logId } = useParams<{ id: string; logId: string }>();
   const recipe = useRecipe(id);
+  const access = useRecipeAccess(id);
   const log = useCookLog(logId);
   const { servings } = useCookState(recipe);
   const [removing, setRemoving] = useState(false);
@@ -351,7 +352,7 @@ export default function CookLogEdit() {
     );
   }
 
-  if (recipeStore.isShared(recipe.id)) {
+  if (access === 'viewer' || access === 'editor') {
     return (
       <div className="p-6 text-center text-ink-muted">
         {t('error.cookLogSharedRecipe')}{' '}

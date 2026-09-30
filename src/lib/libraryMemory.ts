@@ -139,6 +139,11 @@ function emit(next: LibrarySnapshot): void {
   }
 }
 
+/**
+ * Copies every map, for rollback only. Ordinary writes copy just the maps
+ * they change, so an unchanged map keeps its identity and hooks that read it
+ * do not re-derive. No write mutates a published map.
+ */
 function cloneMaps(from: LibrarySnapshot): {
   recipes: Map<string, Recipe>;
   collections: Map<string, Collection>;
@@ -301,14 +306,25 @@ export function replaceFromPullWithShared(
 
 /** `origin` defaults to own; an editor's optimistic save passes the shared origin through. */
 export function upsertRecipe(recipe: Recipe, origin: ItemOrigin = { kind: 'own' }): void {
-  const next = cloneMaps(snapshot);
-  next.recipes.set(recipe.id, recipe);
-  next.recipeOrigins.set(recipe.id, origin);
-  emit({ ...snapshot, ...next });
+  const recipes = new Map(snapshot.recipes);
+  recipes.set(recipe.id, recipe);
+  const recipeOrigins = new Map(snapshot.recipeOrigins);
+  recipeOrigins.set(recipe.id, origin);
+  emit({ ...snapshot, recipes, recipeOrigins });
 }
 
 export function removeRecipeLocal(id: string): void {
-  const next = cloneMaps(snapshot);
+  const next = {
+    recipes: new Map(snapshot.recipes),
+    recipeOrigins: new Map(snapshot.recipeOrigins),
+    cook: new Map(snapshot.cook),
+    cookParentOrigins: new Map(snapshot.cookParentOrigins),
+    chat: new Map(snapshot.chat),
+    chatParentOrigins: new Map(snapshot.chatParentOrigins),
+    cookLogs: new Map(snapshot.cookLogs),
+    pendingBlobs: new Map(snapshot.pendingBlobs),
+    remotePhotoIds: new Set(snapshot.remotePhotoIds),
+  };
   const recipe = next.recipes.get(id);
   next.recipes.delete(id);
   next.recipeOrigins.delete(id);
@@ -351,7 +367,7 @@ function assignInferredParentOrigin(
   sidecar: Map<string, string>,
   key: string,
   recipeId: string,
-  recipeOrigins: Map<string, ItemOrigin>,
+  recipeOrigins: ReadonlyMap<string, ItemOrigin>,
 ): void {
   const origin = recipeOrigins.get(recipeId);
   if (origin?.kind === 'shared' && origin.ownerSub !== '') {
@@ -364,19 +380,25 @@ function assignInferredParentOrigin(
 }
 
 export function upsertChat(message: ChatMessage): void {
-  const next = cloneMaps(snapshot);
-  next.chat.set(message.id, message);
+  const chat = new Map(snapshot.chat);
+  chat.set(message.id, message);
+  const chatParentOrigins = new Map(snapshot.chatParentOrigins);
   assignInferredParentOrigin(
-    next.chatParentOrigins,
+    chatParentOrigins,
     message.id,
     message.recipeId,
-    next.recipeOrigins,
+    snapshot.recipeOrigins,
   );
-  emit({ ...snapshot, ...next });
+  emit({ ...snapshot, chat, chatParentOrigins });
 }
 
 export function clearChatLocal(recipeId: string): void {
-  const next = cloneMaps(snapshot);
+  const next = {
+    chat: new Map(snapshot.chat),
+    chatParentOrigins: new Map(snapshot.chatParentOrigins),
+    pendingBlobs: new Map(snapshot.pendingBlobs),
+    remotePhotoIds: new Set(snapshot.remotePhotoIds),
+  };
   for (const [messageId, message] of next.chat) {
     if (message.recipeId === recipeId) {
       next.chat.delete(messageId);
@@ -391,67 +413,109 @@ export function clearChatLocal(recipeId: string): void {
 }
 
 export function upsertCook(row: CookStateRow): void {
-  const next = cloneMaps(snapshot);
-  next.cook.set(row.recipeId, row);
+  const cook = new Map(snapshot.cook);
+  cook.set(row.recipeId, row);
+  const cookParentOrigins = new Map(snapshot.cookParentOrigins);
   assignInferredParentOrigin(
-    next.cookParentOrigins,
+    cookParentOrigins,
     row.recipeId,
     row.recipeId,
-    next.recipeOrigins,
+    snapshot.recipeOrigins,
   );
-  emit({ ...snapshot, ...next });
+  emit({ ...snapshot, cook, cookParentOrigins });
 }
 
 export function upsertCookLog(log: CookLog): void {
-  const next = cloneMaps(snapshot);
-  next.cookLogs.set(log.id, log);
-  emit({ ...snapshot, ...next });
+  const cookLogs = new Map(snapshot.cookLogs);
+  cookLogs.set(log.id, log);
+  emit({ ...snapshot, cookLogs });
 }
 
 export function removeCookLogLocal(id: string): void {
-  const next = cloneMaps(snapshot);
-  next.cookLogs.delete(id);
-  emit({ ...snapshot, ...next });
+  const cookLogs = new Map(snapshot.cookLogs);
+  cookLogs.delete(id);
+  emit({ ...snapshot, cookLogs });
 }
 
 export function addPendingBlob(id: string, blob: Blob): void {
-  const next = cloneMaps(snapshot);
-  next.pendingBlobs.set(id, blob);
-  emit({ ...snapshot, ...next });
+  const pendingBlobs = new Map(snapshot.pendingBlobs);
+  pendingBlobs.set(id, blob);
+  emit({ ...snapshot, pendingBlobs });
 }
 
 export function dropPendingBlob(id: string): void {
   if (!snapshot.pendingBlobs.has(id)) {
     return;
   }
-  const next = cloneMaps(snapshot);
-  next.pendingBlobs.delete(id);
-  emit({ ...snapshot, ...next });
+  const pendingBlobs = new Map(snapshot.pendingBlobs);
+  pendingBlobs.delete(id);
+  emit({ ...snapshot, pendingBlobs });
 }
 
 export function markPhotoRemote(id: string): void {
-  const next = cloneMaps(snapshot);
-  next.pendingBlobs.delete(id);
-  next.remotePhotoIds.add(id);
-  emit({ ...snapshot, ...next });
+  if (!snapshot.pendingBlobs.has(id) && snapshot.remotePhotoIds.has(id)) {
+    return;
+  }
+  const pendingBlobs = new Map(snapshot.pendingBlobs);
+  pendingBlobs.delete(id);
+  const remotePhotoIds = new Set(snapshot.remotePhotoIds);
+  remotePhotoIds.add(id);
+  emit({ ...snapshot, pendingBlobs, remotePhotoIds });
 }
 
 export function cachePhotoBlob(id: string, blob: Blob): void {
-  const next = cloneMaps(snapshot);
-  next.pendingBlobs.set(id, blob);
-  next.remotePhotoIds.add(id);
-  emit({ ...snapshot, ...next });
+  if (snapshot.pendingBlobs.get(id) === blob && snapshot.remotePhotoIds.has(id)) {
+    return;
+  }
+  const pendingBlobs = new Map(snapshot.pendingBlobs);
+  pendingBlobs.set(id, blob);
+  const remotePhotoIds = new Set(snapshot.remotePhotoIds);
+  remotePhotoIds.add(id);
+  emit({ ...snapshot, pendingBlobs, remotePhotoIds });
 }
 
 export function dropPhoto(id: string): void {
-  const next = cloneMaps(snapshot);
-  next.pendingBlobs.delete(id);
-  next.remotePhotoIds.delete(id);
-  emit({ ...snapshot, ...next });
+  const pendingBlobs = new Map(snapshot.pendingBlobs);
+  pendingBlobs.delete(id);
+  const remotePhotoIds = new Set(snapshot.remotePhotoIds);
+  remotePhotoIds.delete(id);
+  emit({ ...snapshot, pendingBlobs, remotePhotoIds });
+}
+
+export function sortRecipes(recipes: ReadonlyMap<string, Recipe>): Recipe[] {
+  return [...recipes.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export function sortCollections(collections: ReadonlyMap<string, Collection>): Collection[] {
+  return [...collections.values()].sort((a, b) => {
+    const name = a.name.localeCompare(b.name);
+    return name !== 0 ? name : a.id.localeCompare(b.id);
+  });
+}
+
+/** Oldest first. */
+export function chatFor(
+  chat: ReadonlyMap<string, ChatMessage>,
+  recipeId: string,
+): ChatMessage[] {
+  return [...chat.values()]
+    .filter((message) => message.recipeId === recipeId)
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** Newest cook first; every entry when `recipeId` is omitted. */
+export function cookLogsFor(
+  cookLogs: ReadonlyMap<string, CookLog>,
+  recipeId?: string,
+): CookLog[] {
+  const logs = [...cookLogs.values()];
+  return sortCookLogs(
+    recipeId === undefined ? logs : logs.filter((log) => log.recipeId === recipeId),
+  );
 }
 
 export function listRecipes(): Recipe[] {
-  return [...snapshot.recipes.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+  return sortRecipes(snapshot.recipes);
 }
 
 export function getRecipe(id: string): Recipe | undefined {
@@ -459,10 +523,7 @@ export function getRecipe(id: string): Recipe | undefined {
 }
 
 export function listCollections(): Collection[] {
-  return [...snapshot.collections.values()].sort((a, b) => {
-    const name = a.name.localeCompare(b.name);
-    return name !== 0 ? name : a.id.localeCompare(b.id);
-  });
+  return sortCollections(snapshot.collections);
 }
 
 export function countOwnedNamedCollections(): number {
@@ -480,19 +541,23 @@ export function getCollection(id: string): Collection | undefined {
 }
 
 export function upsertCollection(collection: Collection): void {
-  const next = cloneMaps(snapshot);
-  next.collections.set(collection.id, collection);
-  if (!next.collectionOrigins.has(collection.id)) {
-    next.collectionOrigins.set(collection.id, { kind: 'own' });
+  const collections = new Map(snapshot.collections);
+  collections.set(collection.id, collection);
+  let collectionOrigins = snapshot.collectionOrigins;
+  if (!collectionOrigins.has(collection.id)) {
+    const origins = new Map(collectionOrigins);
+    origins.set(collection.id, { kind: 'own' });
+    collectionOrigins = origins;
   }
-  emit({ ...snapshot, ...next });
+  emit({ ...snapshot, collections, collectionOrigins });
 }
 
 export function removeCollectionLocal(id: string): void {
-  const next = cloneMaps(snapshot);
-  next.collections.delete(id);
-  next.collectionOrigins.delete(id);
-  emit({ ...snapshot, ...next });
+  const collections = new Map(snapshot.collections);
+  collections.delete(id);
+  const collectionOrigins = new Map(snapshot.collectionOrigins);
+  collectionOrigins.delete(id);
+  emit({ ...snapshot, collections, collectionOrigins });
 }
 
 export function getRecipeOrigin(id: string): ItemOrigin | undefined {
@@ -534,9 +599,7 @@ export function photoOwnerSub(photoId: string): string | undefined {
 }
 
 export function listChat(recipeId: string): ChatMessage[] {
-  return [...snapshot.chat.values()]
-    .filter((message) => message.recipeId === recipeId)
-    .sort((a, b) => a.createdAt - b.createdAt);
+  return chatFor(snapshot.chat, recipeId);
 }
 
 export function getCook(recipeId: string): CookStateRow | undefined {
@@ -549,10 +612,7 @@ export function getCookLog(id: string): CookLog | undefined {
 
 /** Newest cook first; every entry when `recipeId` is omitted. */
 export function listCookLogs(recipeId?: string): CookLog[] {
-  const logs = [...snapshot.cookLogs.values()];
-  return sortCookLogs(
-    recipeId === undefined ? logs : logs.filter((log) => log.recipeId === recipeId),
-  );
+  return cookLogsFor(snapshot.cookLogs, recipeId);
 }
 
 export function getPendingBlob(id: string): Blob | undefined {
