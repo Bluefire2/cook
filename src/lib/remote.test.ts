@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  addCollectionGrant,
   applyPullChanges,
   createCollectionLink,
   fetchPhotoBlob,
@@ -15,6 +16,7 @@ import {
 } from './remote';
 import type { PushOp } from './pushOps';
 import { isDiscardedPushReason } from './pushReasons';
+import { t } from '../i18n';
 
 const op: PushOp = {
   kind: 'recipe.delete',
@@ -106,6 +108,34 @@ describe('createCollectionLink', () => {
       '/api/collections/col-1/links',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ role: 'editor' }) }),
     );
+  });
+});
+
+describe('sharing requests that never reach the server', () => {
+  it('say offline when the browser is offline, and a generic failure otherwise', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new TypeError('Failed to fetch'))));
+    vi.stubGlobal('navigator', { onLine: false });
+    await expect(addCollectionGrant('col-1', 'a@example.com', 'viewer')).resolves.toEqual({
+      kind: 'error',
+      message: t('error.sharingOffline'),
+    });
+    vi.stubGlobal('navigator', { onLine: true });
+    await expect(addCollectionGrant('col-1', 'a@example.com', 'viewer')).resolves.toEqual({
+      kind: 'error',
+      message: t('error.sharingUpdate'),
+    });
+  });
+
+  it('shows the server code text for an unknown email', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ code: 'share-no-account', error: 'No account' }, 404)),
+    );
+    await expect(addCollectionGrant('col-1', 'a@example.com', 'viewer')).resolves.toMatchObject({
+      kind: 'error',
+      message: t('error.shareNoAccount'),
+      status: 404,
+    });
   });
 });
 

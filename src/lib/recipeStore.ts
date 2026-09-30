@@ -483,6 +483,12 @@ export const recipeStore = {
     return isSharedRecipe(id);
   },
 
+  /** Email of whoever shared this recipe with you, when known. */
+  sharedBy(id: string): string | undefined {
+    const origin = getRecipeOrigin(id);
+    return origin?.kind === 'shared' ? origin.ownerEmail : undefined;
+  },
+
   /** `editor` when a shared recipe may be edited here (text only, not photos). */
   access(id: string): LibraryAccess | undefined {
     return recipeAccess(id);
@@ -782,6 +788,14 @@ export function useRecipe(id: string | undefined): Recipe | null | undefined {
       return null;
     }
     return snap.recipes.get(id) ?? null;
+  });
+}
+
+/** Reactive email of whoever shared this recipe with you, when known. */
+export function useRecipeSharedBy(id: string | undefined): string | undefined {
+  return useLibrarySelect((snap) => {
+    const origin = id === undefined ? undefined : snap.recipeOrigins.get(id);
+    return origin?.kind === 'shared' ? origin.ownerEmail : undefined;
   });
 }
 

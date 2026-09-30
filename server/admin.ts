@@ -243,12 +243,9 @@ function sandboxSender(): boolean {
 }
 
 async function notifyApproval(email: string): Promise<void> {
-  const problem = approvalRecipientProblem(email);
-  if (problem === 'missing') {
-    console.log('approval email skipped: missing recipient');
-    return;
-  }
-  if (problem === 'invalid') {
+  // '' does not parse, but a whitespace-only email does, and the classifier
+  // calls that 'missing'. Either result is not a deliverable address.
+  if (approvalRecipientProblem(email) !== null) {
     console.log('approval email skipped: invalid recipient');
     return;
   }
@@ -257,14 +254,16 @@ async function notifyApproval(email: string): Promise<void> {
     return;
   }
 
-  const subject = 'Your Sous access was approved';
-  let text: string;
+  let origin: string;
   try {
-    const origin = publicOrigin();
-    text = `Your request for Sous was approved.\nSign in again at ${origin}`;
+    origin = publicOrigin();
   } catch {
-    text = 'Your request for Sous was approved.\nSign in again.';
+    console.log('approval email skipped: PUBLIC_ORIGIN unset');
+    return;
   }
+
+  const subject = 'Your Sous access was approved';
+  const text = `Your request for Sous was approved.\nSign in again at ${origin}`;
 
   try {
     await sendMail({ to: email, subject, text });
@@ -273,13 +272,17 @@ async function notifyApproval(email: string): Promise<void> {
   }
 }
 
+// Both handlers are attached on purpose. promise.finally() returns a new
+// promise that rejects with the original reason, and nothing observes it.
+// On Node 22 that unhandled rejection exits the process.
 function settleWithin(promise: Promise<void>, ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    void promise.finally(() => {
+    const done = () => {
       clearTimeout(timer);
       resolve();
-    });
+    };
+    const timer = setTimeout(done, ms);
+    void promise.then(done, done);
   });
 }
 
