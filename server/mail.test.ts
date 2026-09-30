@@ -88,11 +88,17 @@ describe('sendMail', () => {
     expect(postedTo()).toEqual(['owner@example.com']);
   });
 
-  it('does not fall back to the owner when to is an empty string', async () => {
-    const ok = await sendMail({ subject: 'Approved', text: 'You can sign in.', to: '' });
-    expect(ok).toBe(true);
-    expect(postedTo()).toEqual(['']);
-  });
+  it.each(['', 'a@b.com,c@d.com', 'person @example.com'])(
+    'refuses recipient %j without posting or falling back to the owner',
+    async (to) => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const ok = await sendMail({ subject: 'Approved', text: 'You can sign in.', to });
+      expect(ok).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(log.mock.calls).toEqual([['resend send skipped: invalid recipient']]);
+      log.mockRestore();
+    },
+  );
 
   it('does not call ownerNotifyEmail when to is set, even if OWNER_NOTIFY_EMAIL is unset', async () => {
     delete process.env.OWNER_NOTIFY_EMAIL;

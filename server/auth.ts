@@ -222,6 +222,10 @@ export async function authCallbackGoogle(req: Request): Promise<Response> {
 
     if (access === 'denied') {
       console.log(`sign-in refused: ${email}`);
+      // Keep a pending or declined request's address current, so a later
+      // approval emails the address this Google account has now. A missing
+      // request is a no-op; failures are logged and ignored.
+      await touchRequestIdentity(payload.sub, { sub: payload.sub, email, name });
       let requestToken: string | null = null;
       try {
         requestToken = signAccessRequestTx({ sub: payload.sub, email, name }, Date.now());

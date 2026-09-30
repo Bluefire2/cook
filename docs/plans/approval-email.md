@@ -139,6 +139,23 @@ the response `adminDecisionPost` already returns.
       pending then finishes, or hits `sendMail`'s 10 s timeout, after the
       response. This supersedes the "before `clearMembershipCache` and
       `listAccessRequests`" ordering in Decision 1 and step 2.
+    - *Recipient check in the seam.* `sendMail` refuses any explicit `to`
+      that `approvalRecipientProblem` flags (blank, whitespace, comma, or
+      not exactly one `@`): it logs `resend send skipped: invalid
+      recipient`, returns `false`, and never posts. `notifyApproval` keeps
+      its own check for its specific log lines. This supersedes step 1's
+      "Passing `to: ''` does not select the owner" posting behavior; an
+      empty `to` still never falls back to the owner.
+    - *Disabled-key log.* The once-per-process line is now
+      `RESEND_API_KEY unset — access-request and approval emails are
+      disabled`, superseding Decision 4's wording.
+    - *Current address.* A refused sign-in (not admitted, invitation page)
+      calls `touchRequestIdentity`, so a pending or declined request's
+      stored email follows the Google account's current address. Before
+      this, a declined request kept the address from the original
+      request, and a later approve from Declined emailed that.
+    - *Owner copy.* `admin.intro` in all four catalogs now says approving
+      emails the person.
 
 ## Steps
 

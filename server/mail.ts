@@ -13,8 +13,13 @@ export async function sendMail(msg: MailMessage): Promise<boolean> {
   if (key === null) {
     if (!loggedResendDisabled) {
       loggedResendDisabled = true;
-      console.log('RESEND_API_KEY unset — access-request notifications are disabled');
+      console.log('RESEND_API_KEY unset — access-request and approval emails are disabled');
     }
+    return false;
+  }
+
+  if (msg.to !== undefined && approvalRecipientProblem(msg.to) !== null) {
+    console.log('resend send skipped: invalid recipient');
     return false;
   }
 
