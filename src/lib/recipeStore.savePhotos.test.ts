@@ -7,6 +7,7 @@ import {
   clearLibrary,
   getRecipe,
   getSnapshot,
+  markPhotoRemote,
   upsertRecipe,
 } from './libraryMemory';
 import { postPhoto, pushOps } from './remote';
@@ -457,6 +458,8 @@ describe('recipeStore.save photo cleanup', () => {
 
   it('tombstones a photo the other save released while this delete was in flight', async () => {
     upsertRecipe(storedRecipe());
+    markPhotoRemote(OLD_COVER);
+    markPhotoRemote(OLD_GALLERY);
     addPendingBlob(NEW_COVER, jpeg('cover'));
     addPendingBlob(NEW_GALLERY, jpeg('gallery'));
     vi.mocked(postPhoto).mockResolvedValue('ok');
@@ -530,6 +533,8 @@ describe('recipeStore.save photo cleanup', () => {
     ]);
     expect(getSnapshot().remotePhotoIds.has(NEW_COVER)).toBe(false);
     expect(getSnapshot().remotePhotoIds.has(NEW_GALLERY)).toBe(false);
+    expect(getSnapshot().remotePhotoIds.has(OLD_COVER)).toBe(true);
+    expect(getSnapshot().remotePhotoIds.has(OLD_GALLERY)).toBe(true);
   });
 
   it('does not tombstone when the upload signs the user out', async () => {
