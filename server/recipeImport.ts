@@ -236,14 +236,21 @@ function scriptRawText(html: string, element: HtmlElement): string | null {
   return html.slice(loc.startTag.endOffset, loc.endTag.startOffset);
 }
 
-/** Elements in source order, including the contents of `<template>`. Comments are not elements. */
+/**
+ * An HTML `<template>` keeps its children on `.content`. A `<template>` in
+ * SVG or MathML is a foreign element with no content fragment; its children
+ * are ordinary child nodes.
+ */
+function isHtmlTemplate(element: HtmlElement): element is DefaultTreeAdapterMap['template'] {
+  return element.tagName === 'template' && 'content' in element;
+}
+
+/** Elements in source order, including HTML `<template>` contents. Comments are not elements. */
 function walkElements(parent: HtmlParent, visit: (element: HtmlElement) => void): void {
   for (const child of parent.childNodes) {
     if (!isHtmlElement(child)) continue;
     visit(child);
-    if (child.tagName === 'template') {
-      walkElements((child as DefaultTreeAdapterMap['template']).content, visit);
-    }
+    if (isHtmlTemplate(child)) walkElements(child.content, visit);
     walkElements(child, visit);
   }
 }

@@ -263,6 +263,18 @@ describe('extractRecipeSource', () => {
     expect(text).not.toContain('Menu item');
   });
 
+  it('reads a Recipe script beside an svg template', () => {
+    const node = { ...RECIPE, recipeIngredient: ['200 g pecorino'] };
+    const html = `<svg><template></template></svg>${ldBlock(JSON.stringify(node))}`;
+    expect(JSON.parse(extractRecipeSource(html))).toEqual(node);
+  });
+
+  it('reads a Recipe script inside an HTML template', () => {
+    const node = { ...RECIPE, recipeIngredient: ['200 g pecorino'] };
+    const html = `<template>${ldBlock(JSON.stringify(node))}</template>`;
+    expect(JSON.parse(extractRecipeSource(html))).toEqual(node);
+  });
+
   it('uses an unclosed article instead of the whole page', () => {
     const nav = `<nav>${'Menu item '.repeat(8000)}</nav>`;
     const html = `${nav}<article><h1>Borscht</h1><p>Ingredients: beets`;

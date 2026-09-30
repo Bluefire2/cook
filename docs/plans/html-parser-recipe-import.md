@@ -199,9 +199,12 @@ Do not add a second row later.
 In `server/recipeImport.ts` only:
 
 - `parse(html, { sourceCodeLocationInfo: true })`.
-- Walk elements in source order, including `template.content`. Collect
-  `script` elements for Decision 3 and `article` / main candidates for
-  Decision 4. Comments are not elements; do not read them.
+- Walk elements in source order, including `template.content` when that
+  property exists. An HTML `<template>` keeps its children there. A
+  `<template>` in SVG or MathML is a foreign element with no content
+  fragment; its children are ordinary child nodes, and reading `.content`
+  throws. Collect `script` elements for Decision 3 and `article` / main
+  candidates for Decision 4. Comments are not elements; do not read them.
 - Feed each matching script's raw text into the existing JSON-LD loop.
 - Choose the region with the existing `* 2` rule on original slices, then
   `stripToText`.
