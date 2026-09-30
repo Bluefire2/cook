@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -67,6 +68,25 @@ function DialogFrame({
     }
     openerRef.current = opener;
   }, [openerRef]);
+
+  useEffect(() => {
+    // Runs after FocusScope's effect, so this bubble listener is registered
+    // second and runs after the trap. A control that disables itself (Share,
+    // Delete, save) moves focus to body. The trap's last-focused node is that
+    // disabled control, or still null when autoFocus beat the trap's listener,
+    // so its focusin handler cannot pull focus back. The next Tab then leaves
+    // the sheet. Cleanup removes this listener before FocusScope's unmount
+    // timeout, so close can still focus the opener.
+    const pullFocusInside = () => {
+      const panel = panelRef.current;
+      if (!panel?.isConnected) return;
+      const active = document.activeElement;
+      if (!(active instanceof Node) || panel.contains(active)) return;
+      panel.focus({ preventScroll: true });
+    };
+    document.addEventListener('focusin', pullFocusInside);
+    return () => document.removeEventListener('focusin', pullFocusInside);
+  }, [panelRef]);
 
   useLayoutEffect(() => {
     const panel = panelRef.current;

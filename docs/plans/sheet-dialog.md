@@ -177,7 +177,23 @@ amended.
    outside the panel. The backdrop stays `tabIndex={-1}` and outside
    the content, so it is not in the cycle. The page underneath is not
    in the cycle. `hideOthers` marks the rest of the document
-   `aria-hidden` while the dialog is mounted.
+   `aria-hidden` while the dialog is mounted. It does not set `inert`.
+
+   That pull-back misses one case. React `autoFocus` can focus a field
+   before `FocusScope` attaches its `focusin` listener, so
+   `lastFocusedElementRef` is still null. A later click on Share,
+   cook-log Delete, or save-to-collection records that button, then
+   `disabled` moves focus to `document.body` (`relatedTarget` is null,
+   so the trap's `focusout` handler returns). The following `focusin`
+   calls `focus` on the disabled button, or on null, and no-ops. The
+   next Tab lands on the `data-radix-focus-guard` outside the panel
+   and the Tab after that enters `#root`. `DialogFrame` adds its own
+   bubble `focusin` listener in a `useEffect`, which runs after
+   `FocusScope`'s effect and is therefore registered second. If the
+   panel is connected and `document.activeElement` is outside it, the
+   listener focuses the panel with `preventScroll`. Its cleanup removes
+   the listener before `onCloseAutoFocus`'s `setTimeout(0)`, so a real
+   close still focuses the opener.
 
    On close, decision 2 restores the captured opener when it is still
    connected. Add (the FAB), Rename, Share, Delete collection, Leave,
