@@ -504,8 +504,35 @@ describe('normalizeChatChange / normalizeCookChange', () => {
       'recipeId',
       'recipeUpdatedAt',
       'servings',
+      'updatedAt',
     ]);
     expect(cook).not.toHaveProperty('sharedParentOwnerSub');
+    expect(cook.updatedAt).toBe(4);
+  });
+
+  it('omits a missing or unusable cook updatedAt and still tombstones a delete', () => {
+    const live = {
+      recipeId: 'r1',
+      servings: 2,
+      currentStep: 1,
+      checkedKeys: ['0-0'],
+      recipeUpdatedAt: 2,
+    };
+    const cases = [
+      live,
+      { ...live, updatedAt: Number.NaN },
+      { ...live, updatedAt: Number.POSITIVE_INFINITY },
+      { ...live, updatedAt: '4' },
+    ];
+    for (const raw of cases) {
+      const cook = normalizeCookChange(raw);
+      expect(cook).not.toBe('tombstone');
+      if (cook === 'tombstone') {
+        continue;
+      }
+      expect(cook).not.toHaveProperty('updatedAt');
+    }
+    expect(normalizeCookChange({ ...live, deletedAt: 9 })).toBe('tombstone');
   });
 
   it('places provenance only in sidecars', () => {
