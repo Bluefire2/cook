@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { t } from '../i18n';
-import { recipeStore } from './recipeStore';
+import { recipeStore, resetRecipePhotoSaveTracking } from './recipeStore';
 import {
   addPendingBlob,
   cachePhotoBlob,
@@ -51,8 +51,16 @@ function photoDeletes(): PushOp[] {
     .filter((op) => op.kind === 'photo.delete');
 }
 
+function deletePushes(): PushOp[][] {
+  return vi
+    .mocked(pushOps)
+    .mock.calls.map(([ops]) => ops)
+    .filter((ops) => ops.some((op) => op.kind === 'photo.delete'));
+}
+
 afterEach(() => {
   clearLibrary();
+  resetRecipePhotoSaveTracking();
   vi.mocked(postPhoto).mockReset();
   vi.mocked(pushOps).mockReset();
 });
@@ -76,6 +84,7 @@ describe('recipeStore.save photo cleanup', () => {
       }),
     ).rejects.toThrow(t('error.recipeSave'));
 
+    expect(deletePushes()).toHaveLength(1);
     expect(photoDeletes()).toEqual([
       { kind: 'photo.delete', payload: { id: NEW_COVER, updatedAt: expect.any(Number) } },
       { kind: 'photo.delete', payload: { id: NEW_GALLERY, updatedAt: expect.any(Number) } },
@@ -105,8 +114,12 @@ describe('recipeStore.save photo cleanup', () => {
     ).rejects.toThrow(t('error.photoSave'));
 
     expect(postPhoto).toHaveBeenCalledTimes(2);
+    // The gallery POST reported failure. Its id was recorded first, so a
+    // response lost after the bytes landed is still tombstoned.
+    expect(deletePushes()).toHaveLength(1);
     expect(photoDeletes()).toEqual([
       { kind: 'photo.delete', payload: { id: NEW_COVER, updatedAt: expect.any(Number) } },
+      { kind: 'photo.delete', payload: { id: NEW_GALLERY, updatedAt: expect.any(Number) } },
     ]);
     expect(vi.mocked(pushOps).mock.calls.some(([ops]) => ops.some((op) => op.kind === 'recipe.put'))).toBe(
       false,
@@ -150,7 +163,13 @@ describe('recipeStore.save photo cleanup', () => {
       }),
     ).rejects.toThrow(t('error.recipeSave'));
 
-    expect(postPhoto).toHaveBeenCalledWith(OLD_COVER, RECIPE_ID, expect.any(Number), expect.any(Blob));
+    expect(postPhoto).not.toHaveBeenCalledWith(
+      OLD_COVER,
+      RECIPE_ID,
+      expect.any(Number),
+      expect.any(Blob),
+    );
+    expect(postPhoto).toHaveBeenCalledTimes(1);
     expect(photoDeletes().map((op) => (op.kind === 'photo.delete' ? op.payload.id : ''))).toEqual([
       NEW_GALLERY,
     ]);
@@ -212,5 +231,100 @@ describe('recipeStore.save photo cleanup', () => {
       galleryPhotoIds: [NEW_GALLERY],
     });
     expect(getSnapshot().remotePhotoIds.has(NEW_GALLERY)).toBe(true);
+  });
+
+  it('tombstones a new photo when its upload reports failure', async () => {
+    upsertRecipe(storedRecipe());
+    addPendingBlob(NEW_COVER, jpeg('cover'));
+    vi.mocked(postPhoto).mockResolvedValue('error');
+    vi.mocked(pushOps).mockResolvedValue('ok');
+
+    await expect(
+      recipeStore.save({ ...storedRecipe(), photoId: NEW_COVER }),
+    ).rejects.toThrow(t('error.photoSave'));
+
+    expect(photoDeletes()).toEqual([
+      { kind: 'photo.delete', payload: { id: NEW_COVER, updatedAt: expect.any(Number) } },
+    ]);
+    expect(vi.mocked(pushOps).mock.calls.some(([ops]) => ops.some((op) => op.kind === 'recipe.put'))).toBe(
+      false,
+    );
+  });
+
+  it('keeps the saved recipe when a removed-photo delete throws after the put lands', async () => {
+    upsertRecipe(storedRecipe());
+    addPendingBlob(NEW_GALLERY, jpeg('gallery'));
+    vi.mocked(postPhoto).mockResolvedValue('ok');
+    vi.mocked(pushOps).mockImplementation(async (ops) => {
+      if (ops.some((op) => op.kind === 'photo.delete')) {
+        throw new Error('delete blew up');
+      }
+      return 'ok';
+    });
+
+    await expect(
+      recipeStore.save({
+        ...storedRecipe(),
+        title: 'Landed',
+        galleryPhotoIds: [NEW_GALLERY],
+      }),
+    ).rejects.toThrow('delete blew up');
+
+    expect(getRecipe(RECIPE_ID)).toMatchObject({
+      title: 'Landed',
+      photoId: OLD_COVER,
+      galleryPhotoIds: [NEW_GALLERY],
+    });
+  });
+
+  it('does not tombstone a photo a concurrent save already committed', async () => {
+    upsertRecipe(storedRecipe());
+    addPendingBlob(NEW_GALLERY, jpeg('gallery'));
+    vi.mocked(postPhoto).mockResolvedValue('ok');
+    let puts = 0;
+    vi.mocked(pushOps).mockImplementation(async (ops) => {
+      if (!ops.some((op) => op.kind === 'recipe.put')) {
+        return 'ok';
+      }
+      puts += 1;
+      if (puts === 1) {
+        const current = getRecipe(RECIPE_ID);
+        await recipeStore.save({ ...current!, title: 'Lesson' });
+        return 'invalid';
+      }
+      return 'ok';
+    });
+
+    await expect(
+      recipeStore.save({
+        ...storedRecipe(),
+        title: 'Failed edit',
+        galleryPhotoIds: [OLD_GALLERY, NEW_GALLERY],
+      }),
+    ).rejects.toThrow(t('error.recipeSave'));
+
+    expect(photoDeletes()).toEqual([]);
+    expect(getRecipe(RECIPE_ID)).toMatchObject({
+      title: 'Lesson',
+      photoId: OLD_COVER,
+      galleryPhotoIds: [OLD_GALLERY, NEW_GALLERY],
+    });
+    expect(getSnapshot().remotePhotoIds.has(NEW_GALLERY)).toBe(true);
+  });
+
+  it('does not tombstone when the upload signs the user out', async () => {
+    upsertRecipe(storedRecipe());
+    addPendingBlob(NEW_COVER, jpeg('cover'));
+    vi.mocked(postPhoto).mockImplementation(async () => {
+      clearLibrary();
+      return 'signedOut';
+    });
+
+    await expect(
+      recipeStore.save({ ...storedRecipe(), photoId: NEW_COVER }),
+    ).rejects.toThrow(t('error.sessionExpired'));
+
+    expect(pushOps).not.toHaveBeenCalled();
+    expect(getRecipe(RECIPE_ID)).toBeUndefined();
   });
 });
