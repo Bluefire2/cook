@@ -150,6 +150,18 @@ describe('GET /c/<token>', () => {
     }
   });
 
+  it('a dead or bogus token never touches a hop cookie for another link', async () => {
+    const { deps } = pageDeps({ resolve: async () => null });
+    for (const path of ['/c/nope', `/c/${token}`]) {
+      const response = await handleCollectionLinkLanding(
+        new Request(`${ORIGIN}${path}`, { headers: { cookie: hopCookie() } }),
+        deps,
+      );
+      expect(response.status).toBe(404);
+      expect(response.headers.getSetCookie()).toEqual([]);
+    }
+  });
+
   it('a store error is 503, not the dead page', async () => {
     const { deps } = pageDeps({
       resolve: async () => {
@@ -170,11 +182,32 @@ describe('GET /c/join', () => {
     expect(await response.text()).toBe(collectionLinkDeadPageHtml());
   });
 
-  it('a revoked link after the hop is the generic page', async () => {
+  it('a revoked link after the hop is the generic page and clears that hop cookie', async () => {
     const { deps } = pageDeps({ resolve: async () => null });
     const response = await handleCollectionLinkJoinGet(joinGet(hopCookie()), deps);
     expect(response.status).toBe(404);
     expect(await response.text()).toBe(collectionLinkDeadPageHtml());
+    expect(response.headers.getSetCookie()).toHaveLength(1);
+    expect(response.headers.getSetCookie()[0]).toMatch(/^sous_collection_link=;.*Max-Age=0/);
+  });
+
+  it('without a hop cookie there is nothing to clear; a forged one is cleared', async () => {
+    const { deps } = pageDeps();
+    const none = await handleCollectionLinkJoinGet(joinGet(), deps);
+    expect(none.headers.getSetCookie()).toEqual([]);
+    const forged = await handleCollectionLinkJoinGet(
+      joinGet(`${COLLECTION_LINK_COOKIE_NAME}=forged.value`),
+      deps,
+    );
+    expect(forged.status).toBe(404);
+    expect(forged.headers.getSetCookie()[0]).toMatch(/^sous_collection_link=;.*Max-Age=0/);
+  });
+
+  it('an unadmitted owner makes the hop link dead, so its cookie is cleared', async () => {
+    const { deps } = pageDeps({ ownerAdmitted: async () => false });
+    const response = await handleCollectionLinkJoinGet(joinGet(hopCookie()), deps);
+    expect(response.status).toBe(404);
+    expect(response.headers.getSetCookie()[0]).toMatch(/Max-Age=0/);
   });
 
   it('signed out: sign in and come back to /c/join; names no collection', async () => {
@@ -302,7 +335,8 @@ describe('POST /c/join', () => {
       joinPost({ cookie: hopCookie(), origin: 'https://evil.example' }),
       deps,
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(403);
+    expect(response.headers.getSetCookie()).toEqual([]);
     expect(identity).not.toHaveBeenCalled();
     expect(redeem).not.toHaveBeenCalled();
   });
@@ -319,7 +353,8 @@ describe('POST /c/join', () => {
       joinPost({ cookie: hopCookie(), origin: 'null' }),
       deps,
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(403);
+    expect(response.headers.getSetCookie()).toEqual([]);
     expect(identity).not.toHaveBeenCalled();
     expect(redeem).not.toHaveBeenCalled();
   });
@@ -330,7 +365,8 @@ describe('POST /c/join', () => {
       joinPost({ cookie: hopCookie(), origin: null }),
       refused.deps,
     );
-    expect(bare.status).toBe(404);
+    expect(bare.status).toBe(403);
+    expect(bare.headers.getSetCookie()).toEqual([]);
     expect(refused.redeem).not.toHaveBeenCalled();
 
     const allowed = pageDeps();
@@ -348,6 +384,7 @@ describe('POST /c/join', () => {
       deps,
     );
     expect(response.status).toBe(404);
+    expect(response.headers.getSetCookie()).toEqual([]);
     expect(redeem).not.toHaveBeenCalled();
   });
 
@@ -365,6 +402,8 @@ describe('POST /c/join', () => {
     const response = await handleCollectionLinkJoinPost(joinPost({ cookie: hopCookie() }), deps);
     expect(response.status).toBe(404);
     expect(await response.text()).toBe(collectionLinkDeadPageHtml());
+    // That hop cookie's own link is dead, so it is cleared.
+    expect(response.headers.getSetCookie()[0]).toMatch(/^sous_collection_link=;.*Max-Age=0/);
   });
 
   it('at the grant cap shows the full page and keeps the hop cookie', async () => {
@@ -581,5 +620,37 @@ describe('owner API /api/collections/:id/links', () => {
     );
     expect(ok.status).toBe(200);
     expect(revoke).toHaveBeenCalledWith(ownerSub, collectionId, linkId, now);
+    expect(await ok.json()).toEqual({
+      revokedId: linkId,
+      links: [{ id: linkId, role: 'viewer', createdAt: now, expiresAt: now + 1 }],
+    });
+  });
+
+  it('a committed revoke is 200 even when the list read after it fails', async () => {
+    const { deps, revoke } = apiDeps({
+      list: async () => {
+        throw new Error('firestore blip');
+      },
+    });
+    const response = await handleCollectionLinksRevokePost(
+      new Request(`${base}/revoke`, { method: 'POST', body: JSON.stringify({ id: linkId }) }),
+      deps,
+    );
+    expect(response.status).toBe(200);
+    expect(revoke).toHaveBeenCalledTimes(1);
+    expect(await response.json()).toEqual({ revokedId: linkId, links: [], partial: true });
+  });
+
+  it('a revoke store failure is 503 (nothing committed)', async () => {
+    const { deps } = apiDeps({
+      revoke: vi.fn(async () => {
+        throw new Error('firestore down');
+      }),
+    });
+    const response = await handleCollectionLinksRevokePost(
+      new Request(`${base}/revoke`, { method: 'POST', body: JSON.stringify({ id: linkId }) }),
+      deps,
+    );
+    expect(response.status).toBe(503);
   });
 });

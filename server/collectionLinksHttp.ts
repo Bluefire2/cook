@@ -250,16 +250,39 @@ export async function handleCollectionLinksRevokePost(
   if (body === null || !isCollectionLinkId(body.id)) {
     return badRequest();
   }
+  const revokedId = body.id;
+  const now = deps.now();
+  let outcome: Awaited<ReturnType<typeof revokeCollectionLink>>;
   try {
-    const now = deps.now();
-    const outcome = await deps.revoke(gate.sub, gate.collectionId, body.id, now);
-    if (outcome === 'missing') {
-      return notFound();
-    }
-    return jsonResponse({ links: await deps.list(gate.sub, gate.collectionId, now) });
+    outcome = await deps.revoke(gate.sub, gate.collectionId, revokedId, now);
   } catch (err) {
     console.error('collectionLinksRevokePost store error:', err);
     return storeUnavailable();
+  }
+  if (outcome === 'missing') {
+    return notFound();
+  }
+  return revokedLinkResponse({
+    revokedId,
+    list: () => deps.list(gate.sub, gate.collectionId, now),
+  });
+}
+
+/**
+ * 200 once the revoke committed, always, with `revokedId`. If the list read
+ * after it fails, `links` is empty and `partial` tells the client to drop
+ * `revokedId` from what it shows and reread; a 503 here would read as "not
+ * revoked" while the link is already dead.
+ */
+export async function revokedLinkResponse(input: {
+  revokedId: string;
+  list: () => Promise<CollectionLinkEntry[]>;
+}): Promise<Response> {
+  try {
+    return jsonResponse({ revokedId: input.revokedId, links: await input.list() });
+  } catch (err) {
+    console.error('collectionLinksRevokePost list after revoke failed:', err);
+    return jsonResponse({ revokedId: input.revokedId, links: [], partial: true });
   }
 }
 
@@ -362,14 +385,20 @@ function pageResponse(
   return new Response(options.body ?? null, { status, headers });
 }
 
+/**
+ * The generic "not valid" page. It clears the hop cookie only when asked:
+ * that is, only on `/c/join` when the request presented a hop cookie and
+ * that cookie's own link is dead. A refused POST, a bogus `/c/<x>`, or a
+ * mismatched form must never wipe another in-progress join.
+ */
 function deadPage(
   deps: CollectionLinkPageDependencies,
-  referrer: LinkPageReferrerPolicy = JOIN_REFERRER,
+  options: { clearHop: boolean; referrer?: LinkPageReferrerPolicy; status?: number },
 ): Response {
-  return pageResponse(404, {
+  return pageResponse(options.status ?? 404, {
     body: collectionLinkDeadPageHtml(),
-    cookies: [clearedCollectionLinkCookie({ secure: deps.secure() })],
-    referrer,
+    cookies: options.clearHop ? [clearedCollectionLinkCookie({ secure: deps.secure() })] : [],
+    referrer: options.referrer ?? JOIN_REFERRER,
   });
 }
 
@@ -399,14 +428,16 @@ export async function handleCollectionLinkLanding(
   deps: CollectionLinkPageDependencies,
 ): Promise<Response> {
   const token = collectionLinkTokenFromPath(new URL(req.url).pathname);
+  // A dead or bogus token leaves any hop cookie alone: it belongs to
+  // another link the visitor may be joining.
   if (token === null) {
-    return deadPage(deps, LANDING_REFERRER);
+    return deadPage(deps, { clearHop: false, referrer: LANDING_REFERRER });
   }
   const now = deps.now();
   const id = hashCollectionLinkToken(token);
   try {
     if ((await deps.resolve(id, now)) === null) {
-      return deadPage(deps, LANDING_REFERRER);
+      return deadPage(deps, { clearHop: false, referrer: LANDING_REFERRER });
     }
   } catch (err) {
     console.error('collectionLinkLanding store error:', err);
@@ -439,14 +470,16 @@ async function joinContext(
   deps: CollectionLinkPageDependencies,
   now: number,
 ): Promise<JoinContext> {
+  const presented = readCookie(req, COLLECTION_LINK_COOKIE_NAME) !== null;
   const id = hopLinkId(req, now);
   if (id === null) {
-    return { kind: 'response', response: deadPage(deps) };
+    // No hop cookie: nothing to clear. An unverifiable one is junk: clear it.
+    return { kind: 'response', response: deadPage(deps, { clearHop: presented }) };
   }
   try {
     const resolved = await deps.resolve(id, now);
     if (resolved === null) {
-      return { kind: 'response', response: deadPage(deps) };
+      return { kind: 'response', response: deadPage(deps, { clearHop: true }) };
     }
     const identity = await deps.identity(req);
     if (identity.kind === 'signedOut') {
@@ -463,7 +496,7 @@ async function joinContext(
     }
     if (identity.sub !== resolved.link.ownerSub && !(await deps.ownerAdmitted(resolved.link.ownerSub))) {
       // Grants from an unadmitted owner are inert; the link is as good as dead.
-      return { kind: 'response', response: deadPage(deps) };
+      return { kind: 'response', response: deadPage(deps, { clearHop: true }) };
     }
     return { kind: 'member', resolved, sub: identity.sub, email: identity.email };
   } catch (err) {
@@ -536,7 +569,9 @@ export async function handleCollectionLinkJoinPost(
     return unavailable();
   }
   if (!sameOriginPost(req, origin)) {
-    return deadPage(deps);
+    // 403 and no Set-Cookie: a cross-site POST must not be able to wipe the
+    // visitor's hop cookie.
+    return deadPage(deps, { clearHop: false, status: 403 });
   }
   const contentType = req.headers.get('content-type');
   if (
@@ -556,7 +591,8 @@ export async function handleCollectionLinkJoinPost(
   // The page named one collection; a hop cookie swapped since then must not
   // redirect the click to another.
   if (posted !== context.resolved.id) {
-    return deadPage(deps);
+    // The hop cookie's own link is still live; keep it.
+    return deadPage(deps, { clearHop: false });
   }
   if (context.sub === context.resolved.link.ownerSub) {
     return homeRedirect(deps);
@@ -569,7 +605,7 @@ export async function handleCollectionLinkJoinPost(
     return unavailable();
   }
   if (outcome.kind === 'dead') {
-    return deadPage(deps);
+    return deadPage(deps, { clearHop: true });
   }
   if (outcome.kind === 'cap') {
     return pageResponse(409, { body: collectionLinkFullPageHtml() });
