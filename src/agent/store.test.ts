@@ -142,7 +142,7 @@ describe('applyEvent', () => {
       code: 'assistant_unavailable',
       message: "The assistant couldn't answer that.",
     });
-    expect(state.error).toBe('Асистент не зміг на це відповісти.');
+    expect(state.error).toBe('Помічник не зміг на це відповісти.');
     expect(state.error).toBe(t('assistant.couldntAnswer'));
   });
 

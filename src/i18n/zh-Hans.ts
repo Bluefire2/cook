@@ -426,7 +426,7 @@ export const zhHans: Messages = {
   'assistant.stop': '停止',
   'assistant.send': '发送',
   'assistant.starterTonight': '今晚大约 30 分钟能做什么？',
-  'assistant.starterTogether': '帮我一起做两道菜，并列出购物清单。',
+  'assistant.starterTogether': '帮我同时做两道菜，并列出购物清单。',
   'assistant.searching': '正在搜索食谱…',
   'assistant.reading': '正在阅读食谱…',
   'assistant.combining': '正在合并食材…',
