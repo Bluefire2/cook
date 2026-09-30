@@ -210,6 +210,17 @@ export default function RecipeView() {
 
   const shared = recipeStore.isShared(recipe.id);
   const canEdit = !shared || recipeStore.access(recipe.id) === 'editor';
+  // One catalog sentence per case: joining two with a space breaks Chinese punctuation.
+  const sharedBy = shared ? recipeStore.sharedBy(recipe.id) : undefined;
+  const sharedLine = !shared
+    ? undefined
+    : sharedBy
+      ? canEdit
+        ? t('recipe.sharedByEdit', { email: sharedBy })
+        : t('recipe.sharedByView', { email: sharedBy })
+      : canEdit
+        ? t('recipe.sharedEdit')
+        : t('recipe.sharedView');
   const scale = servings / recipe.servings;
   const source = sourceLink(recipe.sourceUrl);
   // A translation must not flow into chat or save, or it would overwrite the original (principle 1).
@@ -298,6 +309,11 @@ export default function RecipeView() {
             </Link>
           )}
         </div>
+        {sharedLine !== undefined && (
+          <p className="mt-2 rounded-xl bg-surface-muted px-3 py-2 text-sm break-words text-ink-muted">
+            {sharedLine}
+          </p>
+        )}
         {photoUrl && (
           <img
             src={photoUrl}
