@@ -323,7 +323,10 @@ function startFlight(): Promise<SyncResult> {
     const result = await runOnce(startedEpoch, sawOpenWrite);
     if (result.outcome === 'superseded') {
       discardedPull = true;
-    } else if (result.outcome === 'ok') {
+    } else {
+      // The dropped snapshot is no longer the last word: this flight published,
+      // failed, or signed out. Leaving the flag set would turn every later
+      // successful write into another full pull and another refresh error.
       discardedPull = false;
     }
     emitSyncFinished(result);
@@ -343,8 +346,8 @@ function startFlight(): Promise<SyncResult> {
 /**
  * True when a pull read (or may still read) library state from before this
  * write. An in-flight pull must not publish. A pull that already returned
- * `superseded` and cleared `flight` still counts, until some later sync
- * publishes `ok`.
+ * `superseded` and cleared `flight` still counts, until a later sync finishes
+ * with any other outcome.
  */
 export function localWriteOverlapsPull(writeEpoch: number): boolean {
   return (
