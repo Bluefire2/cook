@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { importHref, libraryHref, newRecipeHref } from './collectionHref';
+import {
+  importHref,
+  libraryHref,
+  missingCollectionAction,
+  newRecipeHref,
+} from './collectionHref';
 
 const SAMPLE_COLLECTION_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -31,6 +36,48 @@ describe('importHref', () => {
       `/collections/${SAMPLE_COLLECTION_ID}/import`,
     );
     expect(importHref('a/b')).toBe('/collections/a%2Fb/import');
+  });
+});
+
+describe('missingCollectionAction', () => {
+  const gone = {
+    collectionId: 'gone',
+    collectionIds: ['kept'] as readonly string[] | undefined,
+    snapshotConfirmed: true,
+    hold: false,
+  };
+  const stay = { redirectHome: false, resetCollectionSheets: false };
+
+  it('replace-navigates when a full pull published a library without that id', () => {
+    expect(missingCollectionAction(gone)).toEqual({
+      redirectHome: true,
+      resetCollectionSheets: true,
+    });
+    expect(missingCollectionAction({ ...gone, collectionIds: [] })).toEqual({
+      redirectHome: true,
+      resetCollectionSheets: true,
+    });
+  });
+
+  it('does nothing on the default library or when the id is still listed', () => {
+    expect(missingCollectionAction({ ...gone, collectionId: undefined })).toEqual(stay);
+    expect(missingCollectionAction({ ...gone, collectionId: '' })).toEqual(stay);
+    expect(missingCollectionAction({ ...gone, collectionIds: ['gone', 'kept'] })).toEqual(stay);
+  });
+
+  it('waits until the library has loaded', () => {
+    expect(missingCollectionAction({ ...gone, collectionIds: undefined })).toEqual(stay);
+  });
+
+  it('does not redirect an owned-only or not-yet-published snapshot', () => {
+    expect(missingCollectionAction({ ...gone, snapshotConfirmed: false })).toEqual({
+      redirectHome: false,
+      resetCollectionSheets: true,
+    });
+  });
+
+  it('holds the redirect and the sheets for this collection delete or leave', () => {
+    expect(missingCollectionAction({ ...gone, hold: true })).toEqual(stay);
   });
 });
 

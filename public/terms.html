@@ -64,7 +64,9 @@
       are stored in Firestore under your account and are deleted when their
       recipe is deleted. Translations of recipes shared with you are not
       stored; they are translated again each session. You can share a named
-      collection with another admitted member by email. A viewer can see those
+      collection with another admitted member by email, or with a link that
+      admitted members can use to join until you revoke it or it expires.
+      A viewer can see those
       recipes and photos. An editor can also change the recipes' details (such
       as title, ingredients, steps, notes, servings, cooking times, and tags),
       but not their photos, and cannot delete them or change who has access.
@@ -72,6 +74,13 @@
     </p>
 
     <h2>Accuracy</h2>
+    <p>
+      On a recipe, that recipe's text is sent to Google's Gemini API at request
+      time to answer your questions. When you use the library assistant (Ask, at
+      /assistant), many recipes from your library — titles, tags, and the full
+      text of recipes the assistant looks up — not only the recipe you are
+      viewing, are sent to Gemini at request time to produce the reply.
+    </p>
     <p>
       The assistant, dictation, recipe translation, and the recipe importer are
       AI and can be wrong — including about cooking times, temperatures,

@@ -505,10 +505,31 @@ export type GrantHttpResult =
   | { kind: 'signedOut' }
   | { kind: 'error'; message: string; status?: number };
 
+type SharingHttpResult =
+  | { kind: 'ok'; body: unknown }
+  | { kind: 'signedOut' }
+  | { kind: 'error'; message: string; status?: number };
+
 async function grantRequest(
   path: string,
   init?: RequestInit,
 ): Promise<GrantHttpResult> {
+  const result = await sharingRequest(path, init);
+  if (result.kind !== 'ok') {
+    return result;
+  }
+  return {
+    kind: 'ok',
+    grants: (result.body as { grants?: CollectionGrant[] }).grants,
+    grant: (result.body as { grant?: CollectionGrant }).grant,
+  };
+}
+
+/** Owner sharing REST (grants and links): 401/403 sign out, 503 is transient. */
+async function sharingRequest(
+  path: string,
+  init?: RequestInit,
+): Promise<SharingHttpResult> {
   let response: Response;
   try {
     response = await fetch(path, {
@@ -540,11 +561,7 @@ async function grantRequest(
       status: response.status,
     };
   }
-  return {
-    kind: 'ok',
-    grants: (body as { grants?: CollectionGrant[] }).grants,
-    grant: (body as { grant?: CollectionGrant }).grant,
-  };
+  return { kind: 'ok', body };
 }
 
 export async function listCollectionGrants(
@@ -645,4 +662,118 @@ export async function leaveSharedCollection(
     };
   }
   return { kind: 'ok' };
+}
+
+export type CollectionLink = {
+  /** sha256 of the token; identifies the link for revoke, cannot open it. */
+  id: string;
+  role: GrantRole;
+  createdAt: number;
+  expiresAt: number;
+};
+
+export type CollectionLinksBody = {
+  links: CollectionLink[];
+  /** Mint response only: the one time the token is shown. */
+  url?: string;
+  /** Mint response only: the new link's sha256 id (never the token). */
+  id?: string;
+  /** Revoke response only: the link that was revoked. */
+  revokedId?: string;
+  /**
+   * Mint or revoke response: the write committed but the list read after it
+   * failed. `links` is only the minted row (mint) or empty (revoke); reread.
+   */
+  partial?: true;
+};
+
+export type CollectionLinkHttpResult =
+  | ({ kind: 'ok' } & CollectionLinksBody)
+  | { kind: 'signedOut' }
+  | { kind: 'error'; message: string; status?: number };
+
+export function parseCollectionLinksBody(body: unknown): CollectionLinksBody | null {
+  if (!body || typeof body !== 'object' || !Array.isArray((body as { links?: unknown }).links)) {
+    return null;
+  }
+  const links: CollectionLink[] = [];
+  for (const raw of (body as { links: unknown[] }).links) {
+    if (!raw || typeof raw !== 'object') {
+      continue;
+    }
+    const row = raw as Record<string, unknown>;
+    if (
+      typeof row.id !== 'string' ||
+      typeof row.createdAt !== 'number' ||
+      typeof row.expiresAt !== 'number'
+    ) {
+      continue;
+    }
+    links.push({
+      id: row.id,
+      role: row.role === 'editor' ? 'editor' : 'viewer',
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+    });
+  }
+  const record = body as {
+    url?: unknown;
+    id?: unknown;
+    revokedId?: unknown;
+    partial?: unknown;
+  };
+  const parsed: CollectionLinksBody = { links };
+  if (typeof record.url === 'string') {
+    parsed.url = record.url;
+  }
+  if (typeof record.id === 'string') {
+    parsed.id = record.id;
+  }
+  if (typeof record.revokedId === 'string') {
+    parsed.revokedId = record.revokedId;
+  }
+  if (record.partial === true) {
+    parsed.partial = true;
+  }
+  return parsed;
+}
+
+async function linkRequest(path: string, init?: RequestInit): Promise<CollectionLinkHttpResult> {
+  const result = await sharingRequest(path, init);
+  if (result.kind !== 'ok') {
+    return result;
+  }
+  const parsed = parseCollectionLinksBody(result.body);
+  if (parsed === null) {
+    return { kind: 'error', message: t('error.sharingUpdate') };
+  }
+  return { kind: 'ok', ...parsed };
+}
+
+export async function listCollectionLinks(
+  collectionId: string,
+): Promise<CollectionLinkHttpResult> {
+  return linkRequest(`/api/collections/${encodeURIComponent(collectionId)}/links`);
+}
+
+export async function createCollectionLink(
+  collectionId: string,
+  role: GrantRole,
+): Promise<CollectionLinkHttpResult> {
+  return linkRequest(`/api/collections/${encodeURIComponent(collectionId)}/links`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function revokeCollectionLink(
+  collectionId: string,
+  linkId: string,
+): Promise<CollectionLinkHttpResult> {
+  return linkRequest(`/api/collections/${encodeURIComponent(collectionId)}/links/revoke`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify({ id: linkId }),
+  });
 }

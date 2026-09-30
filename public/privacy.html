@@ -108,7 +108,11 @@
       If you share a named collection, the live recipes in that folder and
       their recipe photos become visible to the Google accounts whose emails
       you add, and they see your email address as the person who shared it.
-      Those people must already have a Sous account. If you make someone an
+      Those people must already have a Sous account. You can also create a
+      link to the collection: anyone who already has a Sous account and opens
+      it can join until you revoke the link or it expires after 7 days, and
+      you then see their email address. Only a fingerprint of the link is
+      stored; opening it does not create a Sous account. If you make someone an
       editor, their changes to a recipe's details (such as its title,
       ingredients, steps, notes, servings, cooking times, and tags) are saved
       to your copy of that recipe; they cannot change its photos, delete it,
@@ -128,8 +132,13 @@
 
     <h2>Third parties</h2>
     <p>
-      Recipe text, your chat messages and any photo you send the assistant are
-      passed to Google's Gemini API at request time to produce a reply. Using
+      On a recipe, the text of that recipe, your chat messages on it, and any
+      photo you send the assistant are passed to Google's Gemini API at request
+      time to produce a reply. When you use the library assistant (Ask, at
+      /assistant), Sous sends many recipes from your library — titles, tags,
+      and the full text of recipes the assistant looks up — not only the recipe
+      you are viewing, to Google's Gemini API at request time to produce the
+      reply. Using
       Dictate uploads a short microphone recording to Sous, which sends it to
       Gemini to turn into text and does not store the audio. Recipe text is
       sent to Gemini, or the configured translation provider, for
@@ -142,7 +151,11 @@
       notification email to the owner is sent through Resend and contains
       your email address, display name and the time of the request; it
       includes no one-click approval link — approval only ever happens on the
-      owner's own signed-in screen. Hosting is on Google Cloud.
+      owner's own signed-in screen. If the owner approves that request, Sous
+      sends an email through Resend to the address on the request. The email
+      says the request was approved and links to the app so you can sign in.
+      It includes no secret and no one-click approval. Hosting is on Google
+      Cloud.
     </p>
 
     <h2>Retention and deletion</h2>

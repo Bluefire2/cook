@@ -25,12 +25,18 @@ import {
 import { useLibrarySlice } from './useLibrary';
 import {
   addCollectionGrant,
+  createCollectionLink,
   leaveSharedCollection,
   listCollectionGrants,
+  listCollectionLinks,
   pushOps,
   revokeCollectionGrant,
+  revokeCollectionLink,
   setCollectionGrantRole,
   type CollectionGrant,
+  type CollectionLink,
+  type CollectionLinkHttpResult,
+  type CollectionLinksBody,
   type GrantRole,
   type LeaveSharedResult,
   type RemoteResult,
@@ -56,6 +62,48 @@ export function collectionPushErrorMessage(result: RemoteResult, created = false
 
 function saveError(result: RemoteResult, created = false): Error {
   return new Error(collectionPushErrorMessage(result, created));
+}
+
+/** A link the share sheet just minted: the one-time URL and its sha256 id. */
+export type MintedLink = { url: string; id: string };
+
+/**
+ * The shown-once URL stays visible only while its link is in the live list.
+ * Revoking it, or a refreshed list without it, hides the URL.
+ */
+export function visibleMintedUrl(
+  minted: MintedLink | null,
+  links: readonly CollectionLink[] | undefined,
+): string | null {
+  if (minted === null || links === undefined) {
+    return null;
+  }
+  return links.some((link) => link.id === minted.id) ? minted.url : null;
+}
+
+function linkResult(
+  result: CollectionLinkHttpResult,
+): CollectionLinksBody {
+  if (result.kind === 'signedOut') {
+    throw new Error(t('error.sessionExpired'));
+  }
+  if (result.kind === 'error') {
+    throw new Error(result.message);
+  }
+  const body: CollectionLinksBody = { links: result.links };
+  if (result.url !== undefined) {
+    body.url = result.url;
+  }
+  if (result.id !== undefined) {
+    body.id = result.id;
+  }
+  if (result.revokedId !== undefined) {
+    body.revokedId = result.revokedId;
+  }
+  if (result.partial) {
+    body.partial = true;
+  }
+  return body;
 }
 
 async function pushCollection(
@@ -252,6 +300,61 @@ export const collectionStore = {
     }
   },
 
+  async listLinks(id: string): Promise<CollectionLink[]> {
+    rejectShared(id);
+    return linkResult(await listCollectionLinks(id)).links;
+  },
+
+  /**
+   * The returned `url` carries the raw token and is never shown again;
+   * `linkId` is its sha256 id, so the caller can tell when it was revoked.
+   * Once the server has minted, this never throws: a list read that failed
+   * after the mint is retried once, and otherwise the minted row stands in.
+   */
+  async createLink(
+    id: string,
+    role: GrantRole = 'viewer',
+  ): Promise<{ url: string; linkId: string; links: CollectionLink[] }> {
+    rejectShared(id);
+    const minted = linkResult(await createCollectionLink(id, role));
+    if (minted.url === undefined || minted.id === undefined) {
+      throw new Error(t('error.sharingUpdate'));
+    }
+    let links = minted.links;
+    if (minted.partial) {
+      try {
+        links = linkResult(await listCollectionLinks(id)).links;
+      } catch {
+        // Keep the minted row; the next open of the sheet rereads the list.
+      }
+    }
+    return { url: minted.url, linkId: minted.id, links };
+  },
+
+  /**
+   * Revokes `linkId` and returns the live list to show. Once the server
+   * committed the revoke this never throws: if its list read failed
+   * (`partial`), the list is reread once, and otherwise `current` without the
+   * revoked link stands in.
+   */
+  async revokeLink(
+    id: string,
+    linkId: string,
+    current: readonly CollectionLink[] = [],
+  ): Promise<CollectionLink[]> {
+    rejectShared(id);
+    const revoked = linkResult(await revokeCollectionLink(id, linkId));
+    if (!revoked.partial) {
+      return revoked.links;
+    }
+    const gone = revoked.revokedId ?? linkId;
+    try {
+      return linkResult(await listCollectionLinks(id)).links;
+    } catch {
+      return current.filter((link) => link.id !== gone);
+    }
+  },
+
   async moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {
     if (isSharedRecipe(recipeId) || (dest !== 'default' && isSharedCollection(dest))) {
       throw new Error(t('error.sharedViewOnly'));
@@ -306,5 +409,10 @@ export function useCollections(): Collection[] | undefined {
     () => (loaded ? sortCollections(collections) : undefined),
     [loaded, collections, origins],
   );
+}
+
+/** True when the rows on screen came from a pull that included shared collections. */
+export function useFullPull(): boolean {
+  return useLibrarySlice('fullPull');
 }
 

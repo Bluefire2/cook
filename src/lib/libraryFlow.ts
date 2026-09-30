@@ -23,7 +23,8 @@ export type LibrarySheet =
     }
   | { kind: 'rename'; collectionId: string; name: string; error?: string }
   | { kind: 'deleteCollection'; collectionId: string; error?: string }
-  | { kind: 'leave'; collectionId: string; busy: boolean; error?: string }
+  /** `name` is kept so the sheet can still title itself once the collection has left the list. */
+  | { kind: 'leave'; collectionId: string; name: string; error?: string }
   | { kind: 'share' }
   | { kind: 'inviteConfirm' };
 
@@ -37,7 +38,7 @@ export type LibraryFlowAction =
   | { type: 'startCreate' }
   | { type: 'openRename'; collectionId: string; name: string }
   | { type: 'openDeleteCollection'; collectionId: string }
-  | { type: 'openLeave'; collectionId: string }
+  | { type: 'openLeave'; collectionId: string; name: string }
   | { type: 'openShare' }
   | { type: 'openInviteConfirm' }
   | { type: 'setName'; name: string }
@@ -80,7 +81,11 @@ export function libraryFlowReducer(
     case 'openDeleteCollection':
       return open(state, { kind: 'deleteCollection', collectionId: action.collectionId });
     case 'openLeave':
-      return open(state, { kind: 'leave', collectionId: action.collectionId, busy: false });
+      return open(state, {
+        kind: 'leave',
+        collectionId: action.collectionId,
+        name: action.name,
+      });
     case 'openShare':
       return open(state, { kind: 'share' });
     case 'openInviteConfirm':
@@ -96,7 +101,6 @@ export function libraryFlowReducer(
       }
       switch (sheet.kind) {
         case 'leave':
-          return { ...state, sheet: { ...sheet, busy: true, error: undefined } };
         case 'move':
         case 'create':
         case 'rename':
@@ -116,7 +120,6 @@ export function libraryFlowReducer(
       }
       switch (sheet.kind) {
         case 'leave':
-          return { ...state, sheet: { ...sheet, busy: false, error: action.error } };
         case 'move':
         case 'create':
         case 'rename':

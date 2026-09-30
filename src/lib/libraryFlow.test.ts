@@ -80,30 +80,23 @@ describe('libraryFlowReducer', () => {
     );
   });
 
-  it('a stale leave completion does not touch a newer leave sheet', () => {
-    let state = run({ type: 'openLeave', collectionId: 'c1' });
+  it('a stale leave failure does not touch a newer leave sheet', () => {
+    let state = run({ type: 'openLeave', collectionId: 'c1', name: 'Shared' });
     const stale = state.token;
     state = libraryFlowReducer(state, { type: 'submitting', token: stale });
-    expect(state.sheet).toEqual({
-      kind: 'leave',
-      collectionId: 'c1',
-      busy: true,
-      error: undefined,
-    });
-
     state = libraryFlowReducer(state, { type: 'close' });
-    state = libraryFlowReducer(state, { type: 'openLeave', collectionId: 'c1' });
+    state = libraryFlowReducer(state, { type: 'openLeave', collectionId: 'c1', name: 'Shared' });
     const fresh = state;
     state = libraryFlowReducer(state, { type: 'failed', token: stale, error: 'x' });
     expect(state).toBe(fresh);
-    expect(state.sheet).toEqual({ kind: 'leave', collectionId: 'c1', busy: false });
+    expect(state.sheet).toEqual({ kind: 'leave', collectionId: 'c1', name: 'Shared' });
   });
 
-  it('a failed leave clears busy and shows the error', () => {
-    let state = run({ type: 'openLeave', collectionId: 'c1' });
+  it('a failed leave keeps its name and shows the error', () => {
+    let state = run({ type: 'openLeave', collectionId: 'c1', name: 'Shared' });
     state = libraryFlowReducer(state, { type: 'submitting', token: state.token });
     state = libraryFlowReducer(state, { type: 'failed', token: state.token, error: 'x' });
-    expect(state.sheet).toEqual({ kind: 'leave', collectionId: 'c1', busy: false, error: 'x' });
+    expect(state.sheet).toEqual({ kind: 'leave', collectionId: 'c1', name: 'Shared', error: 'x' });
   });
 
   it('opening one sheet replaces another', () => {

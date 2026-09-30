@@ -81,6 +81,12 @@ export type LibrarySnapshot = {
   /** Same marker for cook rows, keyed by recipe id. */
   cookParentOrigins: ReadonlyMap<string, string>;
   loaded: boolean;
+  /**
+   * True only when these rows came from a pull whose shared phase succeeded.
+   * An owned-only publish (shared phase failed) clears it. A later idle
+   * status must not treat that snapshot as a confirmed library.
+   */
+  fullPull: boolean;
 };
 
 const listeners = new Set<() => void>();
@@ -99,6 +105,7 @@ function empty(loaded: boolean): LibrarySnapshot {
     chatParentOrigins: new Map(),
     cookParentOrigins: new Map(),
     loaded,
+    fullPull: false,
   };
 }
 
@@ -184,11 +191,15 @@ export function getSnapshot(): LibrarySnapshot {
 }
 
 export function captureSnapshot(): LibrarySnapshot {
-  return { ...cloneMaps(snapshot), loaded: snapshot.loaded };
+  return { ...cloneMaps(snapshot), loaded: snapshot.loaded, fullPull: snapshot.fullPull };
 }
 
 export function restoreSnapshot(previous: LibrarySnapshot): void {
-  emit({ ...cloneMaps(previous), loaded: previous.loaded });
+  emit({
+    ...cloneMaps(previous),
+    loaded: previous.loaded,
+    fullPull: previous.fullPull,
+  });
 }
 
 export function markLoaded(): void {
@@ -249,6 +260,7 @@ export function replaceFromPull(next: OwnedPullSnapshot): void {
     chatParentOrigins: copyOwnerMap(next.chatParentOrigins),
     cookParentOrigins: copyOwnerMap(next.cookParentOrigins),
     loaded: true,
+    fullPull: false,
   });
 }
 
@@ -301,6 +313,7 @@ export function replaceFromPullWithShared(
     chatParentOrigins: copyOwnerMap(owned.chatParentOrigins),
     cookParentOrigins: copyOwnerMap(owned.cookParentOrigins),
     loaded: true,
+    fullPull: true,
   });
 }
 

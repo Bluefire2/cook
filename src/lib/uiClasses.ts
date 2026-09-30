@@ -14,6 +14,10 @@ export const secondaryBtn =
 export const ghostBtn =
   'rounded-full px-3 py-1 text-sm text-ink-muted hover:bg-surface-muted hover:text-ink active:bg-surface-muted';
 
+/** Round icon-only button for the Library header. Not `ghostBtn` plus `p-2`: its `px-3` would win. */
+export const ghostIconBtn =
+  'inline-flex items-center justify-center rounded-full p-2 text-ink-muted hover:bg-surface-muted hover:text-ink active:bg-surface-muted';
+
 export const backLink = 'text-sm text-ink-muted hover:text-ink';
 
 export const iconBtn =

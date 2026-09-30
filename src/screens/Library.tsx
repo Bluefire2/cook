@@ -9,9 +9,14 @@ import Sheet from '../components/Sheet';
 import { createInvite } from '../lib/adminApi';
 import { createMemberInvite } from '../lib/inviteApi';
 import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
-import { FolderIcon, PlusIcon, SettingsIcon, SharedIcon } from '../lib/icons';
-import { importHref, libraryHref, newRecipeHref } from '../lib/collectionHref';
-import { collectionStore, useCollections } from '../lib/collectionStore';
+import { FolderIcon, InviteIcon, PlusIcon, SettingsIcon, SharedIcon, SpinnerIcon } from '../lib/icons';
+import {
+  importHref,
+  libraryHref,
+  missingCollectionAction,
+  newRecipeHref,
+} from '../lib/collectionHref';
+import { collectionStore, useCollections, useFullPull } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
 import { initialLibraryFlow, libraryFlowReducer, sheetError } from '../lib/libraryFlow';
 import {
@@ -23,9 +28,11 @@ import { recipeStore, useRecipes } from '../lib/recipeStore';
 import { visibleLibraryRecipes } from '../lib/visibleLibraryRecipes';
 import { useSession } from '../lib/session';
 import { useSyncStatus } from '../lib/syncEngine';
+import { AssistantEntryLink } from '../agent/index';
 import {
   dangerBtn,
   ghostBtn,
+  ghostIconBtn,
   inputClass,
   menuItem,
   menuItemDanger,
@@ -52,6 +59,7 @@ export default function Library() {
   const t = useT();
   const allRecipes = useRecipes();
   const collections = useCollections();
+  const fullPull = useFullPull();
   const { status: sessionStatus, user } = useSession();
   const syncStatus = useSyncStatus();
   const { collectionId } = useParams();
@@ -82,6 +90,10 @@ export default function Library() {
   useLayoutEffect(() => {
     flowRef.current = flow;
   }, [flow]);
+  // In-flight delete and leave, by collection id. They outlive the sheet,
+  // so a missing-collection redirect waits for the request that removed it.
+  const [leavingId, setLeavingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [invitePending, setInvitePending] = useState(false);
   const [revealedUrl, setRevealedUrl] = useState<string | null>(null);
@@ -118,6 +130,7 @@ export default function Library() {
   const setCollectionName = (name: string) => dispatch({ type: 'setName', name });
   const isCurrent = (token: number) => flowRef.current.token === token;
   const namedIsShared = named ? collectionStore.isShared(named.id) : false;
+  const leaveBusy = leavingId !== null && leavingId === collectionId;
   const showSwitcher = (collections?.length ?? 0) > 0;
   const addCollectionId =
     currentId && !namedIsShared ? currentId : undefined;
@@ -221,6 +234,9 @@ export default function Library() {
     const { token } = flow;
     const startedOn = shownCollectionId.current;
     dispatch({ type: 'submitting', token });
+    // The collection leaves the list before the server answers. Hold only
+    // this id, so Back to a different missing collection is not stuck.
+    setDeletingId(sheet.collectionId);
     try {
       await collectionStore.remove(sheet.collectionId);
       if (shownCollectionId.current !== startedOn || !isCurrent(token)) return;
@@ -233,6 +249,8 @@ export default function Library() {
         token,
         error: err instanceof Error ? err.message : t('error.collectionDelete'),
       });
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -243,6 +261,7 @@ export default function Library() {
     const { token } = flow;
     const startedOn = shownCollectionId.current;
     dispatch({ type: 'submitting', token });
+    setLeavingId(sheet.collectionId);
     try {
       await collectionStore.leave(sheet.collectionId);
       if (shownCollectionId.current !== startedOn || !isCurrent(token)) return;
@@ -255,6 +274,8 @@ export default function Library() {
         token,
         error: err instanceof Error ? err.message : t('error.leaveCollection'),
       });
+    } finally {
+      setLeavingId(null);
     }
   };
 
@@ -387,6 +408,37 @@ export default function Library() {
     closeSheets();
   }, [collectionId]);
 
+  // A loaded library that no longer contains this id is not that collection.
+  // Redirect only when the snapshot on screen is a full pull. An owned-only
+  // publish, a sign-out, and a pull that has not finished are not that.
+  // Delete and leave hold only their own id. Sheet reset closes rename,
+  // delete, leave, and share; Create and Move are not collection sheets, so
+  // their name and error stay.
+  useLayoutEffect(() => {
+    const action = missingCollectionAction({
+      collectionId,
+      collectionIds: collections?.map((collection) => collection.id),
+      snapshotConfirmed: fullPull,
+      hold: deletingId === collectionId || leavingId === collectionId,
+    });
+    const collectionSheetOpen =
+      sheet.kind === 'rename' ||
+      sheet.kind === 'deleteCollection' ||
+      sheet.kind === 'leave' ||
+      sheet.kind === 'share';
+    // A failed leave or delete sets its error in the same turn the hold
+    // ends. Closing here would drop that message.
+    const showingFailure =
+      (sheet.kind === 'leave' || sheet.kind === 'deleteCollection') &&
+      sheet.error !== undefined;
+    if (action.resetCollectionSheets && collectionSheetOpen && !showingFailure) {
+      closeSheets();
+    }
+    if (action.redirectHome) {
+      navigate('/', { replace: true });
+    }
+  }, [collectionId, collections, fullPull, deletingId, leavingId, sheet, navigate]);
+
   useEffect(() => {
     if (!menuId) return;
     firstActionRef.current?.focus({ preventScroll: true });
@@ -435,10 +487,13 @@ export default function Library() {
       <header className="flex items-center justify-between py-4">
         <h1 className="text-2xl font-bold">Sous</h1>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+          <AssistantEntryLink />
           {user !== null && (
             <button
               type="button"
-              className={`${ghostBtn} disabled:opacity-40`}
+              className={`${ghostIconBtn} disabled:opacity-40`}
+              aria-label={invitePending ? t('admin.creating') : t('library.inviteLink')}
+              aria-busy={invitePending}
               disabled={invitePending || sheet.kind === 'inviteConfirm'}
               onClick={() => {
                 if (inviteMintClient(user) === 'member') {
@@ -448,7 +503,11 @@ export default function Library() {
                 void mint();
               }}
             >
-              {invitePending ? t('admin.creating') : t('library.inviteLink')}
+              {invitePending ? (
+                <SpinnerIcon className="block h-5 w-5 animate-spin" />
+              ) : (
+                <InviteIcon className="block h-5 w-5" />
+              )}
             </button>
           )}
           <Link to="/cooks" className={ghostBtn}>
@@ -456,7 +515,7 @@ export default function Library() {
           </Link>
           <Link
             to="/settings"
-            className={`${ghostBtn} inline-flex items-center justify-center px-2 py-2`}
+            className={ghostIconBtn}
             aria-label={t('settings.title')}
           >
             <SettingsIcon className="block h-5 w-5" />
@@ -582,7 +641,9 @@ export default function Library() {
           </span>
           <button
             type="button"
-            onClick={() => dispatch({ type: 'openLeave', collectionId: named.id })}
+            onClick={() =>
+              dispatch({ type: 'openLeave', collectionId: named.id, name: named.name })
+            }
             className="shrink-0 text-sm text-danger hover:underline"
           >
             {t('library.leave')}
@@ -928,9 +989,13 @@ export default function Library() {
         </Sheet>
       )}
 
-      {sheet.kind === 'leave' && named && namedIsShared && (
+      {sheet.kind === 'leave' && (named && namedIsShared ? named.name : sheet.name) && (
         <Sheet onClose={() => closeSheets()}>
-          <h2 className="text-lg font-semibold">{t('library.leaveTitle', { name: named.name })}</h2>
+          <h2 className="text-lg font-semibold">
+            {t('library.leaveTitle', {
+              name: named && namedIsShared ? named.name : sheet.name,
+            })}
+          </h2>
           <p className="mt-1 text-sm text-ink-muted">{t('library.leaveBody')}</p>
           {collectionError && (
             <p className="mt-2 text-sm text-danger">{collectionError}</p>
@@ -938,10 +1003,10 @@ export default function Library() {
           <button
             type="button"
             onClick={() => void submitLeave()}
-            disabled={sheet.busy}
+            disabled={leaveBusy}
             className={`${dangerBtn} mt-3 w-full py-3`}
           >
-            {sheet.busy ? t('library.leaving') : t('library.leaveCollection')}
+            {leaveBusy ? t('library.leaving') : t('library.leaveCollection')}
           </button>
           <button
             type="button"

@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchSession, getSessionSnapshot, subscribeSession } from './session';
-import { getSnapshot, upsertRecipe } from './libraryMemory';
-import type { Recipe } from './types';
+import { invalidateSession, onSessionReset } from './session';
 
-const store = new Map<string, string>();
-const originalStorage = globalThis.localStorage;
+const clearLibraryMock = vi.fn();
+
+vi.mock('./libraryMemory', () => ({
+  clearLibrary: () => clearLibraryMock(),
+}));
 
 beforeEach(() => {
-  store.clear();
+  clearLibraryMock.mockClear();
+  const store = new Map<string, string>();
   globalThis.localStorage = {
     getItem: (key) => store.get(key) ?? null,
     setItem: (key, value) => {
@@ -27,80 +29,47 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
-  store.clear();
-  if (originalStorage === undefined) {
-    delete (globalThis as { localStorage?: Storage }).localStorage;
-  } else {
-    globalThis.localStorage = originalStorage;
-  }
 });
 
-const user = { sub: 'sub-1', email: 'a@example.com' };
-
-function respond(status: number, body: unknown = {}): void {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async () => new Response(JSON.stringify(body), { status })),
-  );
-}
-
-function recipe(id: string): Recipe {
-  return {
-    id,
-    title: id,
-    servings: 1,
-    ingredientSections: [],
-    steps: [],
-    tags: [],
-    createdAt: 1,
-    updatedAt: 2,
-  };
-}
-
-describe('session store', () => {
-  it('returns the same snapshot until something is published', async () => {
-    respond(200, { user });
-    await fetchSession();
-    const first = getSessionSnapshot();
-    expect(getSessionSnapshot()).toBe(first);
-    await fetchSession();
-    const second = getSessionSnapshot();
-    expect(second).not.toBe(first);
-    expect(second).toEqual({ user, status: 'signedIn' });
+describe('onSessionReset', () => {
+  it('notifies listeners when invalidateSession runs', () => {
+    const seen: number[] = [];
+    const unsub = onSessionReset(() => {
+      seen.push(1);
+    });
+    invalidateSession();
+    expect(seen).toEqual([1]);
+    unsub();
   });
 
-  it('notifies subscribers on each published status and stops after unsubscribe', async () => {
-    const listener = vi.fn();
-    const unsubscribe = subscribeSession(listener);
-
-    respond(200, { user });
-    await fetchSession();
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(getSessionSnapshot().status).toBe('signedIn');
-
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        throw new TypeError('network');
-      }),
-    );
-    await fetchSession();
-    expect(listener).toHaveBeenCalledTimes(2);
-    expect(getSessionSnapshot()).toEqual({ user, status: 'offline' });
-
-    unsubscribe();
-    respond(200, { user });
-    await fetchSession();
-    expect(listener).toHaveBeenCalledTimes(2);
+  it('stops notifying after unsubscribe', () => {
+    const seen: number[] = [];
+    const unsub = onSessionReset(() => {
+      seen.push(1);
+    });
+    unsub();
+    invalidateSession();
+    expect(seen).toEqual([]);
   });
 
-  it('publishes signedOut on 401 and clears the library', async () => {
-    upsertRecipe(recipe('r1'));
-    respond(401);
-    await expect(fetchSession()).resolves.toEqual({ status: 'signedOut' });
-    expect(getSessionSnapshot()).toEqual({ user: null, status: 'signedOut' });
-    expect(getSnapshot().loaded).toBe(true);
-    expect(getSnapshot().recipes.size).toBe(0);
+  it('runs clearLibrary before reset listeners and isolates throwing listeners', () => {
+    const order: string[] = [];
+    clearLibraryMock.mockImplementation(() => {
+      order.push('clearLibrary');
+    });
+    onSessionReset(() => {
+      order.push('first');
+    });
+    onSessionReset(() => {
+      order.push('throw');
+      throw new Error('boom');
+    });
+    onSessionReset(() => {
+      order.push('second');
+    });
+    invalidateSession();
+    expect(order).toEqual(['clearLibrary', 'first', 'throw', 'second']);
   });
 });

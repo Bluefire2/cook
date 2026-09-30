@@ -51,6 +51,37 @@ afterEach(() => {
   clearLibrary();
 });
 
+describe('fullPull', () => {
+  const owned = {
+    recipes: new Map<string, Recipe>(),
+    collections: new Map<string, Collection>(),
+    chat: new Map(),
+    cook: new Map(),
+    cookLogs: new Map(),
+    remotePhotoIds: new Set<string>(),
+  };
+
+  it('marks a pull that included shared rows, and clears that on an owned-only publish or sign-out', () => {
+    expect(getSnapshot().fullPull).toBe(false);
+    replaceFromPullWithShared(owned, {
+      recipes: new Map(),
+      collections: new Map(),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map(),
+      collectionOrigins: new Map(),
+    });
+    expect(getSnapshot().fullPull).toBe(true);
+    const captured = captureSnapshot();
+    replaceFromPull(owned);
+    expect(getSnapshot().fullPull).toBe(false);
+    restoreSnapshot(captured);
+    expect(getSnapshot().fullPull).toBe(true);
+    clearLibrary();
+    expect(getSnapshot().fullPull).toBe(false);
+    expect(getSnapshot().loaded).toBe(true);
+  });
+});
+
 describe('shared rows', () => {
   it('adds a shared recipe and refuses to overwrite an owned id', () => {
     const own = recipe('own-1', 'Mine');
