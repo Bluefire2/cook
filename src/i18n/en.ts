@@ -482,6 +482,7 @@ export const en = {
   'assistant.ownRecipesOnly': 'The assistant only sees your own recipes, not collections shared with you.',
   'assistant.searching': 'Searching recipes…',
   'assistant.reading': 'Reading recipes…',
+  'assistant.readingCollections': 'Reading collections…',
   'assistant.combining': 'Combining ingredients…',
   'assistant.makingList': 'Making a shopping list…',
   'assistant.working': 'Working…',

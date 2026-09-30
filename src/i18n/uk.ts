@@ -482,6 +482,7 @@ export const uk: Messages = {
   'assistant.ownRecipesOnly': 'Помічник бачить лише ваші власні рецепти, а не колекції, якими з вами поділилися.',
   'assistant.searching': 'Шукаю рецепти…',
   'assistant.reading': 'Читаю рецепти…',
+  'assistant.readingCollections': 'Переглядаю колекції…',
   'assistant.combining': 'Об’єдную інгредієнти…',
   'assistant.makingList': 'Складаю список покупок…',
   'assistant.working': 'Працюю…',

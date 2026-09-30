@@ -6,7 +6,6 @@ export type CombinedLine = {
   unit?: string;
   asNeeded?: true;
   sourceRecipeIds: string[];
-  unmerged?: true;
 };
 
 type UnitFamily = 'us_volume' | 'metric_volume' | 'metric_mass' | 'imperial_mass' | 'count' | 'other';

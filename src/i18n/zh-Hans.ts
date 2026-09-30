@@ -448,6 +448,7 @@ export const zhHans: Messages = {
   'assistant.ownRecipesOnly': '助手只查看你自己的食谱，不含分享给你的合集。',
   'assistant.searching': '正在搜索食谱…',
   'assistant.reading': '正在阅读食谱…',
+  'assistant.readingCollections': '正在查看合集…',
   'assistant.combining': '正在合并食材…',
   'assistant.makingList': '正在制作购物清单…',
   'assistant.working': '处理中…',
