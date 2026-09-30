@@ -286,9 +286,9 @@ trigger.
 Docker is not installed locally; local `bash scripts/deploy.sh` still uses
 Cloud Build.
 
-Production is `sous-00013-ccs`, deployed from `main` at `cdf6d07` (includes
-#35 Ask photo copy, #36 cook log, #37). Later `main` merges (#42 i18n, #43,
-#45, #46, #48, #49) are not deployed.
+As of 2026-09-27, production was `sous-00013-ccs`, deployed from `main` at
+`cdf6d07` (includes #35, #36 cook log, and #37). Commits after `cdf6d07` were
+not in that deploy. This file does not record later revisions.
 
 The `emailLower` backfill (`node --env-file=.env.local
 scripts/backfill-email-lower.ts`, ADC for `cooking-assistant-508423`, dry run
@@ -347,7 +347,6 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/invitation-flow.md` | Done (#8). Request access → `/admin` → Firestore membership. |
 | `docs/plans/invite-links.md` | Done (#12). Single-use 7-day bearer invite links that admit on Google consent. Owners mint from `/admin`. |
 | `docs/plans/member-invite-links.md` | Merged (#48; library-header copy in #49). A non-owner member mints one link from Settings (`POST /api/invites`). Not deployed. |
-| `docs/plans/deploy-and-end-state.md` | Production cutover (`sous-00004-mpx`) and consent In production done. |
 | `docs/plans/server-backed-library.md` | Done: drop IndexedDB; in-memory library over pull/push. |
 | `docs/plans/ask-voice-stt.md` | Done (#7). Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
@@ -360,9 +359,10 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
 | `docs/plans/image-import.md` | Built on `cursor/image-import-38e9`, not deployed. Import one recipe from 1–4 photos (handwritten notes) via `images` on `POST /api/import`; Gemini reads them; never stored. Bound by `docs/constitutions/image-import.md`. |
 | `docs/plans/image-import-evals-and-retry.md` | Built, not deployed. Handwritten evals split into dev/holdout with `evals/AGENTS.md` rules and `ocrCompare --thinking`. The photo retry and runaway-unit check were measured and reverted (dev approach A 14/15 → 12/15; holdout stayed 15/15). |
-| `docs/plans/cook-log.md` | Built on `cursor/cook-log-5615` (constitution `docs/constitutions/cook-log.md`). Not deployed. |
+| `docs/plans/cook-log.md` | Done (#36; constitution `docs/constitutions/cook-log.md`). Included in `sous-00013-ccs`. |
 | `docs/plans/i18n.md` | Merged (#42; constitution `docs/constitutions/i18n.md`). Not deployed. UI language with `src/i18n/` catalogs, `Recipe.lang`, translation at import and on the recipe screen, dictation language. |
 | `docs/plans/i18n-follow-ups.md` | Open. Post-deploy owner steps (Cloud Run translate p95, dictation clips, `lang` backfill `--write`), unrun checks, and review nits left after PR #42. |
+| `docs/plans/collection-path.md` | Built on `cursor/collection-path-2d3d`. Named collections open at `/collections/<id>`. Legacy `?c=` redirects removed. Not deployed. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
@@ -372,7 +372,14 @@ invent other OAuth workarounds.
 
 Unit tests cover **pure** logic only. There is no fake-indexeddb, no Firestore
 emulator in CI, no GCS mock, no DOM testing library — do not add them for one
-feature. `.github/workflows/ci.yml` stays `tsc -b` + `npm test` on push/PR.
+feature. `.github/workflows/ci.yml` runs on PRs and pushes to `main`:
+`npm run build` + `npm test`, a Docker image build booted with no cloud
+credentials and checked by `.github/scripts/smoke-server.sh`, and dependency
+review. None of it needs secrets, ADC, or production.
+`scripts/invariants.test.ts` turns rules in this file into failing tests; follow
+the rule rather than loosening the check. `evals/pageFixtures.test.ts` runs the
+offline extraction step over every cached page and needs an entry for each new
+page fixture.
 
 Live paste-to-recipe evals are `npm run test:import` (`evals/**/*.eval.ts`,
 `vitest.eval.config.ts`). They call Gemini against fixtures in `evals/import/`

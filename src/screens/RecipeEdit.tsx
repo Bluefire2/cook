@@ -1,10 +1,11 @@
 import { useCallback, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useT } from '../i18n';
 import RecipeForm from '../components/RecipeForm';
 import CreateRecipeForm from '../components/CreateRecipeForm';
-import { collectionStore, libraryHref, useCollections } from '../lib/collectionStore';
+import { libraryHref } from '../lib/collectionHref';
+import { collectionStore, useCollections } from '../lib/collectionStore';
 import { blankDraft } from '../lib/recipeDraft';
 import { recipeStore, useRecipe } from '../lib/recipeStore';
 import { backLink, primaryBtn } from '../lib/uiClasses';
@@ -45,10 +46,10 @@ function Screen({
 function CreateRecipe() {
   const t = useT();
   const navigate = useNavigate();
-  const [params] = useSearchParams();
-  const collectionId = params.get('c') ?? undefined;
-  // Subscribed, not a one-shot store read: on a cold load of `?c=<id>` the
-  // pull has not landed yet, and only a subscriber re-renders once it does.
+  const { collectionId } = useParams();
+  // Subscribed, not a one-shot store read: on a cold load of a collection
+  // new-recipe path the pull has not landed yet, and only a subscriber
+  // re-renders once it does.
   const collections = useCollections();
   const knownCollectionId =
     collectionId &&
