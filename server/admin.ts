@@ -243,12 +243,10 @@ function sandboxSender(): boolean {
 }
 
 async function notifyApproval(email: string): Promise<void> {
-  const problem = approvalRecipientProblem(email);
-  if (problem === 'missing') {
-    console.log('approval email skipped: missing recipient');
-    return;
-  }
-  if (problem === 'invalid') {
+  // An empty address never arrives: parseAccessRequestDoc rejects it, so
+  // applyDecision does not return an ok result with one. PUBLIC_ORIGIN is
+  // required for OAuth, so the sign-in link is always available.
+  if (approvalRecipientProblem(email) === 'invalid') {
     console.log('approval email skipped: invalid recipient');
     return;
   }
@@ -258,13 +256,7 @@ async function notifyApproval(email: string): Promise<void> {
   }
 
   const subject = 'Your Sous access was approved';
-  let text: string;
-  try {
-    const origin = publicOrigin();
-    text = `Your request for Sous was approved.\nSign in again at ${origin}`;
-  } catch {
-    text = 'Your request for Sous was approved.\nSign in again.';
-  }
+  const text = `Your request for Sous was approved.\nSign in again at ${publicOrigin()}`;
 
   try {
     await sendMail({ to: email, subject, text });
