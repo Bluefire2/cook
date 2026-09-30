@@ -11,6 +11,7 @@ import {
 } from './libraryMemory';
 import { withLocalWrite } from './localWrite';
 import { fetchPhotoBlob, pushOps } from './remote';
+import { localWriteOverlapsPull } from './syncEngine';
 
 const ensureLocalInFlight = new Map<string, Promise<void>>();
 
