@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MAX_NAMED_COLLECTIONS } from './compactCollection';
-import { collectionPushErrorMessage, collectionStore } from './collectionStore';
+import {
+  collectionPushErrorMessage,
+  collectionStore,
+  visibleMintedUrl,
+} from './collectionStore';
 import {
   clearLibrary,
   countOwnedNamedCollections,
@@ -13,10 +17,14 @@ import { recipeStore } from './recipeStore';
 import { installSharedRows } from './testLibrary';
 import {
   addCollectionGrant,
+  createCollectionLink,
   leaveSharedCollection,
   listCollectionGrants,
+  listCollectionLinks,
   pushOps,
   revokeCollectionGrant,
+  revokeCollectionLink,
+  type CollectionLink,
 } from './remote';
 import { pullAfterLocalWrite } from './syncEngine';
 import type { CollectionGrant } from './remote';
@@ -24,10 +32,13 @@ import type { Collection } from './types';
 
 vi.mock('./remote', () => ({
   addCollectionGrant: vi.fn(),
+  createCollectionLink: vi.fn(),
   leaveSharedCollection: vi.fn(),
   listCollectionGrants: vi.fn(),
+  listCollectionLinks: vi.fn(),
   pushOps: vi.fn(),
   revokeCollectionGrant: vi.fn(),
+  revokeCollectionLink: vi.fn(),
 }));
 
 vi.mock('./syncEngine', () => ({
@@ -280,5 +291,101 @@ describe('collectionStore.leave', () => {
       "Couldn't leave the collection.",
     );
     expect(pullAfterLocalWrite).not.toHaveBeenCalled();
+  });
+});
+
+describe('collection links', () => {
+  const linkA: CollectionLink = { id: 'a'.repeat(64), role: 'viewer', createdAt: 1, expiresAt: 2 };
+  const linkB: CollectionLink = { id: 'b'.repeat(64), role: 'editor', createdAt: 3, expiresAt: 4 };
+  const minted = { url: 'https://sous.example/c/token', id: linkA.id };
+
+  afterEach(() => {
+    vi.mocked(createCollectionLink).mockReset();
+    vi.mocked(listCollectionLinks).mockReset();
+  });
+
+  it('shows the minted URL only while its link is in the live list', () => {
+    expect(visibleMintedUrl(null, [linkA])).toBeNull();
+    expect(visibleMintedUrl(minted, undefined)).toBeNull();
+    expect(visibleMintedUrl(minted, [linkB, linkA])).toBe(minted.url);
+    expect(visibleMintedUrl(minted, [linkB])).toBeNull();
+    expect(visibleMintedUrl(minted, [])).toBeNull();
+  });
+
+  it('createLink returns the url and its id', async () => {
+    vi.mocked(createCollectionLink).mockResolvedValue({
+      kind: 'ok',
+      url: minted.url,
+      id: linkA.id,
+      links: [linkB, linkA],
+    });
+    await expect(collectionStore.createLink('col-1', 'viewer')).resolves.toEqual({
+      url: minted.url,
+      linkId: linkA.id,
+      links: [linkB, linkA],
+    });
+    expect(listCollectionLinks).not.toHaveBeenCalled();
+  });
+
+  it('revokeLink returns the server list after a full revoke', async () => {
+    vi.mocked(revokeCollectionLink).mockResolvedValueOnce({
+      kind: 'ok',
+      revokedId: linkA.id,
+      links: [linkB],
+    });
+    await expect(collectionStore.revokeLink('col-1', linkA.id, [linkA, linkB])).resolves.toEqual([
+      linkB,
+    ]);
+    expect(listCollectionLinks).not.toHaveBeenCalled();
+  });
+
+  it('a partial revoke rereads once, and otherwise drops the revoked id locally', async () => {
+    vi.mocked(revokeCollectionLink).mockResolvedValue({
+      kind: 'ok',
+      revokedId: linkA.id,
+      links: [],
+      partial: true,
+    });
+    vi.mocked(listCollectionLinks).mockResolvedValueOnce({ kind: 'ok', links: [linkB] });
+    await expect(collectionStore.revokeLink('col-1', linkA.id, [linkA, linkB])).resolves.toEqual([
+      linkB,
+    ]);
+    expect(listCollectionLinks).toHaveBeenCalledTimes(1);
+
+    vi.mocked(listCollectionLinks).mockResolvedValueOnce({
+      kind: 'error',
+      message: 'Sharing is temporarily unavailable.',
+      status: 503,
+    });
+    const shown = await collectionStore.revokeLink('col-1', linkA.id, [linkA, linkB]);
+    expect(shown).toEqual([linkB]);
+    // The shown URL for the revoked link is hidden by the same list.
+    expect(visibleMintedUrl(minted, shown)).toBeNull();
+    vi.mocked(revokeCollectionLink).mockReset();
+  });
+
+  it('createLink refetches a partial list and keeps the URL when that fails too', async () => {
+    vi.mocked(createCollectionLink).mockResolvedValue({
+      kind: 'ok',
+      url: minted.url,
+      id: linkA.id,
+      links: [linkA],
+      partial: true,
+    });
+    vi.mocked(listCollectionLinks).mockResolvedValueOnce({ kind: 'ok', links: [linkB, linkA] });
+    await expect(collectionStore.createLink('col-1', 'viewer')).resolves.toMatchObject({
+      url: minted.url,
+      links: [linkB, linkA],
+    });
+    vi.mocked(listCollectionLinks).mockResolvedValueOnce({
+      kind: 'error',
+      message: 'Sharing is temporarily unavailable.',
+      status: 503,
+    });
+    await expect(collectionStore.createLink('col-1', 'viewer')).resolves.toEqual({
+      url: minted.url,
+      linkId: linkA.id,
+      links: [linkA],
+    });
   });
 });

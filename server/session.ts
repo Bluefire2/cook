@@ -4,6 +4,13 @@ import { sessionSecret } from './env.ts';
 export const SESSION_COOKIE_NAME = 'sous_session';
 export const OAUTH_COOKIE_NAME = 'sous_oauth';
 export const INVITE_COOKIE_NAME = 'sous_invite';
+/**
+ * Hop cookie for a shareable collection link (`/c/<token>`). Carries only the
+ * link's sha256 id, HMAC-signed, for 10 minutes, and only on `/c` paths so it
+ * survives the Google round trip without being sent anywhere else.
+ */
+export const COLLECTION_LINK_COOKIE_NAME = 'sous_collection_link';
+const COLLECTION_LINK_COOKIE_PATH = '/c';
 
 /**
  * Carries the same token as the cookie, for clients that cannot rely on the
@@ -37,6 +44,12 @@ export interface AuthTxPayload {
 }
 
 export interface InviteTxPayload {
+  id: string;
+  iat: number;
+  exp: number;
+}
+
+export interface CollectionLinkTxPayload {
   id: string;
   iat: number;
   exp: number;
@@ -429,6 +442,91 @@ export function clearedInviteCookie(options: { secure: boolean }): string {
     `${INVITE_COOKIE_NAME}=`,
     'HttpOnly',
     'Path=/',
+    'SameSite=Lax',
+    'Max-Age=0',
+  ];
+  if (options.secure) {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
+export function signCollectionLinkTx(tx: { id: string }, now: number): string {
+  const secret = sessionSecret();
+  if (!secret) {
+    throw new Error('SESSION_SECRET is not set');
+  }
+  if (!isInviteId(tx.id)) {
+    throw new Error('collection link id is not a sha256 hex digest');
+  }
+  const iat = now;
+  const exp = now + TEN_MINUTES_MS;
+  const payloadPart = base64urlEncode(
+    JSON.stringify({ v: 'clink', id: tx.id, iat, exp }),
+  );
+  const signature = hmacSign(payloadPart, secret);
+  return `${payloadPart}.${signature}`;
+}
+
+export function verifyCollectionLinkTx(
+  token: string,
+  now: number,
+): CollectionLinkTxPayload | null {
+  const secret = sessionSecret();
+  if (!secret) {
+    return null;
+  }
+  const parts = splitToken(token);
+  if (!parts) {
+    return null;
+  }
+  if (!hmacVerify(parts.payload, parts.signature, secret)) {
+    return null;
+  }
+  const parsed = base64urlDecodeJson(parts.payload);
+  if (typeof parsed !== 'object' || parsed === null) {
+    return null;
+  }
+  const row = parsed as {
+    v?: unknown;
+    id?: unknown;
+    iat?: unknown;
+    exp?: unknown;
+  };
+  if (row.v !== 'clink') {
+    return null;
+  }
+  if (typeof row.id !== 'string' || !isInviteId(row.id)) {
+    return null;
+  }
+  if (typeof row.iat !== 'number' || typeof row.exp !== 'number') {
+    return null;
+  }
+  if (row.exp <= now) {
+    return null;
+  }
+  return { id: row.id, iat: row.iat, exp: row.exp };
+}
+
+export function collectionLinkCookie(token: string, options: { secure: boolean }): string {
+  const parts = [
+    `${COLLECTION_LINK_COOKIE_NAME}=${token}`,
+    'HttpOnly',
+    `Path=${COLLECTION_LINK_COOKIE_PATH}`,
+    'SameSite=Lax',
+    `Max-Age=${OAUTH_MAX_AGE_SEC}`,
+  ];
+  if (options.secure) {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
+export function clearedCollectionLinkCookie(options: { secure: boolean }): string {
+  const parts = [
+    `${COLLECTION_LINK_COOKIE_NAME}=`,
+    'HttpOnly',
+    `Path=${COLLECTION_LINK_COOKIE_PATH}`,
     'SameSite=Lax',
     'Max-Age=0',
   ];

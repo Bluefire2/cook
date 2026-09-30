@@ -332,6 +332,22 @@ export const en = {
   'share.viewer': 'Viewer',
   'share.editor': 'Editor',
   'share.nobodyYet': 'Nobody else can see this yet.',
+  'share.linkTitle': 'Share by link',
+  'share.linkIntro': 'Anyone who already has a Sous account can join with the link until you revoke it or it expires after 7 days. The link is shown only once.',
+  'share.linkRoleLabel': 'Role for people who join by link',
+  'share.copyLink': 'Copy link',
+  'share.linkCopiedHint': 'Copied. It will not be shown again.',
+  'share.linkCopyNowHint': 'Copy this now. It will not be shown again.',
+  'share.copy': 'Copy',
+  'share.copied': 'Copied',
+  'share.noLinks': 'No live links.',
+  'share.linkRejoinWarning':
+    'Someone you remove can still rejoin with a live link. Revoke the link to stop that.',
+  'share.viewerLink': 'Viewer link',
+  'share.editorLink': 'Editor link',
+  'share.revoke': 'Revoke',
+  'share.revokeViewerLink': 'Revoke this viewer link',
+  'share.revokeEditorLink': 'Revoke this editor link',
 
   'sheet.dismiss': 'Dismiss',
 
@@ -442,6 +458,10 @@ export const en = {
   'error.shareSelf': "You can't share with yourself.",
   'error.shareNoAccount': 'No Sous account with that email.',
   'error.shareFull': 'This collection already has {max} people.',
+  'error.linkCap': {
+    one: 'This collection already has {count} live link. Revoke one first.',
+    other: 'This collection already has {count} live links. Revoke one first.',
+  },
   'error.adminSelf': "You can't change your own access.",
   'error.adminUnknownRequest': 'That access request was not found.',
   'error.adminUnknownInvite': 'That invite link was not found.',
