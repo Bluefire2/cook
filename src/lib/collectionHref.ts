@@ -2,6 +2,41 @@ function collectionPath(collectionId: string): string {
   return `/collections/${encodeURIComponent(collectionId)}`;
 }
 
+export type MissingCollectionAction = {
+  /** Replace the URL with `/` once a full pull has shown the id is gone. */
+  redirectHome: boolean;
+  /** Close rename, delete, leave, and share. The URL itself did not change. */
+  resetCollectionSheets: boolean;
+};
+
+/**
+ * What Library should do when `/collections/:id` is not in the loaded list.
+ * `snapshotConfirmed` is true only for the snapshot a full pull published
+ * (shared phase included). An owned-only publish, a slow pull, a sign-out,
+ * and a not-yet-loaded library are not confirmation. `hold` is an owned
+ * delete or a leave of this same id, which must keep its sheet.
+ */
+export function missingCollectionAction(input: {
+  collectionId: string | undefined;
+  /** Undefined until the library has loaded. An empty list has loaded. */
+  collectionIds: readonly string[] | undefined;
+  snapshotConfirmed: boolean;
+  hold: boolean;
+}): MissingCollectionAction {
+  const none: MissingCollectionAction = {
+    redirectHome: false,
+    resetCollectionSheets: false,
+  };
+  if (input.collectionId === undefined || input.collectionId === '') return none;
+  if (input.collectionIds === undefined) return none;
+  if (input.collectionIds.includes(input.collectionId)) return none;
+  if (input.hold) return none;
+  return {
+    redirectHome: input.snapshotConfirmed,
+    resetCollectionSheets: true,
+  };
+}
+
 export function libraryHref(collectionId: string | undefined): string {
   if (collectionId === undefined || collectionId === '') {
     return '/';
