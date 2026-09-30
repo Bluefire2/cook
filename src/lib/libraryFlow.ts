@@ -147,3 +147,47 @@ export function libraryFlowReducer(
 export function sheetError(sheet: LibrarySheet): string | undefined {
   return 'error' in sheet ? sheet.error : undefined;
 }
+
+export type CreateResult = { kind: 'done'; id: string } | { kind: 'stale' };
+
+/**
+ * The create sheet's submit: make (or reuse) the collection, then move the
+ * recipe into it when the create came from Move. `isCurrent` is checked after
+ * each step, before the next one starts, so a create the user cancelled or
+ * left behind cannot go on to move a recipe they have since put elsewhere.
+ * A collection already made stays made. Errors propagate to the caller.
+ */
+export async function runCreate(input: {
+  name: string;
+  created: { id: string; name: string } | undefined;
+  moveRecipeId: string | undefined;
+  isCurrent: () => boolean;
+  create: (name: string) => Promise<{ id: string }>;
+  rename: (id: string, name: string) => Promise<void>;
+  move: (recipeId: string, collectionId: string) => Promise<void>;
+  /** Record the collection so a retry after a failed move reuses it. */
+  onCreated: (created: { id: string; name: string }) => void;
+}): Promise<CreateResult> {
+  const trimmed = input.name.trim();
+  let id: string;
+  if (input.created === undefined) {
+    id = (await input.create(input.name)).id;
+    input.onCreated({ id, name: trimmed });
+  } else {
+    id = input.created.id;
+    if (input.created.name !== trimmed) {
+      await input.rename(id, input.name);
+      input.onCreated({ id, name: trimmed });
+    }
+  }
+  if (!input.isCurrent()) {
+    return { kind: 'stale' };
+  }
+  if (input.moveRecipeId) {
+    await input.move(input.moveRecipeId, id);
+    if (!input.isCurrent()) {
+      return { kind: 'stale' };
+    }
+  }
+  return { kind: 'done', id };
+}

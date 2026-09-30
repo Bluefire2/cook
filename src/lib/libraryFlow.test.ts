@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   initialLibraryFlow,
   libraryFlowReducer,
+  runCreate,
   sheetError,
   type LibraryFlow,
   type LibraryFlowAction,
@@ -143,5 +144,111 @@ describe('libraryFlowReducer', () => {
     });
     const other = run({ type: 'openAdd' });
     expect(libraryFlowReducer(other, { type: 'closeInviteConfirm' })).toBe(other);
+  });
+});
+
+describe('runCreate', () => {
+  function effects(options: { current?: () => boolean; moveFails?: boolean } = {}) {
+    const calls: string[] = [];
+    const recorded: { id: string; name: string }[] = [];
+    return {
+      calls,
+      recorded,
+      input: {
+        isCurrent: options.current ?? (() => true),
+        create: async (name: string) => {
+          calls.push(`create:${name}`);
+          return { id: 'c-new' };
+        },
+        rename: async (id: string, name: string) => {
+          calls.push(`rename:${id}:${name}`);
+        },
+        move: async (recipeId: string, collectionId: string) => {
+          calls.push(`move:${recipeId}:${collectionId}`);
+          if (options.moveFails) {
+            throw new Error('move failed');
+          }
+        },
+        onCreated: (created: { id: string; name: string }) => {
+          recorded.push(created);
+        },
+      },
+    };
+  }
+
+  it('creates, moves the recipe in, and returns the new id', async () => {
+    const fx = effects();
+    const result = await runCreate({ ...fx.input, name: ' Soups ', created: undefined, moveRecipeId: 'r1' });
+    expect(result).toEqual({ kind: 'done', id: 'c-new' });
+    expect(fx.calls).toEqual(['create: Soups ', 'move:r1:c-new']);
+    expect(fx.recorded).toEqual([{ id: 'c-new', name: 'Soups' }]);
+  });
+
+  it('reuses a collection an earlier attempt made, renaming only when the name changed', async () => {
+    const same = effects();
+    await runCreate({
+      ...same.input,
+      name: 'Soups',
+      created: { id: 'c1', name: 'Soups' },
+      moveRecipeId: 'r1',
+    });
+    expect(same.calls).toEqual(['move:r1:c1']);
+
+    const renamed = effects();
+    await runCreate({
+      ...renamed.input,
+      name: 'Stews',
+      created: { id: 'c1', name: 'Soups' },
+      moveRecipeId: undefined,
+    });
+    expect(renamed.calls).toEqual(['rename:c1:Stews']);
+    expect(renamed.recorded).toEqual([{ id: 'c1', name: 'Stews' }]);
+  });
+
+  it('does not move the recipe once the workflow was cancelled or left', async () => {
+    let current = true;
+    const fx = effects({ current: () => current });
+    const create = fx.input.create;
+    const result = await runCreate({
+      ...fx.input,
+      // The user cancels while the create is in flight.
+      create: async (name) => {
+        const made = await create(name);
+        current = false;
+        return made;
+      },
+      name: 'Soups',
+      created: undefined,
+      moveRecipeId: 'r1',
+    });
+    expect(result).toEqual({ kind: 'stale' });
+    expect(fx.calls).toEqual(['create:Soups']);
+    // The collection that landed is still recorded for a retry.
+    expect(fx.recorded).toEqual([{ id: 'c-new', name: 'Soups' }]);
+  });
+
+  it('reports stale when the workflow ends during the move, so the caller does not navigate', async () => {
+    let current = true;
+    const fx = effects({ current: () => current });
+    const move = fx.input.move;
+    const result = await runCreate({
+      ...fx.input,
+      move: async (recipeId, collectionId) => {
+        await move(recipeId, collectionId);
+        current = false;
+      },
+      name: 'Soups',
+      created: undefined,
+      moveRecipeId: 'r1',
+    });
+    expect(result).toEqual({ kind: 'stale' });
+  });
+
+  it('lets a failed move throw after recording the collection', async () => {
+    const fx = effects({ moveFails: true });
+    await expect(
+      runCreate({ ...fx.input, name: 'Soups', created: undefined, moveRecipeId: 'r1' }),
+    ).rejects.toThrow('move failed');
+    expect(fx.recorded).toEqual([{ id: 'c-new', name: 'Soups' }]);
   });
 });

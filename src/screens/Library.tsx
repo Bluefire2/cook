@@ -18,7 +18,7 @@ import {
 } from '../lib/collectionHref';
 import { collectionStore, useCollections, useFullPull } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
-import { initialLibraryFlow, libraryFlowReducer, sheetError } from '../lib/libraryFlow';
+import { initialLibraryFlow, libraryFlowReducer, runCreate, sheetError } from '../lib/libraryFlow';
 import {
   readPersistedLibraryView,
   writePersistedLibraryView,
@@ -100,7 +100,7 @@ export default function Library() {
   const [inviteCopied, setInviteCopied] = useState(false);
   const [inviteNotice, setInviteNotice] = useState<LibraryInviteNotice | null>(null);
   const [inviteQuota, setInviteQuota] = useState<{ id: number; message: string } | null>(null);
-  const inviteMountedRef = useRef(true);
+  const mountedRef = useRef(true);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLAnchorElement>(null);
 
@@ -128,7 +128,10 @@ export default function Library() {
   const collectionName = sheet.kind === 'create' || sheet.kind === 'rename' ? sheet.name : '';
   const collectionError = sheetError(sheet);
   const setCollectionName = (name: string) => dispatch({ type: 'setName', name });
-  const isCurrent = (token: number) => flowRef.current.token === token;
+  // A workflow is current while its sheet is the one open and Library is
+  // still mounted: after unmount, a late result must not navigate away from
+  // the screen the user went to.
+  const isCurrent = (token: number) => mountedRef.current && flowRef.current.token === token;
   const namedIsShared = named ? collectionStore.isShared(named.id) : false;
   const leaveBusy = leavingId !== null && leavingId === collectionId;
   const showSwitcher = (collections?.length ?? 0) > 0;
@@ -154,29 +157,23 @@ export default function Library() {
       return;
     }
     const { token } = flow;
-    const { name, created, moveRecipeId } = sheet;
-    const trimmed = name.trim();
     dispatch({ type: 'submitting', token });
     try {
-      // Reuse the collection a failed attempt already created, so retrying
+      // Reuses the collection a failed attempt already created, so retrying
       // does not leave two folders with the same name behind.
-      let id: string;
-      if (created === undefined) {
-        id = (await collectionStore.create(name)).id;
-        dispatch({ type: 'created', token, created: { id, name: trimmed } });
-      } else {
-        id = created.id;
-        if (created.name !== trimmed) {
-          await collectionStore.rename(id, name);
-          dispatch({ type: 'created', token, created: { id, name: trimmed } });
-        }
-      }
-      if (moveRecipeId) {
-        await collectionStore.moveRecipe(moveRecipeId, id);
-      }
-      if (!isCurrent(token)) return;
+      const result = await runCreate({
+        name: sheet.name,
+        created: sheet.created,
+        moveRecipeId: sheet.moveRecipeId,
+        isCurrent: () => isCurrent(token),
+        create: (name) => collectionStore.create(name),
+        rename: (id, name) => collectionStore.rename(id, name),
+        move: (recipeId, collectionId) => collectionStore.moveRecipe(recipeId, collectionId),
+        onCreated: (created) => dispatch({ type: 'created', token, created }),
+      });
+      if (result.kind === 'stale') return;
       closeSheets();
-      navigate(libraryHref(id));
+      navigate(libraryHref(result.id));
     } catch (err) {
       dispatch({
         type: 'failed',
@@ -280,9 +277,9 @@ export default function Library() {
   };
 
   useEffect(() => {
-    inviteMountedRef.current = true;
+    mountedRef.current = true;
     return () => {
-      inviteMountedRef.current = false;
+      mountedRef.current = false;
     };
   }, []);
 
@@ -322,7 +319,7 @@ export default function Library() {
     }
     try {
       const url = await urlPromise;
-      if (!inviteMountedRef.current) {
+      if (!mountedRef.current) {
         return;
       }
       setInviteQuota(null);
@@ -343,7 +340,7 @@ export default function Library() {
           copied = false;
         }
       }
-      if (!inviteMountedRef.current) {
+      if (!mountedRef.current) {
         return;
       }
       dispatch({ type: 'closeInviteConfirm' });
@@ -357,7 +354,7 @@ export default function Library() {
         showInviteToast('error', t('library.inviteCopyFailed'));
       }
     } catch (err) {
-      if (!inviteMountedRef.current) {
+      if (!mountedRef.current) {
         return;
       }
       const message = err instanceof Error ? err.message : t('common.somethingWentWrong');
@@ -369,7 +366,7 @@ export default function Library() {
       setInviteQuota(null);
       showInviteToast('error', message);
     } finally {
-      if (inviteMountedRef.current) {
+      if (mountedRef.current) {
         setInvitePending(false);
       }
     }
@@ -383,13 +380,13 @@ export default function Library() {
     try {
       await navigator.clipboard.writeText(url);
     } catch {
-      if (!inviteMountedRef.current) {
+      if (!mountedRef.current) {
         return;
       }
       setInviteCopied(false);
       return;
     }
-    if (!inviteMountedRef.current) {
+    if (!mountedRef.current) {
       return;
     }
     setRevealedUrl(null);
