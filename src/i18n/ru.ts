@@ -332,6 +332,8 @@ export const ru: Messages = {
   'share.copy': 'Копировать',
   'share.copied': 'Скопировано',
   'share.noLinks': 'Активных ссылок нет.',
+  'share.linkRejoinWarning':
+    'Человек, которого вы уберёте, может снова присоединиться по активной ссылке. Чтобы этого не случилось, отзовите ссылку.',
   'share.viewerLink': 'Ссылка для читателя',
   'share.editorLink': 'Ссылка для редактора',
   'share.revoke': 'Отозвать',

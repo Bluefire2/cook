@@ -334,6 +334,8 @@ export const uk: Messages = {
   'share.copy': 'Копіювати',
   'share.copied': 'Скопійовано',
   'share.noLinks': 'Активних посилань немає.',
+  'share.linkRejoinWarning':
+    'Людина, яку ви приберете, може знову приєднатися за активним посиланням. Щоб цього не сталося, відкличте посилання.',
   'share.viewerLink': 'Посилання для читача',
   'share.editorLink': 'Посилання для редактора',
   'share.revoke': 'Відкликати',

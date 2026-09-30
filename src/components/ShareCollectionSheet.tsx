@@ -32,6 +32,8 @@ export default function ShareCollectionSheet({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [links, setLinks] = useState<CollectionLink[] | undefined>(undefined);
+  // Link list/mint/revoke errors show in the link block, not under the email form.
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [linkRole, setLinkRole] = useState<GrantRole>('viewer');
   // The raw link is only in this state: the server never returns it again.
   const [minted, setMinted] = useState<MintedLink | null>(null);
@@ -63,7 +65,7 @@ export default function ShareCollectionSheet({
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : t('error.sharingLoad'));
+          setLinkError(err instanceof Error ? err.message : t('error.sharingLoad'));
           setLinks([]);
         }
       });
@@ -83,7 +85,7 @@ export default function ShareCollectionSheet({
   };
 
   const createLink = async () => {
-    setError(null);
+    setLinkError(null);
     setBusy(true);
     setCopied(false);
     try {
@@ -92,22 +94,22 @@ export default function ShareCollectionSheet({
       setMinted({ url: created.url, id: created.linkId });
       await copyUrl(created.url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
+      setLinkError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
       setBusy(false);
     }
   };
 
   const revokeLink = async (linkId: string) => {
-    setError(null);
+    setLinkError(null);
     setBusy(true);
     try {
-      setLinks(await collectionStore.revokeLink(collection.id, linkId));
+      setLinks(await collectionStore.revokeLink(collection.id, linkId, links ?? []));
       if (minted?.id === linkId) {
         setMinted(null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('error.sharingUpdate'));
+      setLinkError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
       setBusy(false);
     }
@@ -233,6 +235,7 @@ export default function ShareCollectionSheet({
           {t('share.copyLink')}
         </button>
       </div>
+      {linkError && <p className="mt-2 text-sm text-danger">{linkError}</p>}
       {mintedUrl !== null && (
         <div className="mt-3">
           <label className="text-xs text-ink-muted" htmlFor="minted-collection-link">
@@ -289,6 +292,10 @@ export default function ShareCollectionSheet({
           </li>
         ))}
       </ul>
+      {links !== undefined && links.length > 0 && (
+        // Once, under the list: Remove above does not stop a live link.
+        <p className="mt-2 text-xs text-ink-muted">{t('share.linkRejoinWarning')}</p>
+      )}
       <button
         type="button"
         onClick={onClose}

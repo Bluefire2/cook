@@ -311,6 +311,7 @@ export const zhHans: Messages = {
   'share.copy': '复制',
   'share.copied': '已复制',
   'share.noLinks': '没有有效的链接。',
+  'share.linkRejoinWarning': '被你移除的人仍可以通过有效链接重新加入。要阻止这种情况，请撤销链接。',
   'share.viewerLink': '查看者链接',
   'share.editorLink': '编辑者链接',
   'share.revoke': '撤销',

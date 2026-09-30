@@ -749,7 +749,12 @@ never admits anyone to Sous. Owner-confirmed decisions:
   twice). Once the write succeeded the response is always 200: if the list
   read after it fails, `links` holds only the new row with `partial: true`
   and the client rereads the list. The sheet hides the shown URL as soon as
-  that `id` is revoked or missing from a refreshed list.
+  that `id` is revoked or missing from a refreshed list. Revoke mirrors
+  this: once it committed the response is 200 with `revokedId`; if the list
+  read fails, `links` is empty with `partial: true`, and the client drops
+  that id, hides its URL, and rereads once. Link errors show in the sheet's
+  link block, and while any link is live one sentence under the list warns
+  that someone removed above can rejoin with it until it is revoked.
 - **Visit.** `GET /c/<token>` is server HTML like `/invite/<token>`. A live
   link sets the `sous_collection_link` hop cookie (`v: 'clink'`, link id
   only, 10 minutes, `Path=/c`) and 303s to `/c/join`, so the token leaves
@@ -802,7 +807,10 @@ Deviations recorded at implementation:
   to the link's owner. The callback only signs in; the join is the POST.
 - **The hop cookie is not copied into the oauth transaction.** It rides the
   round trip on its own `Path=/c` cookie and is cleared on a successful join,
-  the owner's own visit, or a dead link.
+  the owner's own visit, or when `/c/join` receives a hop cookie whose own
+  link is dead. A refused Join POST (403, no `Set-Cookie`), a dead or bogus
+  `/c/<x>`, and a form id that does not match the cookie leave it alone, so
+  none of them can wipe another in-progress join.
 - **Collection delete does not revoke links.** A dead collection already
   fails generically; an undelete within 7 days revives its unexpired links.
 - **A revoked viewer can rejoin** with a link that is still live; revoke the

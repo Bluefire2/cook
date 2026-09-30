@@ -341,6 +341,8 @@ export const en = {
   'share.copy': 'Copy',
   'share.copied': 'Copied',
   'share.noLinks': 'No live links.',
+  'share.linkRejoinWarning':
+    'Someone you remove can still rejoin with a live link. Revoke the link to stop that.',
   'share.viewerLink': 'Viewer link',
   'share.editorLink': 'Editor link',
   'share.revoke': 'Revoke',
