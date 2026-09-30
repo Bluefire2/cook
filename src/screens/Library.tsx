@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useT } from '../i18n';
 import LibraryInviteToast, {
   type LibraryInviteNotice,
@@ -9,13 +9,14 @@ import Sheet from '../components/Sheet';
 import { createInvite } from '../lib/adminApi';
 import { createMemberInvite } from '../lib/inviteApi';
 import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
-import { FolderIcon, PlusIcon, SharedIcon } from '../lib/icons';
-import {
-  collectionStore,
-  libraryHref,
-  useCollections,
-} from '../lib/collectionStore';
+import { FolderIcon, PlusIcon, SettingsIcon, SharedIcon } from '../lib/icons';
+import { importHref, libraryHref, newRecipeHref } from '../lib/collectionHref';
+import { collectionStore, useCollections } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
+import {
+  readPersistedLibraryView,
+  writePersistedLibraryView,
+} from '../lib/librarySearchMemory';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
 import { visibleLibraryRecipes } from '../lib/visibleLibraryRecipes';
@@ -53,17 +54,24 @@ export default function Library() {
   const collections = useCollections();
   const { status: sessionStatus, user } = useSession();
   const syncStatus = useSyncStatus();
-  const [params] = useSearchParams();
+  const { collectionId } = useParams();
   const navigate = useNavigate();
-  const requestedId = params.get('c');
   const named =
-    requestedId && collections
-      ? collections.find((c) => c.id === requestedId)
+    collectionId && collections
+      ? collections.find((c) => c.id === collectionId)
       : undefined;
   const currentId = named?.id;
 
-  const [query, setQuery] = useState('');
-  const [browseAll, setBrowseAll] = useState(false);
+  // The collection the URL shows now. A save that finishes after the user has
+  // moved on must not touch the sheets or the route of the collection they are on.
+  const shownCollectionId = useRef(collectionId);
+  const [query, setQuery] = useState(() => readPersistedLibraryView().query);
+  const [browseAll, setBrowseAll] = useState(
+    () => readPersistedLibraryView().browseAll,
+  );
+  useEffect(() => {
+    writePersistedLibraryView({ query, browseAll });
+  }, [query, browseAll]);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -110,8 +118,8 @@ export default function Library() {
   const moveRecipe = allRecipes?.find((r) => r.id === moveRecipeId);
   const namedIsShared = named ? collectionStore.isShared(named.id) : false;
   const showSwitcher = (collections?.length ?? 0) > 0;
-  const addQuery =
-    currentId && !namedIsShared ? `?c=${encodeURIComponent(currentId)}` : '';
+  const addCollectionId =
+    currentId && !namedIsShared ? currentId : undefined;
   const ownedCollections =
     collections?.filter((collection) => !collectionStore.isShared(collection.id)) ?? [];
 
@@ -185,11 +193,14 @@ export default function Library() {
     if (!currentId) {
       return;
     }
+    const startedOn = shownCollectionId.current;
     setCollectionError(null);
     try {
       await collectionStore.rename(currentId, collectionName);
+      if (shownCollectionId.current !== startedOn) return;
       closeSheets();
     } catch (err) {
+      if (shownCollectionId.current !== startedOn) return;
       setCollectionError(err instanceof Error ? err.message : t('error.collectionSave'));
     }
   };
@@ -198,12 +209,15 @@ export default function Library() {
     if (!currentId) {
       return;
     }
+    const startedOn = shownCollectionId.current;
     setCollectionError(null);
     try {
       await collectionStore.remove(currentId);
+      if (shownCollectionId.current !== startedOn) return;
       closeSheets();
       navigate('/');
     } catch (err) {
+      if (shownCollectionId.current !== startedOn) return;
       setCollectionError(
         err instanceof Error ? err.message : t('error.collectionDelete'),
       );
@@ -214,13 +228,16 @@ export default function Library() {
     if (!currentId) {
       return;
     }
+    const startedOn = shownCollectionId.current;
     setCollectionError(null);
     setLeaveBusy(true);
     try {
       await collectionStore.leave(currentId);
+      if (shownCollectionId.current !== startedOn) return;
       closeSheets();
       navigate('/');
     } catch (err) {
+      if (shownCollectionId.current !== startedOn) return;
       setCollectionError(
         err instanceof Error ? err.message : t('error.leaveCollection'),
       );
@@ -347,9 +364,16 @@ export default function Library() {
     showInviteToast('success', t('library.inviteCopied'));
   };
 
-  useEffect(() => {
+  // Library stays mounted across collection routes, so per-collection state
+  // (open sheets, the typed name, scope) must not leak into the next one.
+  useLayoutEffect(() => {
+    if (shownCollectionId.current === collectionId) return;
+    shownCollectionId.current = collectionId;
     setBrowseAll(false);
-  }, [currentId]);
+    setMenuId(null);
+    setDeleteError(null);
+    closeSheets();
+  }, [collectionId]);
 
   useEffect(() => {
     if (!menuId) return;
@@ -435,8 +459,12 @@ export default function Library() {
           <Link to="/cooks" className={ghostBtn}>
             {t('library.cooks')}
           </Link>
-          <Link to="/settings" className={ghostBtn}>
-            {t('settings.title')}
+          <Link
+            to="/settings"
+            className={`${ghostBtn} inline-flex items-center justify-center px-2 py-2`}
+            aria-label={t('settings.title')}
+          >
+            <SettingsIcon className="block h-5 w-5" />
           </Link>
         </div>
       </header>
@@ -728,13 +756,13 @@ export default function Library() {
         <Sheet onClose={() => setAddOpen(false)}>
           <h2 className="text-lg font-semibold">{t('library.addRecipeTitle')}</h2>
           <Link
-            to={`/import${addQuery}`}
+            to={importHref(addCollectionId)}
             className={`${primaryBtn} mt-3 block py-3 text-center`}
           >
             {t('library.importFromLink')}
           </Link>
           <Link
-            to={`/recipe/new${addQuery}`}
+            to={newRecipeHref(addCollectionId)}
             className={`${secondaryBtn} mt-2 block py-3 text-center`}
           >
             {t('library.writeFromScratch')}

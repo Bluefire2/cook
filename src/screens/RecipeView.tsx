@@ -5,7 +5,7 @@ import { unitLabel } from '../i18n/unitLabel';
 import ChatPanel from '../components/ChatPanel';
 import CookLogCard from '../components/CookLogCard';
 import { useCookLogs } from '../lib/cookLogStore';
-import { SpinnerIcon } from '../lib/icons';
+import { SpinnerIcon, TranslateIcon } from '../lib/icons';
 import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipe } from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
@@ -55,6 +55,9 @@ function ingredientLabel(
   return ing.note ? `${base} (${ing.note})` : base;
 }
 
+const translateChipClass =
+  'inline-flex max-w-full items-center gap-1.5 rounded-full border border-amber-600/70 bg-accent-soft px-3 py-1.5 text-left text-sm font-medium text-ink shadow-sm hover:enabled:opacity-90 active:enabled:opacity-80 disabled:opacity-60';
+
 function TranslateChip({
   mode,
   label,
@@ -66,26 +69,21 @@ function TranslateChip({
   onTranslate: () => void;
   onOriginal: () => void;
 }) {
-  if (mode === 'loading') {
-    return (
-      <button
-        type="button"
-        disabled
-        aria-busy="true"
-        aria-label={label}
-        className={`${ghostBtn} inline-flex items-center`}
-      >
-        <SpinnerIcon className="h-4 w-4 animate-spin" />
-      </button>
-    );
-  }
+  const busy = mode === 'loading';
   return (
     <button
       type="button"
+      disabled={busy}
+      aria-busy={busy ? true : undefined}
       onClick={mode === 'translated' ? onOriginal : onTranslate}
-      className={`${ghostBtn} inline-flex items-center${mode === 'unlabelled' ? ' opacity-70' : ''}`}
+      className={translateChipClass}
     >
-      {label}
+      {busy ? (
+        <SpinnerIcon className="h-4 w-4 shrink-0 animate-spin" />
+      ) : (
+        <TranslateIcon className="h-4 w-4 shrink-0" />
+      )}
+      <span className="min-w-0 text-left">{label}</span>
     </button>
   );
 }
@@ -312,26 +310,31 @@ export default function RecipeView() {
           <p className="mt-1 text-ink-muted">{displayRecipe.description}</p>
         )}
         {(hasTime || mode !== 'hidden') && (
-          <p className="mt-2 flex flex-wrap items-center gap-x-1.5 text-sm text-ink-muted">
-            {recipe.prepMinutes != null && (
-              <span>{t('recipe.prepMinutes', { count: recipe.prepMinutes })}</span>
+          <div className="mt-2 text-sm">
+            {hasTime && (
+              <p className="flex flex-wrap items-center gap-x-1.5 text-ink-muted">
+                {recipe.prepMinutes != null && (
+                  <span>{t('recipe.prepMinutes', { count: recipe.prepMinutes })}</span>
+                )}
+                {recipe.prepMinutes != null && recipe.cookMinutes != null && (
+                  <span aria-hidden="true">·</span>
+                )}
+                {recipe.cookMinutes != null && (
+                  <span>{t('recipe.cookMinutes', { count: recipe.cookMinutes })}</span>
+                )}
+              </p>
             )}
-            {recipe.prepMinutes != null && recipe.cookMinutes != null && (
-              <span aria-hidden="true">·</span>
-            )}
-            {recipe.cookMinutes != null && (
-              <span>{t('recipe.cookMinutes', { count: recipe.cookMinutes })}</span>
-            )}
-            {/* No "·" before the chip: it is a button, and a separator left at a line end when it wraps. */}
             {mode !== 'hidden' && (
-              <TranslateChip
-                mode={mode}
-                label={chipLabel}
-                onTranslate={onTranslate}
-                onOriginal={onOriginal}
-              />
+              <div className={hasTime ? 'mt-2' : undefined}>
+                <TranslateChip
+                  mode={mode}
+                  label={chipLabel}
+                  onTranslate={onTranslate}
+                  onOriginal={onOriginal}
+                />
+              </div>
             )}
-          </p>
+          </div>
         )}
         {showAlready && (
           <p
