@@ -278,6 +278,36 @@ describe('recipeStore.save photo cleanup', () => {
     });
   });
 
+  it('still deletes a later removed photo when an earlier delete throws', async () => {
+    upsertRecipe(storedRecipe());
+    addPendingBlob(NEW_COVER, jpeg('cover'));
+    addPendingBlob(NEW_GALLERY, jpeg('gallery'));
+    vi.mocked(postPhoto).mockResolvedValue('ok');
+    vi.mocked(pushOps).mockImplementation(async (ops) => {
+      if (ops.some((op) => op.kind === 'photo.delete' && op.payload.id === OLD_COVER)) {
+        throw new Error('delete blew up');
+      }
+      return 'ok';
+    });
+
+    await recipeStore.save({
+      ...storedRecipe(),
+      title: 'Landed',
+      photoId: NEW_COVER,
+      galleryPhotoIds: [NEW_GALLERY],
+    });
+
+    expect(photoDeletes().map((op) => (op.kind === 'photo.delete' ? op.payload.id : ''))).toEqual([
+      OLD_COVER,
+      OLD_GALLERY,
+    ]);
+    expect(getRecipe(RECIPE_ID)).toMatchObject({
+      title: 'Landed',
+      photoId: NEW_COVER,
+      galleryPhotoIds: [NEW_GALLERY],
+    });
+  });
+
   it('does not tombstone a photo a concurrent save already committed', async () => {
     upsertRecipe(storedRecipe());
     addPendingBlob(NEW_GALLERY, jpeg('gallery'));
@@ -366,6 +396,7 @@ describe('recipeStore.save photo cleanup', () => {
     expect(photoDeletes()).toEqual([
       { kind: 'photo.delete', payload: { id: NEW_GALLERY, updatedAt: expect.any(Number) } },
     ]);
+    expect(getSnapshot().remotePhotoIds.has(NEW_GALLERY)).toBe(false);
   });
 
   it('does not tombstone a photo a sibling save may have committed', async () => {
@@ -422,6 +453,83 @@ describe('recipeStore.save photo cleanup', () => {
     ).rejects.toThrow(t('error.recipeSave'));
     expect(photoDeletes()).toEqual([]);
     expect(getSnapshot().remotePhotoIds.has(NEW_GALLERY)).toBe(true);
+  });
+
+  it('tombstones a photo the other save released while this delete was in flight', async () => {
+    upsertRecipe(storedRecipe());
+    addPendingBlob(NEW_COVER, jpeg('cover'));
+    addPendingBlob(NEW_GALLERY, jpeg('gallery'));
+    vi.mocked(postPhoto).mockResolvedValue('ok');
+
+    let releaseCoverDelete: () => void = () => {};
+    const coverDeleteGate = new Promise<void>((resolve) => {
+      releaseCoverDelete = resolve;
+    });
+    let markCoverDeleteStarted: () => void = () => {};
+    const coverDeleteStarted = new Promise<void>((resolve) => {
+      markCoverDeleteStarted = resolve;
+    });
+    let releaseSecondPut: () => void = () => {};
+    const secondPutGate = new Promise<void>((resolve) => {
+      releaseSecondPut = resolve;
+    });
+    let markSecondPutStarted: () => void = () => {};
+    const secondPutStarted = new Promise<void>((resolve) => {
+      markSecondPutStarted = resolve;
+    });
+
+    const secondSaves: Promise<void>[] = [];
+    let puts = 0;
+    vi.mocked(pushOps).mockImplementation(async (ops) => {
+      const deleteIds = ops.flatMap((op) => (op.kind === 'photo.delete' ? [op.payload.id] : []));
+      if (deleteIds.includes(NEW_COVER)) {
+        markCoverDeleteStarted();
+        await coverDeleteGate;
+        return 'ok';
+      }
+      if (deleteIds.length > 0) {
+        return 'ok';
+      }
+      puts += 1;
+      if (puts === 1) {
+        const current = getRecipe(RECIPE_ID);
+        secondSaves.push(
+          recipeStore.save({
+            ...current!,
+            title: 'Second',
+            photoId: OLD_COVER,
+            galleryPhotoIds: [NEW_GALLERY],
+          }),
+        );
+        await secondPutStarted;
+        return 'invalid';
+      }
+      markSecondPutStarted();
+      await secondPutGate;
+      return 'invalid';
+    });
+
+    const first = recipeStore.save({
+      ...storedRecipe(),
+      title: 'First',
+      photoId: NEW_COVER,
+      galleryPhotoIds: [NEW_GALLERY],
+    });
+    // A is blocked deleting its own orphan cover. B lists only the gallery
+    // photo, fails, and releases before A's delete finishes.
+    await coverDeleteStarted;
+    releaseSecondPut();
+    await expect(secondSaves[0]).rejects.toThrow(t('error.recipeSave'));
+    releaseCoverDelete();
+    await expect(first).rejects.toThrow(t('error.recipeSave'));
+
+    expect(postPhoto).toHaveBeenCalledTimes(2);
+    expect(photoDeletes().map((op) => (op.kind === 'photo.delete' ? op.payload.id : ''))).toEqual([
+      NEW_COVER,
+      NEW_GALLERY,
+    ]);
+    expect(getSnapshot().remotePhotoIds.has(NEW_COVER)).toBe(false);
+    expect(getSnapshot().remotePhotoIds.has(NEW_GALLERY)).toBe(false);
   });
 
   it('does not tombstone when the upload signs the user out', async () => {
