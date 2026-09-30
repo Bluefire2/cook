@@ -38,18 +38,9 @@ import { recipePhotoIds } from './recipePhotos';
 import type { Recipe, RecipeDraft } from './types';
 import type { PushOp } from './pushOps';
 import { isDiscardedPushReason } from './pushReasons';
+import { SessionExpiredError } from './sessionExpired';
 
 export { compactRecipe };
-
-/**
- * A 401/403 from the server. The message is the usual sign-in prompt; the type
- * lets a rollback tell sign-out apart without reading the text.
- */
-class SessionExpiredError extends Error {
-  constructor() {
-    super(t('error.sessionExpired'));
-  }
-}
 
 /**
  * A create that did not stick. The message is the error to show. Its staged

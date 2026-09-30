@@ -10,6 +10,7 @@ import {
 } from './libraryMemory';
 import { useLibrarySlice } from './useLibrary';
 import { postPhoto, pushOps } from './remote';
+import { SessionExpiredError } from './sessionExpired';
 import type { ChatMessage } from './types';
 
 async function uploadMessagePhotos(message: ChatMessage): Promise<void> {
@@ -20,9 +21,7 @@ async function uploadMessagePhotos(message: ChatMessage): Promise<void> {
     }
     const result = await postPhoto(photoId, message.recipeId, message.createdAt, blob);
     if (result !== 'ok') {
-      throw new Error(
-        result === 'signedOut' ? t('error.sessionExpired') : t('error.photoSave'),
-      );
+      throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.photoSave'));
     }
     markPhotoRemote(photoId);
   }
@@ -47,11 +46,13 @@ export const chatStore = {
       await uploadMessagePhotos(message);
       const result = await pushOps([{ kind: 'chat.put', payload: message }]);
       if (result !== 'ok') {
-        throw new Error(
-          result === 'signedOut' ? t('error.sessionExpired') : t('error.messageSave'),
-        );
+        throw result === 'signedOut' ? new SessionExpiredError() : new Error(t('error.messageSave'));
       }
     } catch (err) {
+      if (err instanceof SessionExpiredError) {
+        // The 401 cleared the library already; write nothing back into it.
+        throw err;
+      }
       clearChatLocal(data.recipeId);
       for (const existing of previous) {
         upsertChat(existing);
@@ -68,13 +69,15 @@ export const chatStore = {
     const result = await pushOps([
       { kind: 'chat.clearForRecipe', payload: { recipeId, at } },
     ]);
+    if (result === 'signedOut') {
+      // The 401 cleared the library already; write nothing back into it.
+      throw new SessionExpiredError();
+    }
     if (result !== 'ok') {
       for (const message of previous) {
         upsertChat(message);
       }
-      throw new Error(
-        result === 'signedOut' ? t('error.sessionExpired') : t('error.chatClear'),
-      );
+      throw new Error(t('error.chatClear'));
     }
   },
 };
