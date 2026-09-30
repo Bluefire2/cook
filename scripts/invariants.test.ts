@@ -123,28 +123,12 @@ describe('deploy', () => {
 });
 
 describe('AGENTS.md plan table', () => {
-  // Plans named in AGENTS.md that are not on main yet. Remove an entry once the
-  // plan is merged or its row is dropped; the second test makes that happen.
-  const KNOWN_MISSING = new Set<string>([
-    // Only on the local `deploy-and-end-state` branch (bc35524), never merged.
-    'docs/plans/deploy-and-end-state.md',
-  ]);
-  const referenced = [
-    ...new Set([...read('AGENTS.md').matchAll(/docs\/plans\/[\w.-]+\.md/g)].map((m) => m[0])),
-  ].sort();
-
   it('every docs/plans path in AGENTS.md exists', () => {
-    const missing = referenced.filter(
-      (path) => !existsSync(join(repoRoot, path)) && !KNOWN_MISSING.has(path),
-    );
+    const referenced = [
+      ...new Set([...read('AGENTS.md').matchAll(/docs\/plans\/[\w.-]+\.md/g)].map((m) => m[0])),
+    ].sort();
+    const missing = referenced.filter((path) => !existsSync(join(repoRoot, path)));
     expect(missing).toEqual([]);
-  });
-
-  it('KNOWN_MISSING lists only paths that are still referenced and still missing', () => {
-    const stale = [...KNOWN_MISSING].filter(
-      (path) => !referenced.includes(path) || existsSync(join(repoRoot, path)),
-    );
-    expect(stale).toEqual([]);
   });
 });
 

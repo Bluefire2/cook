@@ -344,7 +344,6 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/invitation-flow.md` | In progress on branch `invitation-flow` (request access → `/admin` → Firestore membership). |
 | `docs/plans/invite-links.md` | Built. Single-use 7-day bearer invite links that admit on Google consent. Owners mint from `/admin`. |
 | `docs/plans/member-invite-links.md` | Built. A non-owner member mints one link from Settings (`POST /api/invites`). Not deployed. |
-| `docs/plans/deploy-and-end-state.md` | Production cutover (`sous-00004-mpx`) and consent In production done. |
 | `docs/plans/server-backed-library.md` | Done: drop IndexedDB; in-memory library over pull/push. |
 | `docs/plans/ask-voice-stt.md` | Implementing. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
