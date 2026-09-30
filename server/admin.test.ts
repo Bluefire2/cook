@@ -491,7 +491,7 @@ describe('adminDecisionPost approval email', () => {
     expect(text).not.toContain('Nadya Petrova');
   });
 
-  it('sends the no-url body when PUBLIC_ORIGIN is unset', async () => {
+  it('skips the send when PUBLIC_ORIGIN is unset', async () => {
     delete process.env.PUBLIC_ORIGIN;
     vi.mocked(members.applyDecision).mockResolvedValue({
       kind: 'ok',
@@ -501,10 +501,10 @@ describe('adminDecisionPost approval email', () => {
     const response = await decision({ sub: 'other-user', action: 'approve' });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual(serializeAccessRequestLists(emptyLists));
-    expect(mail.sendMail).toHaveBeenCalledTimes(1);
-    const text = vi.mocked(mail.sendMail).mock.calls[0]?.[0].text ?? '';
-    expect(text).toBe('Your request for Sous was approved.\nSign in again.');
-    expect(text).not.toContain('http');
+    expect(mail.sendMail).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log).mock.calls).toEqual([
+      ['approval email skipped: PUBLIC_ORIGIN unset'],
+    ]);
   });
 
   it('keeps the 200 JSON when sendMail returns false', async () => {
@@ -534,7 +534,7 @@ describe('adminDecisionPost approval email', () => {
     expect(console.log).toHaveBeenCalledWith('approval email failed');
   });
 
-  it.each(['', 'person @example.com', 'a@b.com,c@d.com'])(
+  it.each(['', '   ', 'person @example.com', 'a@b.com,c@d.com'])(
     'skips sendMail for stored email %j and logs a fixed line',
     async (email) => {
       vi.mocked(members.applyDecision).mockResolvedValue({
@@ -546,11 +546,9 @@ describe('adminDecisionPost approval email', () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual(serializeAccessRequestLists(emptyLists));
       expect(mail.sendMail).not.toHaveBeenCalled();
-      const line =
-        email.trim() === ''
-          ? 'approval email skipped: missing recipient'
-          : 'approval email skipped: invalid recipient';
-      expect(vi.mocked(console.log).mock.calls).toEqual([[line]]);
+      expect(vi.mocked(console.log).mock.calls).toEqual([
+        ['approval email skipped: invalid recipient'],
+      ]);
     },
   );
 
