@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { clearLibrary, discardLegacyCookDb, markLoaded } from './lib/libraryMemory';
-import { fetchSession } from './lib/session';
+import { fetchSession, setupSessionTriggers } from './lib/session';
 import { setupSyncTriggers, triggerSyncAfterSession } from './lib/syncEngine';
 import { applyLocale, settings } from './lib/settings';
 import { applyTheme } from './lib/theme';
@@ -22,6 +22,7 @@ createRoot(document.getElementById('root')!).render(
 );
 
 setupSyncTriggers();
+setupSessionTriggers();
 
 void fetchSession()
   .then((result) => {

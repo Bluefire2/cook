@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import { clearLibrary } from './libraryMemory';
 import { clearPersistedLibraryView } from './librarySearchMemory';
 
@@ -89,7 +89,9 @@ export function invalidateSession(): void {
   notifySessionReset();
 }
 
-export async function fetchSession(): Promise<FetchSessionResult> {
+let sessionRequest: Promise<FetchSessionResult> | null = null;
+
+async function loadSession(): Promise<FetchSessionResult> {
   try {
     const response = await fetch('/api/auth/session', {
       credentials: 'same-origin',
@@ -117,6 +119,56 @@ export async function fetchSession(): Promise<FetchSessionResult> {
     publish({ user: cached, status: 'offline' });
     return { status: 'offline', user: cached };
   }
+}
+
+/**
+ * One network read at a time. A tab return and a reconnect can ask together,
+ * and the boot read in main.tsx can still be in flight; they share this
+ * promise. A later call, after it settles, hits the network again.
+ * A non-ok response or a thrown fetch stays offline (cached user kept).
+ * Only 401, 403, and a signed-in body with no user sign the reader out.
+ */
+export function fetchSession(): Promise<FetchSessionResult> {
+  if (sessionRequest) {
+    return sessionRequest;
+  }
+  let resolve!: (result: FetchSessionResult) => void;
+  let reject!: (reason: unknown) => void;
+  const request = new Promise<FetchSessionResult>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  sessionRequest = request;
+  // Drop the slot before resolving so a caller that continues after await
+  // starts a new read. Clearing in finally runs too late: that continuation
+  // is queued ahead of it and would reuse the finished promise.
+  const finish = (settle: () => void) => {
+    if (sessionRequest === request) {
+      sessionRequest = null;
+    }
+    settle();
+  };
+  void loadSession().then(
+    (result) => finish(() => resolve(result)),
+    (reason: unknown) => finish(() => reject(reason)),
+  );
+  return request;
+}
+
+/**
+ * Registered once from main, like the sync triggers. Each mounted useSession
+ * used to add its own pair, so one tab return fetched the session once per
+ * open screen.
+ */
+export function setupSessionTriggers(): void {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      void fetchSession();
+    }
+  });
+  window.addEventListener('online', () => {
+    void fetchSession();
+  });
 }
 
 export function signInHref(returnTo: string): string {
@@ -152,23 +204,6 @@ export function useSession(): {
 
   const refresh = useCallback(async () => {
     await fetchSession();
-  }, []);
-
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
-        void fetchSession();
-      }
-    };
-    const onOnline = () => {
-      void fetchSession();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('online', onOnline);
-    return () => {
-      document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('online', onOnline);
-    };
   }, []);
 
   return { user: current.user, status: current.status, refresh };
