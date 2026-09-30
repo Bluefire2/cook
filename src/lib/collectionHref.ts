@@ -1,42 +1,38 @@
-import type { SyncStatusKind } from './syncEngine';
-
 function collectionPath(collectionId: string): string {
   return `/collections/${encodeURIComponent(collectionId)}`;
 }
 
 export type MissingCollectionAction = {
-  /** `replace` target once a successful sync has shown the id is gone. */
-  redirectTo: '/' | null;
+  /** Replace the URL with `/` once a full pull has shown the id is gone. */
+  redirectHome: boolean;
   /** Close rename, delete, leave, and share. The URL itself did not change. */
   resetCollectionSheets: boolean;
 };
 
 /**
  * What Library should do when `/collections/:id` is not in the loaded list.
- * A slow or failed pull must not send a still-valid collection home: that
- * requires sync status `idle` after a success (`lastSyncedAt` set). An owned
- * delete removes the collection locally before the server answers, so both
- * actions wait until that request settles.
+ * `snapshotConfirmed` is true only for the snapshot a full pull published
+ * (shared phase included). An owned-only publish, a slow pull, a sign-out,
+ * and a not-yet-loaded library are not confirmation. `hold` is an owned
+ * delete or a leave of this same id, which must keep its sheet.
  */
 export function missingCollectionAction(input: {
   collectionId: string | undefined;
   /** Undefined until the library has loaded. An empty list has loaded. */
   collectionIds: readonly string[] | undefined;
-  syncStatus: SyncStatusKind;
-  lastSyncedAt: number | null;
-  deleteInFlight: boolean;
+  snapshotConfirmed: boolean;
+  hold: boolean;
 }): MissingCollectionAction {
   const none: MissingCollectionAction = {
-    redirectTo: null,
+    redirectHome: false,
     resetCollectionSheets: false,
   };
   if (input.collectionId === undefined || input.collectionId === '') return none;
   if (input.collectionIds === undefined) return none;
   if (input.collectionIds.includes(input.collectionId)) return none;
-  if (input.deleteInFlight) return none;
-  const confirmed = input.syncStatus === 'idle' && input.lastSyncedAt !== null;
+  if (input.hold) return none;
   return {
-    redirectTo: confirmed ? '/' : null,
+    redirectHome: input.snapshotConfirmed,
     resetCollectionSheets: true,
   };
 }

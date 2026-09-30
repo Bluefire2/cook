@@ -35,19 +35,20 @@ the other plans that still say `/?c=`).
    on the SPA fallback.
 3. `Library` reads `useParams().collectionId` as the requested id.
    `currentId` is set only when the id matches a loaded collection.
-   Once that load came from a successful sync and the id is not among
-   the collections, `Library` `replace`-navigates to `/`. The client
-   signal for that success is sync status `idle` with `lastSyncedAt`
-   set (`missingCollectionAction` in `src/lib/collectionHref.ts`).
-   Status `loading`, `error`, or `signedOut`, or `lastSyncedAt === null`,
-   stays on the URL and shows the unfiled list, so a slow or failed
-   first pull does not send a still-valid collection home. An owned
-   delete removes the collection locally before the server answers;
-   while that request is in flight the redirect waits, so a failed
-   delete can still show its error in the sheet. Amended for issue #58.
-   The earlier rule (unknown id stays on the URL and shows the unfiled
-   list, with no redirect) made revocation and stale Back look like the
-   default library.
+   Once the snapshot on screen came from a pull whose shared phase
+   succeeded (`fullPull` on the library snapshot, set in
+   `replaceFromPullWithShared` and cleared in `replaceFromPull`) and
+   the id is not among the collections, `Library` `replace`-navigates
+   to `/`. An owned-only publish, a pull that has not finished, and a
+   sign-out (`clearLibrary` clears `fullPull`) stay on the URL and show
+   the unfiled list. Idle status after a superseded pull does not
+   confirm an older owned-only snapshot. An owned delete and a leave
+   hold the redirect and the sheet reset only for that collection's id,
+   so a failed delete or leave can still show its error, and Back to a
+   different missing collection is not stuck on the in-flight one.
+   Amended for issue #58. The earlier rule (unknown id stays on the URL
+   and shows the unfiled list, with no redirect) made revocation and
+   stale Back look like the default library.
 4. There are no legacy `?c=` redirects. The first version of this plan
    redirected `/?c=`, `/import?c=`, and `/recipe/new?c=`; that was
    removed on purpose. `Library`, `ImportScreen`, and `RecipeEdit` take
@@ -70,10 +71,17 @@ the other plans that still say `/?c=`).
    the new collection.
    Rename, delete, leave, and share also reset when the loaded library
    no longer contains the path's id, even though the URL has not changed
-   yet. Without that, the sheet is only hidden by its `named &&` guard:
-   the flag still swallows Escape, and the sheet reappears if the
-   collection comes back. The in-flight owned delete in Decision 3 is
-   the exception, so its error still has a sheet if the delete rolls back.
+   yet. `closeCollectionSheets` is the one list of those flags;
+   `closeSheets` calls it. The reset runs only while one of those sheets
+   is open, and it does not clear the name or error Create and Move
+   share. A leave or delete that is already showing its error stays
+   open. Without the reset, the sheet is only hidden by its `named &&`
+   guard: the flag still swallows Escape, and the sheet reappears if
+   the collection comes back. The in-flight delete and leave in
+   Decision 3 are the other exception, so a rolled-back failure still
+   has a sheet. The leave sheet keeps the collection name it opened
+   with, so a failed refresh that drops shared rows can still show
+   that error.
 8. Search text and the All collections scope are kept in
    `sessionStorage` under `cook.librarySearch`
    (`src/lib/librarySearchMemory.ts`) so they also survive leaving

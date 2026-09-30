@@ -306,3 +306,12 @@ export function useCollections(): Collection[] | undefined {
   }, [snap]);
 }
 
+function readFullPull(): boolean {
+  return getSnapshot().fullPull;
+}
+
+/** True when the rows on screen came from a pull that included shared collections. */
+export function useFullPull(): boolean {
+  return useSyncExternalStore(subscribe, readFullPull);
+}
+

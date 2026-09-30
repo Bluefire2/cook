@@ -43,60 +43,41 @@ describe('missingCollectionAction', () => {
   const gone = {
     collectionId: 'gone',
     collectionIds: ['kept'] as readonly string[] | undefined,
-    syncStatus: 'idle' as const,
-    lastSyncedAt: 1 as number | null,
-    deleteInFlight: false,
+    snapshotConfirmed: true,
+    hold: false,
   };
+  const stay = { redirectHome: false, resetCollectionSheets: false };
 
-  it('replace-navigates once a successful sync has loaded a library without that id', () => {
+  it('replace-navigates when a full pull published a library without that id', () => {
     expect(missingCollectionAction(gone)).toEqual({
-      redirectTo: '/',
+      redirectHome: true,
       resetCollectionSheets: true,
     });
     expect(missingCollectionAction({ ...gone, collectionIds: [] })).toEqual({
-      redirectTo: '/',
+      redirectHome: true,
       resetCollectionSheets: true,
     });
   });
 
   it('does nothing on the default library or when the id is still listed', () => {
-    expect(missingCollectionAction({ ...gone, collectionId: undefined })).toEqual({
-      redirectTo: null,
-      resetCollectionSheets: false,
-    });
-    expect(missingCollectionAction({ ...gone, collectionId: '' })).toEqual({
-      redirectTo: null,
-      resetCollectionSheets: false,
-    });
-    expect(missingCollectionAction({ ...gone, collectionIds: ['gone', 'kept'] })).toEqual({
-      redirectTo: null,
-      resetCollectionSheets: false,
-    });
+    expect(missingCollectionAction({ ...gone, collectionId: undefined })).toEqual(stay);
+    expect(missingCollectionAction({ ...gone, collectionId: '' })).toEqual(stay);
+    expect(missingCollectionAction({ ...gone, collectionIds: ['gone', 'kept'] })).toEqual(stay);
   });
 
   it('waits until the library has loaded', () => {
-    expect(missingCollectionAction({ ...gone, collectionIds: undefined })).toEqual({
-      redirectTo: null,
-      resetCollectionSheets: false,
+    expect(missingCollectionAction({ ...gone, collectionIds: undefined })).toEqual(stay);
+  });
+
+  it('does not redirect an owned-only or not-yet-published snapshot', () => {
+    expect(missingCollectionAction({ ...gone, snapshotConfirmed: false })).toEqual({
+      redirectHome: false,
+      resetCollectionSheets: true,
     });
   });
 
-  it('does not redirect on a slow, failed, signed-out, or not-yet-successful sync', () => {
-    for (const syncStatus of ['loading', 'error', 'signedOut'] as const) {
-      const action = missingCollectionAction({ ...gone, syncStatus });
-      expect(action.redirectTo).toBe(null);
-      expect(action.resetCollectionSheets).toBe(true);
-    }
-    const notYet = missingCollectionAction({ ...gone, lastSyncedAt: null });
-    expect(notYet.redirectTo).toBe(null);
-    expect(notYet.resetCollectionSheets).toBe(true);
-  });
-
-  it('holds the redirect and the sheets while an owned delete is in flight', () => {
-    expect(missingCollectionAction({ ...gone, deleteInFlight: true })).toEqual({
-      redirectTo: null,
-      resetCollectionSheets: false,
-    });
+  it('holds the redirect and the sheets for this collection delete or leave', () => {
+    expect(missingCollectionAction({ ...gone, hold: true })).toEqual(stay);
   });
 });
 
