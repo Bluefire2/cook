@@ -401,7 +401,9 @@ export default function Library() {
         menuTriggerRef.current?.focus();
         return;
       }
-      // The share sheet handles its own Escape.
+      // A rendered Sheet takes Escape first (capture phase) and stops it, so
+      // this only clears a sheet state that rendered nothing, such as a
+      // delete confirmation whose recipe vanished in a refresh.
       if (sheet.kind !== 'closed' && sheet.kind !== 'share') {
         event.preventDefault();
         closeSheets();
