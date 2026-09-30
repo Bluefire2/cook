@@ -313,7 +313,13 @@ export async function importLibrary(
   );
 
   const previous = captureSnapshot();
-  return withLocalWrite(async () => {
+  // A throw inside the callback skips the follow-up read. A recipe phase that
+  // already returned ok has to return `reconcile: true` instead, then the
+  // import rejects after that read. Otherwise an overlapping pull is discarded
+  // and the restored snapshot hides rows the server accepted.
+  let failure: unknown;
+  const outcome = await withLocalWrite(async () => {
+    let recipesLanded = false;
     try {
       for (const photo of photos) {
         addPendingBlob(photo.id, photo.blob);
@@ -336,8 +342,9 @@ export async function importLibrary(
 
       // Remote import is best-effort across requests. Recipe puts are
       // acknowledged before photo bytes and dependent puts. A failure after
-      // the recipe phase can leave accepted server rows; the next refresh
-      // reveals them. restoreSnapshot undoes this local copy.
+      // the recipe phase can leave accepted server rows. restoreSnapshot
+      // undoes the optimistic tail so chat and cook rows the server never
+      // stored are not shown when nothing is in flight to reread.
       const recipeOps: PushOp[] = importRecipes.map((recipe) => ({
         kind: 'recipe.put',
         payload: recipe,
@@ -346,6 +353,7 @@ export async function importLibrary(
       if (recipeResult !== 'ok') {
         throw importPushError(recipeResult);
       }
+      recipesLanded = true;
 
       for (const [photoId, recipeId] of photoAttribution) {
         const photo = photos.find((p) => p.id === photoId);
@@ -388,7 +396,12 @@ export async function importLibrary(
       return { value: { imported: importRecipes.length, skipped }, reconcile: true };
     } catch (err) {
       restoreSnapshot(previous);
-      throw err;
+      failure = err;
+      return { value: { imported: 0, skipped }, reconcile: recipesLanded };
     }
   });
+  if (failure) {
+    throw failure;
+  }
+  return outcome;
 }

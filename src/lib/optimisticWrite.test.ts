@@ -1,21 +1,32 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { importLibrary } from './backup';
 import { chatStore } from './chatStore';
 import { collectionStore } from './collectionStore';
 import { cookLogStore } from './cookLogStore';
 import {
   clearLibrary,
+  getCollection,
   getCook,
   getCookLog,
   getRecipe,
+  getSnapshot,
   listChat,
   listCollections,
   localWritesOpen,
   replaceFromPull,
 } from './libraryMemory';
-import { pushOps, type PullChanges, type PullPage, type SharedPullPage } from './remote';
+import { photoStore } from './photoStore';
+import {
+  pullPage,
+  pullSharedPage,
+  pushOps,
+  type PullChanges,
+  type PullPage,
+  type SharedPullPage,
+} from './remote';
 import { recipeStore } from './recipeStore';
-import { pullAll } from './syncEngine';
-import type { Recipe } from './types';
+import { pullAll, sync } from './syncEngine';
+import type { Collection, Recipe } from './types';
 import { updateCookState, type CookStateRow } from './useCookState';
 
 vi.mock('./remote', async (importOriginal) => {
@@ -24,10 +35,17 @@ vi.mock('./remote', async (importOriginal) => {
     ...actual,
     pushOps: vi.fn(async () => 'ok' as const),
     postPhoto: vi.fn(async () => 'ok' as const),
+    pullPage: vi.fn(),
+    pullSharedPage: vi.fn(),
   };
 });
 
 const RECIPE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const OTHER_RECIPE_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const CHAT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const PHOTO_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+const COLLECTION_A = '11111111-1111-4111-8111-111111111111';
+const COLLECTION_B = '22222222-2222-4222-8222-222222222222';
 
 function recipe(title = 'Soup'): Recipe {
   return {
@@ -80,6 +98,10 @@ function sharedPage(): SharedPullPage {
   };
 }
 
+function collection(id: string, name: string, recipeIds: string[]): Collection {
+  return { id, name, recipeIds, createdAt: 1, updatedAt: 2 };
+}
+
 function seed(base: Recipe = recipe(), row: CookStateRow = cook(0)): void {
   replaceFromPull({
     recipes: new Map([[base.id, base]]),
@@ -89,6 +111,41 @@ function seed(base: Recipe = recipe(), row: CookStateRow = cook(0)): void {
     cookLogs: new Map(),
     remotePhotoIds: new Set(),
   });
+}
+
+function gate<T>(): { promise: Promise<T>; release: (value: T) => void } {
+  let release: (value: T) => void = () => {};
+  const promise = new Promise<T>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
+
+/**
+ * The app-open pull, as `sync` runs it: this sets `flight`, which is what
+ * `localWriteOverlapsPull` and the follow-up reread look at. `pullAll` alone
+ * does not.
+ */
+function startSync(first: PullPage, second: PullPage): {
+  pending: Promise<void>;
+  releaseFirst: () => void;
+  releaseSecond: () => void;
+} {
+  const firstGate = gate<PullPage>();
+  const secondGate = gate<PullPage>();
+  let calls = 0;
+  vi.mocked(pullPage).mockImplementation(() => {
+    calls += 1;
+    return calls === 1 ? firstGate.promise : secondGate.promise;
+  });
+  vi.mocked(pullSharedPage).mockResolvedValue(sharedPage());
+  localStorage.setItem('cook.session', '{"sub":"me"}');
+  const pending = sync();
+  return {
+    pending,
+    releaseFirst: () => firstGate.release(first),
+    releaseSecond: () => secondGate.release(second),
+  };
 }
 
 /** A pull that has captured its epoch and is waiting on the first page. */
@@ -107,10 +164,33 @@ function startPull(page: PullPage): {
   return { pending, release };
 }
 
+beforeEach(() => {
+  const store = new Map<string, string>();
+  globalThis.localStorage = {
+    getItem: (key) => store.get(key) ?? null,
+    setItem: (key, value) => {
+      store.set(key, value);
+    },
+    removeItem: (key) => {
+      store.delete(key);
+    },
+    clear: () => {
+      store.clear();
+    },
+    key: (index) => [...store.keys()][index] ?? null,
+    get length() {
+      return store.size;
+    },
+  };
+});
+
 afterEach(() => {
   clearLibrary();
   vi.mocked(pushOps).mockReset();
   vi.mocked(pushOps).mockResolvedValue('ok');
+  vi.mocked(pullPage).mockReset();
+  vi.mocked(pullSharedPage).mockReset();
+  localStorage.clear();
 });
 
 describe('optimistic writes vs an in-flight pull', () => {
@@ -329,5 +409,288 @@ describe('optimistic writes vs an in-flight pull', () => {
 
     expect(result.outcome).toBe('ok');
     expect(getCookLog(log.id)).toBeUndefined();
+  });
+
+  it('rereads after a cook tap that overlapped the app-open pull', async () => {
+    const base = recipe();
+    seed(base, cook(0));
+    const other = { ...recipe('From another device'), id: OTHER_RECIPE_ID };
+    const flight = startSync(
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+      ownedPage(
+        ownedChanges({
+          recipes: [pullDoc(base), pullDoc(other)],
+          cookState: [pullDoc(cook(1))],
+        }),
+      ),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    const writing = updateCookState(base, (prev) => ({ ...prev, currentStep: 1 }));
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalled());
+    flight.releaseFirst();
+    flight.releaseSecond();
+    await writing;
+    await flight.pending;
+
+    expect(pullPage).toHaveBeenCalledTimes(2);
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+    expect(getRecipe(OTHER_RECIPE_ID)?.title).toBe('From another device');
+    expect(localWritesOpen()).toBe(0);
+  });
+
+  it('does not reread a failed cook tap over the optimistic step', async () => {
+    const base = recipe();
+    seed(base, cook(0));
+    vi.mocked(pushOps).mockResolvedValue('error');
+    const flight = startSync(
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    const writing = updateCookState(base, (prev) => ({ ...prev, currentStep: 1 }));
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalled());
+    flight.releaseFirst();
+    flight.releaseSecond();
+    await writing;
+    await flight.pending;
+
+    expect(pullPage).toHaveBeenCalledOnce();
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+  });
+
+  it('keeps the second cook tap when both pushes are in flight together', async () => {
+    const base = recipe();
+    seed(base, cook(0));
+    const releases: Array<(result: 'ok') => void> = [];
+    vi.mocked(pushOps).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+    const flight = startPull(ownedPage(ownedChanges({ cookState: [pullDoc(cook(0))] })));
+    const first = updateCookState(base, (prev) => ({ ...prev, currentStep: prev.currentStep + 1 }));
+    const second = updateCookState(base, (prev) => ({
+      ...prev,
+      currentStep: prev.currentStep + 1,
+    }));
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalledTimes(2));
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(2);
+
+    releases[0]?.('ok');
+    releases[1]?.('ok');
+    await Promise.all([first, second]);
+    flight.release();
+
+    expect((await flight.pending).outcome).toBe('superseded');
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(2);
+    expect(localWritesOpen()).toBe(0);
+  });
+
+  it('keeps a cleared chat when the pull still has the thread', async () => {
+    seed();
+    const message = {
+      id: CHAT_ID,
+      recipeId: RECIPE_ID,
+      role: 'user' as const,
+      content: 'keep me',
+      createdAt: 3,
+    };
+    replaceFromPull({
+      recipes: new Map([[RECIPE_ID, recipe()]]),
+      collections: new Map(),
+      chat: new Map([[message.id, message]]),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    const flight = startPull(
+      ownedPage(ownedChanges({ chatMessages: [pullDoc(message)] })),
+    );
+
+    await chatStore.clearForRecipe(RECIPE_ID);
+    flight.release();
+
+    expect((await flight.pending).outcome).toBe('superseded');
+    expect(listChat(RECIPE_ID)).toEqual([]);
+  });
+
+  it('keeps a deleted photo when the pull still lists it', async () => {
+    replaceFromPull({
+      recipes: new Map([[RECIPE_ID, recipe()]]),
+      collections: new Map(),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set([PHOTO_ID]),
+    });
+    const flight = startPull(ownedPage(ownedChanges({ photos: [{ id: PHOTO_ID }] })));
+
+    await photoStore.remove(PHOTO_ID);
+    flight.release();
+
+    expect((await flight.pending).outcome).toBe('superseded');
+    expect(getSnapshot().remotePhotoIds.has(PHOTO_ID)).toBe(false);
+  });
+
+  it('keeps a removed collection when the pull still has it', async () => {
+    const dinners = collection(COLLECTION_A, 'Dinners', [RECIPE_ID]);
+    replaceFromPull({
+      recipes: new Map([[RECIPE_ID, recipe()]]),
+      collections: new Map([[dinners.id, dinners]]),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    const flight = startPull(ownedPage(ownedChanges({ collections: [pullDoc(dinners)] })));
+
+    await collectionStore.remove(COLLECTION_A);
+    flight.release();
+
+    expect((await flight.pending).outcome).toBe('superseded');
+    expect(getCollection(COLLECTION_A)).toBeUndefined();
+  });
+
+  it('keeps a recipe move when the pull still has the old membership', async () => {
+    const from = collection(COLLECTION_A, 'From', [RECIPE_ID]);
+    const to = collection(COLLECTION_B, 'To', []);
+    replaceFromPull({
+      recipes: new Map([[RECIPE_ID, recipe()]]),
+      collections: new Map([
+        [from.id, from],
+        [to.id, to],
+      ]),
+      chat: new Map(),
+      cook: new Map(),
+      cookLogs: new Map(),
+      remotePhotoIds: new Set(),
+    });
+    const flight = startPull(
+      ownedPage(ownedChanges({ collections: [pullDoc(from), pullDoc(to)] })),
+    );
+
+    await collectionStore.moveRecipe(RECIPE_ID, COLLECTION_B);
+    flight.release();
+
+    expect((await flight.pending).outcome).toBe('superseded');
+    expect(getCollection(COLLECTION_A)?.recipeIds).toEqual([]);
+    expect(getCollection(COLLECTION_B)?.recipeIds).toEqual([RECIPE_ID]);
+  });
+
+  it('keeps a recipe created while the pull is in flight', async () => {
+    seed();
+    const flight = startPull(ownedPage(ownedChanges({ recipes: [pullDoc(recipe())] })));
+
+    const created = await recipeStore.create({
+      title: 'New',
+      servings: 1,
+      ingredientSections: [],
+      steps: [{ text: 'Go.' }],
+      tags: [],
+    });
+    flight.release();
+
+    expect((await flight.pending).outcome).toBe('superseded');
+    expect(getRecipe(created.id)?.title).toBe('New');
+  });
+
+  it('rereads a partial backup import when the recipe push landed during a pull', async () => {
+    const base = recipe('Already here');
+    seed(base);
+    const imported = { ...recipe('Imported'), id: OTHER_RECIPE_ID };
+    const file = new File(
+      [
+        JSON.stringify({
+          app: 'cook',
+          version: 4,
+          exportedAt: 1,
+          exportedBySub: 'me',
+          recipes: [imported],
+          chatMessages: [
+            {
+              id: CHAT_ID,
+              recipeId: OTHER_RECIPE_ID,
+              role: 'user',
+              content: 'from the backup',
+              createdAt: 4,
+            },
+          ],
+          photos: [],
+          collections: [],
+          cookState: [],
+        }),
+      ],
+      'cook-backup.json',
+      { type: 'application/json' },
+    );
+    let pushes = 0;
+    vi.mocked(pushOps).mockImplementation(async () => {
+      pushes += 1;
+      return pushes === 1 ? 'ok' : 'error';
+    });
+    const flight = startSync(
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)] })),
+      ownedPage(ownedChanges({ recipes: [pullDoc(base), pullDoc(imported)] })),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    const importing = importLibrary(file, 'me');
+    const rejected = expect(importing).rejects.toThrow("Couldn't import the backup.");
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalledTimes(2));
+    flight.releaseFirst();
+    flight.releaseSecond();
+
+    await rejected;
+    await flight.pending;
+
+    expect(pullPage).toHaveBeenCalledTimes(2);
+    expect(getRecipe(OTHER_RECIPE_ID)?.title).toBe('Imported');
+    expect(getRecipe(RECIPE_ID)?.title).toBe('Already here');
+    expect(listChat(OTHER_RECIPE_ID)).toEqual([]);
+  });
+
+  it('does not reread a backup whose recipe push never landed', async () => {
+    const base = recipe('Already here');
+    seed(base);
+    const imported = { ...recipe('Imported'), id: OTHER_RECIPE_ID };
+    const file = new File(
+      [
+        JSON.stringify({
+          app: 'cook',
+          version: 4,
+          exportedAt: 1,
+          exportedBySub: 'me',
+          recipes: [imported],
+          chatMessages: [],
+          photos: [],
+          collections: [],
+          cookState: [],
+        }),
+      ],
+      'cook-backup.json',
+      { type: 'application/json' },
+    );
+    vi.mocked(pushOps).mockResolvedValue('error');
+    const flight = startSync(
+      ownedPage(ownedChanges({ recipes: [pullDoc(base), pullDoc(imported)] })),
+      ownedPage(ownedChanges({ recipes: [pullDoc(imported)] })),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    const importing = importLibrary(file, 'me');
+    const rejected = expect(importing).rejects.toThrow("Couldn't import the backup.");
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalled());
+    flight.releaseFirst();
+    flight.releaseSecond();
+
+    await rejected;
+    await flight.pending;
+
+    expect(pullPage).toHaveBeenCalledOnce();
+    expect(getRecipe(OTHER_RECIPE_ID)).toBeUndefined();
+    expect(getRecipe(RECIPE_ID)?.title).toBe('Already here');
   });
 });
