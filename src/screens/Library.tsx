@@ -10,8 +10,13 @@ import { createInvite } from '../lib/adminApi';
 import { createMemberInvite } from '../lib/inviteApi';
 import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
 import { FolderIcon, InviteIcon, PlusIcon, SettingsIcon, SharedIcon, SpinnerIcon } from '../lib/icons';
-import { importHref, libraryHref, newRecipeHref } from '../lib/collectionHref';
-import { collectionStore, useCollections } from '../lib/collectionStore';
+import {
+  importHref,
+  libraryHref,
+  missingCollectionAction,
+  newRecipeHref,
+} from '../lib/collectionHref';
+import { collectionStore, useCollections, useFullPull } from '../lib/collectionStore';
 import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
 import {
   readPersistedLibraryView,
@@ -53,6 +58,7 @@ export default function Library() {
   const t = useT();
   const allRecipes = useRecipes();
   const collections = useCollections();
+  const fullPull = useFullPull();
   const { status: sessionStatus, user } = useSession();
   const syncStatus = useSyncStatus();
   const { collectionId } = useParams();
@@ -81,7 +87,9 @@ export default function Library() {
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteCollectionOpen, setDeleteCollectionOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
-  const [leaveBusy, setLeaveBusy] = useState(false);
+  const [leaveName, setLeaveName] = useState<string | null>(null);
+  const [leavingId, setLeavingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [collectionName, setCollectionName] = useState('');
   const [collectionError, setCollectionError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
@@ -118,6 +126,7 @@ export default function Library() {
   const pendingDelete = allRecipes?.find((r) => r.id === pendingDeleteId);
   const moveRecipe = allRecipes?.find((r) => r.id === moveRecipeId);
   const namedIsShared = named ? collectionStore.isShared(named.id) : false;
+  const leaveBusy = leavingId !== null && leavingId === collectionId;
   const showSwitcher = (collections?.length ?? 0) > 0;
   const addCollectionId =
     currentId && !namedIsShared ? currentId : undefined;
@@ -134,15 +143,20 @@ export default function Library() {
     }
   };
 
+  const closeCollectionSheets = () => {
+    setRenameOpen(false);
+    setDeleteCollectionOpen(false);
+    setLeaveOpen(false);
+    setLeaveName(null);
+    setShareOpen(false);
+  };
+
   const closeSheets = () => {
     setAddOpen(false);
     setPendingDeleteId(null);
     setMoveRecipeId(null);
     setCreateOpen(false);
-    setRenameOpen(false);
-    setDeleteCollectionOpen(false);
-    setLeaveOpen(false);
-    setShareOpen(false);
+    closeCollectionSheets();
     setInviteConfirmOpen(false);
     setCollectionName('');
     setCollectionError(null);
@@ -212,6 +226,9 @@ export default function Library() {
     }
     const startedOn = shownCollectionId.current;
     setCollectionError(null);
+    // The collection leaves the list before the server answers. Hold only
+    // this id, so Back to a different missing collection is not stuck.
+    setDeletingId(currentId);
     try {
       await collectionStore.remove(currentId);
       if (shownCollectionId.current !== startedOn) return;
@@ -222,6 +239,8 @@ export default function Library() {
       setCollectionError(
         err instanceof Error ? err.message : t('error.collectionDelete'),
       );
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -231,7 +250,7 @@ export default function Library() {
     }
     const startedOn = shownCollectionId.current;
     setCollectionError(null);
-    setLeaveBusy(true);
+    setLeavingId(currentId);
     try {
       await collectionStore.leave(currentId);
       if (shownCollectionId.current !== startedOn) return;
@@ -243,7 +262,7 @@ export default function Library() {
         err instanceof Error ? err.message : t('error.leaveCollection'),
       );
     } finally {
-      setLeaveBusy(false);
+      setLeavingId(null);
     }
   };
 
@@ -375,6 +394,50 @@ export default function Library() {
     setDeleteError(null);
     closeSheets();
   }, [collectionId]);
+
+  // A loaded library that no longer contains this id is not that collection.
+  // Redirect only when the snapshot on screen is a full pull. An owned-only
+  // publish, a sign-out, and a pull that has not finished are not that.
+  // Delete and leave hold only their own id. Sheet reset closes rename,
+  // delete, leave, and share, and leaves Create/Move's name and error alone.
+  useLayoutEffect(() => {
+    const action = missingCollectionAction({
+      collectionId,
+      collectionIds: collections?.map((collection) => collection.id),
+      snapshotConfirmed: fullPull,
+      hold: deletingId === collectionId || leavingId === collectionId,
+    });
+    const collectionSheetOpen =
+      renameOpen || deleteCollectionOpen || leaveOpen || shareOpen;
+    // A failed leave or delete sets its error in the same turn the hold
+    // ends. Closing here would drop that message.
+    const showingFailure =
+      collectionError !== null && (leaveOpen || deleteCollectionOpen);
+    if (action.resetCollectionSheets && collectionSheetOpen && !showingFailure) {
+      closeCollectionSheets();
+      if (!createOpen && moveRecipeId === null) {
+        setCollectionName('');
+        setCollectionError(null);
+      }
+    }
+    if (action.redirectHome) {
+      navigate('/', { replace: true });
+    }
+  }, [
+    collectionId,
+    collections,
+    fullPull,
+    deletingId,
+    leavingId,
+    renameOpen,
+    deleteCollectionOpen,
+    leaveOpen,
+    shareOpen,
+    collectionError,
+    createOpen,
+    moveRecipeId,
+    navigate,
+  ]);
 
   useEffect(() => {
     if (!menuId) return;
@@ -600,6 +663,7 @@ export default function Library() {
             type="button"
             onClick={() => {
               setCollectionError(null);
+              setLeaveName(named.name);
               setLeaveOpen(true);
             }}
             className="shrink-0 text-sm text-danger hover:underline"
@@ -951,9 +1015,13 @@ export default function Library() {
         </Sheet>
       )}
 
-      {leaveOpen && named && namedIsShared && (
+      {leaveOpen && (named && namedIsShared ? named.name : leaveName) && (
         <Sheet onClose={() => closeSheets()}>
-          <h2 className="text-lg font-semibold">{t('library.leaveTitle', { name: named.name })}</h2>
+          <h2 className="text-lg font-semibold">
+            {t('library.leaveTitle', {
+              name: named && namedIsShared ? named.name : (leaveName ?? ''),
+            })}
+          </h2>
           <p className="mt-1 text-sm text-ink-muted">{t('library.leaveBody')}</p>
           {collectionError && (
             <p className="mt-2 text-sm text-danger">{collectionError}</p>

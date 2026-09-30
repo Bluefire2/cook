@@ -79,6 +79,15 @@ const photosHeldBySaves = new Map<string, number>();
  */
 const photosCommittedByPut = new Set<string>();
 
+/**
+ * Uploaded by a save whose put certainly did not land, while another save
+ * still held the id. Claimed after a later holder releases, and only when
+ * that hold was the last one and that save's put certainly did not land.
+ * An unknown put outcome drops them instead: that save may have committed
+ * the id, and an orphan is cheaper than deleting a live photo.
+ */
+const photosLeftForLastHolder = new Set<string>();
+
 function holdPhotoIds(ids: readonly string[]): void {
   for (const id of ids) {
     photosHeldBySaves.set(id, (photosHeldBySaves.get(id) ?? 0) + 1);
@@ -112,10 +121,58 @@ function orphanedUploads(uploaded: readonly string[]): string[] {
   return orphans;
 }
 
+/**
+ * This save uploaded these ids, then failed, while another save still lists
+ * them. Remember them so the last holder can tombstone them if it fails too.
+ */
+function rememberUploadsHeldElsewhere(uploaded: readonly string[]): void {
+  for (const id of uploaded) {
+    if (photosCommittedByPut.has(id)) {
+      continue;
+    }
+    if ((photosHeldBySaves.get(id) ?? 0) > 1) {
+      photosLeftForLastHolder.add(id);
+    }
+  }
+}
+
+/**
+ * Ids a failed sibling uploaded that this save held and has now released.
+ * Call after `releasePhotoIds`: a count of 0 means this save was the last
+ * holder. Taking one removes it; a committed id is removed too, since the
+ * live recipe lists it. An id another save still holds stays for that save.
+ */
+function takePhotosLeftForLastHolder(held: readonly string[]): string[] {
+  const take: string[] = [];
+  for (const id of held) {
+    if (!photosLeftForLastHolder.has(id)) {
+      continue;
+    }
+    if (photosCommittedByPut.has(id)) {
+      photosLeftForLastHolder.delete(id);
+      continue;
+    }
+    if ((photosHeldBySaves.get(id) ?? 0) !== 0) {
+      continue;
+    }
+    photosLeftForLastHolder.delete(id);
+    take.push(id);
+  }
+  return take;
+}
+
+/** The put's outcome is unknown, so these ids might be on the live recipe. */
+function forgetPhotosLeftForLastHolder(held: readonly string[]): void {
+  for (const id of held) {
+    photosLeftForLastHolder.delete(id);
+  }
+}
+
 /** Clears the in-flight accounting. Tests reuse photo ids across cases. */
 export function resetRecipePhotoSaveTracking(): void {
   photosHeldBySaves.clear();
   photosCommittedByPut.clear();
+  photosLeftForLastHolder.clear();
 }
 
 /**
@@ -238,7 +295,11 @@ async function deleteRemovedPhotos(
     if (keep.has(photoId)) {
       continue;
     }
-    await deletePhoto(photoId);
+    try {
+      await deletePhoto(photoId);
+    } catch {
+      // The put already landed. One failure must not skip the photos after it.
+    }
   }
 }
 
@@ -448,6 +509,7 @@ export const recipeStore = {
       const uploaded: string[] = [];
       // Unset until the put is sent.
       let putResult: Awaited<ReturnType<typeof pushOps>> | undefined;
+      let failure: unknown;
       try {
         upsertRecipe(next);
         await uploadRecipePhotos(next, uploaded);
@@ -458,8 +520,15 @@ export const recipeStore = {
         for (const id of held) {
           photosCommittedByPut.add(id);
         }
-        await deleteRemovedPhotos(previous, next);
-        return { value: undefined, reconcile: true };
+        forgetPhotosLeftForLastHolder(held);
+        // The put landed. Each replaced photo is deleted on its own, so one
+        // failure neither fails this save nor skips the photos after it.
+        // Memory already lists the new ids, so a later save will not retry.
+        try {
+          await deleteRemovedPhotos(previous, next);
+        } catch {
+          // Backstop. deleteRemovedPhotos already continues past one failure.
+        }
       } catch (err) {
         if (err instanceof SessionExpiredError) {
           // The 401 cleared the library already; write nothing back into it.
@@ -479,13 +548,29 @@ export const recipeStore = {
         // or the server answered that it discarded it. A plain 'error' can be a
         // dropped response after the live recipe started listing these ids, and
         // deleting them would break it; an orphan is the cheaper mistake.
+        // Own uploads only. Ids another save still holds are claimed after this
+        // hold is released, so a sibling that fails during the delete below can
+        // leave them for whoever drops the count to zero.
         if (putResult === undefined || isDiscardedPushReason(putResult)) {
+          rememberUploadsHeldElsewhere(uploaded);
           await discardOrphanUploads(orphanedUploads(uploaded));
+        } else if (putResult !== 'ok') {
+          forgetPhotosLeftForLastHolder(held);
         }
-        throw err;
+        failure = err;
       } finally {
         releasePhotoIds(held);
       }
+      if (
+        failure !== undefined &&
+        (putResult === undefined || isDiscardedPushReason(putResult))
+      ) {
+        await discardOrphanUploads(takePhotosLeftForLastHolder(held));
+      }
+      if (failure !== undefined) {
+        throw failure;
+      }
+      return { value: undefined, reconcile: true };
     });
   },
 
