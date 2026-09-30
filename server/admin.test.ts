@@ -491,6 +491,22 @@ describe('adminDecisionPost approval email', () => {
     expect(text).not.toContain('Nadya Petrova');
   });
 
+  it('skips the send when PUBLIC_ORIGIN is unset', async () => {
+    delete process.env.PUBLIC_ORIGIN;
+    vi.mocked(members.applyDecision).mockResolvedValue({
+      kind: 'ok',
+      request: approvedRequest('person@example.com'),
+      member: { status: 'active' },
+    });
+    const response = await decision({ sub: 'other-user', action: 'approve' });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(serializeAccessRequestLists(emptyLists));
+    expect(mail.sendMail).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log).mock.calls).toEqual([
+      ['approval email skipped: PUBLIC_ORIGIN unset'],
+    ]);
+  });
+
   it('keeps the 200 JSON when sendMail returns false', async () => {
     vi.mocked(mail.sendMail).mockResolvedValue(false);
     vi.mocked(members.applyDecision).mockResolvedValue({
@@ -518,7 +534,7 @@ describe('adminDecisionPost approval email', () => {
     expect(console.log).toHaveBeenCalledWith('approval email failed');
   });
 
-  it.each(['person @example.com', 'a@b.com,c@d.com'])(
+  it.each(['', '   ', 'person @example.com', 'a@b.com,c@d.com'])(
     'skips sendMail for stored email %j and logs a fixed line',
     async (email) => {
       vi.mocked(members.applyDecision).mockResolvedValue({

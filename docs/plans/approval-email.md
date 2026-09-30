@@ -65,16 +65,16 @@ the response `adminDecisionPost` already returns.
    (Resend). No new env var. The disabled-key log line stays
    `RESEND_API_KEY unset — access-request notifications are disabled`.
 5. Before calling `sendMail` for an approval, classify the stored email
-   with a pure helper. An address that contains whitespace, a newline, or
-   a comma, or that does not contain exactly one `@`, skips the send and
-   logs `approval email skipped: invalid recipient`. The log line does not
-   include the address. Do not throw. Do not trim a dirty address and
-   send the trimmed form. `a@b` (one `@`, no whitespace, no comma) is
-   deliverable under this rule. Do not add a stricter pattern. A blank
-   address never arrives here: `parseAccessRequestDoc` returns `null` for
-   an empty email, so `applyDecision` never returns an `ok` result with
-   one. `approvalRecipientProblem` still returns `'missing'` for that
-   case, and `sendMail` still refuses any explicit `to` the helper flags.
+   with a pure helper. Any non-null `approvalRecipientProblem` result
+   skips the send and logs `approval email skipped: invalid recipient`.
+   One branch covers both `'invalid'` (whitespace inside the address, a
+   newline, a comma, or not exactly one `@`) and `'missing'` (`''` or
+   whitespace-only). `parseAccessRequestDoc` rejects `''`, but a
+   whitespace-only email still parses. The log line does not include the
+   address. Do not throw. Do not trim a dirty address and send the
+   trimmed form. `a@b` (one `@`, no whitespace, no comma) is deliverable
+   under this rule. Do not add a stricter pattern. `sendMail` still
+   refuses any explicit `to` the helper flags.
 6. The message is plain text, English, passed as Resend `text`.
    Subject: `Your Sous access was approved`.
    Body:
@@ -86,8 +86,9 @@ the response `adminDecisionPost` already returns.
 
    `<origin>` is the string `publicOrigin()` (`server/env.ts`) returns
    (trimmed `PUBLIC_ORIGIN`, trailing slashes removed). No path, query, or
-   token. `PUBLIC_ORIGIN` is required for OAuth (`redirectUri`), so the
-   approve path always has it. There is no fallback body without a link.
+   token. If `publicOrigin()` throws, skip the send and log
+   `approval email skipped: PUBLIC_ORIGIN unset`. Do not send a body
+   without the sign-in link. The admin JSON is unchanged.
    Subject and body contain no name, no email address, and no token.
    There is no one-click approval link. Do not log the body or the address.
 7. Copy in `server/access.ts` (English, outside `src/i18n/`):
@@ -133,7 +134,10 @@ the response `adminDecisionPost` already returns.
       The send starts beside `listAccessRequests`, and the response waits
       on it for at most 3 s (`APPROVAL_MAIL_WAIT_MS`). A send still
       pending then finishes, or hits `sendMail`'s 10 s timeout, after the
-      response. This supersedes the "before `clearMembershipCache` and
+      response. The wait attaches both fulfillment and rejection handlers
+      (`promise.then(done, done)`). `promise.finally()` returns a promise
+      that rejects with the original reason, and an unobserved rejection
+      exits Node 22. This supersedes the "before `clearMembershipCache` and
       `listAccessRequests`" ordering in Decision 1 and step 2.
     - *Recipient check in the seam.* `sendMail` refuses any explicit `to`
       that `approvalRecipientProblem` flags (blank, whitespace, comma, or
@@ -222,13 +226,14 @@ Add a private `notifyApproval(email: string): Promise<void>` in
 `server/mail.ts`, and `publicOrigin` from `server/env.ts` (already
 imported).
 
-- `'invalid'`: `console.log` the
-  `approval email skipped: invalid recipient` line from Decision 5, then
-  return. The log argument must be that fixed string only. Do not branch
-  on `'missing'`.
-- Otherwise build the subject and body from Decision 6. Call
-  `publicOrigin()` directly. Do not catch it, and do not send a body
-  without the sign-in link.
+- Any non-null `approvalRecipientProblem` result: `console.log`
+  `approval email skipped: invalid recipient`, then return. One branch
+  covers both `'missing'` and `'invalid'`. The log argument must be that
+  fixed string only.
+- Otherwise build the subject and body from Decision 6. If
+  `publicOrigin()` throws, log
+  `approval email skipped: PUBLIC_ORIGIN unset` and return. Do not send a
+  body without the sign-in link.
 - `await sendMail({ to: email, subject, text })`. Ignore the boolean.
   Wrap that `await` in `try/catch`. On rejection, `console.log` the fixed
   string `approval email failed` (no address) and do not rethrow.
@@ -285,10 +290,13 @@ Assert:
   `email: 'other@example.com'` does not change `to`.
 - `sendMail` resolving `false`, and `sendMail` rejecting: response still
   200 with that same JSON.
-- Stored email `'person @example.com'` and `'a@b.com,c@d.com'`:
-  `sendMail` not called, response 200. Spy on `console.log` and assert
-  the skip line is `approval email skipped: invalid recipient` and does
-  not contain the address. Do not assert a `'missing'` skip for `''`.
+- Stored email `''`, `'   '`, `'person @example.com'`, and
+  `'a@b.com,c@d.com'`: `sendMail` not called, response 200. Spy on
+  `console.log` and assert the skip line is
+  `approval email skipped: invalid recipient` and does not contain the
+  address.
+- `PUBLIC_ORIGIN` unset: `sendMail` not called, response 200 with the
+  same JSON, log line `approval email skipped: PUBLIC_ORIGIN unset`.
 - Deny with `{ kind: 'ok' }`, revoke with `{ kind: 'ok' }`, and the
   existing unknown-request refusal: `sendMail` not called. On the
   refusal, status stays 404.
@@ -309,7 +317,7 @@ the same way `unavailablePageHtml` is exported, and keep the response
 helper private:
 
 ```ts
-export function recordedPageHtml(): string
+export function recordedPageHtml(promiseEmail: boolean): string
 ```
 
 Build the body paragraph once. `recordedPageHtml` returns

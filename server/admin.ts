@@ -243,10 +243,9 @@ function sandboxSender(): boolean {
 }
 
 async function notifyApproval(email: string): Promise<void> {
-  // An empty address never arrives: parseAccessRequestDoc rejects it, so
-  // applyDecision does not return an ok result with one. PUBLIC_ORIGIN is
-  // required for OAuth, so the sign-in link is always available.
-  if (approvalRecipientProblem(email) === 'invalid') {
+  // '' does not parse, but a whitespace-only email does, and the classifier
+  // calls that 'missing'. Either result is not a deliverable address.
+  if (approvalRecipientProblem(email) !== null) {
     console.log('approval email skipped: invalid recipient');
     return;
   }
@@ -255,8 +254,16 @@ async function notifyApproval(email: string): Promise<void> {
     return;
   }
 
+  let origin: string;
+  try {
+    origin = publicOrigin();
+  } catch {
+    console.log('approval email skipped: PUBLIC_ORIGIN unset');
+    return;
+  }
+
   const subject = 'Your Sous access was approved';
-  const text = `Your request for Sous was approved.\nSign in again at ${publicOrigin()}`;
+  const text = `Your request for Sous was approved.\nSign in again at ${origin}`;
 
   try {
     await sendMail({ to: email, subject, text });
@@ -265,13 +272,17 @@ async function notifyApproval(email: string): Promise<void> {
   }
 }
 
+// Both handlers are attached on purpose. promise.finally() returns a new
+// promise that rejects with the original reason, and nothing observes it.
+// On Node 22 that unhandled rejection exits the process.
 function settleWithin(promise: Promise<void>, ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    void promise.finally(() => {
+    const done = () => {
       clearTimeout(timer);
       resolve();
-    });
+    };
+    const timer = setTimeout(done, ms);
+    void promise.then(done, done);
   });
 }
 
