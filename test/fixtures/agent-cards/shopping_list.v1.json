@@ -1,0 +1,99 @@
+{
+  "cases": [
+    {
+      "ok": true,
+      "args": {
+        "title": "Weekend shop",
+        "recipes": [{ "id": "r1", "title": "Wrong title", "servings": 2 }],
+        "sections": [
+          {
+            "name": "Produce",
+            "items": [
+              {
+                "key": "onion",
+                "item": "Yellow onion",
+                "quantity": 2,
+                "unit": "piece",
+                "recipeIds": ["r1"]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "title": "Weekend shop",
+        "recipes": [{ "id": "r1", "title": "Library title", "servings": 2 }],
+        "sections": [
+          {
+            "name": "Produce",
+            "items": [
+              {
+                "key": "onion",
+                "item": "Yellow onion",
+                "quantity": 2,
+                "unit": "piece",
+                "recipeIds": ["r1"]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "ok": true,
+      "args": {
+        "title": "Pantry extras",
+        "recipes": [{ "id": "r1", "title": "Wrong title", "servings": 1 }],
+        "sections": [
+          {
+            "name": "Pantry",
+            "items": [
+              {
+                "key": "salt",
+                "item": "Salt",
+                "recipeIds": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "title": "Pantry extras",
+        "recipes": [{ "id": "r1", "title": "Library title", "servings": 1 }],
+        "sections": [
+          {
+            "name": "Pantry",
+            "items": [
+              {
+                "key": "salt",
+                "item": "Salt",
+                "recipeIds": []
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "ok": false,
+      "args": {
+        "title": "",
+        "recipes": [{ "id": "r1" }],
+        "sections": [{ "name": "X", "items": [] }]
+      }
+    },
+    {
+      "ok": false,
+      "args": {
+        "title": "Bad key",
+        "recipes": [{ "id": "r1" }],
+        "sections": [
+          {
+            "name": "Pantry",
+            "items": [{ "key": "Bad Key!", "item": "Salt", "recipeIds": ["r1"] }]
+          }
+        ]
+      }
+    }
+  ]
+}

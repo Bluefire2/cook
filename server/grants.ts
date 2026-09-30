@@ -1,4 +1,4 @@
-import { FieldPath } from '@google-cloud/firestore';
+import { FieldPath, type Transaction } from '@google-cloud/firestore';
 import { isAllowed } from './allowlist.ts';
 import { allowedEmails } from './env.ts';
 import { readMember } from './members.ts';
@@ -1254,6 +1254,42 @@ export async function orchestrateGrantAdd(
   });
 }
 
+/** Firestore reads and writes for one owner's collection grants, inside `tx`. */
+export function firestoreGrantAddTransaction(
+  tx: Transaction,
+  ownerSub: string,
+  collectionId: string,
+): GrantAddTransaction {
+  const grantCollection = grantColRef(ownerSub, collectionId);
+  const collectionRef = collectionDocRef(ownerSub, collectionId);
+  return {
+    readCollection: async () => {
+      const snap = await tx.get(collectionRef);
+      return snap.exists
+        ? (snap.data() as Record<string, unknown>)
+        : undefined;
+    },
+    readForwardGrants: async () => {
+      const snap = await tx.get(grantCollection);
+      return snap.docs.map((doc) => ({
+        id: doc.id,
+        data: doc.data() as Record<string, unknown>,
+      }));
+    },
+    writePair: (grant, share) => {
+      tx.set(grantCollection.doc(grant.viewerSub), grant, { merge: false });
+      tx.set(
+        incomingShareRef(
+          grant.viewerSub,
+          shareGrantId(ownerSub, collectionId),
+        ),
+        share,
+        { merge: false },
+      );
+    },
+  };
+}
+
 export async function commitCollectionGrant(input: {
   ownerSub: string;
   ownerEmail: string;
@@ -1264,38 +1300,11 @@ export async function commitCollectionGrant(input: {
   onExisting: GrantAddOnExisting;
 }): Promise<GrantAddOutcome> {
   const db = getStoreFirestore();
-  const grantCollection = grantColRef(input.ownerSub, input.collectionId);
-  const collectionRef = collectionDocRef(input.ownerSub, input.collectionId);
   return orchestrateGrantAdd(input, {
     now: () => Date.now(),
     runTransaction: (work) =>
       db.runTransaction(async (tx) =>
-        work({
-          readCollection: async () => {
-            const snap = await tx.get(collectionRef);
-            return snap.exists
-              ? (snap.data() as Record<string, unknown>)
-              : undefined;
-          },
-          readForwardGrants: async () => {
-            const snap = await tx.get(grantCollection);
-            return snap.docs.map((doc) => ({
-              id: doc.id,
-              data: doc.data() as Record<string, unknown>,
-            }));
-          },
-          writePair: (grant, share) => {
-            tx.set(grantCollection.doc(grant.viewerSub), grant, { merge: false });
-            tx.set(
-              incomingShareRef(
-                grant.viewerSub,
-                shareGrantId(input.ownerSub, input.collectionId),
-              ),
-              share,
-              { merge: false },
-            );
-          },
-        }),
+        work(firestoreGrantAddTransaction(tx, input.ownerSub, input.collectionId)),
       ),
   });
 }

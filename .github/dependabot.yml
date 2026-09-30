@@ -9,6 +9,15 @@ updates:
       # One PR for routine bumps; majors still arrive one by one.
       npm-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      # TypeScript 6 and 7 are compiler migrations. 5.9 can still
+      # arrive through the minor-and-patch group.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # plugin-react 6 requires Vite 8. 5.x still peers Vite 6,
+      # so that major can still be proposed.
+      - dependency-name: "@vitejs/plugin-react"
+        versions: [">= 6.0.0"]
 
   - package-ecosystem: github-actions
     directory: /

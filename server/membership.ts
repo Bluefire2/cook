@@ -134,6 +134,29 @@ export async function requireMember(req: Request): Promise<RequireMemberResult> 
   return memberFromSession(readSession(req));
 }
 
+export type VisitorMembership =
+  | { kind: 'signedOut' }
+  | { kind: 'denied'; sub: string; email: string }
+  | { kind: 'unknown' }
+  | { kind: 'ok'; sub: string; email: string; isOwner: boolean };
+
+/**
+ * `requireMember` for server HTML pages that treat "no usable cookie" (sign
+ * in) differently from "signed in but not admitted" (invitation-only page).
+ * The admission decision is exactly `requireMember`'s.
+ */
+export async function visitorMembership(req: Request): Promise<VisitorMembership> {
+  const sessionResult = readSession(req);
+  if (sessionResult.status !== 'ok') {
+    return { kind: 'signedOut' };
+  }
+  const access = await memberFromSession(sessionResult);
+  if (access.kind === 'denied') {
+    return { kind: 'denied', sub: sessionResult.session.sub, email: sessionResult.session.email };
+  }
+  return access;
+}
+
 /** Same decision as `requireMember`, from `X-Sous-Session` only. No cookie fallback. */
 export async function requireHeaderMember(req: Request): Promise<RequireMemberResult> {
   return memberFromSession(readHeaderSession(req));

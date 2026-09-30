@@ -4,6 +4,7 @@ import {
   invitationOnlyPage,
   inviteDeadPageHtml,
   inviteJoinPageHtml,
+  recordedPageHtml,
   unavailablePageHtml,
 } from './access.ts';
 
@@ -38,8 +39,10 @@ describe('invitationOnlyPage', () => {
     expect(html).toContain('<form method="POST" action="/api/access-request">');
     expect(html).toContain('<input type="hidden" name="t" value="tok.en-value">');
     expect(html).toContain('<button type="submit">Request access</button>');
-    expect(html).toContain('Your request goes to the owner of this app.');
-    expect(html).toContain('Nobody will email you back');
+    expect(html).toContain(
+      "Your request goes to the owner of this app. Once it is approved, we'll email you, and you can sign in again.",
+    );
+    expect(html).not.toContain('Nobody will email you back');
     expect(html).toContain('<a href="/about">About</a>');
     expect(html).toContain('<a href="/privacy">Privacy</a>');
     expect(html).toContain('<a href="/terms">Terms</a>');
@@ -67,11 +70,14 @@ describe('invitationOnlyPage', () => {
     expect(html).not.toContain('<form');
     expect(html).not.toContain('name="t"');
     expect(html).not.toContain('<button');
-    // D14 substance survives the missing form: no email back, sign in again
-    // once approved — plus the transient-failure pointer to retry sign-in.
+    // Approval emails the requester, and signing in again works once
+    // approved — plus the transient-failure pointer to retry sign-in.
     expect(html).toContain('could not be started right now');
-    expect(html).toContain('Nobody will email you back');
-    expect(html).toContain('once you have been approved, you can try signing in again');
+    expect(html).toContain('signing in again will offer it once more');
+    expect(html).toContain(
+      "Once you have been approved, we'll email you, and you can try signing in again.",
+    );
+    expect(html).not.toContain('Nobody will email you back');
   });
 
   it('is self-contained: lang, viewport, color-scheme, no script, no external URLs', () => {
@@ -81,6 +87,22 @@ describe('invitationOnlyPage', () => {
     expect(html).toContain('color-scheme: light dark');
     expect(html).not.toContain('<script');
     expect(html).not.toMatch(/https?:\/\//);
+  });
+});
+
+describe('recordedPageHtml', () => {
+  it('says the request was recorded and that approval will email them', () => {
+    const html = recordedPageHtml(true);
+    expect(html).toContain('<h1>Request sent</h1>');
+    expect(html).toContain('Your request was recorded.');
+    expect(html).toContain("Once it is approved, we'll email you.");
+  });
+
+  it('promises no email for a declined request', () => {
+    const html = recordedPageHtml(false);
+    expect(html).toContain('<h1>Request sent</h1>');
+    expect(html).toContain('Your request was recorded.');
+    expect(html).not.toContain('email');
   });
 });
 

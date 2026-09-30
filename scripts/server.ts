@@ -7,8 +7,8 @@
  * `createRequestListener({ staticRoot: null })` is the API-only listener used
  * by `scripts/dev-api-server.ts`. With `staticRoot: null`, `/privacy`,
  * `/terms`, and `/about` return 404 on this port; Vite serves `public/` on
- * :5173 in dev. `/invite/:token` is handled here in both modes (Vite proxies
- * `/invite`).
+ * :5173 in dev. `/invite/:token` and the collection-link pages under `/c/`
+ * are handled here in both modes (Vite proxies `/invite` and `/c/`).
  *
  * Requires Node 22.18+ for native TypeScript type stripping.
  */
@@ -37,10 +37,19 @@ import {
   memberInvitesPost,
 } from '../server/admin.ts';
 import { accessRequestPost } from '../server/access.ts';
+import {
+  collectionLinkJoinGet,
+  collectionLinkJoinPost,
+  collectionLinkLandingGet,
+  collectionLinksGet,
+  collectionLinksPost,
+  collectionLinksRevokePost,
+} from '../server/collectionLinksHttp.ts';
 import { extensionImport, extensionImportOptions } from '../server/extensionImport.ts';
 import { inviteLandingGet } from '../server/invites.ts';
 import { withMembership } from '../server/membership.ts';
 import { photosGet, photosPost } from '../server/photos.ts';
+import { agentPost } from '../server/agent/index.ts';
 import { sttPost } from '../server/stt.ts';
 import { translatePost } from '../server/translateRoute.ts';
 import {
@@ -64,6 +73,7 @@ const apiRoutes: ApiRoute[] = [
   { method: 'POST', path: '/api/chat', handler: withMembership(chatPost) },
   { method: 'POST', path: '/api/import', handler: withMembership(importPost) },
   { method: 'POST', path: '/api/stt', handler: sttPost },
+  { method: 'POST', path: '/api/agent', handler: agentPost },
   { method: 'POST', path: '/api/translate', handler: translatePost },
   { method: 'POST', path: '/api/access-request', handler: accessRequestPost },
   { method: 'GET', path: '/api/admin/requests', handler: adminRequestsGet },
@@ -175,6 +185,16 @@ async function handleRequest(
       return;
     }
 
+    if (decodedPath === '/c' || decodedPath.startsWith('/c/')) {
+      const handler = matchCollectionLinkPage(decodedPath, method);
+      if (handler === 'wrongMethod') {
+        sendText(nodeReq, nodeRes, 405, 'Method not allowed');
+        return;
+      }
+      await dispatchFetch(nodeReq, nodeRes, decodedPath, method, handler);
+      return;
+    }
+
     if (staticRoot === null) {
       sendText(nodeReq, nodeRes, 404, 'Not found');
       return;
@@ -230,6 +250,23 @@ async function handleRequest(
   }
 }
 
+/** `/c/join` is the confirm step; any other `/c/...` is a token landing (bad shapes render the generic page). */
+function matchCollectionLinkPage(pathname: string, method: string): ApiHandler | 'wrongMethod' {
+  if (pathname === '/c/join') {
+    if (method === 'GET' || method === 'HEAD') {
+      return collectionLinkJoinGet;
+    }
+    if (method === 'POST') {
+      return collectionLinkJoinPost;
+    }
+    return 'wrongMethod';
+  }
+  if (method === 'GET' || method === 'HEAD') {
+    return collectionLinkLandingGet;
+  }
+  return 'wrongMethod';
+}
+
 function matchApiRoute(pathname: string, method: string): ApiHandler | 'wrongMethod' | null {
   let pathMatched = false;
   for (const route of apiRoutes) {
@@ -279,6 +316,21 @@ function matchApiRoute(pathname: string, method: string): ApiHandler | 'wrongMet
   if (roleMatch) {
     if (method === 'POST') {
       return collectionGrantsRolePost;
+    }
+    return 'wrongMethod';
+  }
+  if (/^\/api\/collections\/[^/]+\/links$/.test(pathname)) {
+    if (method === 'GET') {
+      return collectionLinksGet;
+    }
+    if (method === 'POST') {
+      return collectionLinksPost;
+    }
+    return 'wrongMethod';
+  }
+  if (/^\/api\/collections\/[^/]+\/links\/revoke$/.test(pathname)) {
+    if (method === 'POST') {
+      return collectionLinksRevokePost;
     }
     return 'wrongMethod';
   }

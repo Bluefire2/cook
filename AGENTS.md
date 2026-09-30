@@ -128,6 +128,12 @@ No refresh tokens, no extra Google APIs, no Auth.js.
   cookie is not dependably attached to an extension-initiated request. Do not
   extend header auth to any other route, and do not add
   `Access-Control-Allow-Credentials` to this one.
+- **Other cookies**, all HttpOnly, SameSite=Lax, HMAC-signed with
+  `SESSION_SECRET`, 10 minutes, each its own `v` family so one never verifies
+  as another: `sous_oauth` (oauth transaction), `sous_invite` (app invite
+  hop), `sous_collection_link` (collection link hop, `v: 'clink'`,
+  **`Path=/c`**, carries the link's sha256 id, never the token). A new flow
+  gets a new cookie name and family; do not reuse one.
 - OAuth callback **must not** use `Response.redirect()` (immutable Headers;
   `Set-Cookie` would be dropped). Build a `Response` with a `Location` header
   and always clear `sous_oauth`.
@@ -193,6 +199,29 @@ session with no own row that reaches the id through a share is `invalid`.
 Client role is in-memory `access` on the shared origin, never a `Recipe`
 field. Editors get Edit and Ask Apply (photos always kept), no photo, delete,
 move, or cook-log controls.
+
+**Collection links** (`server/collectionLinks.ts`, `collectionLinksHttp.ts`)
+attach an already admitted member to one collection; they never create a
+member (that is `/invite`). The owner mints, lists, and revokes under
+`/api/collections/:id/links` (`GET`, `POST { role? }`, `POST …/revoke
+{ id }`), cookie session, collection owner only, 404 for anyone else. Firestore
+`collectionLinks/{sha256(token)}` holds owner, collection, role, and expiry;
+the raw token is only in the mint response. Multi-use until revoked or 7 days,
+at most 20 live per collection. `/c/<token>` is server HTML (Vite proxies
+`^/c/`, PWA denylist): it swaps the token for the `sous_collection_link` hop
+cookie and 303s to `/c/join`, so the token never reaches a rendered page,
+Referer, or the OAuth round trip. `GET /c/join` only renders: signed out ⇒ sign
+in with `returnTo=/c/join`; signed-in non-member ⇒ the invitation-only 403;
+member ⇒ a confirm form. Only the same-origin `POST /c/join` redeems
+(`Origin` must be exactly ours, never `null`, so `/c/join` pages send
+`Referrer-Policy: same-origin`, not `no-referrer`; the posted id must match
+the hop cookie), through `orchestrateGrantAdd`,
+the same code path as add-by-email but with `onExisting: 'keepRole'`:
+unlike add-by-email, already granted keeps its role (a link never upgrades
+or downgrades anyone; the owner's row switch does), the
+20-grant cap shows a "full" page and leaves the link valid, the owner's own
+link writes nothing. Unknown, revoked, expired, deleted collection, and
+unadmitted owner are one generic 404 page. The OAuth callback is unchanged.
 
 Collection delete tombstones live grants in the same transaction. Forward
 grants carry an internal `active` flag, and the cascade time is
@@ -286,15 +315,18 @@ trigger.
 Docker is not installed locally; local `bash scripts/deploy.sh` still uses
 Cloud Build.
 
-After the first production deploy of sharing:
+As of 2026-09-27, production was `sous-00013-ccs`, deployed from `main` at
+`cdf6d07` (includes #35, #36 cook log, and #37). Commits after `cdf6d07` were
+not in that deploy. This file does not record later revisions.
 
-- Run `node --env-file=.env.local scripts/backfill-email-lower.ts` with ADC
-  for `cooking-assistant-508423`, review the dry run, then rerun with
-  `--apply`. It is idempotent.
-- Delete a real recipe that is listed in a collection and confirm the
-  `array-contains` query on `recipeIds` succeeds. Native Firestore creates
-  that single-field array index automatically; the check is for an index
-  exemption or misconfiguration, and it exercises the real delete path.
+The `emailLower` backfill (`node --env-file=.env.local
+scripts/backfill-email-lower.ts`, ADC for `cooking-assistant-508423`, dry run
+before `--apply`, idempotent) ran 2026-09-27: dry run found 0 pending of 4
+profiles, so nothing was applied. Still to run: delete a real recipe that is
+listed in a collection and confirm the `array-contains` query on `recipeIds`
+succeeds. Native Firestore creates that single-field array index
+automatically; the check is for an index exemption or misconfiguration, and
+it exercises the real delete path.
 
 ## Do not touch
 
@@ -309,6 +341,19 @@ After the first production deploy of sharing:
 - `package.json` `"name"`
 - Polling sync, Firestore listeners, WebSockets
 - Conflict-merge UI (LWW is the product)
+
+## Agent module
+
+The library assistant (`POST /api/agent`, screen `/assistant`) is a module.
+Public entry points are `agentPost` from `server/agent/index.ts` and
+`AssistantScreen` / `AssistantEntryLink` from `src/agent/index.ts`. Nothing
+outside those directories imports agent internals. Wiring outside the module
+is one route line in `scripts/server.ts`, one route in `src/App.tsx`,
+`<AssistantEntryLink />` in `src/screens/Library.tsx`, `listLiveDocs` in
+`server/store.ts`, and `onSessionReset` in `src/lib/session.ts`. The harness
+under `server/agent/harness/` knows nothing about recipes; only
+`server/agent/harness/google.ts` imports `@google/genai`. Domain tools live in
+`server/agent/sous/`. See `docs/plans/library-agent.md`.
 
 ## Feature constitutions
 
@@ -341,25 +386,27 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/sous-oauth-db.md` | Parent. Identity + sync (1–17) done. |
 | `docs/plans/sync-toast.md` | Done (`b4b43b6`). |
 | `docs/plans/photos-and-deploy-docs.md` | Done (GCS photos, deploy.sh, README, legal rewrite). |
-| `docs/plans/invitation-flow.md` | In progress on branch `invitation-flow` (request access → `/admin` → Firestore membership). |
-| `docs/plans/invite-links.md` | Built. Single-use 7-day bearer invite links that admit on Google consent. Owners mint from `/admin`. |
-| `docs/plans/member-invite-links.md` | Built. A non-owner member mints one link from Settings (`POST /api/invites`). Not deployed. |
+| `docs/plans/invitation-flow.md` | Done (#8). Request access → `/admin` → Firestore membership. |
+| `docs/plans/invite-links.md` | Done (#12). Single-use 7-day bearer invite links that admit on Google consent. Owners mint from `/admin`. |
+| `docs/plans/member-invite-links.md` | Merged (#48; library-header copy in #49). A non-owner member mints one link from Settings (`POST /api/invites`). Not deployed. |
 | `docs/plans/server-backed-library.md` | Done: drop IndexedDB; in-memory library over pull/push. |
-| `docs/plans/ask-voice-stt.md` | Implementing. Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
+| `docs/plans/ask-voice-stt.md` | Done (#7). Ask composer dictation via `POST /api/stt` (Gemini); output remains text. |
 | `docs/plans/sync-engine-hardening.md` | Findings only, not an approved plan. Dexie-lease items no longer apply. |
-| `docs/plans/recipe-gallery.md` | In progress on branch `cursor/recipe-gallery-267b` (main photo + end-of-recipe gallery). |
-| `docs/plans/shared-recipes.md` | Done. PR 2 view-only collection grants (#23) deployed as `sous-00011-td2`. Post-deploy `emailLower` backfill and real-delete `array-contains` check still to run (see Cloud and deploy). |
+| `docs/plans/recipe-gallery.md` | Done (#10, simplified in #18). Main photo + end-of-recipe gallery. |
+| `docs/plans/shared-recipes.md` | Done. PR 2 view-only collection grants (#23) deployed as `sous-00011-td2`; production is now `sous-00013-ccs`. `emailLower` backfill ran 2026-09-27 (0 pending); real-delete `array-contains` check still to run (see Cloud and deploy). Editor role (#45) and grantee leave (#43) are merged, not deployed. |
 | `docs/plans/shared-collections-review-fixes.md`, `shared-access-hardening.md`, `shared-sharing-final-hardening.md`, `pr23-review-fixes-round-2.md` | Done. Review rounds for PR 2; history only, `shared-recipes.md` and the Sharing section here are current. |
-| `docs/plans/bulk-import.md` | Implementing. Opt-in bulk URL import on `/import`. |
+| `docs/plans/bulk-import.md` | Done (#15). Opt-in bulk URL import on `/import`. |
 | `docs/plans/chrome-extension-import.md` | Built: `extension/` + `POST /api/extension/import`. Not deployed. |
 | `docs/plans/recipe-import-module.md` | Built on `recipe-import-module`: import is `server/recipeImport.ts`; one pipeline for web, extension, evals (`evals/recipeImport.eval.ts`). `api/import.ts` is a 401 stub. Not deployed. |
 | `docs/plans/import-blocked-fetch.md` | Extension POSTs the tab HTML; empty html is 422, never `fetchPageHtml`. Website URL import stays paste-fallback. No proxy. |
 | `docs/plans/image-import.md` | Built on `cursor/image-import-38e9`, not deployed. Import one recipe from 1–4 photos (handwritten notes) via `images` on `POST /api/import`; Gemini reads them; never stored. Bound by `docs/constitutions/image-import.md`. |
 | `docs/plans/image-import-evals-and-retry.md` | Built, not deployed. Handwritten evals split into dev/holdout with `evals/AGENTS.md` rules and `ocrCompare --thinking`. The photo retry and runaway-unit check were measured and reverted (dev approach A 14/15 → 12/15; holdout stayed 15/15). |
-| `docs/plans/cook-log.md` | Built on `cursor/cook-log-5615` (constitution `docs/constitutions/cook-log.md`). Not deployed. |
-| `docs/plans/i18n.md` | Built and verified on `cursor/i18n-implement-5489` (PR #42; constitution `docs/constitutions/i18n.md`). Not deployed. UI language with `src/i18n/` catalogs, `Recipe.lang`, translation at import and on the recipe screen, dictation language. |
+| `docs/plans/cook-log.md` | Done (#36; constitution `docs/constitutions/cook-log.md`). Included in `sous-00013-ccs`. |
+| `docs/plans/i18n.md` | Merged (#42; constitution `docs/constitutions/i18n.md`). Not deployed. UI language with `src/i18n/` catalogs, `Recipe.lang`, translation at import and on the recipe screen, dictation language. |
 | `docs/plans/i18n-follow-ups.md` | Open. Post-deploy owner steps (Cloud Run translate p95, dictation clips, `lang` backfill `--write`), unrun checks, and review nits left after PR #42. |
 | `docs/plans/collection-path.md` | Built on `cursor/collection-path-2d3d`. Named collections open at `/collections/<id>`. Legacy `?c=` redirects removed. Not deployed. |
+| `docs/plans/approval-email.md` | Built on `cursor/approval-email-420a`. Email the requester after an admin approves an access request. Not deployed; before deploying, set `MAIL_FROM` to a sender on a Resend-verified domain (the sandbox sender skips the send). |
+| `docs/plans/library-agent.md` | Merged (#34), not deployed. App-level assistant: read-only tools over the user's own library, modular cards (shopping list first), ephemeral threads. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not

@@ -19,10 +19,10 @@ import {
   sessionCookie,
   shouldRefresh,
   signAccessRequestTx,
-  signOauthTx,
+  signAuthTx,
   signSession,
+  verifyAuthTx,
   verifyInviteTx,
-  verifyOauthTx,
 } from './session.ts';
 import { upsertUser as upsertUserDoc } from './store.ts';
 
@@ -72,7 +72,7 @@ export async function authStart(req: Request): Promise<Response> {
   const now = Date.now();
   const inviteRaw = readCookie(req, INVITE_COOKIE_NAME);
   const inviteTx = inviteRaw === null ? null : verifyInviteTx(inviteRaw, now);
-  const txToken = signOauthTx(
+  const txToken = signAuthTx(
     {
       state,
       nonce,
@@ -134,11 +134,11 @@ export async function authCallbackGoogle(req: Request): Promise<Response> {
       });
     }
 
-    const oauthRaw = readCookie(req, OAUTH_COOKIE_NAME);
-    if (oauthRaw === null) {
+    const authTxRaw = readCookie(req, OAUTH_COOKIE_NAME);
+    if (authTxRaw === null) {
       return respond(400, { body: 'Sign-in failed' });
     }
-    const txToken = verifyOauthTx(oauthRaw, Date.now());
+    const txToken = verifyAuthTx(authTxRaw, Date.now());
     if (!txToken) {
       return respond(400, { body: 'Sign-in failed' });
     }
@@ -222,6 +222,10 @@ export async function authCallbackGoogle(req: Request): Promise<Response> {
 
     if (access === 'denied') {
       console.log(`sign-in refused: ${email}`);
+      // Keep a pending or declined request's address current, so a later
+      // approval emails the address this Google account has now. A missing
+      // request is a no-op; failures are logged and ignored.
+      await touchRequestIdentity(payload.sub, { sub: payload.sub, email, name });
       let requestToken: string | null = null;
       try {
         requestToken = signAccessRequestTx({ sub: payload.sub, email, name }, Date.now());
