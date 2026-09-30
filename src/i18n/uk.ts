@@ -457,6 +457,7 @@ export const uk: Messages = {
   'assistant.send': 'Надіслати',
   'assistant.starterTonight': 'Що приготувати сьогодні ввечері приблизно за 30 хвилин?',
   'assistant.starterTogether': 'Допоможи приготувати дві страви разом і склади список покупок.',
+  'assistant.ownRecipesOnly': 'Помічник бачить лише ваші власні рецепти, а не колекції, якими з вами поділилися.',
   'assistant.searching': 'Шукаю рецепти…',
   'assistant.reading': 'Читаю рецепти…',
   'assistant.combining': 'Об’єдную інгредієнти…',

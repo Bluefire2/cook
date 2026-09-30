@@ -455,6 +455,7 @@ export const ru: Messages = {
   'assistant.send': 'Отправить',
   'assistant.starterTonight': 'Что приготовить сегодня вечером примерно за 30 минут?',
   'assistant.starterTogether': 'Помоги приготовить два рецепта вместе и составь список покупок.',
+  'assistant.ownRecipesOnly': 'Помощник видит только ваши собственные рецепты, а не коллекции, которыми с вами поделились.',
   'assistant.searching': 'Ищу рецепты…',
   'assistant.reading': 'Читаю рецепты…',
   'assistant.combining': 'Объединяю ингредиенты…',

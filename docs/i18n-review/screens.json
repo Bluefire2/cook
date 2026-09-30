@@ -278,7 +278,7 @@
   {
     "id": "assistant-empty",
     "route": "/assistant",
-    "setup": "Signed in with an empty assistant thread, so the two starter prompts, the composer, Send, and Clear are showing. Do not send a message.",
+    "setup": "Signed in with an empty assistant thread, so the two starter prompts, the note that only your own recipes are searched, the composer, Send, and Clear are showing. Do not send a message.",
     "needsData": true
   },
   {

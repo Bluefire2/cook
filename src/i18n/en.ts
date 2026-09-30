@@ -459,6 +459,7 @@ export const en = {
   'assistant.send': 'Send',
   'assistant.starterTonight': 'What can I make tonight in about 30 minutes?',
   'assistant.starterTogether': 'Help me cook two recipes together and make a shopping list.',
+  'assistant.ownRecipesOnly': 'The assistant only sees your own recipes, not collections shared with you.',
   'assistant.searching': 'Searching recipes…',
   'assistant.reading': 'Reading recipes…',
   'assistant.combining': 'Combining ingredients…',

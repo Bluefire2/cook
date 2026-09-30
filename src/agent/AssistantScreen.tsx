@@ -214,6 +214,7 @@ export default function AssistantScreen() {
                 {tr(key)}
               </button>
             ))}
+            <p className="px-1 pt-1 text-sm text-ink-muted">{tr('assistant.ownRecipesOnly')}</p>
           </div>
         )}
 

@@ -427,6 +427,7 @@ export const zhHans: Messages = {
   'assistant.send': '发送',
   'assistant.starterTonight': '今晚大约 30 分钟能做什么？',
   'assistant.starterTogether': '帮我同时做两道菜，并列出购物清单。',
+  'assistant.ownRecipesOnly': '助手只查看你自己的食谱，不含分享给你的合集。',
   'assistant.searching': '正在搜索食谱…',
   'assistant.reading': '正在阅读食谱…',
   'assistant.combining': '正在合并食材…',
