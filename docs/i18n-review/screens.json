@@ -12,9 +12,15 @@
     "needsData": true
   },
   {
+    "id": "collections-index",
+    "route": "/collections",
+    "setup": "Signed in, opened from the Collections label on a library that already has at least one named collection. The screen lists Recipes and each collection as a row with a recipe count, plus New collection. Do not press New collection. Do not create, rename, share, or delete. If the account has no named collection, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
     "id": "library-populated",
     "route": "/",
-    "setup": "Signed in on the Recipes list (/) or an own named collection (/collections/<id>) that already shows at least one recipe card. Prefer / when it has cards. Do not create a recipe. If nothing is listed, mark skipped: needs data. A signed-in header shows the Ask (chat bubble) and Invite (person with a plus) icons before Cooks; their names are aria-labels. Do not click Invite.",
+    "setup": "Signed in on the Recipes list (/) or an own named collection (/collections/<id>) that already shows at least one recipe card. Prefer / when it has cards. The collections section sits on the page background between the header and search: a Collections label with a folder icon (it links to the index), New collection on the right, and one sideways row of chips starting with Recipes. On an owned named collection, Share, Rename, and Delete are plain text under the chips. There is no card around the section. Do not press New collection, Share, Rename, or Delete, and do not create a recipe. If nothing is listed, mark skipped: needs data. A signed-in header shows the Ask (chat bubble) and Invite (person with a plus) icons before Cooks; their names are aria-labels. Do not click Invite.",
     "needsData": true
   },
   {

@@ -44,6 +44,12 @@ export const uk: Messages = {
   'library.inviteCopyFailed': 'Посилання-запрошення створено, але його не вдалося скопіювати',
   'library.collectionsNav': 'Колекції',
   'library.recipes': 'Рецепти',
+  'library.recipeCount': {
+    one: '{count} рецепт',
+    few: '{count} рецепти',
+    many: '{count} рецептів',
+    other: '{count} рецепти',
+  },
   'library.sharedByLabel': '{name} (від {email})',
   'library.sharedLabel': '{name} (спільна)',
   'library.rename': 'Перейменувати',

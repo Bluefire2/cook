@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useT } from '../i18n';
+import CollectionSection from '../components/CollectionSection';
 import LibraryInviteToast, {
   type LibraryInviteNotice,
 } from '../components/LibraryInviteToast';
@@ -9,7 +10,7 @@ import Sheet from '../components/Sheet';
 import { createInvite } from '../lib/adminApi';
 import { createMemberInvite } from '../lib/inviteApi';
 import { copyStrategy, inviteMintClient, isInviteQuotaError } from '../lib/inviteMint';
-import { FolderIcon, InviteIcon, PlusIcon, SettingsIcon, SharedIcon, SpinnerIcon } from '../lib/icons';
+import { FolderIcon, InviteIcon, PlusIcon, SettingsIcon, SpinnerIcon } from '../lib/icons';
 import {
   importHref,
   libraryHref,
@@ -674,77 +675,20 @@ export default function Library() {
         </div>
       )}
 
-      {showSwitcher && (
-        <nav aria-label={t('library.collectionsNav')} className="mb-3 flex items-start gap-1.5">
-          <FolderIcon className="mt-1.5 block h-5 w-5 shrink-0 text-ink-muted" />
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <Link
-              to="/"
-              onClick={() => setBrowseAll(false)}
-              className={chipClass(!browseAll && currentId === undefined)}
-            >
-              {t('library.recipes')}
-            </Link>
-            {collections?.map((collection) => {
-              const shared = collectionStore.isShared(collection.id);
-              const sharedBy = shared ? collectionStore.sharedBy(collection.id) : undefined;
-              const sharedLabel = sharedBy
-                ? t('library.sharedByLabel', { name: collection.name, email: sharedBy })
-                : t('library.sharedLabel', { name: collection.name });
-              return (
-                <Link
-                  key={collection.id}
-                  to={libraryHref(collection.id)}
-                  onClick={() => setBrowseAll(false)}
-                  aria-label={shared ? sharedLabel : collection.name}
-                  title={shared ? sharedLabel : undefined}
-                  className={`${chipClass(!browseAll && collection.id === currentId)} inline-flex items-center gap-1.5`}
-                >
-                  {shared && (
-                    <SharedIcon className="block h-3.5 w-3.5 shrink-0" />
-                  )}
-                  {collection.name}
-                </Link>
-              );
-            })}
-            <button
-              type="button"
-              onClick={() => dispatch({ type: 'startCreate' })}
-              className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
-            >
-              {t('common.newCollection')}
-            </button>
-            {named && !namedIsShared && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => dispatch({ type: 'openShare' })}
-                  className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
-                >
-                  {t('common.share')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    dispatch({ type: 'openRename', collectionId: named.id, name: named.name })
-                  }
-                  className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
-                >
-                  {t('library.rename')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    dispatch({ type: 'openDeleteCollection', collectionId: named.id })
-                  }
-                  className="rounded-full px-3 py-1.5 text-sm text-danger hover:text-ink"
-                >
-                  {t('common.delete')}
-                </button>
-              </>
-            )}
-          </div>
-        </nav>
+      {showSwitcher && collections !== undefined && (
+        <CollectionSection
+          collections={collections}
+          currentId={currentId}
+          browseAll={browseAll}
+          showOwnedActions={Boolean(named && !namedIsShared)}
+          onCreate={() => dispatch({ type: 'startCreate' })}
+          onShare={() => dispatch({ type: 'openShare' })}
+          onRename={() =>
+            named && dispatch({ type: 'openRename', collectionId: named.id, name: named.name })
+          }
+          onDelete={() => named && dispatch({ type: 'openDeleteCollection', collectionId: named.id })}
+          onOpenList={() => setBrowseAll(false)}
+        />
       )}
 
       {named && namedIsShared && !browseAll && (

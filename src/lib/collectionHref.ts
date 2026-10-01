@@ -37,6 +37,19 @@ export function missingCollectionAction(input: {
   };
 }
 
+/**
+ * Where the collections index sends Back. Only a library path is kept:
+ * `/` or `/collections/<id>`. Anything else, including the index itself,
+ * goes home.
+ */
+export function libraryReturnPath(from: unknown): string {
+  if (from === '/') return '/';
+  if (typeof from !== 'string' || !from.startsWith('/collections/')) return '/';
+  const id = from.slice('/collections/'.length);
+  if (id === '' || id.includes('/')) return '/';
+  return from;
+}
+
 export function libraryHref(collectionId: string | undefined): string {
   if (collectionId === undefined || collectionId === '') {
     return '/';

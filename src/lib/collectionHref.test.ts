@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   importHref,
   libraryHref,
+  libraryReturnPath,
   missingCollectionAction,
   newRecipeHref,
 } from './collectionHref';
@@ -22,6 +23,22 @@ describe('libraryHref', () => {
 
   it('encodes the id into a collection path', () => {
     expect(libraryHref('a/b')).toBe('/collections/a%2Fb');
+  });
+});
+
+describe('libraryReturnPath', () => {
+  it('keeps the home library and a collection library', () => {
+    expect(libraryReturnPath('/')).toBe('/');
+    expect(libraryReturnPath(`/collections/${SAMPLE_COLLECTION_ID}`)).toBe(
+      `/collections/${SAMPLE_COLLECTION_ID}`,
+    );
+  });
+
+  it('sends anything else home', () => {
+    expect(libraryReturnPath(undefined)).toBe('/');
+    expect(libraryReturnPath('/collections')).toBe('/');
+    expect(libraryReturnPath(`/collections/${SAMPLE_COLLECTION_ID}/import`)).toBe('/');
+    expect(libraryReturnPath('/settings')).toBe('/');
   });
 });
 

@@ -44,6 +44,12 @@ export const ru: Messages = {
   'library.inviteCopyFailed': 'Ссылка-приглашение создана, но её не удалось скопировать',
   'library.collectionsNav': 'Коллекции',
   'library.recipes': 'Рецепты',
+  'library.recipeCount': {
+    one: '{count} рецепт',
+    few: '{count} рецепта',
+    many: '{count} рецептов',
+    other: '{count} рецепта',
+  },
   'library.sharedByLabel': '{name} (от {email})',
   'library.sharedLabel': '{name} (общая)',
   'library.rename': 'Переименовать',

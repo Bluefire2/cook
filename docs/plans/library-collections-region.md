@@ -1,7 +1,7 @@
 # Library collections region
 
-UX spec. Not an implementation plan: it has no tagged steps, and nothing
-here should be built until a later plan breaks it into steps.
+Accepted UX spec. The library section and the `/collections` index follow
+this document.
 
 Constitutions read: `docs/constitutions/i18n.md`,
 `docs/constitutions/client-state.md`. Neither is amended. Cook log and
