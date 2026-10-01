@@ -660,7 +660,7 @@ export default function Library() {
       {collections !== undefined && collections.length === 0 && sessionStatus === 'signedIn' && (
         // Nothing shared by you or with you yet: say where sharing starts.
         <div className="mb-3 flex items-start gap-1.5">
-          <FolderIcon className="mt-2 block h-4 w-4 shrink-0 text-ink-muted" />
+          <FolderIcon className="mt-1.5 block h-5 w-5 shrink-0 text-ink-muted" />
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-muted">
             <span>{t('library.collectionsEmpty')}</span>
             <button
@@ -676,7 +676,7 @@ export default function Library() {
 
       {showSwitcher && (
         <nav aria-label={t('library.collectionsNav')} className="mb-3 flex items-start gap-1.5">
-          <FolderIcon className="mt-2 block h-4 w-4 shrink-0 text-ink-muted" />
+          <FolderIcon className="mt-1.5 block h-5 w-5 shrink-0 text-ink-muted" />
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <Link
               to="/"
