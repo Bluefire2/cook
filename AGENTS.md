@@ -1,8 +1,8 @@
 # AGENTS.md
 
-Guidance for agents working in this repo. The product is **Sous**; the npm
-package, backup marker, and directories are still named
-`cook`.
+Guidance for agents working in this repo. The product is **Sous**, and so are
+the npm package and the GitHub repo (`Bluefire2/sous`); the backup marker and
+local directories are still named `cook`.
 
 ## What this is
 
