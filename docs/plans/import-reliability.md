@@ -1,17 +1,16 @@
 # Recipe import reliability
 
 **Status:** Approved 2026-09-30. Phase 2 built 2026-10-01 on
-`claude/import-reliability-plan-170fa6` (stacked on this branch), not
-deployed; see [Phase 2 implementation notes](#phase-2-implementation-notes).
-Import logging, its privacy copy, and `scripts/import-audit.ts` are done
-separately in #102 (open, not deployed). Phase 1 is still waiting on the
-reporter's failing URLs. Phase 3 waits on a deploy and log data. The spec is
+`claude/import-reliability-plan-170fa6`, not deployed; see
+[Phase 2 implementation notes](#phase-2-implementation-notes). Import
+logging, its privacy and terms copy, `scripts/import-audit.ts`, and the
+sanitized rethrow (`sanitizedImportError`) are #102, merged 2026-10-01, not
+deployed. Phase 1 is still waiting on the reporter's failing URLs. Phase 3
+waits on a deploy and log data. The spec is
 [`import-reliability-spec.md`](import-reliability-spec.md).
 
-**Branch:** `claude/import-reliability` is stacked on #102
-(`claude/import-logs`), because phase 2 extends `server/importLog.ts`. Once #102
-merges, rebase onto `main`. Open this work's PR against `main` only after
-that, or against `claude/import-logs` until then.
+**Branch:** `claude/import-reliability-plan-170fa6`, with `main` merged in
+after #102. Open its PR against `main`.
 
 ## Context
 

@@ -112,8 +112,25 @@ export function importLogLine(entry: ImportLogEntry): string {
 }
 
 /**
+ * An error to rethrow in place of `err`. Its fixed message names `err`'s class
+ * and numeric status, and nothing else: no message, no stack, no `cause`.
+ * The dispatcher in `scripts/server.ts` `console.error`s whatever escapes, and
+ * an SDK message can quote the request (pasted text, a page's HTML, or an
+ * extension page behind a login).
+ */
+export function sanitizedImportError(err: unknown): Error {
+  const rawName = err instanceof Error ? err.name : typeof err;
+  const name = /^[A-Za-z]{1,40}$/.test(rawName) ? rawName : 'Error';
+  const status = thrownStatus(err);
+  return new Error(
+    `Import failed: ${name}${status === undefined ? '' : ` (status ${status})`}; message withheld`,
+  );
+}
+
+/**
  * Runs `handle`, then writes one line with its status and duration. A throw is
- * logged as `threw` and rethrown, so the caller's behaviour does not change.
+ * logged as `threw` and rethrown as `sanitizedImportError`, so the client still
+ * gets the dispatcher's plain-text 500 but no request text reaches the logs.
  */
 export async function withImportLog(
   entry: ImportLogEntry,
@@ -129,7 +146,7 @@ export async function withImportLog(
     const status = thrownStatus(err);
     if (status !== undefined) entry.errorStatus = status;
     entry.status = 500;
-    throw err;
+    throw sanitizedImportError(err);
   } finally {
     entry.ms = Date.now() - started;
     console.log(importLogLine(entry));

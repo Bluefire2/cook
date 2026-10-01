@@ -36,12 +36,19 @@ checks and makes exactly one call.
 
 Both import routes write one `event: 'import'` JSON log line per request
 (`server/importLog.ts`, `withImportLog`): the session `sub`, how the import
-arrived, the URL as `origin + pathname`, `source` (`jsonld` | `text`),
-`attempts` (each call's result), warning `codes`, the outcome, counts, a
-thrown error's numeric `status`, and timing. Never the email, recipe or pasted text,
-HTML, photo bytes, a query string, or an error message. `/privacy` (Server
-logs) and `/terms` describe exactly that line and its 30-day retention (the
-`_Default` log bucket); change them with it.
+arrived, the URL as `origin + pathname`, for page and paste imports `source`
+(`jsonld` | `text`) and `attempts` (each call's result), warning `codes`, the
+outcome, counts, a thrown error's numeric `status`, and timing. Never the
+email, recipe or pasted text, HTML, photo bytes, a query string, or an error
+message. A Gemini throw on a page or paste import is a logged `model_error`,
+not a throw. Any other throw from either
+route is rethrown as `sanitizedImportError` (class name and status only),
+because the dispatcher in `scripts/server.ts` `console.error`s whatever
+escapes and an SDK message can quote the request; never let the original
+error escape an import route. `/privacy` (Server logs) and `/terms` describe
+that line and its 30-day retention (the `_Default` log bucket); change them
+with it. Photo import's share of the line is bound by
+`docs/constitutions/image-import.md` principle 3.
 
 No server log line may contain an email address or a link token. Invite
 (`/invite/<token>`) and collection-link (`/c/<token>`) pages send
@@ -442,7 +449,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/collection-path.md` | Built on `cursor/collection-path-2d3d`. Named collections open at `/collections/<id>`. Legacy `?c=` redirects removed. Not deployed. |
 | `docs/plans/approval-email.md` | Built on `cursor/approval-email-420a`. Email the requester after an admin approves an access request. Not deployed; before deploying, set `MAIL_FROM` to a sender on a Resend-verified domain (the sandbox sender skips the send). |
 | `docs/plans/library-agent.md` | Merged (#34), not deployed. App-level assistant: read-only tools over the user's own library, modular cards (shopping list first), ephemeral threads. |
-| `docs/plans/import-reliability.md` | Phase 2 built on `claude/import-reliability-plan-170fa6`, not deployed. Typed import warnings stored as optional `Recipe.importCheck`, deterministic checks, retries (constant at 0 until phase 3), warning UI. Import logging was done separately (#102). Phase 1 still waits on the reporter's failing URLs; phase 3 waits on a deploy and data. |
+| `docs/plans/import-reliability.md` | Phase 2 built on `claude/import-reliability-plan-170fa6`, not deployed. Typed import warnings stored as optional `Recipe.importCheck`, deterministic checks, retries (constant at 0 until phase 3), warning UI. Import logging is #102 (merged, not deployed). Phase 1 still waits on the reporter's failing URLs; phase 3 waits on a deploy and data. |
 | `docs/plans/agent-collection-moves.md` | Built, not deployed. `propose_collection_move` / `collection_move` v1 proposal card; client apply via `collectionStore.moveRecipes`. |
 | `docs/plans/html-parser-recipe-import.md` | Built on `cursor/html-parser-recipe-import-11d4`. Not deployed. Replace the hand-rolled HTML scanner in `server/recipeImport.ts` with parse5 (issue #91). |
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |

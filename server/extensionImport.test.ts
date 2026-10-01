@@ -4,6 +4,7 @@ import { fakeImportDeps } from '../test/fakeGemini.ts';
 import {
   IMPORT_BAD_LANGUAGE_CODE,
   IMPORT_BAD_LANGUAGE_ERROR,
+  type RecipeImportDeps,
 } from './recipeImport.ts';
 import * as recipeImport from './recipeImport.ts';
 import { SESSION_HEADER_NAME, signSession } from './session.ts';
@@ -269,6 +270,13 @@ describe('extensionImport translateTo', () => {
   });
 });
 
+function importLogEntries(log: { mock: { calls: unknown[][] } }): Record<string, unknown>[] {
+  return log.mock.calls
+    .map(([message]) => String(message))
+    .filter((raw) => raw.startsWith('{"event":"import"'))
+    .map((raw) => JSON.parse(raw) as Record<string, unknown>);
+}
+
 describe('extensionImport log line', () => {
   beforeEach(() => {
     Object.assign(process.env, SESSION_ENV);
@@ -277,13 +285,6 @@ describe('extensionImport log line', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-
-  function importLogEntries(log: { mock: { calls: unknown[][] } }): Record<string, unknown>[] {
-    return log.mock.calls
-      .map(([message]) => String(message))
-      .filter((raw) => raw.startsWith('{"event":"import"'))
-      .map((raw) => JSON.parse(raw) as Record<string, unknown>);
-  }
 
   it('logs the account and the tab address without its query, and the outcome', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -343,26 +344,37 @@ describe('extensionImport warnings', () => {
     }
   });
 
-  it('answers a Gemini throw as import-model-failed, without the error text', async () => {
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+  it('answers a Gemini throw as import-model-failed, with no error text in the body or the log', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const deps: RecipeImportDeps = {
+      model: 'test-model',
+      ai: {
+        models: {
+          generateContent: () =>
+            Promise.reject(Object.assign(new Error('SECRET logged-in page text'), { status: 503 })),
+        },
+      },
+      translator: () => Promise.resolve({ ok: false, code: TRANSLATE_FAILED }),
+    };
     const response = await extensionImport(
       authedRequest({ url, html: '<main><p>Simmer the tomatoes.</p></main>' }),
-      {
-        model: 'test-model',
-        ai: {
-          models: {
-            generateContent: () =>
-              Promise.reject(Object.assign(new Error('SECRET'), { status: 503 })),
-          },
-        },
-        translator: () => Promise.resolve({ ok: false, code: TRANSLATE_FAILED }),
-      },
+      deps,
     );
     expect(response.status).toBe(502);
     const body: unknown = await response.json();
     expect(body).toMatchObject({ code: 'import-model-failed' });
     expect(JSON.stringify(body)).not.toContain('SECRET');
     expect(sync.applyPushOp).not.toHaveBeenCalled();
+    expect(importLogEntries(log)).toEqual([
+      expect.objectContaining({
+        via: 'extension',
+        attempts: ['threw'],
+        outcome: 'model_error',
+        errorStatus: 503,
+        status: 502,
+      }),
+    ]);
+    expect(JSON.stringify(log.mock.calls)).not.toContain('SECRET');
   });
 
   it('saves the warnings on the recipe as importCheck', async () => {
