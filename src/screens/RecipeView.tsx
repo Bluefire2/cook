@@ -540,15 +540,13 @@ export default function RecipeView() {
         <SourceCredit source={source} />
       )}
 
-      {!chatOpen && (
-        <button
-          type="button"
-          onClick={() => setChatOpen(true)}
-          className="fixed right-5 bottom-8 z-10 flex h-14 items-center gap-2 rounded-full bg-amber-500 px-5 font-medium text-white shadow-lg hover:bg-amber-600 active:bg-amber-600"
-        >
-          {t('recipe.ask')}
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => setChatOpen(true)}
+        className={`fixed right-5 bottom-8 z-10 flex h-14 items-center gap-2 rounded-full bg-amber-500 px-5 font-medium text-white shadow-lg hover:bg-amber-600 active:bg-amber-600${chatOpen ? ' invisible' : ''}`}
+      >
+        {t('recipe.ask')}
+      </button>
       {chatOpen && (
         <ChatPanel
           recipe={recipe}

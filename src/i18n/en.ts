@@ -341,6 +341,8 @@ export const en = {
   'saveSheet.collections': 'Collections',
 
   'share.title': 'Share “{name}”',
+  'share.byEmail': 'By email',
+  'share.byLink': 'With a link',
   'share.intro':
     'Add someone who already has a Sous account. Editors can edit recipes but not photos. Only you can delete recipes or change who has access.',
   'share.emailPlaceholder': 'Email',
@@ -352,7 +354,6 @@ export const en = {
   'share.owner': 'Owner',
   'share.peopleTitle': 'People with access',
   'share.removeFor': 'Remove {email}',
-  'share.linkTitle': 'Share by link',
   'share.linkIntro': 'Anyone who already has a Sous account can join with the link until you revoke it or it expires after 7 days. The link is shown only once.',
   'share.linkRoleLabel': 'Role for people who join by link',
   'share.copyLink': 'Copy link',
@@ -519,6 +520,34 @@ export const en = {
   'assistant.recipesHeading': 'Recipes:',
   'assistant.cardUnavailable': 'Update the app to see this card.',
   'assistant.couldntAnswer': "The assistant couldn't answer that.",
+  'assistant.moveRecipesGone': 'These recipes are no longer in your library.',
+  'assistant.preparingMove': 'Preparing a move…',
+  'assistant.moveLeaveCurrentCollections':
+    'These recipes will leave their current collections.',
+  'assistant.moveHeadingToCollection': {
+    one: 'Move {count} recipe into {name}',
+    other: 'Move {count} recipes into {name}',
+  },
+  'assistant.moveHeadingToRecipes': {
+    one: 'Move {count} recipe back to Recipes',
+    other: 'Move {count} recipes back to Recipes',
+  },
+  'assistant.moveAppliedToCollection': {
+    one: 'Moved {count} recipe into {name}',
+    other: 'Moved {count} recipes into {name}',
+  },
+  'assistant.moveAppliedToRecipes': {
+    one: 'Moved {count} recipe back to Recipes',
+    other: 'Moved {count} recipes back to Recipes',
+  },
+  'assistant.moveAndMore': {
+    one: 'and {count} more',
+    other: 'and {count} more',
+  },
+  'assistant.moveShowAll': 'Show all recipes',
+  'assistant.moveShowLess': 'Show fewer',
+  'assistant.move': 'Move',
+  'assistant.moving': 'Moving…',
 } as const satisfies Record<string, string | PluralForms>;
 
 type EnMessages = typeof en;

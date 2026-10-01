@@ -4,6 +4,7 @@ import { googleModel } from '../server/agent/harness/google.ts';
 import { startAgent } from '../server/agent/harness/run.ts';
 import type { AgentEvent } from '../server/agent/harness/types.ts';
 import { CARD_SPECS } from '../server/agent/sous/cards/index.ts';
+import type { CollectionMoveData } from '../server/agent/sous/cards/collectionMove.ts';
 import type { ShoppingListData } from '../server/agent/sous/cards/shoppingList.ts';
 import { buildAgentLibrary, type AgentRecipe } from '../server/agent/sous/library.ts';
 import { buildSystemPrompt } from '../server/agent/sous/prompt.ts';
@@ -107,7 +108,7 @@ function fixtureLibrary() {
         steps: [{ text: 'Toss greens with vinaigrette and serve.' }],
       }),
     ],
-    [],
+    [{ id: 'eval-weeknight', name: 'Weeknight', recipeIds: [RECIPE_SIDE] }],
     { truncated: false, ...INDEX_LIMITS },
   );
 }
@@ -201,6 +202,29 @@ describe('library assistant (live Gemini)', () => {
       const ids = data.recipes.map((r) => r.id);
       expect(ids).toEqual(expect.arrayContaining([RECIPE_SKILLET, RECIPE_SOUP]));
       expect(ids.length).toBeGreaterThanOrEqual(2);
+    },
+    60_000,
+  );
+
+  it(
+    'proposes moving every recipe into the Weeknight collection',
+    async () => {
+      const events = await runLibraryAssistant(
+        'Move all my recipes into the Weeknight collection.',
+      );
+
+      const moveCards = events.filter(
+        (e): e is Extract<AgentEvent, { t: 'card' }> =>
+          e.t === 'card' && e.card.type === 'collection_move',
+      );
+      expect(moveCards.length).toBeGreaterThan(0);
+
+      const data = moveCards[0]!.card.data as CollectionMoveData;
+      expect(data.destination).toEqual({
+        kind: 'collection',
+        id: 'eval-weeknight',
+        name: 'Weeknight',
+      });
     },
     60_000,
   );

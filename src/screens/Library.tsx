@@ -224,7 +224,9 @@ export default function Library() {
         isCurrent: () => isCurrent(token),
         create: (name) => collectionStore.create(name),
         rename: (id, name) => collectionStore.rename(id, name),
-        move: (recipeIds, collectionId) => collectionStore.moveRecipes(recipeIds, collectionId),
+        move: async (recipeIds, collectionId) => {
+          await collectionStore.moveRecipes(recipeIds, collectionId);
+        },
         onCreated: (created) => dispatch({ type: 'created', token, created }),
       });
       if (result.kind === 'stale') return;

@@ -166,6 +166,48 @@ describe('replayCards', () => {
     expect(out[0]?.text).toContain('Yellow onion');
   });
 
+  it('replays collection_move via revalidate and refreshes destination name', () => {
+    const recipe: AgentRecipe = {
+      id: 'r1',
+      title: 'Soup',
+      servings: 4,
+      ingredientSections: [],
+      steps: [],
+      tags: [],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const library = buildAgentLibrary(
+      [recipe],
+      [{ id: 'dest', name: 'Live name', recipeIds: ['r1'] }],
+      { truncated: false, maxIndexEntries: 500, maxIndexChars: 40_000 },
+    );
+    const out = replayCards(
+      [
+        {
+          role: 'assistant',
+          content: 'Proposal',
+          cards: [
+            {
+              type: 'collection_move',
+              v: 1,
+              data: {
+                destination: { kind: 'collection', id: 'dest', name: 'Stale' },
+                recipeIds: ['r1'],
+                preview: [{ id: 'r1', title: 'Soup', from: { kind: 'unfiled' } }],
+                total: 1,
+              },
+            },
+          ],
+        },
+        validUserMessage('next'),
+      ],
+      library,
+    );
+    expect(out[0]?.text).toContain('Live name');
+    expect(out[0]?.text).toContain('Proposed moving 1 recipes');
+  });
+
   it('joins adjacent user turns left by a failed reply', () => {
     const out = replayCards(
       [validUserMessage('first'), validUserMessage('second')],

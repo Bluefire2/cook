@@ -1,3 +1,30 @@
+export type CollectionMoveFrom =
+  | { kind: 'collection'; name: string }
+  | { kind: 'unfiled' };
+
+export type CollectionMoveData = {
+  destination:
+    | { kind: 'collection'; id: string; name: string }
+    | { kind: 'unfiled' };
+  recipeIds: string[];
+  /** Proposal-time source of every moved recipe. Replay omits this. */
+  sources: { id: string; from: CollectionMoveFrom }[];
+  preview: {
+    id: string;
+    title: string;
+    from: CollectionMoveFrom;
+  }[];
+  total: number;
+};
+
+/**
+ * Locked to the server card and to `MAX_COLLECTION_RECIPE_IDS` by
+ * `test/agentCardContract.test.ts`. This file cannot import either side.
+ */
+export const COLLECTION_MOVE_MAX_IDS = 500;
+export const COLLECTION_MOVE_PREVIEW_LIMIT = 8;
+export const COLLECTION_MOVE_TITLE_MAX = 120;
+
 export type ShoppingListData = {
   title: string;
   recipes: { id: string; title: string; servings: number }[];
@@ -149,4 +176,125 @@ export function parseShoppingList(v: number, data: unknown): ShoppingListData | 
   }
 
   return { title, recipes, sections };
+}
+
+function parseMoveFrom(value: unknown): CollectionMoveFrom | undefined {
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+  const kind = value.kind;
+  if (kind === 'unfiled') {
+    return { kind: 'unfiled' };
+  }
+  if (kind === 'collection') {
+    const name = value.name;
+    if (typeof name !== 'string' || name.trim() === '') {
+      return undefined;
+    }
+    return { kind: 'collection', name: name.trim() };
+  }
+  return undefined;
+}
+
+function parseMoveDestination(
+  value: unknown,
+): CollectionMoveData['destination'] | undefined {
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+  const kind = value.kind;
+  if (kind === 'unfiled') {
+    return { kind: 'unfiled' };
+  }
+  if (kind === 'collection') {
+    const id = value.id;
+    const name = value.name;
+    if (typeof id !== 'string' || id === '' || typeof name !== 'string' || name.trim() === '') {
+      return undefined;
+    }
+    return { kind: 'collection', id, name: name.trim() };
+  }
+  return undefined;
+}
+
+export function parseCollectionMove(v: number, data: unknown): CollectionMoveData | undefined {
+  if (v !== 1 || !isPlainObject(data)) {
+    return undefined;
+  }
+
+  const destination = parseMoveDestination(data.destination);
+  if (destination === undefined) {
+    return undefined;
+  }
+
+  const recipeIdsRaw = data.recipeIds;
+  if (
+    !Array.isArray(recipeIdsRaw) ||
+    recipeIdsRaw.length < 1 ||
+    recipeIdsRaw.length > COLLECTION_MOVE_MAX_IDS
+  ) {
+    return undefined;
+  }
+  const recipeIds: string[] = [];
+  const seenIds = new Set<string>();
+  for (const id of recipeIdsRaw) {
+    if (typeof id !== 'string' || id === '' || seenIds.has(id)) {
+      return undefined;
+    }
+    seenIds.add(id);
+    recipeIds.push(id);
+  }
+
+  const sourcesRaw = data.sources;
+  if (!Array.isArray(sourcesRaw) || sourcesRaw.length !== recipeIds.length) {
+    return undefined;
+  }
+  const sources: CollectionMoveData['sources'] = [];
+  for (let i = 0; i < sourcesRaw.length; i += 1) {
+    const entry = sourcesRaw[i];
+    const id = recipeIds[i];
+    if (!isPlainObject(entry) || id === undefined || entry.id !== id) {
+      return undefined;
+    }
+    const from = parseMoveFrom(entry.from);
+    if (from === undefined) {
+      return undefined;
+    }
+    sources.push({ id, from });
+  }
+
+  const total = data.total;
+  if (typeof total !== 'number' || !Number.isFinite(total) || total !== recipeIds.length) {
+    return undefined;
+  }
+
+  const previewRaw = data.preview;
+  if (!Array.isArray(previewRaw) || previewRaw.length > COLLECTION_MOVE_PREVIEW_LIMIT) {
+    return undefined;
+  }
+  const preview: CollectionMoveData['preview'] = [];
+  for (const row of previewRaw) {
+    if (!isPlainObject(row)) {
+      return undefined;
+    }
+    const id = row.id;
+    if (typeof id !== 'string' || id === '') {
+      return undefined;
+    }
+    const title = row.title;
+    if (typeof title !== 'string' || title.trim() === '') {
+      return undefined;
+    }
+    const trimmedTitle = title.trim();
+    if (trimmedTitle.length > COLLECTION_MOVE_TITLE_MAX) {
+      return undefined;
+    }
+    const from = parseMoveFrom(row.from);
+    if (from === undefined) {
+      return undefined;
+    }
+    preview.push({ id, title: trimmedTitle, from });
+  }
+
+  return { destination, recipeIds, sources, preview, total };
 }

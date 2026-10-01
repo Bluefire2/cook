@@ -7,8 +7,10 @@ import {
   compactCollectionName,
 } from './compactCollection';
 import {
-  moveRecipes as applyRecipeMoves,
+  moveRecipe,
+  moveRecipes,
   recipeIdsAfterMove,
+  winningMembership,
   wouldExceedRecipeIdCap,
 } from './collectionMembership';
 import {
@@ -16,6 +18,7 @@ import {
   countOwnedNamedCollections,
   getCollectionOrigin,
   getCollection,
+  getRecipe,
   isSharedCollection,
   isSharedRecipe,
   listCollections,
@@ -386,24 +389,8 @@ export const collectionStore = {
     }
   },
 
-  moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {
-    return this.moveRecipes([recipeId], dest);
-  },
-
-  /**
-   * Moves every id to `dest` as one optimistic write. Each touched collection
-   * is one `collection.put` in a single push. A shared recipe, a shared
-   * destination, or a destination that would pass the recipe cap rejects
-   * the whole batch before anything is written.
-   */
-  async moveRecipes(recipeIds: readonly string[], dest: 'default' | string): Promise<void> {
-    if (recipeIds.length === 0) {
-      return;
-    }
-    if (
-      recipeIds.some((id) => isSharedRecipe(id)) ||
-      (dest !== 'default' && isSharedCollection(dest))
-    ) {
+  async moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {
+    if (isSharedRecipe(recipeId) || (dest !== 'default' && isSharedCollection(dest))) {
       throw new Error(t('error.sharedViewOnly'));
     }
     if (dest !== 'default') {
@@ -411,13 +398,16 @@ export const collectionStore = {
       if (!destCollection) {
         throw new Error(t('error.collectionNotFound'));
       }
-      if (wouldExceedRecipeIdCap(recipeIdsAfterMove(destCollection.recipeIds, recipeIds))) {
+      if (
+        !destCollection.recipeIds.includes(recipeId) &&
+        wouldExceedRecipeIdCap([...destCollection.recipeIds, recipeId])
+      ) {
         throw new Error(t('error.collectionFull'));
       }
     }
     const now = Date.now();
     const current = listCollections();
-    const changed = applyRecipeMoves(current, recipeIds, dest, now).map(compactCollection);
+    const changed = moveRecipe(current, recipeId, dest, now).map(compactCollection);
     if (changed.length === 0) {
       return;
     }
@@ -445,6 +435,105 @@ export const collectionStore = {
           upsertCollection(collection);
         }
         return { value: undefined, reconcile: false, error: err };
+      }
+    });
+  },
+
+  /**
+   * Moves every owned recipe in `ids` to `dest` as one optimistic write.
+   * Each touched collection is one `collection.put` in a single push.
+   * A shared or missing recipe is skipped. When every id was skipped, the
+   * call throws and nothing is written. An empty list does nothing.
+   * A shared destination, a missing destination, or a destination that would
+   * pass the recipe cap rejects the move before anything is written. Ids
+   * already in the destination do not count toward that cap.
+   */
+  async moveRecipes(
+    ids: readonly string[],
+    dest: 'default' | string,
+  ): Promise<{ moved: number }> {
+    if (ids.length === 0) {
+      return { moved: 0 };
+    }
+    if (dest !== 'default' && isSharedCollection(dest)) {
+      throw new Error(t('error.sharedViewOnly'));
+    }
+    if (dest !== 'default' && !getCollection(dest)) {
+      throw new Error(t('error.collectionNotFound'));
+    }
+
+    const owned = listCollections().filter((c) => !isSharedCollection(c.id));
+    const membership = winningMembership(owned);
+
+    const kept: string[] = [];
+    const seen = new Set<string>();
+    for (const id of ids) {
+      if (id === '' || seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      if (isSharedRecipe(id) || !getRecipe(id)) {
+        continue;
+      }
+      kept.push(id);
+    }
+
+    if (kept.length === 0) {
+      throw new Error(t('assistant.moveRecipesGone'));
+    }
+
+    if (dest !== 'default') {
+      const destCollection = getCollection(dest);
+      if (!destCollection) {
+        throw new Error(t('error.collectionNotFound'));
+      }
+      if (wouldExceedRecipeIdCap(recipeIdsAfterMove(destCollection.recipeIds, kept))) {
+        throw new Error(t('error.collectionFull'));
+      }
+    }
+
+    let moved = 0;
+    for (const id of kept) {
+      const current = membership.get(id);
+      if (dest === 'default') {
+        if (current !== undefined) {
+          moved += 1;
+        }
+      } else if (current !== dest) {
+        moved += 1;
+      }
+    }
+
+    const now = Date.now();
+    const changed = moveRecipes(owned, kept, dest, now).map(compactCollection);
+    if (changed.length === 0) {
+      return { moved };
+    }
+
+    const previous = changed
+      .map((next) => owned.find((c) => c.id === next.id))
+      .filter((c): c is Collection => c !== undefined);
+
+    return await withLocalWrite(async () => {
+      for (const next of changed) {
+        upsertCollection(next);
+      }
+      try {
+        const result = await pushOps(
+          changed.map((payload) => ({ kind: 'collection.put' as const, payload })),
+        );
+        if (result !== 'ok') {
+          throw saveError(result);
+        }
+        return { value: { moved }, reconcile: true };
+      } catch (err) {
+        if (err instanceof SessionExpiredError) {
+          throw err;
+        }
+        for (const collection of previous) {
+          upsertCollection(collection);
+        }
+        return { value: { moved: 0 }, reconcile: false, error: err, reread: 'always' };
       }
     });
   },

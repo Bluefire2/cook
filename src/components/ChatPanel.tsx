@@ -19,6 +19,7 @@ import {
   type EncodedImage,
 } from '../lib/image';
 import { CameraIcon } from '../lib/icons';
+import DialogShell from './DialogShell';
 import { formatQuantity } from '../lib/quantity';
 import { normalizeRecipeDraft } from '../lib/recipeShape';
 import type { ChatMessage, Ingredient, Recipe, RecipeDraft } from '../lib/types';
@@ -330,16 +331,6 @@ export default function ChatPanel({
     setTranscribing(false);
   }, [busy]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      onClose();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, []);
-
   const setPending = (photos: { key: string; blob: Blob }[]) => {
     pendingRef.current = photos;
     setPendingPhotos(photos);
@@ -586,15 +577,12 @@ export default function ChatPanel({
   };
 
   return (
-    <div className="fixed inset-0 z-20 flex flex-col justify-end">
-      <button
-        type="button"
-        aria-label={t('chat.closeChat')}
-        tabIndex={-1}
-        onClick={onClose}
-        className="flex-1 bg-black/40"
-      />
-      <div className="flex h-[75dvh] flex-col rounded-t-3xl bg-surface shadow-2xl md:mx-auto md:w-full md:max-w-xl">
+    <DialogShell
+      onClose={onClose}
+      backdropLabel={t('chat.closeChat')}
+      overlayClassName="fixed inset-0 z-20 flex flex-col justify-end"
+      panelClassName="flex h-[75dvh] flex-col rounded-t-3xl bg-surface shadow-2xl md:mx-auto md:w-full md:max-w-xl"
+    >
         <header className="flex items-center justify-between border-b border-line px-4 py-3">
           <h2 className="font-semibold">{t('chat.assistant')}</h2>
           <div className="flex items-center gap-1">
@@ -743,7 +731,6 @@ export default function ChatPanel({
             {t('chat.send')}
           </button>
         </div>
-      </div>
-    </div>
+    </DialogShell>
   );
 }

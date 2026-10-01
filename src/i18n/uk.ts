@@ -338,6 +338,8 @@ export const uk: Messages = {
   'saveSheet.collections': 'Колекції',
 
   'share.title': 'Поділитися «{name}»',
+  'share.byEmail': 'Ел. поштою',
+  'share.byLink': 'Посиланням',
   'share.intro':
     'Додайте людину, яка вже має обліковий запис Sous. Редактори можуть редагувати рецепти, але не фото. Видаляти рецепти чи змінювати доступ можете лише ви.',
   'share.emailPlaceholder': 'Електронна пошта',
@@ -349,7 +351,6 @@ export const uk: Messages = {
   'share.owner': 'Власник',
   'share.peopleTitle': 'Хто має доступ',
   'share.removeFor': 'Прибрати {email}',
-  'share.linkTitle': 'Поділитися посиланням',
   'share.linkIntro': 'Будь-хто, хто вже має обліковий запис Sous, може приєднатися за посиланням, доки ви його не відкличете або не мине 7 днів. Посилання показується лише один раз.',
   'share.linkRoleLabel': 'Роль для тих, хто приєднається за посиланням',
   'share.copyLink': 'Копіювати посилання',
@@ -523,4 +524,42 @@ export const uk: Messages = {
   'assistant.recipesHeading': 'Рецепти:',
   'assistant.cardUnavailable': 'Оновіть застосунок, щоб побачити цю картку.',
   'assistant.couldntAnswer': 'Помічник не зміг на це відповісти.',
+  'assistant.moveRecipesGone': 'Цих рецептів уже немає у вашій бібліотеці.',
+  'assistant.preparingMove': 'Готую переміщення…',
+  'assistant.moveLeaveCurrentCollections':
+    'Ці рецепти залишать свої поточні колекції.',
+  'assistant.moveHeadingToCollection': {
+    one: 'Перемістити {count} рецепт у «{name}»',
+    few: 'Перемістити {count} рецепти у «{name}»',
+    many: 'Перемістити {count} рецептів у «{name}»',
+    other: 'Перемістити {count} рецепта у «{name}»',
+  },
+  'assistant.moveHeadingToRecipes': {
+    one: 'Повернути {count} рецепт до Рецептів',
+    few: 'Повернути {count} рецепти до Рецептів',
+    many: 'Повернути {count} рецептів до Рецептів',
+    other: 'Повернути {count} рецепта до Рецептів',
+  },
+  'assistant.moveAppliedToCollection': {
+    one: 'Переміщено {count} рецепт у «{name}»',
+    few: 'Переміщено {count} рецепти у «{name}»',
+    many: 'Переміщено {count} рецептів у «{name}»',
+    other: 'Переміщено {count} рецепта у «{name}»',
+  },
+  'assistant.moveAppliedToRecipes': {
+    one: 'Повернуто {count} рецепт до Рецептів',
+    few: 'Повернуто {count} рецепти до Рецептів',
+    many: 'Повернуто {count} рецептів до Рецептів',
+    other: 'Повернуто {count} рецепта до Рецептів',
+  },
+  'assistant.moveAndMore': {
+    one: 'і ще {count}',
+    few: 'і ще {count}',
+    many: 'і ще {count}',
+    other: 'і ще {count}',
+  },
+  'assistant.moveShowAll': 'Показати всі рецепти',
+  'assistant.moveShowLess': 'Показати менше',
+  'assistant.move': 'Перемістити',
+  'assistant.moving': 'Переміщення…',
 };

@@ -33,6 +33,8 @@ export interface AgentLibrary {
   recipes: AgentRecipe[];
   collections: AgentCollection[];
   truncated: boolean;
+  /** True only when recipe or collection documents were cut off during load. */
+  loadTruncated: boolean;
   recipeById(id: string): AgentRecipe | undefined;
   collectionNameFor(recipeId: string): string;
   indexText(): string;
@@ -252,12 +254,14 @@ export function buildAgentLibrary(
     maxIndexEntries: opts.maxIndexEntries,
     maxIndexChars: opts.maxIndexChars,
   });
+  const loadTruncated = opts.truncated;
   const truncated = opts.truncated || indexTruncated;
 
   return {
     recipes,
     collections,
     truncated,
+    loadTruncated,
     recipeById(id: string) {
       return recipeByIdMap.get(id);
     },

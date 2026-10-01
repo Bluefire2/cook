@@ -408,7 +408,9 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/collection-path.md` | Built on `cursor/collection-path-2d3d`. Named collections open at `/collections/<id>`. Legacy `?c=` redirects removed. Not deployed. |
 | `docs/plans/approval-email.md` | Built on `cursor/approval-email-420a`. Email the requester after an admin approves an access request. Not deployed; before deploying, set `MAIL_FROM` to a sender on a Resend-verified domain (the sandbox sender skips the send). |
 | `docs/plans/library-agent.md` | Merged (#34), not deployed. App-level assistant: read-only tools over the user's own library, modular cards (shopping list first), ephemeral threads. |
+| `docs/plans/agent-collection-moves.md` | Built, not deployed. `propose_collection_move` / `collection_move` v1 proposal card; client apply via `collectionStore.moveRecipes`. |
 | `docs/plans/html-parser-recipe-import.md` | Built on `cursor/html-parser-recipe-import-11d4`. Not deployed. Replace the hand-rolled HTML scanner in `server/recipeImport.ts` with parse5 (issue #91). |
+| `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
