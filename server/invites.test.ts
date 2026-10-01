@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   hashInviteToken,
+  inviteLandingGet,
   inviteLandingVerdict,
   inviteTokenFromPath,
   isInviteTokenShape,
@@ -345,5 +346,15 @@ describe('revokeInviteTransition', () => {
       kind: 'refusal',
       reason: 'unknown',
     });
+  });
+});
+
+describe('inviteLandingGet', () => {
+  // The token is in the page's own URL; a Referer would carry it into the
+  // request log on the next click. A malformed path answers before any read.
+  it('sends no Referer from an /invite/ page', async () => {
+    const response = await inviteLandingGet(new Request('https://sous.example/invite/short'));
+    expect(response.status).toBe(404);
+    expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
   });
 });

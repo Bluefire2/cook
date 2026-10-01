@@ -1,5 +1,5 @@
 import type { Content } from '@google/genai';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeImportDeps } from '../test/fakeGemini.ts';
 import {
   IMPORT_IMAGE_TYPES,
@@ -80,10 +80,11 @@ function sentParts(calls: { contents: unknown }[]) {
   return (calls[0].contents as Content[])[0].parts ?? [];
 }
 
-function rejectingDeps(message: string): RecipeImportDeps {
+function rejectingDeps(message: string, status?: number): RecipeImportDeps {
+  const error = status === undefined ? new Error(message) : Object.assign(new Error(message), { status });
   return {
     model: 'test-model',
-    ai: { models: { generateContent: () => Promise.reject(new Error(message)) } },
+    ai: { models: { generateContent: () => Promise.reject(error) } },
     translator: () => Promise.resolve({ ok: false, code: TRANSLATE_FAILED }),
   };
 }
@@ -94,9 +95,24 @@ function serve(response: Response) {
   return fetchMock;
 }
 
+// Every request writes an import log line; keep it out of the test output.
+beforeEach(() => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
+
+/** The `event: 'import'` lines written so far, raw and parsed. */
+function importLogLines(): { raw: string; entry: Record<string, unknown> }[] {
+  return vi
+    .mocked(console.log)
+    .mock.calls.map(([message]) => String(message))
+    .filter((raw) => raw.startsWith('{"event":"import"'))
+    .map((raw) => ({ raw, entry: JSON.parse(raw) as Record<string, unknown> }));
+}
 
 describe('POST /api/import', () => {
   it('returns the normalized recipe for pasted text, without sourceUrl', async () => {
@@ -475,17 +491,127 @@ describe('POST /api/import with photos', () => {
     };
 
     expect((await post({ images: [photo] })).status).toBe(200);
-    expect(log.mock.calls.filter(([m]) => /^import images count=1 bytes=\d+$/.test(String(m)))).toHaveLength(1);
+    expect(importLogLines().map((line) => line.entry)).toEqual([
+      {
+        event: 'import',
+        sub: 'sub-1',
+        via: 'photos',
+        photos: 1,
+        bytes: 4096,
+        outcome: 'ok',
+        ingredients: 1,
+        steps: 1,
+        status: 200,
+        ms: expect.any(Number),
+      },
+    ]);
     expect(error).not.toHaveBeenCalled();
     expectNoPhotoData();
 
     log.mockClear();
-    const failed = await post({ images: [photo] }, undefined, { deps: rejectingDeps(secret) });
+    const failed = await post({ images: [photo] }, undefined, { deps: rejectingDeps(secret, 503) });
     expect(failed.status).toBe(502);
-    expect(log.mock.calls.filter(([m]) => /^import images count=1 bytes=\d+$/.test(String(m)))).toHaveLength(1);
-    expect(error).toHaveBeenCalledTimes(1);
-    expect(error.mock.calls[0]).toHaveLength(1);
-    expect(String(error.mock.calls[0][0])).toMatch(/^import images failed count=1 bytes=\d+$/);
+    expect(importLogLines().map((line) => line.entry)).toEqual([
+      expect.objectContaining({
+        via: 'photos',
+        photos: 1,
+        bytes: 4096,
+        outcome: 'threw',
+        errorStatus: 503,
+        status: 502,
+      }),
+    ]);
+    expect(error).not.toHaveBeenCalled();
     expectNoPhotoData();
+  });
+});
+
+describe('POST /api/import log line', () => {
+  it('logs a URL import with the account and the address, never its query or the recipe', async () => {
+    serve(new Response(PAGE));
+    const result = await post({ url: 'https://example.com/soup?user_id=u-77&code=c-88#step-2' });
+    expect(result.status).toBe(200);
+    const lines = importLogLines();
+    expect(lines.map((line) => line.entry)).toEqual([
+      {
+        event: 'import',
+        sub: 'sub-1',
+        via: 'url',
+        url: 'https://example.com/soup',
+        host: 'example.com',
+        fetch: 'ok',
+        outcome: 'ok',
+        ingredients: 1,
+        steps: 1,
+        status: 200,
+        ms: expect.any(Number),
+      },
+    ]);
+    for (const leaked of ['u-77', 'c-88', 'step-2', 'Tomato', 'tomatoes', 'Simmer']) {
+      expect(lines[0].raw).not.toContain(leaked);
+    }
+  });
+
+  it('logs a site that refused the fetch, with its status', async () => {
+    serve(new Response('blocked', { status: 403 }));
+    expect((await post({ url: 'https://example.com/soup' })).status).toBe(422);
+    expect(importLogLines().map((line) => line.entry)).toEqual([
+      expect.objectContaining({
+        via: 'url',
+        url: 'https://example.com/soup',
+        fetch: 'refused',
+        siteStatus: 403,
+        outcome: 'fetch_failed',
+        status: 422,
+      }),
+    ]);
+  });
+
+  it('logs a recipe with no steps as ok with steps 0', async () => {
+    serve(new Response(PAGE));
+    await post({ url: 'https://example.com/soup' }, JSON.stringify({ ...RECIPE, steps: [] }));
+    expect(importLogLines()[0].entry).toMatchObject({ outcome: 'ok', ingredients: 1, steps: 0 });
+  });
+
+  it('logs a Gemini throw on a URL import and passes on only a sanitized error', async () => {
+    serve(new Response(PAGE));
+    const thrown = await post({ url: 'https://example.com/soup' }, undefined, {
+      deps: rejectingDeps('SECRET upstream detail', 429),
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    // The dispatcher console.errors whatever escapes: no SDK text may be in it.
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe('Import failed: Error (status 429); message withheld');
+    expect(String((thrown as Error).stack)).not.toContain('SECRET');
+    const lines = importLogLines();
+    expect(lines.map((line) => line.entry)).toEqual([
+      expect.objectContaining({
+        via: 'url',
+        fetch: 'ok',
+        outcome: 'threw',
+        errorStatus: 429,
+        status: 500,
+      }),
+    ]);
+    expect(lines[0].raw).not.toContain('SECRET');
+  });
+
+  it('logs pasted text without the text', async () => {
+    await post({ text: 'Grandma secret soup: simmer.' });
+    const lines = importLogLines();
+    expect(lines.map((line) => line.entry)).toEqual([
+      expect.objectContaining({ sub: 'sub-1', via: 'paste', outcome: 'ok', status: 200 }),
+    ]);
+    expect(lines[0].entry).not.toHaveProperty('url');
+    expect(lines[0].raw).not.toContain('Grandma');
+  });
+
+  it('logs a request it could not read', async () => {
+    await post(undefined, undefined, { rawBody: '{' });
+    expect(importLogLines().map((line) => line.entry)).toEqual([
+      expect.objectContaining({ sub: 'sub-1', outcome: 'bad_request', status: 400 }),
+    ]);
   });
 });

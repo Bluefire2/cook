@@ -7,6 +7,12 @@
  * and `compactRecipeFields` keep their single home in `server/sync.ts`.
  */
 import { randomUUID } from 'node:crypto';
+import {
+  loggableUrl,
+  noteImportOutcome,
+  withImportLog,
+  type ImportLogEntry,
+} from './importLog.ts';
 import { requireHeaderMember } from './membership.ts';
 import { recipePutFromExtraction } from './recipeFromExtraction.ts';
 import {
@@ -102,13 +108,26 @@ export async function extensionImport(
     return fail(req, 'membership-unavailable', 'Membership unavailable', 503);
   }
 
+  const entry: ImportLogEntry = { sub: access.sub, via: 'extension' };
+  return withImportLog(entry, () => importAndSave(req, access.sub, entry, deps));
+}
+
+/** `extensionImport` after the membership check; it records what happened on `entry`. */
+async function importAndSave(
+  req: Request,
+  sub: string,
+  entry: ImportLogEntry,
+  deps: RecipeImportDeps | undefined,
+): Promise<Response> {
   let raw: string;
   try {
     raw = await req.text();
   } catch {
+    entry.outcome = 'bad_request';
     return fail(req, 'bad-request', 'Bad request', 400);
   }
   if (raw.length > MAX_BODY_CHARS) {
+    entry.outcome = 'too_large';
     return fail(req, 'import-too-large', TOO_LARGE, 413);
   }
 
@@ -120,6 +139,7 @@ export async function extensionImport(
     }
     body = parsed as ExtensionImportBody;
   } catch {
+    entry.outcome = 'bad_request';
     return fail(req, 'bad-request', 'Bad request', 400);
   }
 
@@ -130,22 +150,28 @@ export async function extensionImport(
   try {
     parsedUrl = new URL(url);
   } catch {
+    entry.outcome = 'bad_url';
     return fail(req, 'import-bad-url', 'That does not look like a web address.', 422);
   }
   if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    entry.outcome = 'bad_url';
     return fail(req, 'import-bad-scheme', 'Only http and https URLs are supported.', 422);
   }
+  Object.assign(entry, loggableUrl(url));
 
   const html = typeof body.html === 'string' ? body.html : '';
   if (html.length > MAX_HTML_CHARS) {
+    entry.outcome = 'too_large';
     return fail(req, 'import-too-large', TOO_LARGE, 413);
   }
   if (html.trim() === '') {
+    entry.outcome = 'empty_source';
     return fail(req, 'import-unreadable', 'Could not read that page.', 422);
   }
 
   const target = readImportTranslateTo(body.translateTo);
   if (!target.ok) {
+    entry.outcome = 'bad_language';
     return fail(req, IMPORT_BAD_LANGUAGE_CODE, IMPORT_BAD_LANGUAGE_ERROR, 400);
   }
 
@@ -154,6 +180,7 @@ export async function extensionImport(
     deps ?? recipeImportDepsFromEnv(),
     target.translateTo,
   );
+  noteImportOutcome(entry, outcome);
   switch (outcome.kind) {
     case 'ok':
       break;
@@ -180,6 +207,7 @@ export async function extensionImport(
     sourceUrl: url,
   });
   if (payload === null) {
+    entry.outcome = 'unusable';
     return fail(req, 'import-unusable', UNUSABLE, 502);
   }
 
@@ -187,13 +215,14 @@ export async function extensionImport(
   // reach the dispatcher as a text/plain 500 the popup cannot parse.
   let applied: boolean;
   try {
-    const result = await applyPushOp(access.sub, { kind: 'recipe.put', payload });
+    const result = await applyPushOp(sub, { kind: 'recipe.put', payload });
     applied = result.applied;
   } catch (err) {
     console.error(err);
     applied = false;
   }
   if (!applied) {
+    entry.outcome = 'save_failed';
     return fail(req, 'import-save-failed', 'Could not save the recipe.', 500);
   }
 

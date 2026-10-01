@@ -221,7 +221,8 @@ export async function authCallbackGoogle(req: Request): Promise<Response> {
     }
 
     if (access === 'denied') {
-      console.log(`sign-in refused: ${email}`);
+      // No email or sub: the access request in Firestore already says who.
+      console.log('sign-in refused');
       // Keep a pending or declined request's address current, so a later
       // approval emails the address this Google account has now. A missing
       // request is a no-op; failures are logged and ignored.
