@@ -4,6 +4,7 @@ import { fakeImportDeps } from '../test/fakeGemini.ts';
 import {
   IMPORT_BAD_LANGUAGE_CODE,
   IMPORT_BAD_LANGUAGE_ERROR,
+  type RecipeImportDeps,
 } from './recipeImport.ts';
 import * as recipeImport from './recipeImport.ts';
 import { SESSION_HEADER_NAME, signSession } from './session.ts';
@@ -309,6 +310,33 @@ describe('extensionImport log line', () => {
       },
     ]);
     expect(JSON.stringify(log.mock.calls)).not.toContain('k-99');
+  });
+
+  it('logs a Gemini throw and passes on only a sanitized error', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const deps: RecipeImportDeps = {
+      model: 'test-model',
+      ai: {
+        models: {
+          generateContent: () =>
+            Promise.reject(Object.assign(new Error('SECRET logged-in page text'), { status: 503 })),
+        },
+      },
+      translator: () => Promise.resolve({ ok: false, code: TRANSLATE_FAILED }),
+    };
+    const thrown = await extensionImport(
+      authedRequest({ url: 'https://example.com/soup', html: '<main><p>Soup.</p></main>' }),
+      deps,
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect((thrown as Error).message).toBe('Import failed: Error (status 503); message withheld');
+    expect(String((thrown as Error).stack)).not.toContain('SECRET');
+    expect(importLogEntries(log)).toEqual([
+      expect.objectContaining({ via: 'extension', outcome: 'threw', errorStatus: 503, status: 500 }),
+    ]);
+    expect(JSON.stringify(log.mock.calls)).not.toContain('SECRET');
   });
 
   it('logs a recipe too large to push as unusable', async () => {

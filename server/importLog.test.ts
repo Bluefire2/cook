@@ -3,6 +3,7 @@ import {
   importLogLine,
   loggableUrl,
   noteImportOutcome,
+  sanitizedImportError,
   thrownStatus,
   withImportLog,
   type ImportLogEntry,
@@ -100,12 +101,42 @@ describe('withImportLog', () => {
     });
   });
 
-  it('logs a throw with its status but not its message, then rethrows it', async () => {
+  it('logs a throw with its status but not its message, and rethrows it sanitized', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const err = Object.assign(new Error('SECRET request echo'), { status: 503 });
-    await expect(withImportLog({ sub: 's' }, () => Promise.reject(err))).rejects.toBe(err);
+    const thrown = await withImportLog({ sub: 's' }, () => Promise.reject(err)).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).not.toBe(err);
+    expect((thrown as Error).message).toBe('Import failed: Error (status 503); message withheld');
+    expect(String((thrown as Error).stack)).not.toContain('SECRET');
+    expect((thrown as Error).cause).toBeUndefined();
     const line = String(log.mock.calls[0][0]);
     expect(line).not.toContain('SECRET');
     expect(JSON.parse(line)).toMatchObject({ outcome: 'threw', errorStatus: 503, status: 500 });
+  });
+});
+
+describe('sanitizedImportError', () => {
+  it('keeps a plain class name and status and drops everything else', () => {
+    class ApiError extends Error {
+      status = 429;
+    }
+    const err = new ApiError('quota exceeded for {"contents":"SECRET pasted recipe"}');
+    err.name = 'ApiError';
+    const safe = sanitizedImportError(err);
+    expect(safe.message).toBe('Import failed: ApiError (status 429); message withheld');
+    expect(String(safe.stack)).not.toContain('SECRET');
+  });
+
+  it('does not trust an odd class name or a non-error value', () => {
+    const odd = new Error('x');
+    odd.name = 'SECRET text: with spaces';
+    expect(sanitizedImportError(odd).message).toBe('Import failed: Error; message withheld');
+    expect(sanitizedImportError('SECRET string').message).toBe(
+      'Import failed: string; message withheld',
+    );
   });
 });

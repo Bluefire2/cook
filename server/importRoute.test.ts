@@ -573,13 +573,18 @@ describe('POST /api/import log line', () => {
     expect(importLogLines()[0].entry).toMatchObject({ outcome: 'ok', ingredients: 1, steps: 0 });
   });
 
-  it('logs a Gemini throw on a URL import and still lets it reach the dispatcher', async () => {
+  it('logs a Gemini throw on a URL import and passes on only a sanitized error', async () => {
     serve(new Response(PAGE));
-    await expect(
-      post({ url: 'https://example.com/soup' }, undefined, {
-        deps: rejectingDeps('SECRET upstream detail', 429),
-      }),
-    ).rejects.toThrow('SECRET upstream detail');
+    const thrown = await post({ url: 'https://example.com/soup' }, undefined, {
+      deps: rejectingDeps('SECRET upstream detail', 429),
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    // The dispatcher console.errors whatever escapes: no SDK text may be in it.
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe('Import failed: Error (status 429); message withheld');
+    expect(String((thrown as Error).stack)).not.toContain('SECRET');
     const lines = importLogLines();
     expect(lines.map((line) => line.entry)).toEqual([
       expect.objectContaining({

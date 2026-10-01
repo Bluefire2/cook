@@ -103,9 +103,11 @@
     <p>
       Google Cloud keeps a log of the requests made to Sous: the time, the
       address requested, the response, your IP address, and your browser's
-      user agent. Requests that open an invite link or a collection link are
-      left out of that log, so the secret part of such a link is not
-      recorded there.
+      user agent. Since 1 October 2026, requests that open an invite link or
+      a collection link are left out of that log, so the secret part of such
+      a link is not recorded there. Entries written before then can still
+      contain such a link until they are deleted automatically (see
+      Retention and deletion).
     </p>
     <p>
       Sous also writes its own log lines for errors and for a few events.
@@ -117,11 +119,13 @@
     <p>
       Each recipe import writes one line, so failed imports can be found and
       fixed. The line holds your account id; whether the recipe came from a
-      link, pasted text, photos, or the Chrome extension; the page address
-      without anything after a <code>?</code> or <code>#</code>; whether the
-      import worked and, if not, why; how many ingredients and steps came
-      out; and how long it took. It never includes your email address, the
-      recipe text, the page itself, pasted text, or photos.
+      link, pasted text, photos, or the Chrome extension; for a link or the
+      extension, the page address without anything after a <code>?</code> or
+      <code>#</code>; for photos, how many there were and their total size;
+      whether the import worked and, if not, why; how many ingredients and
+      steps came out; whether a requested translation worked; and how long it
+      took. It never includes your email address, the recipe text, the page
+      itself, pasted text, notes, or photos.
     </p>
     <p>
       Logs are used only to keep Sous running, to fix problems, and to

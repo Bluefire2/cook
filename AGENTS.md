@@ -31,9 +31,14 @@ Both import routes write one `event: 'import'` JSON log line per request
 (`server/importLog.ts`, `withImportLog`): the session `sub`, how the import
 arrived, the URL as `origin + pathname`, the outcome, counts, a thrown
 error's numeric `status`, and timing. Never the email, recipe or pasted text,
-HTML, photo bytes, a query string, or an error message. `/privacy` (Server
-logs) and `/terms` describe exactly that line and its 30-day retention (the
-`_Default` log bucket); change them with it.
+HTML, photo bytes, a query string, or an error message. A throw from either
+route is rethrown as `sanitizedImportError` (class name and status only),
+because the dispatcher in `scripts/server.ts` `console.error`s whatever
+escapes and an SDK message can quote the request; never let the original
+error escape an import route. `/privacy` (Server logs) and `/terms` describe
+that line and its 30-day retention (the `_Default` log bucket); change them
+with it. Photo import's share of the line is bound by
+`docs/constitutions/image-import.md` principle 3.
 
 No server log line may contain an email address or a link token. Invite
 (`/invite/<token>`) and collection-link (`/c/<token>`) pages send

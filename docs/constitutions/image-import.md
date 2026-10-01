@@ -94,9 +94,13 @@ it keeps the layout. Do not replace the photos with OCR text alone.
 ### 3. Photos are used for extraction and never stored
 
 The photos exist only for the length of the request. The client does not pass
-them to `photoStore`; the server writes nothing to GCS or Firestore; neither
-side logs image bytes or base64. Log counts and byte sizes only, as
-`server/stt.ts` does.
+them to `photoStore`; the server writes nothing to GCS or Firestore. Neither
+side logs image bytes, base64, the notes sent with the photos, the extracted
+recipe text, or an error message from the extraction call. The one log line a
+photo import writes is the shared import line (`server/importLog.ts`). It
+holds the account `sub`, `via: 'photos'`, the photo count and total decoded
+bytes, the outcome with ingredient and step counts, the translation result, a
+thrown error's numeric status, the response status, and the duration.
 
 **Why:** the owner decided this. Handwritten notes are personal, and the
 privacy page promises that photos sent for import are not kept. Saving a scan
@@ -219,6 +223,20 @@ principle named.
 Add entries newest first, in this form: date, principle number,
 what changed, why the change was worth it, evidence, PR link.
 
+- **2026-10-01, principle 3.** *Was:* "Log counts and byte sizes only, as
+  `server/stt.ts` does." *Now:* a photo import writes the shared import log
+  line. Besides the counts and byte sizes, that line holds the account `sub`,
+  the outcome with ingredient and step counts, the translation result, a
+  thrown error's numeric status, the response status, and the duration.
+  Image bytes, base64, the notes, recipe text, and error messages stay
+  forbidden. *Why:* failed imports could not be traced to an account or an
+  outcome, so a reported failure could not be investigated. One line shape for
+  every import path puts photo imports in the same log query. The added fields
+  describe the request, not the photos or what they say. The privacy page's
+  Server logs section discloses them. *Evidence:* the reporter's 2026-09-20
+  bulk session left no per-account or per-import record (see
+  `docs/plans/import-reliability.md`). *PR:*
+  https://github.com/Bluefire2/cook/pull/102.
 - **2026-09-27, principle 1, restored.** *Was:* the retry amendment below
   (`fdefa65`). *Now:* `importFromImages` makes one Gemini call, with no
   retries, as it did before that amendment. *Why:* the measurement failed
