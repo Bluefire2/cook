@@ -99,6 +99,15 @@ describe('extractRecipeSource', () => {
     expect(text).not.toContain('<');
   });
 
+  it('strips script and style bodies whose end tag has whitespace or junk before >', () => {
+    const html =
+      '<p>Soup</p><script>var leaked = 1;</script ><STYLE>.leak{}</STYLE foo>' +
+      '<script type="x">var alsoLeaked = 2;</script\n>';
+    const text = extractRecipeSource(html);
+    expect(text.trim()).toBe('Soup');
+    expect(text).not.toContain('leak');
+  });
+
   it('caps the JSON-LD path at 60,000 characters', () => {
     const node = { ...RECIPE, description: 'x'.repeat(80000) };
     const html = ldBlock(JSON.stringify(node));

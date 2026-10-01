@@ -210,12 +210,13 @@ export function withinRegion(inner: PageRegion, outer: PageRegion): boolean {
 /**
  * Tag strip for the text fallback, run on a slice of the original HTML, with
  * no length cap. A `>` inside a quoted attribute still ends `<[^>]+>` early,
- * so the rest of that attribute can leak into the text.
+ * so the rest of that attribute can leak into the text. End tags may carry
+ * whitespace or junk before `>` (`</script >`), which browsers accept.
  */
 export function stripToText(html: string): string {
   return html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script\b[\s\S]*?<\/script[^>]*>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style[^>]*>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/\s+/g, ' ');
