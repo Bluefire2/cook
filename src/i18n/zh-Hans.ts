@@ -299,6 +299,8 @@ export const zhHans: Messages = {
   'saveSheet.collections': '合集',
 
   'share.title': '分享「{name}」',
+  'share.byEmail': '通过邮箱',
+  'share.byLink': '通过链接',
   'share.intro':
     '添加一个已经有 Sous 账号的人。编辑者可以修改食谱，但不能改照片。只有你可以删除食谱或更改谁能访问。',
   'share.emailPlaceholder': '邮箱',
@@ -310,7 +312,6 @@ export const zhHans: Messages = {
   'share.owner': '所有者',
   'share.peopleTitle': '有权访问的人',
   'share.removeFor': '移除 {email}',
-  'share.linkTitle': '通过链接分享',
   'share.linkIntro': '任何已经有 Sous 账号的人都可以通过这个链接加入，直到你撤销它或 7 天后过期。链接只显示一次。',
   'share.linkRoleLabel': '通过链接加入的人的角色',
   'share.copyLink': '复制链接',

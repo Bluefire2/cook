@@ -54,6 +54,9 @@ export default function ShareCollectionSheet({
   // Link mint/revoke errors show in the link block, not under the email form.
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkRole, setLinkRole] = useState<GrantRole>('viewer');
+  // Email is the pane that opens. Switching keeps the form, a minted URL,
+  // and any request already in flight.
+  const [method, setMethod] = useState<'email' | 'link'>('email');
   // The raw link is only in this state: the server never returns it again.
   const [minted, setMinted] = useState<MintedLink | null>(null);
   const [copied, setCopied] = useState(false);
@@ -268,210 +271,242 @@ export default function ShareCollectionSheet({
   return (
     <Sheet onClose={onClose} dismissible={!busy}>
       <h2 className="text-lg font-semibold">{t('share.title', { name: collection.name })}</h2>
-      <p className="mt-1 text-sm text-ink-muted">{t('share.intro')}</p>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void add();
-        }}
-      >
-        <div className="mt-3 flex gap-2">
-          <input
-            autoFocus={finePointer}
-            type="email"
-            value={email}
-            onChange={(e) => {
-              setEmail(e.target.value);
-              setFormError(null);
-            }}
-            placeholder={t('share.emailPlaceholder')}
-            aria-label={t('share.emailPlaceholder')}
-            autoCapitalize="none"
-            spellCheck={false}
-            disabled={busy}
-            className={`${inputClass} min-w-0 flex-1`}
-          />
-          <RoleSelect
-            value={role}
-            onChange={(next) => {
-              setRole(next);
-              setFormError(null);
-            }}
-            disabled={busy}
-          />
-        </div>
-        {formError && (
-          <p role="alert" className="mt-2 text-sm text-danger">
-            {formError}
-          </p>
-        )}
-        <button
-          type="submit"
-          disabled={busy || email.trim() === ''}
-          className={`${primaryBtn} mt-3 w-full py-3`}
-        >
-          {addingNew ? t('common.saving') : t('common.share')}
-        </button>
-      </form>
-      <h3 className="mt-5 text-sm font-semibold">{t('share.peopleTitle')}</h3>
-      {listError && (
-        <p role="alert" className="mt-2 text-sm text-danger">
-          {listError}
-        </p>
-      )}
-      <ul className="mt-2 flex flex-col gap-2.5">
-        {user !== null && (
-          <li className="flex items-center justify-between gap-2 text-sm">
-            <span className="min-w-0 flex-1 truncate" title={user.email}>
-              {user.email}
-            </span>
-            <span className="shrink-0 rounded-full bg-surface-muted px-2.5 py-1 text-xs text-ink-muted">
-              {t('share.owner')}
-            </span>
-          </li>
-        )}
-        {grants === undefined && grantsLoadError === null && (
-          <li className="text-sm text-ink-muted">{t('common.loading')}</li>
-        )}
-        {grants === undefined && grantsLoadError !== null && (
-          <LoadFailed message={grantsLoadError} onRetry={() => void loadGrants(false)} />
-        )}
-        {grants !== undefined && rows.length === 0 && (
-          <li className="text-sm text-ink-muted">{t('share.nobodyYet')}</li>
-        )}
-        {rows.map((row) => (
-          <li
-            key={row.key}
-            aria-busy={row.state !== 'saved'}
-            className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-sm ${
-              row.state === 'saved' ? '' : 'opacity-60'
-            }`}
-          >
-            {/* Phone: the whole email on its own line, controls below it. */}
-            <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
-              <span className="block truncate" title={row.email}>
-                {row.email}
-              </span>
-              {row.state !== 'saved' && (
-                <span className="block text-xs text-ink-muted" role="status">
-                  {t('common.saving')}
-                </span>
-              )}
-            </div>
-            <div className="ml-auto flex items-center gap-2">
-              {row.sub === undefined ? (
-                // Not saved yet, so no controls: there is nothing to change or remove.
-                <span className="rounded-full bg-surface-muted px-2.5 py-1 text-xs text-ink-muted">
-                  {row.role === 'editor' ? t('share.editor') : t('share.viewer')}
-                </span>
-              ) : (
-                <>
-                  <RoleSelect
-                    value={row.role}
-                    onChange={(next) => void changeRole(row.sub!, next)}
-                    disabled={busy}
-                    label={t('share.roleFor', { email: row.email })}
-                  />
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void revoke(row.sub!)}
-                    aria-label={t('share.removeFor', { email: row.email })}
-                    className={`${dangerBtn} px-3 py-1.5 text-xs disabled:opacity-40`}
-                  >
-                    {t('common.remove')}
-                  </button>
-                </>
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
-      <h3 className="mt-6 text-sm font-semibold">{t('share.linkTitle')}</h3>
-      <p className="mt-1 text-sm text-ink-muted">{t('share.linkIntro')}</p>
       <div className="mt-3 flex gap-2">
-        <RoleSelect
-          value={linkRole}
-          onChange={setLinkRole}
-          disabled={busy}
-          label={t('share.linkRoleLabel')}
-        />
         <button
           type="button"
-          disabled={busy}
-          onClick={() => void createLink()}
-          className={`${secondaryBtn} min-w-0 flex-1 py-2 disabled:opacity-40`}
+          aria-pressed={method === 'email'}
+          onClick={() => setMethod('email')}
+          className={`flex-1 rounded-full py-2.5 font-medium ${
+            method === 'email'
+              ? 'bg-ink text-page'
+              : 'border border-line-strong text-ink-muted hover:bg-surface-muted active:bg-surface-muted'
+          }`}
         >
-          {mintingLink ? t('common.saving') : t('share.copyLink')}
+          {t('share.byEmail')}
+        </button>
+        <button
+          type="button"
+          aria-pressed={method === 'link'}
+          onClick={() => setMethod('link')}
+          className={`flex-1 rounded-full py-2.5 font-medium ${
+            method === 'link'
+              ? 'bg-ink text-page'
+              : 'border border-line-strong text-ink-muted hover:bg-surface-muted active:bg-surface-muted'
+          }`}
+        >
+          {t('share.byLink')}
         </button>
       </div>
-      {linkError && (
-        <p role="alert" className="mt-2 text-sm text-danger">
-          {linkError}
-        </p>
-      )}
-      {mintedUrl !== null && (
-        <div className="mt-3">
-          <label className="text-xs text-ink-muted" htmlFor="minted-collection-link">
-            {copied ? t('share.linkCopiedHint') : t('share.linkCopyNowHint')}
-          </label>
-          <div className="mt-1 flex gap-2">
-            <input
-              id="minted-collection-link"
-              readOnly
-              value={mintedUrl}
-              onFocus={(event) => event.currentTarget.select()}
-              className={`${inputClass} min-w-0 flex-1 font-mono text-xs`}
+      {method === 'email' ? (
+        <>
+          <p className="mt-3 text-sm text-ink-muted">{t('share.intro')}</p>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void add();
+            }}
+          >
+            <div className="mt-3 flex gap-2">
+              <input
+                autoFocus={finePointer}
+                type="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setFormError(null);
+                }}
+                placeholder={t('share.emailPlaceholder')}
+                aria-label={t('share.emailPlaceholder')}
+                autoCapitalize="none"
+                spellCheck={false}
+                disabled={busy}
+                className={`${inputClass} min-w-0 flex-1`}
+              />
+              <RoleSelect
+                value={role}
+                onChange={(next) => {
+                  setRole(next);
+                  setFormError(null);
+                }}
+                disabled={busy}
+              />
+            </div>
+            {formError && (
+              <p role="alert" className="mt-2 text-sm text-danger">
+                {formError}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={busy || email.trim() === ''}
+              className={`${primaryBtn} mt-3 w-full py-3`}
+            >
+              {addingNew ? t('common.saving') : t('common.share')}
+            </button>
+          </form>
+          <h3 className="mt-5 text-sm font-semibold">{t('share.peopleTitle')}</h3>
+          {listError && (
+            <p role="alert" className="mt-2 text-sm text-danger">
+              {listError}
+            </p>
+          )}
+          <ul className="mt-2 flex flex-col gap-2.5">
+            {user !== null && (
+              <li className="flex items-center justify-between gap-2 text-sm">
+                <span className="min-w-0 flex-1 truncate" title={user.email}>
+                  {user.email}
+                </span>
+                <span className="shrink-0 rounded-full bg-surface-muted px-2.5 py-1 text-xs text-ink-muted">
+                  {t('share.owner')}
+                </span>
+              </li>
+            )}
+            {grants === undefined && grantsLoadError === null && (
+              <li className="text-sm text-ink-muted">{t('common.loading')}</li>
+            )}
+            {grants === undefined && grantsLoadError !== null && (
+              <LoadFailed message={grantsLoadError} onRetry={() => void loadGrants(false)} />
+            )}
+            {grants !== undefined && rows.length === 0 && (
+              <li className="text-sm text-ink-muted">{t('share.nobodyYet')}</li>
+            )}
+            {rows.map((row) => (
+              <li
+                key={row.key}
+                aria-busy={row.state !== 'saved'}
+                className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-sm ${
+                  row.state === 'saved' ? '' : 'opacity-60'
+                }`}
+              >
+                {/* Phone: the whole email on its own line, controls below it. */}
+                <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
+                  <span className="block truncate" title={row.email}>
+                    {row.email}
+                  </span>
+                  {row.state !== 'saved' && (
+                    <span className="block text-xs text-ink-muted" role="status">
+                      {t('common.saving')}
+                    </span>
+                  )}
+                </div>
+                <div className="ml-auto flex items-center gap-2">
+                  {row.sub === undefined ? (
+                    // Not saved yet, so no controls: there is nothing to change or remove.
+                    <span className="rounded-full bg-surface-muted px-2.5 py-1 text-xs text-ink-muted">
+                      {row.role === 'editor' ? t('share.editor') : t('share.viewer')}
+                    </span>
+                  ) : (
+                    <>
+                      <RoleSelect
+                        value={row.role}
+                        onChange={(next) => void changeRole(row.sub!, next)}
+                        disabled={busy}
+                        label={t('share.roleFor', { email: row.email })}
+                      />
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void revoke(row.sub!)}
+                        aria-label={t('share.removeFor', { email: row.email })}
+                        className={`${dangerBtn} px-3 py-1.5 text-xs disabled:opacity-40`}
+                      >
+                        {t('common.remove')}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <>
+          <p className="mt-3 text-sm text-ink-muted">{t('share.linkIntro')}</p>
+          <div className="mt-3 flex gap-2">
+            <RoleSelect
+              value={linkRole}
+              onChange={setLinkRole}
+              disabled={busy}
+              label={t('share.linkRoleLabel')}
             />
             <button
               type="button"
-              onClick={() => void copyUrl(mintedUrl)}
-              className={`${secondaryBtn} shrink-0 px-3 py-1.5 text-xs`}
+              disabled={busy}
+              onClick={() => void createLink()}
+              className={`${secondaryBtn} min-w-0 flex-1 py-2 disabled:opacity-40`}
             >
-              {copied ? t('share.copied') : t('share.copy')}
+              {mintingLink ? t('common.saving') : t('share.copyLink')}
             </button>
           </div>
-        </div>
-      )}
-      <ul className="mt-3 flex flex-col gap-2">
-        {links === undefined && linksLoadError === null && (
-          <li className="text-sm text-ink-muted">{t('common.loading')}</li>
-        )}
-        {links === undefined && linksLoadError !== null && (
-          <LoadFailed message={linksLoadError} onRetry={() => void loadLinks()} />
-        )}
-        {links?.length === 0 && (
-          <li className="text-sm text-ink-muted">{t('share.noLinks')}</li>
-        )}
-        {links?.map((link) => (
-          <li key={link.id} className="flex items-center justify-between gap-2 text-sm">
-            <span className="min-w-0 flex-1">
-              <span className="block truncate">
-                {link.role === 'editor' ? t('share.editorLink') : t('share.viewerLink')}
-              </span>
-              <span className="block truncate text-xs text-ink-muted">
-                {relativeExpiryLabel(link.expiresAt, Date.now(), locale)}
-              </span>
-            </span>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void revokeLink(link.id)}
-              aria-label={
-                link.role === 'editor'
-                  ? t('share.revokeEditorLink')
-                  : t('share.revokeViewerLink')
-              }
-              className={`${dangerBtn} shrink-0 px-3 py-1.5 text-xs disabled:opacity-40`}
-            >
-              {t('share.revoke')}
-            </button>
-          </li>
-        ))}
-      </ul>
-      {links !== undefined && links.length > 0 && (
-        // Once, under the list: Remove above does not stop a live link.
-        <p className="mt-2 text-xs text-ink-muted">{t('share.linkRejoinWarning')}</p>
+          {linkError && (
+            <p role="alert" className="mt-2 text-sm text-danger">
+              {linkError}
+            </p>
+          )}
+          {mintedUrl !== null && (
+            <div className="mt-3">
+              <label className="text-xs text-ink-muted" htmlFor="minted-collection-link">
+                {copied ? t('share.linkCopiedHint') : t('share.linkCopyNowHint')}
+              </label>
+              <div className="mt-1 flex gap-2">
+                <input
+                  id="minted-collection-link"
+                  readOnly
+                  value={mintedUrl}
+                  onFocus={(event) => event.currentTarget.select()}
+                  className={`${inputClass} min-w-0 flex-1 font-mono text-xs`}
+                />
+                <button
+                  type="button"
+                  onClick={() => void copyUrl(mintedUrl)}
+                  className={`${secondaryBtn} shrink-0 px-3 py-1.5 text-xs`}
+                >
+                  {copied ? t('share.copied') : t('share.copy')}
+                </button>
+              </div>
+            </div>
+          )}
+          <ul className="mt-3 flex flex-col gap-2">
+            {links === undefined && linksLoadError === null && (
+              <li className="text-sm text-ink-muted">{t('common.loading')}</li>
+            )}
+            {links === undefined && linksLoadError !== null && (
+              <LoadFailed message={linksLoadError} onRetry={() => void loadLinks()} />
+            )}
+            {links?.length === 0 && (
+              <li className="text-sm text-ink-muted">{t('share.noLinks')}</li>
+            )}
+            {links?.map((link) => (
+              <li key={link.id} className="flex items-center justify-between gap-2 text-sm">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">
+                    {link.role === 'editor' ? t('share.editorLink') : t('share.viewerLink')}
+                  </span>
+                  <span className="block truncate text-xs text-ink-muted">
+                    {relativeExpiryLabel(link.expiresAt, Date.now(), locale)}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void revokeLink(link.id)}
+                  aria-label={
+                    link.role === 'editor'
+                      ? t('share.revokeEditorLink')
+                      : t('share.revokeViewerLink')
+                  }
+                  className={`${dangerBtn} shrink-0 px-3 py-1.5 text-xs disabled:opacity-40`}
+                >
+                  {t('share.revoke')}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {links !== undefined && links.length > 0 && (
+            // Once, under the list: Remove above does not stop a live link.
+            <p className="mt-2 text-xs text-ink-muted">{t('share.linkRejoinWarning')}</p>
+          )}
+        </>
       )}
       <button
         type="button"

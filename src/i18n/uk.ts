@@ -322,6 +322,8 @@ export const uk: Messages = {
   'saveSheet.collections': 'Колекції',
 
   'share.title': 'Поділитися «{name}»',
+  'share.byEmail': 'Поштою',
+  'share.byLink': 'Посиланням',
   'share.intro':
     'Додайте людину, яка вже має обліковий запис Sous. Редактори можуть редагувати рецепти, але не фото. Видаляти рецепти чи змінювати доступ можете лише ви.',
   'share.emailPlaceholder': 'Електронна пошта',
@@ -333,7 +335,6 @@ export const uk: Messages = {
   'share.owner': 'Власник',
   'share.peopleTitle': 'Хто має доступ',
   'share.removeFor': 'Прибрати {email}',
-  'share.linkTitle': 'Поділитися посиланням',
   'share.linkIntro': 'Будь-хто, хто вже має обліковий запис Sous, може приєднатися за посиланням, доки ви його не відкличете або не мине 7 днів. Посилання показується лише один раз.',
   'share.linkRoleLabel': 'Роль для тих, хто приєднається за посиланням',
   'share.copyLink': 'Копіювати посилання',

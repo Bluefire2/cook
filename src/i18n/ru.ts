@@ -320,6 +320,8 @@ export const ru: Messages = {
   'saveSheet.collections': 'Коллекции',
 
   'share.title': 'Поделиться «{name}»',
+  'share.byEmail': 'По почте',
+  'share.byLink': 'По ссылке',
   'share.intro':
     'Добавьте человека, у которого уже есть аккаунт Sous. Редакторы могут редактировать рецепты, но не фото. Удалять рецепты и менять доступ можете только вы.',
   'share.emailPlaceholder': 'Электронная почта',
@@ -331,7 +333,6 @@ export const ru: Messages = {
   'share.owner': 'Владелец',
   'share.peopleTitle': 'У кого есть доступ',
   'share.removeFor': 'Убрать {email}',
-  'share.linkTitle': 'Поделиться по ссылке',
   'share.linkIntro': 'Любой, у кого уже есть аккаунт Sous, может присоединиться по ссылке, пока вы её не отзовёте или пока не пройдёт 7 дней. Ссылка показывается только один раз.',
   'share.linkRoleLabel': 'Роль для тех, кто присоединится по ссылке',
   'share.copyLink': 'Копировать ссылку',
