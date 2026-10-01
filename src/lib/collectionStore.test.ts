@@ -455,3 +455,97 @@ describe('collectionStore after sign-out', () => {
     expect(getCollection('c2')?.recipeIds).toEqual([]);
   });
 });
+
+describe('collectionStore.moveRecipes', () => {
+  const sharedRecipe = {
+    id: 'shared-recipe',
+    title: 'Theirs',
+    servings: 1,
+    ingredientSections: [],
+    steps: [],
+    tags: [],
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  it('pushes each touched collection once', async () => {
+    upsertCollection({ ...collection('c1', 'Soups'), recipeIds: ['r1'] });
+    upsertCollection({ ...collection('c2', 'Stews'), recipeIds: ['r2'] });
+    upsertCollection(collection('c3', 'Pies'));
+    vi.mocked(pushOps).mockResolvedValue('ok');
+
+    await collectionStore.moveRecipes(['r1', 'r2'], 'c3');
+
+    expect(pushOps).toHaveBeenCalledTimes(1);
+    const ops = vi.mocked(pushOps).mock.calls[0]?.[0];
+    expect(ops?.map((op) => op.kind)).toEqual(['collection.put', 'collection.put', 'collection.put']);
+    expect(getCollection('c1')?.recipeIds).toEqual([]);
+    expect(getCollection('c2')?.recipeIds).toEqual([]);
+    expect(getCollection('c3')?.recipeIds).toEqual(['r1', 'r2']);
+  });
+
+  it('restores every collection when the push fails', async () => {
+    upsertCollection({ ...collection('c1', 'Soups'), recipeIds: ['r1'] });
+    upsertCollection({ ...collection('c2', 'Stews'), recipeIds: ['r2'] });
+    vi.mocked(pushOps).mockResolvedValue('error');
+
+    await expect(collectionStore.moveRecipes(['r1', 'r2'], 'c2')).rejects.toThrow(
+      t('error.collectionSave'),
+    );
+
+    expect(getCollection('c1')?.recipeIds).toEqual(['r1']);
+    expect(getCollection('c2')?.recipeIds).toEqual(['r2']);
+  });
+
+  it('does not restore collections after the session expires', async () => {
+    upsertCollection({ ...collection('c1', 'Soups'), recipeIds: ['r1', 'r2'] });
+    upsertCollection(collection('c2', 'Stews'));
+    vi.mocked(pushOps).mockImplementation(async () => {
+      clearLibrary();
+      return 'signedOut';
+    });
+
+    await expect(collectionStore.moveRecipes(['r1', 'r2'], 'c2')).rejects.toThrow(
+      t('error.sessionExpired'),
+    );
+
+    expect(listCollections()).toEqual([]);
+  });
+
+  it('rejects a shared recipe or a shared destination before writing', async () => {
+    upsertCollection({ ...collection('c1', 'Soups'), recipeIds: ['r1'] });
+    upsertCollection(collection('c2', 'Stews'));
+    installSharedRows({
+      recipes: new Map([['shared-recipe', sharedRecipe]]),
+      collections: new Map([['shared', collection('shared', 'Theirs')]]),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map([['shared-recipe', { kind: 'shared', ownerSub: 'alice' }]]),
+      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
+    });
+
+    await expect(collectionStore.moveRecipes(['r1', 'shared-recipe'], 'c2')).rejects.toThrow(
+      t('error.sharedViewOnly'),
+    );
+    await expect(collectionStore.moveRecipes(['r1'], 'shared')).rejects.toThrow(
+      t('error.sharedViewOnly'),
+    );
+
+    expect(pushOps).not.toHaveBeenCalled();
+    expect(getCollection('c1')?.recipeIds).toEqual(['r1']);
+    expect(getCollection('c2')?.recipeIds).toEqual([]);
+  });
+
+  it('rejects the whole batch when the destination would pass the cap', async () => {
+    const full = Array.from({ length: 500 }, (_, i) => `recipe-${i}`);
+    upsertCollection({ ...collection('c1', 'Soups'), recipeIds: ['extra'] });
+    upsertCollection({ ...collection('c2', 'Stews'), recipeIds: full });
+
+    await expect(collectionStore.moveRecipes(['extra', full[0]!], 'c2')).rejects.toThrow(
+      t('error.collectionFull'),
+    );
+
+    expect(pushOps).not.toHaveBeenCalled();
+    expect(getCollection('c1')?.recipeIds).toEqual(['extra']);
+    expect(getCollection('c2')?.recipeIds).toEqual(full);
+  });
+});

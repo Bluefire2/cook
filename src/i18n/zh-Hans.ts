@@ -77,6 +77,16 @@ export const zhHans: Messages = {
   'library.deleteRecipeTitle': '删除「{title}」？',
   'library.deleteRecipeBody': '这也会删除它的对话记录和烹饪记录。无法撤销。',
   'library.moveTitle': '移动「{title}」',
+  'library.select': '选择',
+  'library.selectRecipe': '选择「{title}」',
+  'library.selectedCount': {
+    other: '已选 {count} 个食谱',
+  },
+  'library.selectAll': '全选',
+  'library.moveSelected': '移动',
+  'library.moveManyTitle': {
+    other: '移动 {count} 个食谱',
+  },
   'library.create': '创建',
   'library.renameCollection': '重命名合集',
   'library.deleteCollectionTitle': '删除「{name}」？',

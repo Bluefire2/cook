@@ -6,7 +6,11 @@ import {
   compactCollection,
   compactCollectionName,
 } from './compactCollection';
-import { moveRecipe, wouldExceedRecipeIdCap } from './collectionMembership';
+import {
+  moveRecipes as applyRecipeMoves,
+  recipeIdsAfterMove,
+  wouldExceedRecipeIdCap,
+} from './collectionMembership';
 import {
   collectionAccess,
   countOwnedNamedCollections,
@@ -382,8 +386,24 @@ export const collectionStore = {
     }
   },
 
-  async moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {
-    if (isSharedRecipe(recipeId) || (dest !== 'default' && isSharedCollection(dest))) {
+  moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {
+    return this.moveRecipes([recipeId], dest);
+  },
+
+  /**
+   * Moves every id to `dest` as one optimistic write. Each touched collection
+   * is one `collection.put` in a single push. A shared recipe, a shared
+   * destination, or a destination that would pass the recipe cap rejects
+   * the whole batch before anything is written.
+   */
+  async moveRecipes(recipeIds: readonly string[], dest: 'default' | string): Promise<void> {
+    if (recipeIds.length === 0) {
+      return;
+    }
+    if (
+      recipeIds.some((id) => isSharedRecipe(id)) ||
+      (dest !== 'default' && isSharedCollection(dest))
+    ) {
       throw new Error(t('error.sharedViewOnly'));
     }
     if (dest !== 'default') {
@@ -391,16 +411,13 @@ export const collectionStore = {
       if (!destCollection) {
         throw new Error(t('error.collectionNotFound'));
       }
-      if (
-        !destCollection.recipeIds.includes(recipeId) &&
-        wouldExceedRecipeIdCap([...destCollection.recipeIds, recipeId])
-      ) {
+      if (wouldExceedRecipeIdCap(recipeIdsAfterMove(destCollection.recipeIds, recipeIds))) {
         throw new Error(t('error.collectionFull'));
       }
     }
     const now = Date.now();
     const current = listCollections();
-    const changed = moveRecipe(current, recipeId, dest, now).map(compactCollection);
+    const changed = applyRecipeMoves(current, recipeIds, dest, now).map(compactCollection);
     if (changed.length === 0) {
       return;
     }

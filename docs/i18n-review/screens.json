@@ -18,6 +18,18 @@
     "needsData": true
   },
   {
+    "id": "library-select",
+    "route": "/",
+    "setup": "Signed in on the Recipes list or an own named collection that already shows at least one recipe card. Select is on, so each own recipe has a checkbox, and a bar shows how many are selected, Select all, Move, and Cancel. Check at least one recipe so Move is enabled. Do not tap Move and do not change which collection a recipe is in. If the list is empty or this is a shared collection, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "library-move-many",
+    "route": "/",
+    "setup": "Signed in, with Select on, at least two own recipes checked, and the Move sheet open. The title counts those recipes. The sheet lists Recipes, each own collection, and New collection. Do not choose a destination and do not create a collection. If fewer than two recipes can be selected, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
     "id": "library-invite-confirm",
     "route": "/",
     "setup": "Signed in as a non-owner, the header Invite icon (person with a plus) opened the sheet, the invite intro is showing, Create link and Cancel are showing, and the review must not click Create link (it writes an invite).",

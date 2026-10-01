@@ -14,8 +14,20 @@ function run(...actions: LibraryFlowAction[]): LibraryFlow {
 
 describe('libraryFlowReducer', () => {
   it('carries the moved recipe into a new-collection create', () => {
-    const state = run({ type: 'openMove', recipeId: 'r1' }, { type: 'startCreate' });
-    expect(state.sheet).toEqual({ kind: 'create', name: '', saving: false, moveRecipeId: 'r1' });
+    const state = run({ type: 'openMove', recipeIds: ['r1'] }, { type: 'startCreate' });
+    expect(state.sheet).toEqual({ kind: 'create', name: '', saving: false, moveRecipeIds: ['r1'] });
+  });
+
+  it('keeps every recipe id from the move sheet into the create', () => {
+    const opened = run({ type: 'openMove', recipeIds: ['r1', 'r2'] });
+    expect(opened.sheet).toEqual({ kind: 'move', recipeIds: ['r1', 'r2'], saving: false });
+    const state = libraryFlowReducer(opened, { type: 'startCreate' });
+    expect(state.sheet).toEqual({
+      kind: 'create',
+      name: '',
+      saving: false,
+      moveRecipeIds: ['r1', 'r2'],
+    });
   });
 
   it('creates without a move when started from the switcher', () => {
@@ -25,7 +37,7 @@ describe('libraryFlowReducer', () => {
 
   it('keeps the created collection through a failed move so a retry reuses it', () => {
     let state = run(
-      { type: 'openMove', recipeId: 'r1' },
+      { type: 'openMove', recipeIds: ['r1'] },
       { type: 'startCreate' },
       { type: 'setName', name: 'Soups' },
     );
@@ -40,7 +52,7 @@ describe('libraryFlowReducer', () => {
     expect(state.sheet).toEqual({
       kind: 'create',
       name: 'Soups',
-      moveRecipeId: 'r1',
+      moveRecipeIds: ['r1'],
       created: { id: 'c1', name: 'Soups' },
       saving: false,
       error: 'move failed',
@@ -81,7 +93,7 @@ describe('libraryFlowReducer', () => {
   });
 
   it.each([
-    ['move', { type: 'openMove', recipeId: 'r1' }],
+    ['move', { type: 'openMove', recipeIds: ['r1'] }],
     ['rename', { type: 'openRename', collectionId: 'c1', name: 'Old' }],
   ] as const)('marks a %s as saving from submit until it fails', (_kind, openAction) => {
     let state = run(openAction);
@@ -95,7 +107,7 @@ describe('libraryFlowReducer', () => {
   });
 
   it.each([
-    ['move', { type: 'openMove', recipeId: 'r1' }],
+    ['move', { type: 'openMove', recipeIds: ['r1'] }],
     ['rename', { type: 'openRename', collectionId: 'c1', name: 'Old' }],
   ] as const)('a stale submit does not mark a newer %s sheet as saving', (_kind, openAction) => {
     let state = run(openAction);
@@ -190,8 +202,8 @@ describe('runCreate', () => {
         rename: async (id: string, name: string) => {
           calls.push(`rename:${id}:${name}`);
         },
-        move: async (recipeId: string, collectionId: string) => {
-          calls.push(`move:${recipeId}:${collectionId}`);
+        move: async (recipeIds: readonly string[], collectionId: string) => {
+          calls.push(`move:${recipeIds.join(',')}:${collectionId}`);
           if (options.moveFails) {
             throw new Error('move failed');
           }
@@ -203,9 +215,40 @@ describe('runCreate', () => {
     };
   }
 
+  it('moves every recipe in one call', async () => {
+    const fx = effects();
+    const result = await runCreate({
+      ...fx.input,
+      name: 'Soups',
+      created: undefined,
+      moveRecipeIds: ['r1', 'r2'],
+    });
+    expect(result).toEqual({ kind: 'done', id: 'c-new' });
+    expect(fx.calls).toEqual(['create:Soups', 'move:r1,r2:c-new']);
+  });
+
+  it('does not move a batch once the workflow was cancelled or left', async () => {
+    let current = true;
+    const fx = effects({ current: () => current });
+    const create = fx.input.create;
+    const result = await runCreate({
+      ...fx.input,
+      create: async (name) => {
+        const made = await create(name);
+        current = false;
+        return made;
+      },
+      name: 'Soups',
+      created: undefined,
+      moveRecipeIds: ['r1', 'r2'],
+    });
+    expect(result).toEqual({ kind: 'stale' });
+    expect(fx.calls).toEqual(['create:Soups']);
+  });
+
   it('creates, moves the recipe in, and returns the new id', async () => {
     const fx = effects();
-    const result = await runCreate({ ...fx.input, name: ' Soups ', created: undefined, moveRecipeId: 'r1' });
+    const result = await runCreate({ ...fx.input, name: ' Soups ', created: undefined, moveRecipeIds: ['r1'] });
     expect(result).toEqual({ kind: 'done', id: 'c-new' });
     expect(fx.calls).toEqual(['create: Soups ', 'move:r1:c-new']);
     expect(fx.recorded).toEqual([{ id: 'c-new', name: 'Soups' }]);
@@ -217,7 +260,7 @@ describe('runCreate', () => {
       ...same.input,
       name: 'Soups',
       created: { id: 'c1', name: 'Soups' },
-      moveRecipeId: 'r1',
+      moveRecipeIds: ['r1'],
     });
     expect(same.calls).toEqual(['move:r1:c1']);
 
@@ -226,7 +269,7 @@ describe('runCreate', () => {
       ...renamed.input,
       name: 'Stews',
       created: { id: 'c1', name: 'Soups' },
-      moveRecipeId: undefined,
+      moveRecipeIds: undefined,
     });
     expect(renamed.calls).toEqual(['rename:c1:Stews']);
     expect(renamed.recorded).toEqual([{ id: 'c1', name: 'Stews' }]);
@@ -246,7 +289,7 @@ describe('runCreate', () => {
       },
       name: 'Soups',
       created: undefined,
-      moveRecipeId: 'r1',
+      moveRecipeIds: ['r1'],
     });
     expect(result).toEqual({ kind: 'stale' });
     expect(fx.calls).toEqual(['create:Soups']);
@@ -260,13 +303,13 @@ describe('runCreate', () => {
     const move = fx.input.move;
     const result = await runCreate({
       ...fx.input,
-      move: async (recipeId, collectionId) => {
-        await move(recipeId, collectionId);
+      move: async (recipeIds, collectionId) => {
+        await move(recipeIds, collectionId);
         current = false;
       },
       name: 'Soups',
       created: undefined,
-      moveRecipeId: 'r1',
+      moveRecipeIds: ['r1'],
     });
     expect(result).toEqual({ kind: 'stale' });
   });
@@ -274,7 +317,7 @@ describe('runCreate', () => {
   it('lets a failed move throw after recording the collection', async () => {
     const fx = effects({ moveFails: true });
     await expect(
-      runCreate({ ...fx.input, name: 'Soups', created: undefined, moveRecipeId: 'r1' }),
+      runCreate({ ...fx.input, name: 'Soups', created: undefined, moveRecipeIds: ['r1'] }),
     ).rejects.toThrow('move failed');
     expect(fx.recorded).toEqual([{ id: 'c-new', name: 'Soups' }]);
   });

@@ -34,6 +34,7 @@ import {
   ghostBtn,
   ghostIconBtn,
   inputClass,
+  inputFocus,
   menuItem,
   menuItemDanger,
   primaryBtn,
@@ -81,6 +82,8 @@ export default function Library() {
     writePersistedLibraryView({ query, browseAll });
   }, [query, browseAll]);
   const [menuId, setMenuId] = useState<string | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [flow, dispatch] = useReducer(libraryFlowReducer, initialLibraryFlow);
   const { sheet } = flow;
   // The flow as last rendered. An async submit compares its starting token
@@ -123,8 +126,11 @@ export default function Library() {
     sheet.kind === 'deleteRecipe'
       ? allRecipes?.find((r) => r.id === sheet.recipeId)
       : undefined;
-  const moveRecipe =
-    sheet.kind === 'move' ? allRecipes?.find((r) => r.id === sheet.recipeId) : undefined;
+  const movingIds = sheet.kind === 'move' ? sheet.recipeIds : undefined;
+  const moveOne =
+    movingIds?.length === 1
+      ? allRecipes?.find((recipe) => recipe.id === movingIds[0])
+      : undefined;
   const collectionName = sheet.kind === 'create' || sheet.kind === 'rename' ? sheet.name : '';
   const collectionError = sheetError(sheet);
   // While a create, move or rename is saving, its inputs and submit controls
@@ -144,6 +150,35 @@ export default function Library() {
     currentId && !namedIsShared ? currentId : undefined;
   const ownedCollections =
     collections?.filter((collection) => !collectionStore.isShared(collection.id)) ?? [];
+  const ownedVisibleIds =
+    recipes === undefined || namedIsShared
+      ? []
+      : recipes
+          .filter((recipe) => !recipeStore.isShared(recipe.id))
+          .map((recipe) => recipe.id);
+  const canSelect = ownedVisibleIds.length > 0;
+  // Undefined while the library is still loading, so a refresh does not
+  // clear a selection that has not been shown yet. An empty string means
+  // the list is loaded and no owned recipe is on screen.
+  const selectionScope =
+    recipes === undefined ? undefined : namedIsShared ? '' : ownedVisibleIds.join('\n');
+
+  const cancelSelect = () => {
+    setSelecting(false);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   const remove = async (id: string) => {
     dispatch({ type: 'close' });
@@ -174,14 +209,16 @@ export default function Library() {
       const result = await runCreate({
         name: sheet.name,
         created: sheet.created,
-        moveRecipeId: sheet.moveRecipeId,
+        moveRecipeIds: sheet.moveRecipeIds,
         isCurrent: () => isCurrent(token),
         create: (name) => collectionStore.create(name),
         rename: (id, name) => collectionStore.rename(id, name),
-        move: (recipeId, collectionId) => collectionStore.moveRecipe(recipeId, collectionId),
+        move: (recipeIds, collectionId) => collectionStore.moveRecipes(recipeIds, collectionId),
         onCreated: (created) => dispatch({ type: 'created', token, created }),
       });
       if (result.kind === 'stale') return;
+      setSelecting(false);
+      setSelectedIds(new Set());
       closeSheets();
       navigate(libraryHref(result.id));
     } catch (err) {
@@ -200,10 +237,15 @@ export default function Library() {
     const { token } = flow;
     dispatch({ type: 'submitting', token });
     try {
-      await collectionStore.moveRecipe(sheet.recipeId, dest);
+      const ids = sheet.recipeIds;
+      await collectionStore.moveRecipes(ids, dest);
       if (!isCurrent(token)) return;
+      setSelecting(false);
+      setSelectedIds(new Set());
       closeSheets();
-      navigate(dest === 'default' ? '/' : libraryHref(dest));
+      if (ids.length <= 1) {
+        navigate(dest === 'default' ? '/' : libraryHref(dest));
+      }
     } catch (err) {
       dispatch({
         type: 'failed',
@@ -412,6 +454,8 @@ export default function Library() {
     setBrowseAll(false);
     setMenuId(null);
     setDeleteError(null);
+    setSelecting(false);
+    setSelectedIds(new Set());
     closeSheets();
   }, [collectionId]);
 
@@ -451,6 +495,30 @@ export default function Library() {
     firstActionRef.current?.focus({ preventScroll: true });
   }, [menuId]);
 
+  // A search or All collections change hides recipes. Drop checks for ids
+  // that are no longer on screen; changing collection clears the set itself.
+  useEffect(() => {
+    if (selectionScope === undefined) {
+      return;
+    }
+    const visible = new Set(selectionScope === '' ? [] : selectionScope.split('\n'));
+    setSelectedIds((prev) => {
+      if (prev.size === 0) {
+        return prev;
+      }
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visible.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [selectionScope]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
@@ -458,6 +526,12 @@ export default function Library() {
         event.preventDefault();
         setMenuId(null);
         menuTriggerRef.current?.focus();
+        return;
+      }
+      if (selecting && sheet.kind === 'closed') {
+        event.preventDefault();
+        setSelecting(false);
+        setSelectedIds(new Set());
         return;
       }
       // A rendered Sheet takes Escape first (capture phase) and stops it, so
@@ -470,7 +544,7 @@ export default function Library() {
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [menuId, sheet.kind]);
+  }, [menuId, selecting, sheet.kind]);
 
   const emptyCopy = () => {
     if (q !== '') {
@@ -488,8 +562,19 @@ export default function Library() {
     return t('library.empty');
   };
 
+  const selectControl =
+    canSelect && !selecting ? (
+      <button
+        type="button"
+        onClick={() => setSelecting(true)}
+        className={`${chipClass(false)} shrink-0`}
+      >
+        {t('library.select')}
+      </button>
+    ) : null;
+
   return (
-    <div className="mx-auto max-w-xl px-4 pb-24">
+    <div className={`mx-auto max-w-xl px-4 ${selecting ? 'pb-40' : 'pb-24'}`}>
       <LibraryInviteToast notice={inviteNotice} />
       <header className="flex items-center justify-between py-4">
         <h1 className="text-2xl font-bold">Sous</h1>
@@ -690,6 +775,7 @@ export default function Library() {
             onChange={(e) => setQuery(e.target.value)}
             className={`${inputClass} min-w-0 flex-1`}
           />
+          {selectControl}
           <button
             type="button"
             onClick={() => setBrowseAll((on) => !on)}
@@ -699,13 +785,16 @@ export default function Library() {
           </button>
         </div>
       ) : (
-        <input
-          type="search"
-          placeholder={t('library.search')}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className={`${inputClass} mb-4`}
-        />
+        <div className="mb-4 flex items-center gap-2">
+          <input
+            type="search"
+            placeholder={t('library.search')}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className={`${inputClass} min-w-0 flex-1`}
+          />
+          {selectControl}
+        </div>
       )}
 
       {deleteError && (
@@ -718,8 +807,23 @@ export default function Library() {
         <p className="py-12 text-center text-ink-muted">{emptyCopy()}</p>
       ) : (
         <ul className="flex flex-col gap-3">
-          {recipes.map((recipe) => (
-            <li key={recipe.id} className="relative">
+          {recipes.map((recipe) => {
+            const shared = recipeStore.isShared(recipe.id);
+            const checked = selectedIds.has(recipe.id);
+            return (
+              <li key={recipe.id} className="flex items-start gap-1">
+                {selecting && !shared && (
+                  <label className="mt-3 flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      aria-label={t('library.selectRecipe', { title: recipe.title })}
+                      onChange={() => toggleSelected(recipe.id)}
+                      className={`h-5 w-5 accent-ink ${inputFocus}`}
+                    />
+                  </label>
+                )}
+                <div className="relative min-w-0 flex-1">
               <Link
                 to={`/recipe/${recipe.id}`}
                 className="flex gap-3 rounded-2xl border border-line bg-surface p-4 pr-14 shadow-sm hover:border-line-strong hover:bg-surface-muted active:bg-surface-muted"
@@ -749,7 +853,7 @@ export default function Library() {
                 </div>
               </Link>
 
-              {!recipeStore.isShared(recipe.id) && (
+              {!shared && (
               <button
                 type="button"
                 aria-label={t('library.actionsFor', { title: recipe.title })}
@@ -764,7 +868,7 @@ export default function Library() {
               </button>
               )}
 
-              {menuId === recipe.id && !recipeStore.isShared(recipe.id) && (
+              {menuId === recipe.id && !shared && (
                 <div
                   role="group"
                   aria-label={t('library.actionsFor', { title: recipe.title })}
@@ -781,7 +885,7 @@ export default function Library() {
                     type="button"
                     onClick={() => {
                       setMenuId(null);
-                      dispatch({ type: 'openMove', recipeId: recipe.id });
+                      dispatch({ type: 'openMove', recipeIds: [recipe.id] });
                     }}
                     className={`${menuItem} border-t border-line`}
                   >
@@ -799,8 +903,10 @@ export default function Library() {
                   </button>
                 </div>
               )}
-            </li>
-          ))}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -814,7 +920,36 @@ export default function Library() {
         />
       )}
 
-      {sessionStatus === 'signedIn' && !namedIsShared && (
+      {selecting && (
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-page px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className="mx-auto flex max-w-xl flex-wrap items-center gap-2">
+            <p className="min-w-0 flex-1 text-sm font-medium">
+              {t('library.selectedCount', { count: selectedIds.size })}
+            </p>
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set(ownedVisibleIds))}
+              disabled={!canSelect}
+              className={`${ghostBtn} disabled:opacity-40`}
+            >
+              {t('library.selectAll')}
+            </button>
+            <button
+              type="button"
+              disabled={selectedIds.size === 0}
+              onClick={() => dispatch({ type: 'openMove', recipeIds: [...selectedIds] })}
+              className={`${primaryBtn} px-4 py-2 text-sm disabled:opacity-40`}
+            >
+              {t('library.moveSelected')}
+            </button>
+            <button type="button" onClick={cancelSelect} className={ghostBtn}>
+              {t('common.cancel')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {sessionStatus === 'signedIn' && !namedIsShared && !selecting && (
         <button
           type="button"
           aria-label={t('library.addRecipe')}
@@ -875,9 +1010,13 @@ export default function Library() {
         </Sheet>
       )}
 
-      {moveRecipe && (
+      {movingIds !== undefined && (movingIds.length > 1 || moveOne !== undefined) && (
         <Sheet onClose={() => closeSheets()}>
-          <h2 className="text-lg font-semibold">{t('library.moveTitle', { title: moveRecipe.title })}</h2>
+          <h2 className="text-lg font-semibold">
+            {movingIds.length === 1 && moveOne
+              ? t('library.moveTitle', { title: moveOne.title })
+              : t('library.moveManyTitle', { count: movingIds.length })}
+          </h2>
           <button
             type="button"
             disabled={sheetSaving}

@@ -34,25 +34,92 @@ export function recipesInCollection(
   return recipes.filter((recipe) => membership.get(recipe.id) === collection.id);
 }
 
+/** First-seen order, dropping blanks and repeats. */
+function uniqueIds(recipeIds: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const id of recipeIds) {
+    if (id === '' || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    next.push(id);
+  }
+  return next;
+}
+
+/**
+ * The destination's `recipeIds` after `recipeIds` move into it. Ids already
+ * there stay where they are; the rest append in the order given.
+ */
+export function recipeIdsAfterMove(
+  existing: readonly string[],
+  recipeIds: readonly string[],
+): string[] {
+  const present = new Set(existing);
+  const appended: string[] = [];
+  for (const id of uniqueIds(recipeIds)) {
+    if (present.has(id)) {
+      continue;
+    }
+    present.add(id);
+    appended.push(id);
+  }
+  return appended.length === 0 ? [...existing] : [...existing, ...appended];
+}
+
+/**
+ * Moves every id in one pass. Each collection is returned at most once:
+ * the destination appends ids it does not already hold, and every other
+ * collection drops them. Moving to `'default'` only removes. An id already
+ * in the destination keeps its place.
+ */
+export function moveRecipes(
+  collections: readonly Collection[],
+  recipeIds: readonly string[],
+  dest: 'default' | string,
+  now: number,
+): Collection[] {
+  const moving = uniqueIds(recipeIds);
+  if (moving.length === 0) {
+    return [];
+  }
+  const movingSet = new Set(moving);
+  const changed: Collection[] = [];
+  for (const collection of collections) {
+    const isDest = dest !== 'default' && collection.id === dest;
+    if (isDest) {
+      const present = new Set(collection.recipeIds);
+      const appended = moving.filter((id) => !present.has(id));
+      if (appended.length === 0) {
+        continue;
+      }
+      changed.push({
+        ...collection,
+        recipeIds: [...collection.recipeIds, ...appended],
+        updatedAt: now,
+      });
+      continue;
+    }
+    if (!collection.recipeIds.some((id) => movingSet.has(id))) {
+      continue;
+    }
+    changed.push({
+      ...collection,
+      recipeIds: collection.recipeIds.filter((id) => !movingSet.has(id)),
+      updatedAt: now,
+    });
+  }
+  return changed;
+}
+
 export function moveRecipe(
   collections: readonly Collection[],
   recipeId: string,
   dest: 'default' | string,
   now: number,
 ): Collection[] {
-  const changed: Collection[] = [];
-  for (const collection of collections) {
-    const has = collection.recipeIds.includes(recipeId);
-    const shouldHave = dest !== 'default' && collection.id === dest;
-    if (has === shouldHave) {
-      continue;
-    }
-    const recipeIds = shouldHave
-      ? [...collection.recipeIds, recipeId]
-      : collection.recipeIds.filter((id) => id !== recipeId);
-    changed.push({ ...collection, recipeIds, updatedAt: now });
-  }
-  return changed;
+  return moveRecipes(collections, [recipeId], dest, now);
 }
 
 export function wouldExceedRecipeIdCap(recipeIds: readonly string[]): boolean {
