@@ -1410,6 +1410,40 @@ export async function cascadeRecipeDelete(
   return { photoIds: [...photoIds], gcsPending: photoIds.size > 0 };
 }
 
+export type ChatClearSnapshot = {
+  exists: boolean;
+  data: () => Record<string, unknown> | undefined;
+};
+
+/**
+ * Tombstone one chunk of chat messages. Firestore transactions require every
+ * read before any write; a per-message get/set throws
+ * "Firestore transactions require all reads to be executed before all writes"
+ * on the second message, and the clear never lands.
+ */
+export async function tombstoneChatChunk<Ref extends { id: string }>(
+  tx: {
+    getAll: (...refs: Ref[]) => Promise<ChatClearSnapshot[]>;
+    set: (ref: Ref, data: Record<string, unknown>, options: { merge: false }) => void;
+  },
+  refs: Ref[],
+  at: number,
+  serverUpdatedAt: number,
+): Promise<void> {
+  if (refs.length === 0) {
+    return;
+  }
+  const snaps = await tx.getAll(...refs);
+  for (let i = 0; i < refs.length; i += 1) {
+    const snap = snaps[i];
+    const stored = readStoredState(snap?.exists ? snap.data() : undefined);
+    if (!compareMutation(stored, at, 'tombstone').allow) {
+      continue;
+    }
+    tx.set(refs[i], tombstonePayload(refs[i].id, at, serverUpdatedAt), { merge: false });
+  }
+}
+
 export async function clearChatForRecipe(
   uid: string,
   recipeId: string,
@@ -1444,17 +1478,8 @@ export async function clearChatForRecipe(
   for (const chunk of chunkForBatch(toTombstone, 400)) {
     const serverUpdatedAt = Date.now();
     await getFirestore().runTransaction(async (tx) => {
-      for (const messageId of chunk) {
-        const ref = colRef(uid, 'chatMessages').doc(messageId);
-        const snap = await tx.get(ref);
-        const stored = readStoredState(
-          snap.exists ? (snap.data() as Record<string, unknown>) : undefined,
-        );
-        const cmp = compareMutation(stored, at, 'tombstone');
-        if (cmp.allow) {
-          tx.set(ref, tombstonePayload(messageId, at, serverUpdatedAt), { merge: false });
-        }
-      }
+      const refs = chunk.map((messageId) => colRef(uid, 'chatMessages').doc(messageId));
+      await tombstoneChatChunk(tx, refs, at, serverUpdatedAt);
     });
   }
 

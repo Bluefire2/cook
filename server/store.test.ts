@@ -42,6 +42,7 @@ import {
   foldListLiveDocsCandidate,
   isUuid,
   messageIdsToClearAtBoundary,
+  tombstoneChatChunk,
   emailLowerBackfill,
   userProfileUpsertFields,
   validatePushOp,
@@ -628,6 +629,73 @@ describe('messageIdsToClearAtBoundary', () => {
       10,
     );
     expect(ids).toEqual(['a']);
+  });
+});
+
+describe('tombstoneChatChunk', () => {
+  const READ_AFTER_WRITE =
+    'Firestore transactions require all reads to be executed before all writes.';
+
+  function transaction(docs: Record<string, Record<string, unknown> | undefined>) {
+    const order: string[] = [];
+    const writes: Array<{ id: string; data: Record<string, unknown> }> = [];
+    let written = false;
+    return {
+      order,
+      writes,
+      async getAll(...refs: { id: string }[]) {
+        if (written) {
+          throw new Error(READ_AFTER_WRITE);
+        }
+        order.push('read');
+        return refs.map((ref) => {
+          const data = docs[ref.id];
+          return {
+            exists: data !== undefined,
+            data: () => data,
+          };
+        });
+      },
+      set(ref: { id: string }, data: Record<string, unknown>, options: { merge: false }) {
+        written = true;
+        order.push('write');
+        writes.push({ id: ref.id, data, ...options });
+      },
+    };
+  }
+
+  it('reads every message before writing, including a thread of two', async () => {
+    const tx = transaction({
+      user: { updatedAt: 1, content: 'Can I use honey?' },
+      assistant: { updatedAt: 2, content: 'Yes.' },
+    });
+
+    await tombstoneChatChunk(tx, [{ id: 'user' }, { id: 'assistant' }], 10, 11);
+
+    expect(tx.order).toEqual(['read', 'write', 'write']);
+    expect(tx.writes).toEqual([
+      {
+        id: 'user',
+        data: { id: 'user', updatedAt: 10, deletedAt: 10, serverUpdatedAt: 11 },
+        merge: false,
+      },
+      {
+        id: 'assistant',
+        data: { id: 'assistant', updatedAt: 10, deletedAt: 10, serverUpdatedAt: 11 },
+        merge: false,
+      },
+    ]);
+  });
+
+  it('leaves a message whose stored updatedAt is newer than the clear', async () => {
+    const tx = transaction({
+      older: { updatedAt: 5 },
+      newer: { updatedAt: 20 },
+    });
+
+    await tombstoneChatChunk(tx, [{ id: 'older' }, { id: 'newer' }], 10, 11);
+
+    expect(tx.writes.map((write) => write.id)).toEqual(['older']);
   });
 });
 
