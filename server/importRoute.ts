@@ -2,10 +2,18 @@
  * `POST /api/import` — URL, pasted text, or up to 4 photos in, a recipe draft
  * out for the client to review and save. Gated by `withMembership` in
  * `scripts/server.ts`. The pipeline lives in `server/recipeImport.ts`; this
- * file only maps its outcomes to HTTP.
+ * file only maps its outcomes to HTTP and writes one log line per request
+ * (`server/importLog.ts`).
  *
  * Photo import is bound by `docs/constitutions/image-import.md`.
  */
+import {
+  loggableUrl,
+  noteImportOutcome,
+  thrownStatus,
+  withImportLog,
+  type ImportLogEntry,
+} from './importLog.ts';
 import { readBoundedText, type MembershipHandlerContext } from './membership.ts';
 import {
   IMPORT_BAD_LANGUAGE_CODE,
@@ -192,45 +200,71 @@ function outcomeResponse(
   }
 }
 
-export async function importPost(
+export function importPost(
   req: Request,
-  _ctx?: MembershipHandlerContext,
+  ctx?: MembershipHandlerContext,
   deps?: RecipeImportDeps,
+): Promise<Response> {
+  const entry: ImportLogEntry = {};
+  // Log line only; `withMembership` has already decided access.
+  if (ctx !== undefined) entry.sub = ctx.authorizedSub;
+  return withImportLog(entry, () => handleImport(req, entry, deps));
+}
+
+/** `importPost` without the log line; it records what happened on `entry`. */
+async function handleImport(
+  req: Request,
+  entry: ImportLogEntry,
+  deps: RecipeImportDeps | undefined,
 ): Promise<Response> {
   const raw = await readBoundedText(req, MAX_IMPORT_BODY_BYTES);
   if (raw === null) {
+    entry.outcome = 'too_large';
     return fail('import-body-too-large', BODY_TOO_LARGE, 413);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
+    entry.outcome = 'bad_request';
     return fail('bad-request', 'Bad request', 400);
   }
   if (!isPlainObject(parsed)) {
+    entry.outcome = 'bad_request';
     return fail('bad-request', 'Bad request', 400);
   }
   const body = parsed as ImportRequestBody;
   const target = readImportTranslateTo(body.translateTo);
   if (!target.ok) {
+    entry.outcome = 'bad_language';
     return fail(IMPORT_BAD_LANGUAGE_CODE, IMPORT_BAD_LANGUAGE_ERROR, 400);
   }
 
   if (body.url) {
+    entry.via = 'url';
+    Object.assign(entry, loggableUrl(body.url));
     const page = await fetchPageHtml(body.url);
+    entry.fetch = page.kind;
     if (page.kind !== 'ok') {
+      if (page.kind === 'refused') entry.siteStatus = page.status;
+      entry.outcome = 'fetch_failed';
       return fetchFailure(page);
     }
-    return outcomeResponse(
-      await importFromHtml(page.html, deps ?? recipeImportDepsFromEnv(), target.translateTo),
-      body.url,
+    const outcome = await importFromHtml(
+      page.html,
+      deps ?? recipeImportDepsFromEnv(),
+      target.translateTo,
     );
+    noteImportOutcome(entry, outcome);
+    return outcomeResponse(outcome, body.url);
   }
 
   const check = checkImportImages(body.images);
   if (check.kind === 'ok') {
     const { images, bytes } = check;
-    console.log(`import images count=${images.length} bytes=${bytes}`);
+    entry.via = 'photos';
+    entry.photos = images.length;
+    entry.bytes = bytes;
     let outcome: ImportOutcome;
     try {
       outcome = await importFromImages(
@@ -239,26 +273,36 @@ export async function importPost(
         deps ?? recipeImportDepsFromEnv(),
         target.translateTo,
       );
-    } catch {
-      // Nothing from the error is logged: SDK errors can echo the request.
-      console.error(`import images failed count=${images.length} bytes=${bytes}`);
+    } catch (err) {
+      // Only a numeric status is kept from the error: SDK messages can echo the request.
+      entry.outcome = 'threw';
+      const status = thrownStatus(err);
+      if (status !== undefined) entry.errorStatus = status;
       return fail('import-photos-failed', "Couldn't read those photos — try again.", 502);
     }
+    noteImportOutcome(entry, outcome);
     return outcomeResponse(outcome, undefined, {
       code: 'import-no-recipe-photos',
       error: PHOTOS_NOT_A_RECIPE,
     });
   }
   if (check.kind !== 'absent') {
+    entry.via = 'photos';
+    entry.outcome = 'bad_photos';
     return imagesFailure(check);
   }
 
+  entry.via = 'paste';
   const text = body.text?.trim() ?? '';
   if (text === '') {
+    entry.outcome = 'empty_source';
     return fail('import-empty', NOTHING_TO_IMPORT, 400);
   }
-  return outcomeResponse(
-    await importFromSource(text, deps ?? recipeImportDepsFromEnv(), target.translateTo),
-    undefined,
+  const outcome = await importFromSource(
+    text,
+    deps ?? recipeImportDepsFromEnv(),
+    target.translateTo,
   );
+  noteImportOutcome(entry, outcome);
+  return outcomeResponse(outcome, undefined);
 }

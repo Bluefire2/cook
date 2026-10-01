@@ -27,6 +27,26 @@ Recipe import (web URL/paste, extension, evals) is one pipeline in
 `ImportOutcome`; routes map outcomes to HTTP. `normalizeImportedRecipe` is the
 only cleanup of model output for import.
 
+Both import routes write one `event: 'import'` JSON log line per request
+(`server/importLog.ts`, `withImportLog`): the session `sub`, how the import
+arrived, the URL as `origin + pathname`, the outcome, counts, a thrown
+error's numeric `status`, and timing. Never the email, recipe or pasted text,
+HTML, photo bytes, a query string, or an error message. `/privacy` (Server
+logs) and `/terms` describe exactly that line and its 30-day retention (the
+`_Default` log bucket); change them with it.
+
+No server log line may contain an email address or a link token. Invite
+(`/invite/<token>`) and collection-link (`/c/<token>`) pages send
+`Referrer-Policy: no-referrer` so the token never rides a `Referer`, and the
+`link-token-requests` exclusion on the `_Default` sink
+(`scripts/logExclusions.ts`, applied with `node
+scripts/apply-log-exclusions.ts --apply`, dry run without) keeps Cloud Run's
+request lines for those URLs out of Cloud Logging. `/privacy` promises both;
+a new token-in-path route must be added to that filter. To see one account's imports, filter Logs
+Explorer on `jsonPayload.event="import"` and `jsonPayload.sub`;
+`scripts/import-audit.ts <email>` prints the `sub` and the account's imported
+recipes, read-only.
+
 ## How to run it
 
 Node **≥ 22.18** (native TypeScript stripping). Both processes:
@@ -408,6 +428,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/collection-path.md` | Built on `cursor/collection-path-2d3d`. Named collections open at `/collections/<id>`. Legacy `?c=` redirects removed. Not deployed. |
 | `docs/plans/approval-email.md` | Built on `cursor/approval-email-420a`. Email the requester after an admin approves an access request. Not deployed; before deploying, set `MAIL_FROM` to a sender on a Resend-verified domain (the sandbox sender skips the send). |
 | `docs/plans/library-agent.md` | Merged (#34), not deployed. App-level assistant: read-only tools over the user's own library, modular cards (shopping list first), ephemeral threads. |
+| `docs/plans/import-reliability.md` | Approved. Import log line (2c) and its privacy copy (2f) built ahead of the rest, not deployed. Then: typed warnings stored as optional `Recipe.importCheck`, deterministic checks, retries (off until phase 3). Phase 1 waits on the reporter's failing URLs. |
 | `docs/plans/agent-collection-moves.md` | Built, not deployed. `propose_collection_move` / `collection_move` v1 proposal card; client apply via `collectionStore.moveRecipes`. |
 | `docs/plans/html-parser-recipe-import.md` | Built on `cursor/html-parser-recipe-import-11d4`. Not deployed. Replace the hand-rolled HTML scanner in `server/recipeImport.ts` with parse5 (issue #91). |
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |

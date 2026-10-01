@@ -530,6 +530,10 @@ function htmlResponse(
   const headers = new Headers({
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
+    // Every page here is served at `/invite/<token>`. Without this, its links
+    // (Sign in, Privacy) send that URL as `Referer`, which the request log
+    // keeps. These pages only link and never POST, so `Origin: null` is moot.
+    'Referrer-Policy': 'no-referrer',
   });
   for (const cookie of extraCookies ?? []) {
     headers.append('Set-Cookie', cookie);

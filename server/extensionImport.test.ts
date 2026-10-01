@@ -268,3 +268,59 @@ describe('extensionImport translateTo', () => {
     });
   });
 });
+
+describe('extensionImport log line', () => {
+  beforeEach(() => {
+    Object.assign(process.env, SESSION_ENV);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function importLogEntries(log: { mock: { calls: unknown[][] } }): Record<string, unknown>[] {
+    return log.mock.calls
+      .map(([message]) => String(message))
+      .filter((raw) => raw.startsWith('{"event":"import"'))
+      .map((raw) => JSON.parse(raw) as Record<string, unknown>);
+  }
+
+  it('logs the account and the tab address without its query, and the outcome', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { deps } = fakeImportDeps(JSON.stringify({ title: 'NOT_A_RECIPE' }));
+    const response = await extensionImport(
+      authedRequest({
+        url: 'https://example.com/soup?unlocked_article_code=k-99',
+        html: '<html><body><main><p>Simmer the tomatoes.</p></main></body></html>',
+      }),
+      deps,
+    );
+    expect(response.status).toBe(422);
+    expect(importLogEntries(log)).toEqual([
+      {
+        event: 'import',
+        sub: 'sub-1',
+        via: 'extension',
+        url: 'https://example.com/soup',
+        host: 'example.com',
+        outcome: 'not_a_recipe',
+        status: 422,
+        ms: expect.any(Number),
+      },
+    ]);
+    expect(JSON.stringify(log.mock.calls)).not.toContain('k-99');
+  });
+
+  it('logs a recipe too large to push as unusable', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const huge = JSON.stringify({ title: 'Soup', servings: 2, notes: 'x'.repeat(200_000) });
+    const { deps } = fakeImportDeps(huge);
+    await extensionImport(
+      authedRequest({ url: 'https://example.com/soup', html: '<main><p>Soup.</p></main>' }),
+      deps,
+    );
+    expect(importLogEntries(log)).toEqual([
+      expect.objectContaining({ via: 'extension', outcome: 'unusable', status: 502 }),
+    ]);
+  });
+});

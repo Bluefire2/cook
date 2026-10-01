@@ -360,12 +360,15 @@ describe('architecture lock', () => {
   });
 
   // api/import.ts is a 401 stub; Cloud Run's import route (server/importRoute.ts)
-  // has no session fallback to bypass, so it must not mention authorizedSub.
-  it('assertion 6: authorizedSub in exactly two files with fixed counts', () => {
+  // has no session fallback to bypass. Its one use of authorizedSub copies the
+  // sub onto the import log line (server/importLog.ts) and never decides
+  // access; a second use fails this count.
+  it('assertion 6: authorizedSub in exactly three files with fixed counts', () => {
     const sources = productionSources();
     expectProductionScanReady(sources);
     const expectedCounts: Record<string, number> = {
       'api/chat.ts': 5,
+      'server/importRoute.ts': 1,
       'server/membership.ts': 2,
     };
     const allowed = new Set(Object.keys(expectedCounts));
