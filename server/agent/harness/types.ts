@@ -31,6 +31,7 @@ export interface CardSpec<Ctx, T = unknown> {
   parameters: ToolParameters;
   rule: string;
   normalize(args: unknown, ctx: Ctx): { ok: true; data: T } | { ok: false; error: string };
+  revalidate?(data: unknown, ctx: Ctx): { ok: true; data: T } | { ok: false; error: string };
   historyText(data: T): string;
 }
 

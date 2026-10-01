@@ -34,25 +34,59 @@ export function recipesInCollection(
   return recipes.filter((recipe) => membership.get(recipe.id) === collection.id);
 }
 
+export function moveRecipes(
+  collections: readonly Collection[],
+  recipeIds: readonly string[],
+  dest: 'default' | string,
+  now: number,
+): Collection[] {
+  const wanted: string[] = [];
+  const seen = new Set<string>();
+  for (const id of recipeIds) {
+    if (id === '' || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    wanted.push(id);
+  }
+  if (wanted.length === 0) {
+    return [];
+  }
+  const wantedSet = new Set(wanted);
+
+  const changed: Collection[] = [];
+  for (const collection of collections) {
+    const before = collection.recipeIds;
+    const isDest = dest !== 'default' && collection.id === dest;
+    let next: string[];
+    if (isDest) {
+      // Keep ids already listed here in place. Removing them and appending
+      // again reorders the collection and writes a no-op last-write-wins put.
+      next = before.slice();
+      const inDest = new Set(before);
+      for (const id of wanted) {
+        if (!inDest.has(id)) {
+          next.push(id);
+          inDest.add(id);
+        }
+      }
+    } else {
+      next = before.filter((id) => !wantedSet.has(id));
+    }
+    if (next.length !== before.length || next.some((id, i) => id !== before[i])) {
+      changed.push({ ...collection, recipeIds: next, updatedAt: now });
+    }
+  }
+  return changed;
+}
+
 export function moveRecipe(
   collections: readonly Collection[],
   recipeId: string,
   dest: 'default' | string,
   now: number,
 ): Collection[] {
-  const changed: Collection[] = [];
-  for (const collection of collections) {
-    const has = collection.recipeIds.includes(recipeId);
-    const shouldHave = dest !== 'default' && collection.id === dest;
-    if (has === shouldHave) {
-      continue;
-    }
-    const recipeIds = shouldHave
-      ? [...collection.recipeIds, recipeId]
-      : collection.recipeIds.filter((id) => id !== recipeId);
-    changed.push({ ...collection, recipeIds, updatedAt: now });
-  }
-  return changed;
+  return moveRecipes(collections, [recipeId], dest, now);
 }
 
 export function wouldExceedRecipeIdCap(recipeIds: readonly string[]): boolean {

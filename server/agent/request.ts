@@ -174,7 +174,8 @@ export function replayCards(
         if (!spec) {
           continue;
         }
-        const normalized = spec.normalize(data, library);
+        const validate = spec.revalidate ?? spec.normalize;
+        const normalized = validate(data, library);
         if (!normalized.ok) {
           continue;
         }

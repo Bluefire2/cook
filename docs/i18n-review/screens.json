@@ -330,6 +330,24 @@
     "needsData": true
   },
   {
+    "id": "assistant-collection-move",
+    "route": "/assistant",
+    "setup": "Signed in, with a collection-move card already on screen showing the pending Move state (heading, the line that recipes leave their current collections, preview rows, and the Move button). If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "assistant-collection-move-applied",
+    "route": "/assistant",
+    "setup": "Signed in, with a collection-move card already on screen showing the applied sentence after Move. If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "assistant-collection-move-error",
+    "route": "/assistant",
+    "setup": "Signed in, with a collection-move card already on screen showing an error line after a failed move. If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
     "id": "assistant-couldnt-answer",
     "route": "/assistant",
     "setup": "Signed in, with the assistant error line already showing (the assistant could not answer). If that state is not already showing, do not send a message to create it; mark skipped: needs data.",

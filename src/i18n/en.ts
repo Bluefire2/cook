@@ -508,6 +508,34 @@ export const en = {
   'assistant.recipesHeading': 'Recipes:',
   'assistant.cardUnavailable': 'Update the app to see this card.',
   'assistant.couldntAnswer': "The assistant couldn't answer that.",
+  'assistant.moveRecipesGone': 'These recipes are no longer in your library.',
+  'assistant.preparingMove': 'Preparing a move…',
+  'assistant.moveLeaveCurrentCollections':
+    'These recipes will leave their current collections.',
+  'assistant.moveHeadingToCollection': {
+    one: 'Move {count} recipe into {name}',
+    other: 'Move {count} recipes into {name}',
+  },
+  'assistant.moveHeadingToRecipes': {
+    one: 'Move {count} recipe back to Recipes',
+    other: 'Move {count} recipes back to Recipes',
+  },
+  'assistant.moveAppliedToCollection': {
+    one: 'Moved {count} recipe into {name}',
+    other: 'Moved {count} recipes into {name}',
+  },
+  'assistant.moveAppliedToRecipes': {
+    one: 'Moved {count} recipe back to Recipes',
+    other: 'Moved {count} recipes back to Recipes',
+  },
+  'assistant.moveAndMore': {
+    one: 'and {count} more',
+    other: 'and {count} more',
+  },
+  'assistant.moveShowAll': 'Show all recipes',
+  'assistant.moveShowLess': 'Show fewer',
+  'assistant.move': 'Move',
+  'assistant.moving': 'Moving…',
 } as const satisfies Record<string, string | PluralForms>;
 
 type EnMessages = typeof en;

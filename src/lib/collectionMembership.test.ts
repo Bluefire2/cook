@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   moveRecipe,
+  moveRecipes,
   recipesInCollection,
   unfiledRecipes,
   winningMembership,
@@ -64,6 +65,72 @@ describe('recipesInCollection', () => {
   it('preserves library order instead of membership insertion order', () => {
     const newest = { ...r2, updatedAt: 10 };
     expect(recipesInCollection([newest, r1, r3], dinners, [dinners])).toEqual([newest, r1]);
+  });
+});
+
+describe('moveRecipes', () => {
+  it('removes ids from every source and appends them to the destination', () => {
+    const desserts: Collection = {
+      id: 'c-d',
+      name: 'Desserts',
+      recipeIds: ['r3'],
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const changed = moveRecipes([dinners, lunches, desserts], ['r1', 'r2'], 'c-d', 9);
+    expect(changed).toEqual([
+      { ...dinners, recipeIds: [], updatedAt: 9 },
+      { ...lunches, recipeIds: [], updatedAt: 9 },
+      { ...desserts, recipeIds: ['r3', 'r1', 'r2'], updatedAt: 9 },
+    ]);
+  });
+
+  it('does not duplicate ids already on the destination', () => {
+    const changed = moveRecipes([dinners], ['r2'], 'c-b', 9);
+    expect(changed).toEqual([]);
+  });
+
+  it('leaves ids already on the destination in place', () => {
+    const dest: Collection = { ...dinners, recipeIds: ['r2', 'r1'] };
+    const changed = moveRecipes([dest, lunches], ['r2', 'r1'], 'c-b', 9);
+    expect(changed.find((c) => c.id === 'c-b')).toBeUndefined();
+    expect(changed.find((c) => c.id === 'c-a')?.recipeIds).toEqual([]);
+  });
+
+  it('removes a doubly-listed id from the non-destination collection', () => {
+    const changed = moveRecipes([dinners, lunches], ['r1'], 'c-b', 9);
+    expect(changed.find((c) => c.id === 'c-a')?.recipeIds).toEqual([]);
+    expect(changed.find((c) => c.id === 'c-b')).toBeUndefined();
+    const applied = [dinners, lunches].map((c) => changed.find((x) => x.id === c.id) ?? c);
+    expect(applied.find((c) => c.id === 'c-b')?.recipeIds).toEqual(['r1', 'r2']);
+    expect(winningMembership(applied).get('r1')).toBe('c-b');
+  });
+
+  it('moving to default only strips named membership', () => {
+    const changed = moveRecipes([dinners, lunches], ['r1', 'r2'], 'default', 9);
+    expect(changed).toEqual([
+      { ...dinners, recipeIds: [], updatedAt: 9 },
+      { ...lunches, recipeIds: [], updatedAt: 9 },
+    ]);
+  });
+
+  it('appends 500 ids to an empty destination without truncating', () => {
+    const empty: Collection = { id: 'c-empty', name: 'Empty', recipeIds: [], createdAt: 1, updatedAt: 2 };
+    const ids = Array.from({ length: MAX_COLLECTION_RECIPE_IDS }, (_, i) => `recipe-${i}`);
+    const changed = moveRecipes([empty], ids, 'c-empty', 9);
+    expect(changed).toHaveLength(1);
+    expect(changed[0]?.recipeIds).toHaveLength(MAX_COLLECTION_RECIPE_IDS);
+    expect(changed[0]?.recipeIds[0]).toBe('recipe-0');
+    expect(changed[0]?.recipeIds[MAX_COLLECTION_RECIPE_IDS - 1]).toBe(
+      `recipe-${MAX_COLLECTION_RECIPE_IDS - 1}`,
+    );
+  });
+
+  it('does not silently truncate when more than 500 ids are appended', () => {
+    const empty: Collection = { id: 'c-empty', name: 'Empty', recipeIds: [], createdAt: 1, updatedAt: 2 };
+    const ids = Array.from({ length: MAX_COLLECTION_RECIPE_IDS + 1 }, (_, i) => `recipe-${i}`);
+    const changed = moveRecipes([empty], ids, 'c-empty', 9);
+    expect(changed[0]?.recipeIds).toHaveLength(MAX_COLLECTION_RECIPE_IDS + 1);
   });
 });
 

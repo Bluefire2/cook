@@ -5,10 +5,14 @@ import { invalidateSession } from '../lib/session';
 import {
   applyEvent,
   beginAgentRequest,
+  beginMoveApplyState,
   beginTurn,
   clearAgentThread,
+  clearThread,
   dispatch,
   endAgentRequest,
+  endMoveBusyState,
+  finishMoveApplyState,
   getAgentSnapshot,
   isActiveAgentRequest,
   initialAgentState,
@@ -26,6 +30,7 @@ vi.mock('../lib/libraryMemory', () => ({
 
 beforeEach(() => {
   clearAgentThread();
+  dispatch({ type: 'endMoveBusy' });
   const store = new Map<string, string>([[LOCALE_KEY, 'en']]);
   globalThis.localStorage = {
     getItem: (key) => store.get(key) ?? null,
@@ -83,6 +88,33 @@ describe('applyEvent', () => {
     const replay = messagesForReplay(state);
     expect(replay.map((m) => m.content)).toEqual(['list', 'final']);
     expect(replay[1]?.cards).toEqual([card]);
+  });
+
+  it('replays a collection move without the recipe id lists', () => {
+    let state = beginTurn(initialAgentState, 'move');
+    const data = {
+      destination: { kind: 'unfiled' },
+      recipeIds: ['r1', 'r2'],
+      sources: [{ id: 'r1', from: { kind: 'unfiled' } }],
+      preview: [{ id: 'r1', title: 'One', from: { kind: 'unfiled' } }],
+      total: 2,
+    };
+    const card = { type: 'collection_move', v: 1, id: 'c-move', data };
+    state = applyEvent(state, { t: 'card', card });
+    const replay = messagesForReplay(state);
+    expect(replay[1]?.cards).toEqual([
+      {
+        type: 'collection_move',
+        v: 1,
+        id: 'c-move',
+        data: {
+          destination: data.destination,
+          preview: data.preview,
+          total: data.total,
+        },
+      },
+    ]);
+    expect(state.messages[state.messages.length - 1]?.cards?.[0]?.data).toEqual(data);
   });
 
   it('keeps interim cards when no later assistant text arrives', () => {
@@ -182,6 +214,110 @@ describe('session reset', () => {
     expect(getAgentSnapshot().messages.length).toBeGreaterThan(0);
     invalidateSession();
     expect(getAgentSnapshot()).toEqual(initialAgentState);
+  });
+});
+
+function stateWithMoveCard(cardId: string) {
+  let state = beginTurn(initialAgentState, 'move');
+  const card = { type: 'collection_move', v: 1, id: cardId, data: {} };
+  state = applyEvent(state, { t: 'card', card });
+  return state;
+}
+
+describe('move apply state', () => {
+  it('beginMoveApplyState sets applying when the card is on the thread', () => {
+    const state = stateWithMoveCard('move-1');
+    const next = beginMoveApplyState(state, 'move-1');
+    expect(next.applies['move-1']).toEqual({ phase: 'applying' });
+    expect(next.moveBusy).toBe(true);
+  });
+
+  it('beginMoveApplyState is unchanged when the card is not on the thread', () => {
+    const state = stateWithMoveCard('move-1');
+    const next = beginMoveApplyState(state, 'other');
+    expect(next).toBe(state);
+  });
+
+  it('finishMoveApplyState sets applied or error when the card is on the thread', () => {
+    const state = stateWithMoveCard('move-1');
+    const applied = finishMoveApplyState(state, 'move-1', { phase: 'applied', moved: 3 });
+    expect(applied.applies['move-1']).toEqual({ phase: 'applied', moved: 3 });
+    const errored = finishMoveApplyState(state, 'move-1', {
+      phase: 'error',
+      message: 'nope',
+    });
+    expect(errored.applies['move-1']).toEqual({ phase: 'error', message: 'nope' });
+  });
+
+  it('clearThread keeps moveBusy until the apply settles', () => {
+    let state = stateWithMoveCard('move-1');
+    state = beginMoveApplyState(state, 'move-1');
+    state = clearThread(state);
+    expect(state.messages).toEqual([]);
+    expect(state.applies).toEqual({});
+    expect(state.moveBusy).toBe(true);
+    state = endMoveBusyState(state);
+    expect(state.moveBusy).toBe(false);
+    expect(state).toEqual(initialAgentState);
+  });
+
+  it('finishMoveApplyState is unchanged after clearThread', () => {
+    let state = stateWithMoveCard('move-1');
+    state = beginMoveApplyState(state, 'move-1');
+    state = clearThread(state);
+    const next = finishMoveApplyState(state, 'move-1', { phase: 'applied', moved: 1 });
+    expect(next.applies).toEqual({});
+    expect(next).toBe(state);
+  });
+
+  it('dispatch wires begin and finish move apply', () => {
+    dispatch({ type: 'begin', userText: 'move' });
+    dispatch({
+      type: 'event',
+      event: {
+        t: 'card',
+        card: { type: 'collection_move', v: 1, id: 'c-move', data: {} },
+      },
+    });
+    dispatch({ type: 'beginMoveApply', cardId: 'c-move' });
+    expect(getAgentSnapshot().applies['c-move']).toEqual({ phase: 'applying' });
+    dispatch({
+      type: 'finishMoveApply',
+      cardId: 'c-move',
+      status: { phase: 'applied', moved: 2 },
+    });
+    expect(getAgentSnapshot().applies['c-move']).toEqual({ phase: 'applied', moved: 2 });
+  });
+});
+
+describe('move apply mutex', () => {
+  it('beginMoveApplyState refuses while another apply is in flight', () => {
+    let state = stateWithMoveCard('move-1');
+    state = applyEvent(state, {
+      t: 'card',
+      card: { type: 'collection_move', v: 1, id: 'move-2', data: {} },
+    });
+    state = beginMoveApplyState(state, 'move-1');
+    const next = beginMoveApplyState(state, 'move-2');
+    expect(next).toBe(state);
+    expect(next.applies['move-2']).toBeUndefined();
+    state = endMoveBusyState(state);
+    expect(beginMoveApplyState(state, 'move-2').applies['move-2']).toEqual({
+      phase: 'applying',
+    });
+  });
+
+  it('clearThread does not release the in-flight apply', () => {
+    dispatch({ type: 'begin', userText: 'move' });
+    dispatch({
+      type: 'event',
+      event: { t: 'card', card: { type: 'collection_move', v: 1, id: 'c-move', data: {} } },
+    });
+    dispatch({ type: 'beginMoveApply', cardId: 'c-move' });
+    dispatch({ type: 'clear' });
+    expect(getAgentSnapshot().moveBusy).toBe(true);
+    dispatch({ type: 'endMoveBusy' });
+    expect(getAgentSnapshot().moveBusy).toBe(false);
   });
 });
 

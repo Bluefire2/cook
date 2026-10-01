@@ -2,16 +2,23 @@ import { useMemo } from 'react';
 import { t } from '../i18n';
 import {
   MAX_COLLECTION_NAME_LENGTH,
+  MAX_COLLECTION_RECIPE_IDS,
   MAX_NAMED_COLLECTIONS,
   compactCollection,
   compactCollectionName,
 } from './compactCollection';
-import { moveRecipe, wouldExceedRecipeIdCap } from './collectionMembership';
+import {
+  moveRecipe,
+  moveRecipes,
+  winningMembership,
+  wouldExceedRecipeIdCap,
+} from './collectionMembership';
 import {
   collectionAccess,
   countOwnedNamedCollections,
   getCollectionOrigin,
   getCollection,
+  getRecipe,
   isSharedCollection,
   isSharedRecipe,
   listCollections,
@@ -428,6 +435,97 @@ export const collectionStore = {
           upsertCollection(collection);
         }
         return { value: undefined, reconcile: false, error: err };
+      }
+    });
+  },
+
+  async moveRecipes(
+    ids: readonly string[],
+    dest: 'default' | string,
+  ): Promise<{ moved: number }> {
+    if (dest !== 'default' && isSharedCollection(dest)) {
+      throw new Error(t('error.sharedViewOnly'));
+    }
+    if (dest !== 'default' && !getCollection(dest)) {
+      throw new Error(t('error.collectionNotFound'));
+    }
+
+    const owned = listCollections().filter((c) => !isSharedCollection(c.id));
+    const membership = winningMembership(owned);
+
+    const kept: string[] = [];
+    const seen = new Set<string>();
+    for (const id of ids) {
+      if (seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      if (isSharedRecipe(id) || !getRecipe(id)) {
+        continue;
+      }
+      kept.push(id);
+    }
+
+    if (kept.length === 0) {
+      throw new Error(t('assistant.moveRecipesGone'));
+    }
+
+    if (dest !== 'default') {
+      const destCollection = getCollection(dest);
+      if (!destCollection) {
+        throw new Error(t('error.collectionNotFound'));
+      }
+      const union = new Set(destCollection.recipeIds);
+      for (const id of kept) {
+        union.add(id);
+      }
+      if (union.size > MAX_COLLECTION_RECIPE_IDS) {
+        throw new Error(t('error.collectionFull'));
+      }
+    }
+
+    let moved = 0;
+    for (const id of kept) {
+      const current = membership.get(id);
+      if (dest === 'default') {
+        if (current !== undefined) {
+          moved += 1;
+        }
+      } else if (current !== dest) {
+        moved += 1;
+      }
+    }
+
+    const now = Date.now();
+    const changed = moveRecipes(owned, kept, dest, now).map(compactCollection);
+    if (changed.length === 0) {
+      return { moved };
+    }
+
+    const previous = changed
+      .map((next) => owned.find((c) => c.id === next.id))
+      .filter((c): c is Collection => c !== undefined);
+
+    return await withLocalWrite(async () => {
+      for (const next of changed) {
+        upsertCollection(next);
+      }
+      try {
+        const result = await pushOps(
+          changed.map((payload) => ({ kind: 'collection.put' as const, payload })),
+        );
+        if (result !== 'ok') {
+          throw saveError(result);
+        }
+        return { value: { moved }, reconcile: true };
+      } catch (err) {
+        if (err instanceof SessionExpiredError) {
+          throw err;
+        }
+        for (const collection of previous) {
+          upsertCollection(collection);
+        }
+        return { value: { moved: 0 }, reconcile: false, error: err, reread: 'always' };
       }
     });
   },
