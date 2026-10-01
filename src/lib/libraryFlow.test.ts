@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { t } from '../i18n';
 import {
   initialLibraryFlow,
   libraryFlowReducer,
@@ -320,5 +321,43 @@ describe('runCreate', () => {
       runCreate({ ...fx.input, name: 'Soups', created: undefined, moveRecipeIds: ['r1'] }),
     ).rejects.toThrow('move failed');
     expect(fx.recorded).toEqual([{ id: 'c-new', name: 'Soups' }]);
+  });
+
+  it('does not create a collection when the recipes would fill it past the cap', async () => {
+    const fx = effects();
+    const ids = Array.from({ length: 501 }, (_, i) => `r${i}`);
+    await expect(
+      runCreate({ ...fx.input, name: 'Soups', created: undefined, moveRecipeIds: ids }),
+    ).rejects.toThrow(t('error.collectionFull'));
+    expect(fx.calls).toEqual([]);
+    expect(fx.recorded).toEqual([]);
+  });
+
+  it('still creates a collection that the move fills exactly to the cap', async () => {
+    const fx = effects();
+    const ids = Array.from({ length: 500 }, (_, i) => `r${i}`);
+    const result = await runCreate({
+      ...fx.input,
+      name: 'Soups',
+      created: undefined,
+      moveRecipeIds: ids,
+    });
+    expect(result).toEqual({ kind: 'done', id: 'c-new' });
+    expect(fx.calls[0]).toBe('create:Soups');
+    expect(fx.recorded).toEqual([{ id: 'c-new', name: 'Soups' }]);
+  });
+
+  it('still moves into a collection an earlier attempt already made', async () => {
+    const fx = effects();
+    const ids = Array.from({ length: 501 }, (_, i) => `r${i}`);
+    const result = await runCreate({
+      ...fx.input,
+      name: 'Soups',
+      created: { id: 'c1', name: 'Soups' },
+      moveRecipeIds: ids,
+    });
+    expect(result).toEqual({ kind: 'done', id: 'c1' });
+    expect(fx.calls).toEqual([`move:${ids.join(',')}:c1`]);
+    expect(fx.recorded).toEqual([]);
   });
 });

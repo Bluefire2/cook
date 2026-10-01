@@ -17,7 +17,12 @@ import {
   newRecipeHref,
 } from '../lib/collectionHref';
 import { collectionStore, useCollections, useFullPull } from '../lib/collectionStore';
-import { recipesInCollection, unfiledRecipes } from '../lib/collectionMembership';
+import {
+  recipeIdsAfterMove,
+  recipesInCollection,
+  unfiledRecipes,
+  wouldExceedRecipeIdCap,
+} from '../lib/collectionMembership';
 import { initialLibraryFlow, libraryFlowReducer, runCreate, sheetError } from '../lib/libraryFlow';
 import {
   readPersistedLibraryView,
@@ -163,7 +168,13 @@ export default function Library() {
   const selectionScope =
     recipes === undefined ? undefined : namedIsShared ? '' : ownedVisibleIds.join('\n');
 
+  const beginSelect = () => {
+    setMenuId(null);
+    setSelecting(true);
+  };
+
   const cancelSelect = () => {
+    setMenuId(null);
     setSelecting(false);
     setSelectedIds(new Set());
   };
@@ -530,6 +541,7 @@ export default function Library() {
       }
       if (selecting && sheet.kind === 'closed') {
         event.preventDefault();
+        setMenuId(null);
         setSelecting(false);
         setSelectedIds(new Set());
         return;
@@ -566,7 +578,7 @@ export default function Library() {
     canSelect && !selecting ? (
       <button
         type="button"
-        onClick={() => setSelecting(true)}
+        onClick={beginSelect}
         className={`${chipClass(false)} shrink-0`}
       >
         {t('library.select')}
@@ -853,7 +865,7 @@ export default function Library() {
                 </div>
               </Link>
 
-              {!shared && (
+              {!shared && !selecting && (
               <button
                 type="button"
                 aria-label={t('library.actionsFor', { title: recipe.title })}
@@ -868,7 +880,7 @@ export default function Library() {
               </button>
               )}
 
-              {menuId === recipe.id && !shared && (
+              {menuId === recipe.id && !shared && !selecting && (
                 <div
                   role="group"
                   aria-label={t('library.actionsFor', { title: recipe.title })}
@@ -910,7 +922,7 @@ export default function Library() {
         </ul>
       )}
 
-      {menuId !== null && (
+      {menuId !== null && !selecting && (
         <button
           type="button"
           aria-label={t('library.closeMenu')}
@@ -938,7 +950,10 @@ export default function Library() {
               <button
                 type="button"
                 disabled={selectedIds.size === 0}
-                onClick={() => dispatch({ type: 'openMove', recipeIds: [...selectedIds] })}
+                onClick={() => {
+                  setMenuId(null);
+                  dispatch({ type: 'openMove', recipeIds: [...selectedIds] });
+                }}
                 className={`${primaryBtn} px-4 py-2 text-sm disabled:opacity-40`}
               >
                 {t('library.moveSelected')}
@@ -1044,7 +1059,20 @@ export default function Library() {
           <button
             type="button"
             disabled={sheetSaving}
-            onClick={() => dispatch({ type: 'startCreate' })}
+            onClick={() => {
+              if (
+                movingIds !== undefined &&
+                wouldExceedRecipeIdCap(recipeIdsAfterMove([], movingIds))
+              ) {
+                dispatch({
+                  type: 'failed',
+                  token: flow.token,
+                  error: t('error.collectionFull'),
+                });
+                return;
+              }
+              dispatch({ type: 'startCreate' });
+            }}
             className={`${primaryBtn} mt-2 w-full py-3`}
           >
             {t('common.newCollection')}

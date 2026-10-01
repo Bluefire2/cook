@@ -1,3 +1,6 @@
+import { t } from '../i18n';
+import { recipeIdsAfterMove, wouldExceedRecipeIdCap } from './collectionMembership';
+
 /**
  * The Library screen's dialogs. At most one sheet is open, and each sheet
  * carries the data its workflow needs, so a move into a new collection keeps
@@ -160,7 +163,9 @@ export type CreateResult = { kind: 'done'; id: string } | { kind: 'stale' };
  * recipes into it when the create came from Move. `isCurrent` is checked after
  * each step, before the next one starts, so a create the user cancelled or
  * left behind cannot go on to move recipes they have since put elsewhere.
- * A collection already made stays made. Errors propagate to the caller.
+ * A collection already made stays made. A move into a new collection that
+ * would pass the recipe cap fails before anything is created. Errors
+ * propagate to the caller.
  */
 export async function runCreate(input: {
   name: string;
@@ -176,6 +181,12 @@ export async function runCreate(input: {
   const trimmed = input.name.trim();
   let id: string;
   if (input.created === undefined) {
+    if (
+      input.moveRecipeIds !== undefined &&
+      wouldExceedRecipeIdCap(recipeIdsAfterMove([], input.moveRecipeIds))
+    ) {
+      throw new Error(t('error.collectionFull'));
+    }
     id = (await input.create(input.name)).id;
     input.onCreated({ id, name: trimmed });
   } else {
