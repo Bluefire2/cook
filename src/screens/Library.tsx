@@ -234,6 +234,7 @@ export default function Library() {
         setSelecting(false);
         setSelectedIds(new Set());
         closeSheets();
+        setBrowseAll(false);
         navigate(libraryHref(id));
       },
     });
@@ -253,6 +254,7 @@ export default function Library() {
       setSelectedIds(new Set());
       closeSheets();
       if (ids.length <= 1) {
+        setBrowseAll(false);
         navigate(dest === 'default' ? '/' : libraryHref(dest));
       }
     } catch (err) {
