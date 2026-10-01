@@ -46,7 +46,6 @@ export const ru: Messages = {
   'library.recipes': 'Рецепты',
   'library.sharedByLabel': '{name} (от {email})',
   'library.sharedLabel': '{name} (общая)',
-  'library.new': 'Новая',
   'library.rename': 'Переименовать',
   'library.sharedBannerByEdit': 'Общий доступ от {email}. Вы можете редактировать эти рецепты.',
   'library.sharedBannerByView': 'Общий доступ от {email}. Только просмотр.',

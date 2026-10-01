@@ -64,7 +64,6 @@ export const en = {
   'library.recipes': 'Recipes',
   'library.sharedByLabel': '{name} (shared by {email})',
   'library.sharedLabel': '{name} (shared)',
-  'library.new': 'New',
   'library.rename': 'Rename',
   'library.sharedBannerByEdit': 'Shared with you by {email}. You can edit these recipes.',
   'library.sharedBannerByView': 'Shared with you by {email}. View only.',

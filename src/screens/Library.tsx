@@ -712,7 +712,7 @@ export default function Library() {
               onClick={() => dispatch({ type: 'startCreate' })}
               className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
             >
-              {t('library.new')}
+              {t('common.newCollection')}
             </button>
             {named && !namedIsShared && (
               <>

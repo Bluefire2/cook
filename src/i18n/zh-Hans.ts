@@ -44,7 +44,6 @@ export const zhHans: Messages = {
   'library.recipes': '食谱',
   'library.sharedByLabel': '{name}（由 {email} 分享）',
   'library.sharedLabel': '{name}（已分享）',
-  'library.new': '新建',
   'library.rename': '重命名',
   'library.sharedBannerByEdit': '{email} 分享给你。你可以编辑这些食谱。',
   'library.sharedBannerByView': '{email} 分享给你。只能查看。',

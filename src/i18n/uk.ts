@@ -46,7 +46,6 @@ export const uk: Messages = {
   'library.recipes': 'Рецепти',
   'library.sharedByLabel': '{name} (від {email})',
   'library.sharedLabel': '{name} (спільна)',
-  'library.new': 'Нова',
   'library.rename': 'Перейменувати',
   'library.sharedBannerByEdit': 'Спільний доступ від {email}. Ви можете редагувати ці рецепти.',
   'library.sharedBannerByView': 'Спільний доступ від {email}. Лише перегляд.',
