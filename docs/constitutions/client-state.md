@@ -184,7 +184,7 @@ a subscription is a stale value waiting to happen.
 Library's dialogs live in a pure reducer (`src/lib/libraryFlow.ts`). At most
 one sheet is open. Each sheet kind carries what its workflow needs:
 
-- the move's recipe id;
+- the move's recipe ids;
 - the collection that a create which failed partway already made, so a retry
   reuses it instead of making a second one;
 - a `saving` flag on create, move and rename, set by `submitting` and cleared

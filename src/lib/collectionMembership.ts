@@ -34,48 +34,81 @@ export function recipesInCollection(
   return recipes.filter((recipe) => membership.get(recipe.id) === collection.id);
 }
 
+/** First-seen order, dropping blanks and repeats. */
+function uniqueIds(recipeIds: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const id of recipeIds) {
+    if (id === '' || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    next.push(id);
+  }
+  return next;
+}
+
+/**
+ * The destination's `recipeIds` after `recipeIds` move into it. Ids already
+ * there stay where they are; the rest append in the order given.
+ */
+export function recipeIdsAfterMove(
+  existing: readonly string[],
+  recipeIds: readonly string[],
+): string[] {
+  const present = new Set(existing);
+  const appended: string[] = [];
+  for (const id of uniqueIds(recipeIds)) {
+    if (present.has(id)) {
+      continue;
+    }
+    present.add(id);
+    appended.push(id);
+  }
+  return appended.length === 0 ? [...existing] : [...existing, ...appended];
+}
+
+/**
+ * Moves every id in one pass. Each collection is returned at most once:
+ * the destination appends ids it does not already hold, and every other
+ * collection drops them. Moving to `'default'` only removes. An id already
+ * in the destination keeps its place.
+ */
 export function moveRecipes(
   collections: readonly Collection[],
   recipeIds: readonly string[],
   dest: 'default' | string,
   now: number,
 ): Collection[] {
-  const wanted: string[] = [];
-  const seen = new Set<string>();
-  for (const id of recipeIds) {
-    if (id === '' || seen.has(id)) {
-      continue;
-    }
-    seen.add(id);
-    wanted.push(id);
-  }
-  if (wanted.length === 0) {
+  const moving = uniqueIds(recipeIds);
+  if (moving.length === 0) {
     return [];
   }
-  const wantedSet = new Set(wanted);
-
+  const movingSet = new Set(moving);
   const changed: Collection[] = [];
   for (const collection of collections) {
-    const before = collection.recipeIds;
     const isDest = dest !== 'default' && collection.id === dest;
-    let next: string[];
     if (isDest) {
-      // Keep ids already listed here in place. Removing them and appending
-      // again reorders the collection and writes a no-op last-write-wins put.
-      next = before.slice();
-      const inDest = new Set(before);
-      for (const id of wanted) {
-        if (!inDest.has(id)) {
-          next.push(id);
-          inDest.add(id);
-        }
+      const present = new Set(collection.recipeIds);
+      const appended = moving.filter((id) => !present.has(id));
+      if (appended.length === 0) {
+        continue;
       }
-    } else {
-      next = before.filter((id) => !wantedSet.has(id));
+      changed.push({
+        ...collection,
+        recipeIds: [...collection.recipeIds, ...appended],
+        updatedAt: now,
+      });
+      continue;
     }
-    if (next.length !== before.length || next.some((id, i) => id !== before[i])) {
-      changed.push({ ...collection, recipeIds: next, updatedAt: now });
+    if (!collection.recipeIds.some((id) => movingSet.has(id))) {
+      continue;
     }
+    changed.push({
+      ...collection,
+      recipeIds: collection.recipeIds.filter((id) => !movingSet.has(id)),
+      updatedAt: now,
+    });
   }
   return changed;
 }

@@ -80,6 +80,22 @@ export const ru: Messages = {
   'library.deleteRecipeBody':
     'Вместе с рецептом будут удалены история чата и журнал приготовлений. Отменить это нельзя.',
   'library.moveTitle': 'Переместить «{title}»',
+  'library.select': 'Выбрать',
+  'library.selectRecipe': 'Выбрать «{title}»',
+  'library.selectedCount': {
+    one: 'Выбран {count} рецепт',
+    few: 'Выбрано {count} рецепта',
+    many: 'Выбрано {count} рецептов',
+    other: 'Выбрано {count} рецепта',
+  },
+  'library.selectAll': 'Выбрать все',
+  'library.moveSelected': 'Переместить',
+  'library.moveManyTitle': {
+    one: 'Переместить {count} рецепт',
+    few: 'Переместить {count} рецепта',
+    many: 'Переместить {count} рецептов',
+    other: 'Переместить {count} рецепта',
+  },
   'library.create': 'Создать',
   'library.renameCollection': 'Переименовать коллекцию',
   'library.deleteCollectionTitle': 'Удалить «{name}»?',

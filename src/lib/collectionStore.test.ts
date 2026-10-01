@@ -480,6 +480,67 @@ describe('collectionStore.moveRecipes', () => {
     resetRereadScheduleForTests();
   });
 
+  it('pushes each touched owned collection once', async () => {
+    upsertRecipe(minimalRecipe('r1'));
+    upsertRecipe(minimalRecipe('r2'));
+    upsertCollection({ ...collection('c1', 'Soups'), recipeIds: ['r1'] });
+    upsertCollection({ ...collection('c2', 'Stews'), recipeIds: ['r2'] });
+    upsertCollection(collection('c3', 'Pies'));
+    const shared = { ...collection('shared', 'Theirs'), recipeIds: ['r1'] };
+    installSharedRows({
+      recipes: new Map(),
+      collections: new Map([[shared.id, shared]]),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map(),
+      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
+    });
+    vi.mocked(pushOps).mockResolvedValue('ok');
+
+    await expect(collectionStore.moveRecipes(['r1', 'r2'], 'c3')).resolves.toEqual({ moved: 2 });
+
+    expect(pushOps).toHaveBeenCalledTimes(1);
+    const ops = vi.mocked(pushOps).mock.calls[0]?.[0];
+    expect(ops?.map((op) => op.kind)).toEqual(['collection.put', 'collection.put', 'collection.put']);
+    expect(ops?.map((op) => (op.kind === 'collection.put' ? op.payload.id : '')).sort()).toEqual([
+      'c1',
+      'c2',
+      'c3',
+    ]);
+    expect(getCollection('c1')?.recipeIds).toEqual([]);
+    expect(getCollection('c2')?.recipeIds).toEqual([]);
+    expect(getCollection('c3')?.recipeIds).toEqual(['r1', 'r2']);
+    expect(getCollection('shared')?.recipeIds).toEqual(['r1']);
+  });
+
+  it('does nothing when given no ids', async () => {
+    upsertCollection(collection('c1', 'Soups'));
+
+    await expect(collectionStore.moveRecipes([], 'c1')).resolves.toEqual({ moved: 0 });
+
+    expect(pushOps).not.toHaveBeenCalled();
+  });
+
+  it('moves owned recipes and skips a shared one', async () => {
+    upsertRecipe(minimalRecipe('r1'));
+    upsertCollection({ ...collection('c1', 'Soups'), recipeIds: ['r1'] });
+    upsertCollection(collection('c2', 'Stews'));
+    installSharedRows({
+      recipes: new Map([['shared-recipe', minimalRecipe('shared-recipe')]]),
+      collections: new Map(),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map([['shared-recipe', { kind: 'shared', ownerSub: 'alice' }]]),
+      collectionOrigins: new Map(),
+    });
+    vi.mocked(pushOps).mockResolvedValue('ok');
+
+    await expect(collectionStore.moveRecipes(['r1', 'shared-recipe'], 'c2')).resolves.toEqual({
+      moved: 1,
+    });
+
+    expect(getCollection('c1')?.recipeIds).toEqual([]);
+    expect(getCollection('c2')?.recipeIds).toEqual(['r1']);
+  });
+
   it('still restores collections when the put fails and schedules a reread', async () => {
     upsertRecipe(minimalRecipe('r1'));
     upsertRecipe(minimalRecipe('r2'));
@@ -554,6 +615,25 @@ describe('collectionStore.moveRecipes', () => {
     }
 
     await expect(collectionStore.moveRecipes(ids, 'dest')).rejects.toThrow(t('error.collectionFull'));
+    expect(pushOps).not.toHaveBeenCalled();
+  });
+
+  it('does not count an id the destination already holds toward the cap', async () => {
+    const present = 'recipe-0';
+    const full = Array.from({ length: MAX_COLLECTION_RECIPE_IDS }, (_, i) => `recipe-${i}`);
+    upsertRecipe(minimalRecipe('extra'));
+    upsertRecipe(minimalRecipe(present));
+    upsertCollection({ ...collection('c1', 'Soups'), recipeIds: ['extra'] });
+    upsertCollection({ ...collection('c2', 'Stews'), recipeIds: full });
+
+    await expect(collectionStore.moveRecipes(['extra', present], 'c2')).rejects.toThrow(
+      t('error.collectionFull'),
+    );
+    expect(pushOps).not.toHaveBeenCalled();
+    expect(getCollection('c1')?.recipeIds).toEqual(['extra']);
+    expect(getCollection('c2')?.recipeIds).toEqual(full);
+
+    await expect(collectionStore.moveRecipes([present], 'c2')).resolves.toEqual({ moved: 0 });
     expect(pushOps).not.toHaveBeenCalled();
   });
 });

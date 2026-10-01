@@ -98,6 +98,18 @@ export const en = {
   'library.deleteRecipeBody':
     'This also deletes its chat history and cook log. There is no undo.',
   'library.moveTitle': 'Move “{title}”',
+  'library.select': 'Select',
+  'library.selectRecipe': 'Select {title}',
+  'library.selectedCount': {
+    one: '{count} recipe selected',
+    other: '{count} recipes selected',
+  },
+  'library.selectAll': 'Select all',
+  'library.moveSelected': 'Move',
+  'library.moveManyTitle': {
+    one: 'Move {count} recipe',
+    other: 'Move {count} recipes',
+  },
   'library.create': 'Create',
   'library.renameCollection': 'Rename collection',
   'library.deleteCollectionTitle': 'Delete “{name}”?',

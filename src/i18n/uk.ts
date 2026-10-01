@@ -81,6 +81,22 @@ export const uk: Messages = {
   'library.deleteRecipeBody':
     'Разом із рецептом буде видалено історію чату та журнал приготувань. Скасувати це не можна.',
   'library.moveTitle': 'Перемістити «{title}»',
+  'library.select': 'Вибрати',
+  'library.selectRecipe': 'Вибрати «{title}»',
+  'library.selectedCount': {
+    one: 'Вибрано {count} рецепт',
+    few: 'Вибрано {count} рецепти',
+    many: 'Вибрано {count} рецептів',
+    other: 'Вибрано {count} рецепта',
+  },
+  'library.selectAll': 'Вибрати всі',
+  'library.moveSelected': 'Перемістити',
+  'library.moveManyTitle': {
+    one: 'Перемістити {count} рецепт',
+    few: 'Перемістити {count} рецепти',
+    many: 'Перемістити {count} рецептів',
+    other: 'Перемістити {count} рецепта',
+  },
   'library.create': 'Створити',
   'library.renameCollection': 'Перейменувати колекцію',
   'library.deleteCollectionTitle': 'Видалити «{name}»?',

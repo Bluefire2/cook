@@ -1,7 +1,10 @@
+import { t } from '../i18n';
+import { recipeIdsAfterMove, wouldExceedRecipeIdCap } from './collectionMembership';
+
 /**
  * The Library screen's dialogs. At most one sheet is open, and each sheet
  * carries the data its workflow needs, so a move into a new collection keeps
- * its recipe id and a retried create reuses the collection it already made.
+ * its recipe ids and a retried create reuses the collection it already made.
  *
  * `token` changes whenever a sheet opens or closes. An async submit captures
  * it at the start; completions from an older token are ignored, so a late
@@ -17,11 +20,11 @@ export type LibrarySheet =
   | { kind: 'closed' }
   | { kind: 'add' }
   | { kind: 'deleteRecipe'; recipeId: string }
-  | { kind: 'move'; recipeId: string; saving: boolean; error?: string }
+  | { kind: 'move'; recipeIds: readonly string[]; saving: boolean; error?: string }
   | {
       kind: 'create';
       /** Set when the new collection is the destination of a move. */
-      moveRecipeId?: string;
+      moveRecipeIds?: readonly string[];
       name: string;
       /** A collection an earlier attempt already created; retries reuse it. */
       created?: { id: string; name: string };
@@ -40,7 +43,7 @@ export type LibraryFlow = { token: number; sheet: LibrarySheet };
 export type LibraryFlowAction =
   | { type: 'openAdd' }
   | { type: 'openDeleteRecipe'; recipeId: string }
-  | { type: 'openMove'; recipeId: string }
+  | { type: 'openMove'; recipeIds: readonly string[] }
   /** From the move sheet the new collection becomes the move's destination. */
   | { type: 'startCreate' }
   | { type: 'openRename'; collectionId: string; name: string }
@@ -72,13 +75,15 @@ export function libraryFlowReducer(
     case 'openDeleteRecipe':
       return open(state, { kind: 'deleteRecipe', recipeId: action.recipeId });
     case 'openMove':
-      return open(state, { kind: 'move', recipeId: action.recipeId, saving: false });
+      return open(state, { kind: 'move', recipeIds: action.recipeIds, saving: false });
     case 'startCreate':
       return open(state, {
         kind: 'create',
         name: '',
         saving: false,
-        ...(sheet.kind === 'move' ? { moveRecipeId: sheet.recipeId } : {}),
+        ...(sheet.kind === 'move' && sheet.recipeIds.length > 0
+          ? { moveRecipeIds: sheet.recipeIds }
+          : {}),
       });
     case 'openRename':
       return open(state, {
@@ -155,25 +160,33 @@ export type CreateResult = { kind: 'done'; id: string } | { kind: 'stale' };
 
 /**
  * The create sheet's submit: make (or reuse) the collection, then move the
- * recipe into it when the create came from Move. `isCurrent` is checked after
+ * recipes into it when the create came from Move. `isCurrent` is checked after
  * each step, before the next one starts, so a create the user cancelled or
- * left behind cannot go on to move a recipe they have since put elsewhere.
- * A collection already made stays made. Errors propagate to the caller.
+ * left behind cannot go on to move recipes they have since put elsewhere.
+ * A collection already made stays made. A move into a new collection that
+ * would pass the recipe cap fails before anything is created. Errors
+ * propagate to the caller.
  */
 export async function runCreate(input: {
   name: string;
   created: { id: string; name: string } | undefined;
-  moveRecipeId: string | undefined;
+  moveRecipeIds: readonly string[] | undefined;
   isCurrent: () => boolean;
   create: (name: string) => Promise<{ id: string }>;
   rename: (id: string, name: string) => Promise<void>;
-  move: (recipeId: string, collectionId: string) => Promise<void>;
+  move: (recipeIds: readonly string[], collectionId: string) => Promise<void>;
   /** Record the collection so a retry after a failed move reuses it. */
   onCreated: (created: { id: string; name: string }) => void;
 }): Promise<CreateResult> {
   const trimmed = input.name.trim();
   let id: string;
   if (input.created === undefined) {
+    if (
+      input.moveRecipeIds !== undefined &&
+      wouldExceedRecipeIdCap(recipeIdsAfterMove([], input.moveRecipeIds))
+    ) {
+      throw new Error(t('error.collectionFull'));
+    }
     id = (await input.create(input.name)).id;
     input.onCreated({ id, name: trimmed });
   } else {
@@ -186,8 +199,8 @@ export async function runCreate(input: {
   if (!input.isCurrent()) {
     return { kind: 'stale' };
   }
-  if (input.moveRecipeId) {
-    await input.move(input.moveRecipeId, id);
+  if (input.moveRecipeIds !== undefined && input.moveRecipeIds.length > 0) {
+    await input.move(input.moveRecipeIds, id);
     if (!input.isCurrent()) {
       return { kind: 'stale' };
     }

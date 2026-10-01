@@ -2,7 +2,6 @@ import { useMemo } from 'react';
 import { t } from '../i18n';
 import {
   MAX_COLLECTION_NAME_LENGTH,
-  MAX_COLLECTION_RECIPE_IDS,
   MAX_NAMED_COLLECTIONS,
   compactCollection,
   compactCollectionName,
@@ -10,6 +9,7 @@ import {
 import {
   moveRecipe,
   moveRecipes,
+  recipeIdsAfterMove,
   winningMembership,
   wouldExceedRecipeIdCap,
 } from './collectionMembership';
@@ -439,10 +439,22 @@ export const collectionStore = {
     });
   },
 
+  /**
+   * Moves every owned recipe in `ids` to `dest` as one optimistic write.
+   * Each touched collection is one `collection.put` in a single push.
+   * A shared or missing recipe is skipped. When every id was skipped, the
+   * call throws and nothing is written. An empty list does nothing.
+   * A shared destination, a missing destination, or a destination that would
+   * pass the recipe cap rejects the move before anything is written. Ids
+   * already in the destination do not count toward that cap.
+   */
   async moveRecipes(
     ids: readonly string[],
     dest: 'default' | string,
   ): Promise<{ moved: number }> {
+    if (ids.length === 0) {
+      return { moved: 0 };
+    }
     if (dest !== 'default' && isSharedCollection(dest)) {
       throw new Error(t('error.sharedViewOnly'));
     }
@@ -456,7 +468,7 @@ export const collectionStore = {
     const kept: string[] = [];
     const seen = new Set<string>();
     for (const id of ids) {
-      if (seen.has(id)) {
+      if (id === '' || seen.has(id)) {
         continue;
       }
       seen.add(id);
@@ -475,11 +487,7 @@ export const collectionStore = {
       if (!destCollection) {
         throw new Error(t('error.collectionNotFound'));
       }
-      const union = new Set(destCollection.recipeIds);
-      for (const id of kept) {
-        union.add(id);
-      }
-      if (union.size > MAX_COLLECTION_RECIPE_IDS) {
+      if (wouldExceedRecipeIdCap(recipeIdsAfterMove(destCollection.recipeIds, kept))) {
         throw new Error(t('error.collectionFull'));
       }
     }
