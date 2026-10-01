@@ -295,7 +295,7 @@ export const uk: Messages = {
   'importWarning.retry': 'Імпортувати знову',
   'importWarning.retrying': 'Імпортуємо знову…',
   'importWarning.replaceTitle': 'Замінити інгредієнти й кроки новим імпортом?',
-  'importWarning.replaceBody': 'Назву, опис, час, нотатки, інгредієнти й кроки буде замінено. Теги, фото, колекції та приготування залишаться.',
+  'importWarning.replaceBody': 'Назву, опис, порції, час, нотатки, інгредієнти, кроки та мову рецепта буде замінено; якщо в новому імпорті мови немає, мову рецепта буде очищено. Теги, фото, колекції та приготування залишаться.',
   'importWarning.replaceStillWarns': 'У новому імпорті теж є проблеми:',
   'importWarning.replace': 'Замінити',
   'import.summaryImported': {

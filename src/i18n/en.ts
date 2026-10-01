@@ -298,7 +298,7 @@ export const en = {
   'importWarning.retry': 'Retry import',
   'importWarning.retrying': 'Importing again…',
   'importWarning.replaceTitle': 'Replace the ingredients and steps with the new import?',
-  'importWarning.replaceBody': 'The title, description, times, notes, ingredients, and steps are replaced. Tags, photos, collections, and cooks stay.',
+  'importWarning.replaceBody': 'The title, description, servings, times, notes, ingredients, steps, and recipe language are replaced; if the new import has no language, the recipe language is cleared. Tags, photos, collections, and cooks stay.',
   'importWarning.replaceStillWarns': 'The new import has these issues too:',
   'importWarning.replace': 'Replace',
   'import.summaryImported': {

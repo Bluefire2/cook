@@ -70,6 +70,11 @@ summary, approach A.
   back. Page + text fixtures, 4 runs: 24/24.
 - Decision: kept. The first version is the regression the ordering fixes;
   the ordering run beats the parent on the same fixtures (24/24 vs 22/24).
+- Grounding now maps ies<->y and ves<->f/fe (review on #103), so a faithful
+  extraction of strawberries or bay leaves is no longer flagged against a
+  page that says strawberry or bay leaf, and the reverse. Offline calibration
+  in `evals/pageFixtures.test.ts` rerun: passes, no new warnings on any cached
+  page.
 - Run by: agent, model default (`CHAT_MODEL` from `.env.local`)
 
 ## 2026-09-27 — Photo import: runaway-unit check (32) and one retry

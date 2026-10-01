@@ -266,7 +266,7 @@ export const zhHans: Messages = {
   'importWarning.retry': '重新导入',
   'importWarning.retrying': '正在重新导入…',
   'importWarning.replaceTitle': '用新导入的内容替换食材和步骤？',
-  'importWarning.replaceBody': '标题、简介、时间、备注、食材和步骤都会被替换。标签、照片、合集和烹饪记录会保留。',
+  'importWarning.replaceBody': '标题、简介、份量、时间、备注、食材、步骤和食谱语言都会被替换；如果新导入的内容没有语言，食谱语言会被清除。标签、照片、合集和烹饪记录会保留。',
   'importWarning.replaceStillWarns': '新导入的内容也有这些问题：',
   'importWarning.replace': '替换',
   'import.summaryImported': {

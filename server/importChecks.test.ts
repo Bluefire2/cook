@@ -164,6 +164,37 @@ describe('checkImport grounding', () => {
     ).toEqual([]);
   });
 
+  describe('irregular English plurals', () => {
+    const pairs: [string, string][] = [
+      ['strawberries', 'strawberry'],
+      ['bay leaves', 'bay leaf'],
+      ['halves', 'half'],
+      ['loaves', 'loaf'],
+      ['knives', 'knife'],
+    ];
+    // Two grounded fillers keep the "more than half ungrounded" skip from hiding a failure.
+    const grounded = (item: string, page: string) =>
+      check({
+        corpus: normalizeForMatch(`${page}, flour, butter, sugar`),
+        recipe: { ingredientSections: sections(item, 'flour', 'butter', 'sugar') },
+      });
+
+    for (const [plural, singular] of pairs) {
+      it(`grounds ${plural} on a page that says ${singular}`, () => {
+        expect(codes(grounded(plural, `2 ${singular}`))).toEqual([]);
+      });
+      it(`grounds ${singular} on a page that says ${plural}`, () => {
+        expect(codes(grounded(singular, `2 ${plural}`))).toEqual([]);
+      });
+    }
+
+    it('still reports an ingredient the page never names', () => {
+      expect(grounded('saffron', '2 strawberries and bay leaf').warnings).toEqual([
+        { code: 'UNGROUNDED_INGREDIENT', at: [0, 0] },
+      ]);
+    });
+  });
+
   it('matches across diacritics both ways', () => {
     const corpus = normalizeForMatch('Ajouter la crème fraîche et le jalapeno');
     expect(

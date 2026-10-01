@@ -392,14 +392,41 @@ function stem(token: string): string {
   return token;
 }
 
-/** Tokens to look for, or `[]` when nothing in the item can be judged. */
-function groundingTokens(item: string): { words: string[]; cjk: string[] } {
+/**
+ * Forms to look for in the corpus for one token; any one counts. The corpus is
+ * not stemmed, so the irregular English plurals map both ways: ies and y
+ * (berries, berry), ves and f / fe (leaves, leaf, knives, knife). Only ever
+ * adds forms, never removes one, so it cannot make the check stricter.
+ */
+function tokenVariants(token: string): string[] {
+  const variants = new Set([stem(token)]);
+  if (/^[a-z]+$/.test(token)) {
+    variants.add(token);
+    if (token.length > 4 && token.endsWith('ies')) {
+      variants.add(`${token.slice(0, -3)}y`);
+    } else if (token.length > 3 && /[^aeiou]y$/.test(token)) {
+      variants.add(`${token.slice(0, -1)}ies`);
+    }
+    if (token.length > 4 && token.endsWith('ves')) {
+      variants.add(`${token.slice(0, -3)}f`);
+      variants.add(`${token.slice(0, -3)}fe`);
+    } else if (token.length > 2 && token.endsWith('fe')) {
+      variants.add(`${token.slice(0, -2)}ves`);
+    } else if (token.length > 2 && token.endsWith('f')) {
+      variants.add(`${token.slice(0, -1)}ves`);
+    }
+  }
+  return [...variants];
+}
+
+/** Tokens to look for (each with its variants), or `[]` when nothing in the item can be judged. */
+function groundingTokens(item: string): { words: string[][]; cjk: string[] } {
   const normalized = normalizeForMatch(item);
-  const words: string[] = [];
+  const words: string[][] = [];
   for (const raw of normalized.split(/[^\p{L}]+/u)) {
     if (raw === '' || CJK.test(raw)) continue;
     if (raw.length < 3 || STOPWORDS.has(raw) || UNIT_WORDS.has(raw)) continue;
-    words.push(stem(raw));
+    words.push(tokenVariants(raw));
   }
   const cjk: string[] = [];
   for (const run of normalized.match(new RegExp(`${CJK.source}+`, 'gu')) ?? []) {
@@ -416,7 +443,7 @@ function groundingTokens(item: string): { words: string[]; cjk: string[] } {
 function isGrounded(item: string, corpus: string): boolean {
   const { words, cjk } = groundingTokens(item);
   if (words.length === 0 && cjk.length === 0) return true;
-  return words.some((word) => corpus.includes(word)) || cjk.some((pair) => corpus.includes(pair));
+  return words.some((variants) => variants.some((form) => corpus.includes(form))) || cjk.some((pair) => corpus.includes(pair));
 }
 
 /**

@@ -293,7 +293,7 @@ export const ru: Messages = {
   'importWarning.retry': 'Импортировать заново',
   'importWarning.retrying': 'Импортируем заново…',
   'importWarning.replaceTitle': 'Заменить ингредиенты и шаги новым импортом?',
-  'importWarning.replaceBody': 'Название, описание, время, заметки, ингредиенты и шаги будут заменены. Теги, фото, коллекции и приготовления останутся.',
+  'importWarning.replaceBody': 'Название, описание, порции, время, заметки, ингредиенты, шаги и язык рецепта будут заменены; если у нового импорта нет языка, язык рецепта будет очищен. Теги, фото, коллекции и приготовления останутся.',
   'importWarning.replaceStillWarns': 'В новом импорте тоже есть проблемы:',
   'importWarning.replace': 'Заменить',
   'import.summaryImported': {
