@@ -48,8 +48,11 @@ export default function CollectionsIndex() {
   const collectionName = sheet.kind === 'create' ? sheet.name : '';
   const collectionError = sheetError(sheet);
   const sheetSaving = sheet.kind === 'create' && sheet.saving;
-  const signedOut = sessionStatus === 'signedOut';
   const loaded = collections !== undefined && recipes !== undefined;
+  const hasCollections = loaded && collections.length > 0;
+  // Signed out with nothing loaded is the sign-in sentence. A library that
+  // already has collections still lists them.
+  const signedOutEmpty = sessionStatus === 'signedOut' && !hasCollections;
 
   const submitCreate = async () => {
     if (sheet.kind !== 'create' || sheet.saving) {
@@ -97,7 +100,7 @@ export default function CollectionsIndex() {
           &larr; {t('common.library')}
         </Link>
         <h1 className="mt-2 text-2xl font-bold">{t('library.collectionsNav')}</h1>
-        {!signedOut && loaded && (
+        {loaded && !signedOutEmpty && (
           <button
             type="button"
             onClick={() => dispatch({ type: 'startCreate' })}
@@ -108,7 +111,7 @@ export default function CollectionsIndex() {
         )}
       </header>
 
-      {signedOut ? (
+      {signedOutEmpty ? (
         <p className="py-12 text-center text-ink-muted">{t('library.emptySignedOut')}</p>
       ) : !loaded ? (
         <p className="py-12 text-center text-ink-muted">{t('common.loadingCollections')}</p>
