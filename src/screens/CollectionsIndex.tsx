@@ -134,9 +134,14 @@ export default function CollectionsIndex() {
                 >
                   <span className="inline-flex min-w-0 items-center gap-1.5 font-medium">
                     {label !== undefined && <SharedIcon className="block h-3.5 w-3.5 shrink-0" />}
-                    <span className="truncate" aria-label={label}>
-                      {collection.name}
-                    </span>
+                    {label === undefined ? (
+                      <span className="truncate">{collection.name}</span>
+                    ) : (
+                      <span className="truncate">
+                        <span aria-hidden="true">{collection.name}</span>
+                        <span className="sr-only">{label}</span>
+                      </span>
+                    )}
                   </span>
                   <span className="shrink-0 text-sm text-ink-muted">
                     {t('library.recipeCount', {
