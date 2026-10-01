@@ -81,11 +81,12 @@ the scroller, so it stays put while the names move.
 **Scroller.** One horizontal row, no wrap. First chip is Recipes (`/`).
 Then one chip per named collection, same shared icon and accessible name
 as today. The selected chip is the current route. If that chip is outside
-the scrollport, scroll it into view when the route changes. Do not reorder
-to pin it.
+the scrollport, scroll the row so the chip is in view when the route changes. That
+scroll moves only the row. Do not reorder to pin it.
 
 Swipe scrolls the row. A pointer drag and a horizontal trackpad scroll do
-the same. Vertical page scroll is unchanged: the row must not capture an
+the same. A fine pointer also gets a thin scrollbar on the row. Vertical
+page scroll is unchanged: the row must not capture an
 up or down gesture. No carousel library, no snap that paginates past a
 chip, no arrows. When the row overflows, fade the trailing edge while more
 chips sit past it, and the leading edge once the row is scrolled. When
@@ -127,9 +128,11 @@ Screen, top to bottom:
 - A row for Recipes: the unfiled list, route `/`.
 - One row per named collection, in the same order as the scroller. The
   row shows the name, the shared icon when it is shared, and a recipe
-  count. The accessible name for a shared row is the same string the chip
-  uses (`library.sharedLabel` or `library.sharedByLabel`).
-- Tap a row to open that library route.
+  count. A shared row’s accessible name includes the same string the chip
+  uses (`library.sharedLabel` or `library.sharedByLabel`) and the count.
+- Tap a row to open that library route. That choice shows one list, so
+  “All collections” turns off, the same way a chip does. Creating a
+  collection from here does the same before it opens the new list.
 
 The count is a new plural catalog string, added in every language in the
 implementation, not before. Recipe text is not shown on this screen.

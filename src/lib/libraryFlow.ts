@@ -207,3 +207,47 @@ export async function runCreate(input: {
   }
   return { kind: 'done', id };
 }
+
+/**
+ * The create sheet's submit for every screen that opens one. `onSuccess`
+ * runs only after a create that is still current. A stale token and a
+ * thrown error stop there, so a retry or a closed sheet is handled once.
+ */
+export async function submitCollectionCreate(input: {
+  name: string;
+  created: { id: string; name: string } | undefined;
+  moveRecipeIds: readonly string[] | undefined;
+  saving: boolean;
+  token: number;
+  isCurrent: (token: number) => boolean;
+  dispatch: (action: LibraryFlowAction) => void;
+  failureMessage: string;
+  create: (name: string) => Promise<{ id: string }>;
+  rename: (id: string, name: string) => Promise<void>;
+  move: (recipeIds: readonly string[], collectionId: string) => Promise<void>;
+  onSuccess: (id: string) => void;
+}): Promise<void> {
+  if (input.saving) return;
+  const { token } = input;
+  input.dispatch({ type: 'submitting', token });
+  try {
+    const result = await runCreate({
+      name: input.name,
+      created: input.created,
+      moveRecipeIds: input.moveRecipeIds,
+      isCurrent: () => input.isCurrent(token),
+      create: input.create,
+      rename: input.rename,
+      move: input.move,
+      onCreated: (created) => input.dispatch({ type: 'created', token, created }),
+    });
+    if (result.kind === 'stale') return;
+    input.onSuccess(result.id);
+  } catch (err) {
+    input.dispatch({
+      type: 'failed',
+      token,
+      error: err instanceof Error ? err.message : input.failureMessage,
+    });
+  }
+}

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useT } from '../i18n';
 import CollectionSection from '../components/CollectionSection';
+import CreateCollectionSheet from '../components/CreateCollectionSheet';
 import LibraryInviteToast, {
   type LibraryInviteNotice,
 } from '../components/LibraryInviteToast';
@@ -24,7 +25,12 @@ import {
   unfiledRecipes,
   wouldExceedRecipeIdCap,
 } from '../lib/collectionMembership';
-import { initialLibraryFlow, libraryFlowReducer, runCreate, sheetError } from '../lib/libraryFlow';
+import {
+  initialLibraryFlow,
+  libraryFlowReducer,
+  sheetError,
+  submitCollectionCreate,
+} from '../lib/libraryFlow';
 import {
   readPersistedLibraryView,
   writePersistedLibraryView,
@@ -33,9 +39,11 @@ import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
 import { visibleLibraryRecipes } from '../lib/visibleLibraryRecipes';
 import { useSession } from '../lib/session';
+import { useMountedFlow } from '../lib/useMountedFlow';
 import { useSyncStatus } from '../lib/syncEngine';
 import { AssistantEntryLink } from '../agent/index';
 import {
+  chipClass,
   dangerBtn,
   ghostBtn,
   ghostIconBtn,
@@ -54,12 +62,6 @@ function CardThumb({ photoId }: { photoId: string }) {
       {url && <img src={url} alt="" className="h-full w-full object-cover" />}
     </div>
   );
-}
-
-function chipClass(active: boolean): string {
-  return active
-    ? 'rounded-full bg-ink px-3 py-1.5 text-sm font-medium text-page'
-    : 'rounded-full bg-surface-muted px-3 py-1.5 text-sm text-ink-muted hover:bg-surface hover:text-ink';
 }
 
 export default function Library() {
@@ -92,13 +94,10 @@ export default function Library() {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [flow, dispatch] = useReducer(libraryFlowReducer, initialLibraryFlow);
   const { sheet } = flow;
-  // The flow as last rendered. An async submit compares its starting token
-  // with this after each await, so a sheet the user closed or replaced
-  // neither closes again nor navigates.
-  const flowRef = useRef(flow);
-  useLayoutEffect(() => {
-    flowRef.current = flow;
-  }, [flow]);
+  // A workflow is current while its sheet is the one open and Library is
+  // still mounted: after unmount, a late result must not navigate away from
+  // the screen the user went to.
+  const { mountedRef, isCurrent } = useMountedFlow(flow);
   // In-flight delete and leave, by collection id. They outlive the sheet,
   // so a missing-collection redirect waits for the request that removed it.
   const [leavingId, setLeavingId] = useState<string | null>(null);
@@ -109,7 +108,6 @@ export default function Library() {
   const [inviteCopied, setInviteCopied] = useState(false);
   const [inviteNotice, setInviteNotice] = useState<LibraryInviteNotice | null>(null);
   const [inviteQuota, setInviteQuota] = useState<{ id: number; message: string } | null>(null);
-  const mountedRef = useRef(true);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLAnchorElement>(null);
 
@@ -145,11 +143,18 @@ export default function Library() {
     (sheet.kind === 'create' || sheet.kind === 'move' || sheet.kind === 'rename') &&
     sheet.saving;
   const setCollectionName = (name: string) => dispatch({ type: 'setName', name });
-  // A workflow is current while its sheet is the one open and Library is
-  // still mounted: after unmount, a late result must not navigate away from
-  // the screen the user went to.
-  const isCurrent = (token: number) => mountedRef.current && flowRef.current.token === token;
   const namedIsShared = named ? collectionStore.isShared(named.id) : false;
+  const sharedLabels = new Map<string, string>();
+  for (const collection of collections ?? []) {
+    if (!collectionStore.isShared(collection.id)) continue;
+    const email = collectionStore.sharedBy(collection.id);
+    sharedLabels.set(
+      collection.id,
+      email
+        ? t('library.sharedByLabel', { name: collection.name, email })
+        : t('library.sharedLabel', { name: collection.name }),
+    );
+  }
   const leaveBusy = leavingId !== null && leavingId === collectionId;
   const showSwitcher = (collections?.length ?? 0) > 0;
   const addCollectionId =
@@ -209,39 +214,29 @@ export default function Library() {
 
   const closeSheets = () => dispatch({ type: 'close' });
 
-  const submitCreate = async () => {
-    if (sheet.kind !== 'create' || sheet.saving) {
-      return;
-    }
-    const { token } = flow;
-    dispatch({ type: 'submitting', token });
-    try {
-      // Reuses the collection a failed attempt already created, so retrying
-      // does not leave two folders with the same name behind.
-      const result = await runCreate({
-        name: sheet.name,
-        created: sheet.created,
-        moveRecipeIds: sheet.moveRecipeIds,
-        isCurrent: () => isCurrent(token),
-        create: (name) => collectionStore.create(name),
-        rename: (id, name) => collectionStore.rename(id, name),
-        move: async (recipeIds, collectionId) => {
-          await collectionStore.moveRecipes(recipeIds, collectionId);
-        },
-        onCreated: (created) => dispatch({ type: 'created', token, created }),
-      });
-      if (result.kind === 'stale') return;
-      setSelecting(false);
-      setSelectedIds(new Set());
-      closeSheets();
-      navigate(libraryHref(result.id));
-    } catch (err) {
-      dispatch({
-        type: 'failed',
-        token,
-        error: err instanceof Error ? err.message : t('error.collectionSave'),
-      });
-    }
+  const submitCreate = () => {
+    if (sheet.kind !== 'create') return;
+    void submitCollectionCreate({
+      name: sheet.name,
+      created: sheet.created,
+      moveRecipeIds: sheet.moveRecipeIds,
+      saving: sheet.saving,
+      token: flow.token,
+      isCurrent,
+      dispatch,
+      failureMessage: t('error.collectionSave'),
+      create: (name) => collectionStore.create(name),
+      rename: (id, name) => collectionStore.rename(id, name),
+      move: async (recipeIds, collectionId) => {
+        await collectionStore.moveRecipes(recipeIds, collectionId);
+      },
+      onSuccess: (id) => {
+        setSelecting(false);
+        setSelectedIds(new Set());
+        closeSheets();
+        navigate(libraryHref(id));
+      },
+    });
   };
 
   const submitMove = async (dest: 'default' | string) => {
@@ -341,13 +336,6 @@ export default function Library() {
       setLeavingId(null);
     }
   };
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
 
   const showInviteToast = (kind: 'success' | 'error', message: string) => {
     setInviteNotice((prev) => ({
@@ -678,6 +666,7 @@ export default function Library() {
       {showSwitcher && collections !== undefined && (
         <CollectionSection
           collections={collections}
+          sharedLabels={sharedLabels}
           currentId={currentId}
           browseAll={browseAll}
           showOwnedActions={Boolean(named && !namedIsShared)}
@@ -1034,41 +1023,14 @@ export default function Library() {
       )}
 
       {sheet.kind === 'create' && (
-        <Sheet onClose={() => closeSheets()}>
-          <h2 className="text-lg font-semibold">{t('common.newCollection')}</h2>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void submitCreate();
-            }}
-          >
-            <input
-              autoFocus
-              value={collectionName}
-              disabled={sheetSaving}
-              onChange={(e) => setCollectionName(e.target.value)}
-              placeholder={t('common.name')}
-              className={`${inputClass} mt-3 disabled:opacity-60`}
-            />
-            {collectionError && (
-              <p className="mt-2 text-sm text-danger">{collectionError}</p>
-            )}
-            <button
-              type="submit"
-              disabled={collectionName.trim() === '' || sheetSaving}
-              className={`${primaryBtn} mt-3 w-full py-3`}
-            >
-              {t('library.create')}
-            </button>
-            <button
-              type="button"
-              onClick={() => closeSheets()}
-              className={`${secondaryBtn} mt-2 w-full py-3`}
-            >
-              {t('common.cancel')}
-            </button>
-          </form>
-        </Sheet>
+        <CreateCollectionSheet
+          name={collectionName}
+          saving={sheetSaving}
+          error={collectionError}
+          onName={setCollectionName}
+          onSubmit={submitCreate}
+          onClose={closeSheets}
+        />
       )}
 
       {sheet.kind === 'rename' && named && (

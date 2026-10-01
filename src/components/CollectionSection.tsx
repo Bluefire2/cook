@@ -2,15 +2,9 @@ import { useLayoutEffect, useRef, useState, type FocusEvent } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useT } from '../i18n';
 import { libraryHref } from '../lib/collectionHref';
-import { collectionStore, useCollections } from '../lib/collectionStore';
 import { FolderIcon, SharedIcon } from '../lib/icons';
 import type { Collection } from '../lib/types';
-
-function chipClass(active: boolean): string {
-  return active
-    ? 'shrink-0 rounded-full bg-ink px-3 py-1.5 text-sm font-medium text-page'
-    : 'shrink-0 rounded-full bg-surface-muted px-3 py-1.5 text-sm text-ink-muted hover:bg-surface hover:text-ink';
-}
+import { chipClass } from '../lib/uiClasses';
 
 function edgeMask(lead: boolean, trail: boolean): string | undefined {
   if (!lead && !trail) return undefined;
@@ -19,12 +13,24 @@ function edgeMask(lead: boolean, trail: boolean): string | undefined {
   return `linear-gradient(to right, ${left}, ${right})`;
 }
 
+/** Move only the row. scrollIntoView would also scroll the page. */
+function revealChip(chip: HTMLElement, scroller: HTMLElement) {
+  const pad = 20;
+  const scrollerBox = scroller.getBoundingClientRect();
+  const chipBox = chip.getBoundingClientRect();
+  const leftInset = chipBox.left - scrollerBox.left;
+  const rightInset = chipBox.right - scrollerBox.right;
+  if (leftInset < pad) scroller.scrollLeft += leftInset - pad;
+  else if (rightInset > -pad) scroller.scrollLeft += rightInset + pad;
+}
+
 /**
  * Collections on the library: a label and one sideways row of names, on the
  * page background. See docs/plans/library-collections-region.md.
  */
 export default function CollectionSection({
   collections,
+  sharedLabels,
   currentId,
   browseAll,
   showOwnedActions,
@@ -35,6 +41,8 @@ export default function CollectionSection({
   onOpenList,
 }: {
   collections: readonly Collection[];
+  /** Accessible name for a shared collection, already including its name. */
+  sharedLabels: ReadonlyMap<string, string>;
   currentId: string | undefined;
   browseAll: boolean;
   showOwnedActions: boolean;
@@ -47,20 +55,20 @@ export default function CollectionSection({
 }) {
   const t = useT();
   const location = useLocation();
-  // Shared labels read collection origins. useCollections subscribes to that
-  // map; the list itself is the one Library already sorted.
-  useCollections();
   const scrollerRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLAnchorElement>(null);
   const [edges, setEdges] = useState({ lead: false, trail: false });
   const selectedKey = browseAll ? '' : (currentId ?? '/');
 
-  const revealChip = (event: FocusEvent<HTMLAnchorElement>) => {
-    event.currentTarget.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  const onChipFocus = (event: FocusEvent<HTMLAnchorElement>) => {
+    const scroller = scrollerRef.current;
+    if (scroller) revealChip(event.currentTarget, scroller);
   };
 
   useLayoutEffect(() => {
-    selectedRef.current?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    const scroller = scrollerRef.current;
+    const chip = selectedRef.current;
+    if (scroller && chip) revealChip(chip, scroller);
   }, [selectedKey]);
 
   useLayoutEffect(() => {
@@ -77,6 +85,7 @@ export default function CollectionSection({
     el.addEventListener('scroll', measure, { passive: true });
     const observer = new ResizeObserver(measure);
     observer.observe(el);
+    for (const child of el.children) observer.observe(child);
     return () => {
       el.removeEventListener('scroll', measure);
       observer.disconnect();
@@ -108,7 +117,7 @@ export default function CollectionSection({
       </div>
       <div
         ref={scrollerRef}
-        className="flex w-full min-w-0 gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex w-full min-w-0 gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] [@media(pointer:fine)]:[scrollbar-width:thin] [&::-webkit-scrollbar]:h-0 [@media(pointer:fine)]:[&::-webkit-scrollbar]:h-1.5"
         style={
           mask
             ? { maskImage: mask, WebkitMaskImage: mask, scrollPaddingInline: '1.25rem' }
@@ -119,17 +128,13 @@ export default function CollectionSection({
           to="/"
           ref={recipesActive ? selectedRef : undefined}
           onClick={onOpenList}
-          onFocus={revealChip}
-          className={chipClass(recipesActive)}
+          onFocus={onChipFocus}
+          className={`${chipClass(recipesActive)} shrink-0`}
         >
           {t('library.recipes')}
         </Link>
         {collections.map((collection) => {
-          const shared = collectionStore.isShared(collection.id);
-          const sharedBy = shared ? collectionStore.sharedBy(collection.id) : undefined;
-          const sharedLabel = sharedBy
-            ? t('library.sharedByLabel', { name: collection.name, email: sharedBy })
-            : t('library.sharedLabel', { name: collection.name });
+          const sharedLabel = sharedLabels.get(collection.id);
           const active = !browseAll && collection.id === currentId;
           return (
             <Link
@@ -137,12 +142,12 @@ export default function CollectionSection({
               ref={active ? selectedRef : undefined}
               to={libraryHref(collection.id)}
               onClick={onOpenList}
-              onFocus={revealChip}
-              aria-label={shared ? sharedLabel : collection.name}
-              title={shared ? sharedLabel : undefined}
-              className={`${chipClass(active)} inline-flex items-center gap-1.5`}
+              onFocus={onChipFocus}
+              aria-label={sharedLabel ?? collection.name}
+              title={sharedLabel}
+              className={`${chipClass(active)} inline-flex shrink-0 items-center gap-1.5`}
             >
-              {shared && <SharedIcon className="block h-3.5 w-3.5 shrink-0" />}
+              {sharedLabel !== undefined && <SharedIcon className="block h-3.5 w-3.5 shrink-0" />}
               {collection.name}
             </Link>
           );

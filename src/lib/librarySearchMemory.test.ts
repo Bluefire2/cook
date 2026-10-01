@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearPersistedLibraryView,
+  persistScopedLibraryView,
   readPersistedLibraryView,
   writePersistedLibraryView,
 } from './librarySearchMemory';
@@ -40,6 +41,12 @@ describe('librarySearchMemory', () => {
     writePersistedLibraryView({ query: '', browseAll: false });
     expect(store.size).toBe(0);
     expect(readPersistedLibraryView()).toEqual({ query: '', browseAll: false });
+  });
+
+  it('keeps the query and drops the all-collections scope', () => {
+    writePersistedLibraryView({ query: 'pasta', browseAll: true });
+    persistScopedLibraryView();
+    expect(readPersistedLibraryView()).toEqual({ query: 'pasta', browseAll: false });
   });
 
   it('clear removes a stored view', () => {
