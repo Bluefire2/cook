@@ -3,7 +3,7 @@ import { getCook, upsertCook } from './libraryMemory';
 import { selectCookRow } from './librarySelectors';
 import { withLocalWrite } from './localWrite';
 import { useLibrarySelect } from './useLibrary';
-import { pushOps } from './remote';
+import { finiteCookUpdatedAt, pushOps } from './remote';
 import type { Recipe } from './types';
 
 export interface CookState {
@@ -26,11 +26,16 @@ export interface CookStateRow {
   servings: number;
   currentStep: number;
   checkedKeys: string[];
-  /** The `updatedAt` this progress was recorded against. */
+  /** Recipe revision this progress was recorded against. Not the progress-write clock. */
   recipeUpdatedAt: number;
+  /**
+   * Client time of this progress write. Absent on old rows. Not the recipe
+   * revision.
+   */
+  updatedAt?: number;
 }
 
-type Progress = Omit<CookStateRow, 'recipeId' | 'recipeUpdatedAt'>;
+type Progress = Omit<CookStateRow, 'recipeId' | 'recipeUpdatedAt' | 'updatedAt'>;
 
 /** Shared so the memo below keeps a stable `Set` identity across renders. */
 const NO_KEYS: string[] = [];
@@ -78,25 +83,34 @@ const cookStateStore = {
     change: (prev: Progress) => Progress,
   ): Promise<void> {
     const prev = progressFor(getCook(recipe.id), recipe);
+    const updatedAt = Date.now();
     const next: CookStateRow = {
       ...change(prev),
       recipeId: recipe.id,
       recipeUpdatedAt: recipe.updatedAt,
+      updatedAt,
     };
     const generation = bumpCookWrite(recipe.id);
     await withLocalWrite(async () => {
       upsertCook(next);
-      const result = await pushOps([
-        { kind: 'cookState.put', payload: { ...next, updatedAt: Date.now() } },
-      ]);
+      const result = await pushOps([{ kind: 'cookState.put', payload: { ...next, updatedAt } }]);
       // A failed push keeps the optimistic row. An overlapping pull is reread
       // and would otherwise paint the pre-tap row back, so put this one back
-      // when that read publishes, unless a later tap already replaced it.
+      // when that read publishes, unless a later tap already replaced it or
+      // the published row's progress clock is strictly newer.
       const failed = result !== 'ok' && result !== 'signedOut';
       return {
         value: undefined,
         reconcile: result === 'ok',
-        preserve: failed ? () => upsertCook(next) : undefined,
+        preserve: failed
+          ? () => {
+              const publishedAt = finiteCookUpdatedAt(getCook(recipe.id)?.updatedAt) ?? 0;
+              if (publishedAt > updatedAt) {
+                return;
+              }
+              upsertCook(next);
+            }
+          : undefined,
         stillCurrent: failed ? () => cookWriteGeneration.get(recipe.id) === generation : undefined,
       };
     });

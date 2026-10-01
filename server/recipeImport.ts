@@ -13,6 +13,7 @@
  * Photo import is bound by `docs/constitutions/image-import.md`.
  */
 import { GoogleGenAI, MediaResolution, Type, type Schema } from '@google/genai';
+import { parse, type DefaultTreeAdapterMap } from 'parse5';
 import { normalizeLang, sameLanguage, toSupportedLocale, type Locale } from './lang.ts';
 import { applyTranslation, recipeSegments, translationExceedsCaps } from './recipeTranslation.ts';
 import {
@@ -191,133 +192,79 @@ const RECIPE_OUTPUT_CONFIG = {
   responseSchema: RECIPE_SCHEMA,
 };
 
-interface HtmlTag {
-  lower: string;
-  start: number;
-  after: number;
-  closing: boolean;
-  selfClosing: boolean;
-  roleMain: boolean;
+type HtmlElement = DefaultTreeAdapterMap['element'];
+type HtmlParent = DefaultTreeAdapterMap['parentNode'];
+
+function isHtmlElement(node: DefaultTreeAdapterMap['childNode']): node is HtmlElement {
+  return 'tagName' in node;
+}
+
+function attributeValue(element: HtmlElement, name: string): string | undefined {
+  for (const attr of element.attrs) {
+    if (attr.name === name) return attr.value;
+  }
+  return undefined;
+}
+
+/** `type` equals `application/ld+json` after trim, case-insensitively. Extra tokens do not count. */
+function isLdJsonScript(element: HtmlElement): boolean {
+  if (element.tagName !== 'script') return false;
+  const type = attributeValue(element, 'type');
+  return type !== undefined && type.trim().toLowerCase() === 'application/ld+json';
+}
+
+/** `role` equals `main` after trim, case-insensitively. `main-content` does not count. */
+function isMainRole(element: HtmlElement): boolean {
+  const role = attributeValue(element, 'role');
+  return role !== undefined && role.trim().toLowerCase() === 'main';
+}
+
+/** Original-HTML span of an element. Implied nodes the parser invented have no location. */
+function elementSource(html: string, element: HtmlElement): string | null {
+  const loc = element.sourceCodeLocation;
+  if (!loc) return null;
+  return html.slice(loc.startOffset, loc.endOffset);
 }
 
 /**
- * A `<` starts a tag only when a name follows (`<article`, `</div>`). Bare
- * comparisons in the copy (`heat to <350°F, don't`) are not tags: treating the
- * apostrophe as an attribute quote would swallow every tag after it.
+ * Raw script text, from the end of the start tag to the start of the end tag.
+ * An unclosed `<script>` has no end tag and is not a JSON-LD candidate.
  */
-function isTagStart(html: string, lt: number): boolean {
-  let i = lt + 1;
-  if (html[i] === '/') i += 1;
-  while (html[i] === ' ' || html[i] === '\n' || html[i] === '\t' || html[i] === '\r') i += 1;
-  const c = html[i];
-  return c !== undefined && ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
-}
-
-/** Index of the next `>` that is not inside a quoted attribute. */
-function tagEnd(html: string, openAt: number): number {
-  let quote: string | null = null;
-  for (let i = openAt + 1; i < html.length; i++) {
-    const c = html[i];
-    if (quote) {
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      quote = c;
-      continue;
-    }
-    if (c === '>') return i;
-  }
-  return -1;
+function scriptRawText(html: string, element: HtmlElement): string | null {
+  const loc = element.sourceCodeLocation;
+  if (!loc?.startTag || !loc.endTag) return null;
+  return html.slice(loc.startTag.endOffset, loc.endTag.startOffset);
 }
 
 /**
- * Tags outside comments, scripts, and styles. Balancing uses these so a nested
- * `<div>` or `<article>` does not end the region at the first closing tag.
+ * An HTML `<template>` keeps its children on `.content`. A `<template>` in
+ * SVG or MathML is a foreign element with no content fragment; its children
+ * are ordinary child nodes.
  */
-function scanTags(html: string): HtmlTag[] {
-  const tags: HtmlTag[] = [];
-  let i = 0;
-  while (i < html.length) {
-    const lt = html.indexOf('<', i);
-    if (lt === -1) break;
-    if (html.startsWith('<!--', lt)) {
-      const end = html.indexOf('-->', lt + 4);
-      i = end === -1 ? html.length : end + 3;
-      continue;
-    }
-    if (html.startsWith('<!', lt) || html.startsWith('<?', lt)) {
-      const end = html.indexOf('>', lt + 2);
-      i = end === -1 ? html.length : end + 1;
-      continue;
-    }
-    if (!isTagStart(html, lt)) {
-      i = lt + 1;
-      continue;
-    }
-    const end = tagEnd(html, lt);
-    if (end === -1) break;
-    const raw = html.slice(lt + 1, end);
-    const closing = raw.startsWith('/');
-    const body = closing ? raw.slice(1) : raw;
-    const nameMatch = /^([A-Za-z][\w:-]*)/.exec(body.trimStart());
-    if (!nameMatch) {
-      i = end + 1;
-      continue;
-    }
-    const name = nameMatch[1];
-    const selfClosing = /\/\s*$/.test(raw) && !closing;
-    const roleMain = /\brole\s*=\s*(?:["']main["']|main\b)/i.test(raw);
-    tags.push({
-      lower: name.toLowerCase(),
-      start: lt,
-      after: end + 1,
-      closing,
-      selfClosing,
-      roleMain,
-    });
-    i = end + 1;
-    if (!closing && !selfClosing && (name.toLowerCase() === 'script' || name.toLowerCase() === 'style')) {
-      const closeRe = new RegExp(`</${name}\\s*>`, 'i');
-      const found = closeRe.exec(html.slice(i));
-      i = found ? i + found.index + found[0].length : html.length;
-    }
-  }
-  return tags;
+function isHtmlTemplate(element: HtmlElement): element is DefaultTreeAdapterMap['template'] {
+  return element.tagName === 'template' && 'content' in element;
 }
 
-function balancedElement(html: string, tags: HtmlTag[], openAt: number): string | null {
-  const open = tags[openAt];
-  if (open.closing || open.selfClosing) return null;
-  let depth = 1;
-  for (let i = openAt + 1; i < tags.length; i++) {
-    const tag = tags[i];
-    if (tag.lower !== open.lower || tag.selfClosing) continue;
-    if (tag.closing) {
-      depth -= 1;
-      if (depth === 0) return html.slice(open.start, tag.after);
-    } else {
-      depth += 1;
-    }
+/** Elements in source order, including HTML `<template>` contents. Comments are not elements. */
+function walkElements(parent: HtmlParent, visit: (element: HtmlElement) => void): void {
+  for (const child of parent.childNodes) {
+    if (!isHtmlElement(child)) continue;
+    visit(child);
+    if (isHtmlTemplate(child)) walkElements(child.content, visit);
+    walkElements(child, visit);
   }
-  return null;
 }
 
+/** Script and style bodies still count; this is not `stripToText`. */
 function regionTextLength(region: string): number {
   return region.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length;
 }
 
-function longestRegion(
-  html: string,
-  tags: HtmlTag[],
-  include: (tag: HtmlTag) => boolean,
-): string | null {
+/** Equal lengths keep the earlier slice (`len > bestLen`). */
+function longestSlice(regions: string[]): string | null {
   let best: string | null = null;
   let bestLen = -1;
-  for (let i = 0; i < tags.length; i++) {
-    if (!include(tags[i])) continue;
-    const region = balancedElement(html, tags, i);
-    if (region === null) continue;
+  for (const region of regions) {
     const len = regionTextLength(region);
     if (len > bestLen) {
       best = region;
@@ -329,19 +276,14 @@ function longestRegion(
 
 /**
  * News-article recipes live in these regions, often after a long nav that
- * would eat the 60k text cap. The longest balanced `<article>` wins, so a
- * header teaser or a nested related-story card does not replace the story.
+ * would eat the 60k text cap. The longest `<article>` wins, so a header
+ * teaser or a nested related-story card does not replace the story.
  * A short article beside a larger `<main>` / `role="main"` yields to that
- * region. Recipe JSON-LD is preferred when it actually has ingredients or steps.
+ * region. Slices are the original HTML, not parser text.
  */
-function primaryRegion(html: string): string {
-  const tags = scanTags(html);
-  const article = longestRegion(html, tags, (tag) => tag.lower === 'article');
-  const main = longestRegion(
-    html,
-    tags,
-    (tag) => tag.lower === 'main' || tag.roleMain,
-  );
+function primaryRegion(html: string, articles: string[], mains: string[]): string {
+  const article = longestSlice(articles);
+  const main = longestSlice(mains);
   if (article && main) {
     if (regionTextLength(article) * 2 >= regionTextLength(main)) return article;
     return main;
@@ -349,6 +291,11 @@ function primaryRegion(html: string): string {
   return article ?? main ?? html;
 }
 
+/**
+ * Tag strip for the text fallback, run on a slice of the original HTML.
+ * A `>` inside a quoted attribute still ends `<[^>]+>` early, so the rest
+ * of that attribute can leak into the text.
+ */
 function stripToText(html: string): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -414,15 +361,32 @@ function recipeNodeSource(node: object): string {
  * preferring `<article>` / `<main>` so a news-article recipe is not lost
  * behind nav chrome. An empty Recipe block does not count. The `type`
  * attribute may be unquoted (`type=application/ld+json`), which HTML allows
- * and minifiers emit.
+ * and minifiers emit. `@graph` is unwrapped one level. A short article
+ * yields to a larger `<main>` or `role="main"`.
+ *
+ * parse5 (with source locations) finds the script bodies and the region
+ * slices. Both are cut from the original HTML. A Recipe that exists only
+ * inside a comment does not win, because a comment is not an element.
  */
 export function extractRecipeSource(html: string): string {
-  const ldBlocks = html.matchAll(
-    /<script[^>]*type=["']?application\/ld\+json(?=["'\s>])[^>]*>([\s\S]*?)<\/script>/gi,
-  );
-  for (const match of ldBlocks) {
+  const scripts: string[] = [];
+  const articles: string[] = [];
+  const mains: string[] = [];
+  walkElements(parse(html, { sourceCodeLocationInfo: true }), (element) => {
+    if (isLdJsonScript(element)) {
+      const body = scriptRawText(html, element);
+      if (body !== null) scripts.push(body);
+      return;
+    }
+    const slice = elementSource(html, element);
+    if (slice === null) return;
+    if (element.tagName === 'article') articles.push(slice);
+    if (element.tagName === 'main' || isMainRole(element)) mains.push(slice);
+  });
+
+  for (const block of scripts) {
     try {
-      const parsed: unknown = JSON.parse(match[1]);
+      const parsed: unknown = JSON.parse(block);
       const nodes: unknown[] = Array.isArray(parsed)
         ? parsed
         : ((parsed as { '@graph'?: unknown[] })['@graph'] ?? [parsed]);
@@ -439,7 +403,7 @@ export function extractRecipeSource(html: string): string {
     }
   }
 
-  return stripToText(primaryRegion(html));
+  return stripToText(primaryRegion(html, articles, mains));
 }
 
 /** Website URL path only. The Chrome extension sends the tab HTML instead. */

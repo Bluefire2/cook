@@ -23,6 +23,7 @@
     "@radix-ui/react-dialog": "1.1.23",
     "date-fns": "^4.4.0",
     "google-auth-library": "^11.1.0",
+    "parse5": "^8.0.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-router-dom": "^7.18.4"

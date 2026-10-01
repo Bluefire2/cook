@@ -153,6 +153,42 @@ function startSync(first: PullPage, second: PullPage): {
   };
 }
 
+/**
+ * Same open pull as `startSync`, but the follow-up page stays pending until
+ * `releaseSecond`. The failed `cookState.put` clock is only known after the
+ * push, so the page cannot be closed over up front.
+ */
+function startSyncDeferredFollowUp(first: PullPage): {
+  pending: Promise<void>;
+  releaseFirst: () => void;
+  releaseSecond: (page: PullPage) => void;
+} {
+  const firstGate = gate<PullPage>();
+  const secondGate = gate<PullPage>();
+  let calls = 0;
+  vi.mocked(pullPage).mockImplementation(() => {
+    calls += 1;
+    return calls === 1 ? firstGate.promise : secondGate.promise;
+  });
+  vi.mocked(pullSharedPage).mockResolvedValue(sharedPage());
+  localStorage.setItem('cook.session', '{"sub":"me"}');
+  const pending = sync();
+  return {
+    pending,
+    releaseFirst: () => firstGate.release(first),
+    releaseSecond: (page) => secondGate.release(page),
+  };
+}
+
+function cookPutPayload(callIndex: number): CookStateRow & { updatedAt: number } {
+  const ops = vi.mocked(pushOps).mock.calls[callIndex]?.[0] ?? [];
+  const put = ops.find((op) => op.kind === 'cookState.put');
+  if (put?.kind !== 'cookState.put') {
+    throw new Error('expected cookState.put');
+  }
+  return put.payload;
+}
+
 /** A pull that has captured its epoch and is waiting on the first page. */
 function startPull(page: PullPage): {
   pending: Promise<Awaited<ReturnType<typeof pullAll>>>;
@@ -479,6 +515,131 @@ describe('optimistic writes vs an in-flight pull', () => {
     await vi.waitFor(() => expect(getRecipe(OTHER_RECIPE_ID)?.title).toBe('From another device'));
 
     expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+    expect(localWritesOpen()).toBe(0);
+    await flight.pending;
+  });
+
+  it('does not restore a failed cook tap over a newer pulled step', async () => {
+    const base = recipe();
+    seed(base, cook(0));
+    const other = { ...recipe('From another device'), id: OTHER_RECIPE_ID };
+    vi.mocked(pushOps).mockResolvedValue('error');
+    const flight = startSyncDeferredFollowUp(
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    const writing = updateCookState(base, (prev) => ({ ...prev, currentStep: 1 }));
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalled());
+    await writing;
+    const failedAt = cookPutPayload(0).updatedAt;
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+    expect(getCook(RECIPE_ID)?.updatedAt).toBe(failedAt);
+    expect(pullPage).toHaveBeenCalledOnce();
+
+    const pulled = { ...cook(4), updatedAt: failedAt + 1 };
+    flight.releaseFirst();
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledTimes(2));
+    flight.releaseSecond(
+      ownedPage(
+        ownedChanges({
+          recipes: [pullDoc(base), pullDoc(other)],
+          cookState: [pullDoc(pulled)],
+        }),
+      ),
+    );
+    await vi.waitFor(() => expect(getRecipe(OTHER_RECIPE_ID)?.title).toBe('From another device'));
+
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(4);
+    expect(getCook(RECIPE_ID)?.updatedAt).toBe(failedAt + 1);
+    expect(localWritesOpen()).toBe(0);
+
+    // The next tap has to land after failedAt + 1. A real clock in the same
+    // millisecond would not satisfy that.
+    const later = failedAt + 10;
+    const now = vi.spyOn(Date, 'now').mockReturnValue(later);
+    try {
+      vi.mocked(pushOps).mockResolvedValue('ok');
+      await updateCookState(base, (prev) => ({ ...prev, currentStep: prev.currentStep + 1 }));
+      const put = cookPutPayload(1);
+      expect(put.currentStep).toBe(5);
+      expect(put.updatedAt).toBeGreaterThan(failedAt + 1);
+      expect(put.updatedAt).toBe(later);
+      expect(put.updatedAt).not.toBe(2);
+      expect(put.updatedAt).not.toBe(failedAt);
+      expect(getCook(RECIPE_ID)?.updatedAt).toBe(put.updatedAt);
+    } finally {
+      now.mockRestore();
+    }
+    await flight.pending;
+  });
+
+  it('restores a failed cook tap when the pulled stamp is older', async () => {
+    const base = recipe();
+    seed(base, cook(0));
+    const other = { ...recipe('From another device'), id: OTHER_RECIPE_ID };
+    vi.mocked(pushOps).mockResolvedValue('error');
+    const flight = startSyncDeferredFollowUp(
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    const writing = updateCookState(base, (prev) => ({ ...prev, currentStep: 1 }));
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalled());
+    await writing;
+    const failedAt = cookPutPayload(0).updatedAt;
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+    expect(pullPage).toHaveBeenCalledOnce();
+
+    flight.releaseFirst();
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledTimes(2));
+    flight.releaseSecond(
+      ownedPage(
+        ownedChanges({
+          recipes: [pullDoc(base), pullDoc(other)],
+          cookState: [pullDoc({ ...cook(0), updatedAt: failedAt - 1 })],
+        }),
+      ),
+    );
+    await vi.waitFor(() => expect(getRecipe(OTHER_RECIPE_ID)?.title).toBe('From another device'));
+
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+    expect(getCook(RECIPE_ID)?.updatedAt).toBe(failedAt);
+    expect(localWritesOpen()).toBe(0);
+    await flight.pending;
+  });
+
+  it('restores a failed cook tap when the pulled stamp matches', async () => {
+    const base = recipe();
+    seed(base, cook(0));
+    const other = { ...recipe('From another device'), id: OTHER_RECIPE_ID };
+    vi.mocked(pushOps).mockResolvedValue('error');
+    const flight = startSyncDeferredFollowUp(
+      ownedPage(ownedChanges({ recipes: [pullDoc(base)], cookState: [pullDoc(cook(0))] })),
+    );
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledOnce());
+
+    const writing = updateCookState(base, (prev) => ({ ...prev, currentStep: 1 }));
+    await vi.waitFor(() => expect(pushOps).toHaveBeenCalled());
+    await writing;
+    const failedAt = cookPutPayload(0).updatedAt;
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+    expect(pullPage).toHaveBeenCalledOnce();
+
+    flight.releaseFirst();
+    await vi.waitFor(() => expect(pullPage).toHaveBeenCalledTimes(2));
+    flight.releaseSecond(
+      ownedPage(
+        ownedChanges({
+          recipes: [pullDoc(base), pullDoc(other)],
+          cookState: [pullDoc({ ...cook(7), updatedAt: failedAt })],
+        }),
+      ),
+    );
+    await vi.waitFor(() => expect(getRecipe(OTHER_RECIPE_ID)?.title).toBe('From another device'));
+
+    expect(getCook(RECIPE_ID)?.currentStep).toBe(1);
+    expect(getCook(RECIPE_ID)?.updatedAt).toBe(failedAt);
     expect(localWritesOpen()).toBe(0);
     await flight.pending;
   });
