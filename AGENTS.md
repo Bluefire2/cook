@@ -379,7 +379,6 @@ it exercises the real delete path.
 - Region, domain mapping, certificate
 - `0x1E` chat framing / Gemini request shape / `maxDuration = 60`
 - Adding Google scopes, refresh tokens, or Auth.js
-- `package.json` `"name"`
 - Polling sync, Firestore listeners, WebSockets
 - Conflict-merge UI (LWW is the product)
 
