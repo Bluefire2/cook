@@ -329,6 +329,8 @@ export const en = {
   'saveSheet.collections': 'Collections',
 
   'share.title': 'Share “{name}”',
+  'share.byEmail': 'By email',
+  'share.byLink': 'With a link',
   'share.intro':
     'Add someone who already has a Sous account. Editors can edit recipes but not photos. Only you can delete recipes or change who has access.',
   'share.emailPlaceholder': 'Email',
@@ -340,7 +342,6 @@ export const en = {
   'share.owner': 'Owner',
   'share.peopleTitle': 'People with access',
   'share.removeFor': 'Remove {email}',
-  'share.linkTitle': 'Share by link',
   'share.linkIntro': 'Anyone who already has a Sous account can join with the link until you revoke it or it expires after 7 days. The link is shown only once.',
   'share.linkRoleLabel': 'Role for people who join by link',
   'share.copyLink': 'Copy link',
