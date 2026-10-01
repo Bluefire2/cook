@@ -192,6 +192,8 @@ async function importAndSave(
       return fail(req, 'import-extract-failed', 'Extraction failed — no structured result.', 502);
     case 'unusable':
       return fail(req, 'import-unusable', UNUSABLE, 502);
+    case 'model_error':
+      return fail(req, 'import-model-failed', "Couldn't read that recipe — try again.", 502);
   }
 
   // A failed translation still saves the original. The extension has no preview.
@@ -201,10 +203,15 @@ async function importAndSave(
     translated = true;
     recipe = { ...outcome.translation.recipe, lang: outcome.translation.lang };
   }
+  const now = Date.now();
   const payload = recipePutFromExtraction(recipe, {
     id: randomUUID(),
-    now: Date.now(),
+    now,
     sourceUrl: url,
+    // The extension has no preview, so the warnings show on the recipe view.
+    ...(outcome.warnings.length > 0
+      ? { importCheck: { at: now, warnings: outcome.warnings } }
+      : {}),
   });
   if (payload === null) {
     entry.outcome = 'unusable';

@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { t as translateNow, useLocale, useT } from '../i18n';
 import ImportPreview from '../components/ImportPreview';
+import { importWarningText } from '../components/ImportWarningList';
 import { type CreateRecipeSubmitStatus } from '../components/CreateRecipeForm';
 import SaveToCollectionSheet from '../components/SaveToCollectionSheet';
 import { libraryHref } from '../lib/collectionHref';
@@ -16,19 +17,37 @@ import {
   MAX_IMPORT_PHOTOS,
   type ImportRecipeResult,
 } from '../lib/importApi';
+import type { ImportWarning } from '../lib/importCheck';
 import { translatedPreviewDraft } from '../lib/importPreview';
 import {
   parseImportInput,
   validateImportInput,
 } from '../lib/importInput';
 import { recipeStore } from '../lib/recipeStore';
+import type { IngredientSection } from '../lib/types';
 import { backLink, inputFocus, primaryBtn, secondaryBtn } from '../lib/uiClasses';
 
 const IMPORT_FORM_ID = 'import-recipe-form';
 
 type BulkResult =
-  | { url: string; ok: true; id: string; title: string; untranslated?: true }
-  | { url: string; ok: false; error: string };
+  | {
+      url: string;
+      ok: true;
+      id: string;
+      title: string;
+      untranslated?: true;
+      /** The import check's warnings, saved on the recipe as `importCheck`. */
+      warnings?: ImportWarning[];
+      /** The saved recipe's ingredients, so a warning can name one. */
+      sections: IngredientSection[];
+    }
+  | { url: string; ok: false; error: string; retrying?: true };
+
+type BulkFilter = 'all' | 'attention' | 'failed';
+
+function needsAttention(row: BulkResult): boolean {
+  return row.ok && row.warnings !== undefined;
+}
 
 type ImportPhoto = { key: string; image: EncodedImage; src: string };
 
@@ -65,6 +84,7 @@ export default function ImportScreen() {
   const [retrying, setRetrying] = useState(false);
   const inFlight = useRef(false);
   const [summary, setSummary] = useState<BulkResult[] | null>(null);
+  const [filter, setFilter] = useState<BulkFilter>('all');
   const [saveStatus, setSaveStatus] = useState<CreateRecipeSubmitStatus>({
     locked: false,
     saving: false,
@@ -74,6 +94,39 @@ export default function ImportScreen() {
       prev.locked === status.locked && prev.saving === status.saving ? prev : status,
     );
   }, []);
+
+  /** One bulk row: import the URL with a fresh fetch and save it to the batch destination. */
+  const importOne = async (url: string, destinationId: string | undefined): Promise<BulkResult> => {
+    if (destinationId && !collectionStore.get(destinationId)) {
+      throw new Error(t('import.collectionNotFoundChoose'));
+    }
+    const imported = await importRecipe(
+      bulkTranslate ? { url, translateTo: locale } : { url },
+    );
+    const untranslated = bulkTranslate && imported.translationFailed === true;
+    const draft =
+      bulkTranslate && imported.translation && !untranslated
+        ? {
+            ...translatedPreviewDraft(imported.recipe, imported.translation.recipe),
+            lang: locale,
+          }
+        : imported.recipe;
+    // Bulk saves without a preview, so the warnings go on the recipe for its banner.
+    const warnings = imported.warnings;
+    const recipe = await recipeStore.create(
+      warnings !== undefined ? { ...draft, importCheck: { at: Date.now(), warnings } } : draft,
+      destinationId ? { collectionId: destinationId } : undefined,
+    );
+    return {
+      url,
+      ok: true,
+      id: recipe.id,
+      title: recipe.title.trim() || url,
+      sections: recipe.ingredientSections,
+      ...(untranslated ? { untranslated: true as const } : {}),
+      ...(warnings !== undefined ? { warnings } : {}),
+    };
+  };
 
   const runBulk = async (urls: string[], destinationId: string | undefined) => {
     if (inFlight.current) return;
@@ -90,31 +143,7 @@ export default function ImportScreen() {
       for (const [i, url] of urls.entries()) {
         setProgress({ current: i + 1, total: urls.length });
         try {
-          if (destinationId && !collectionStore.get(destinationId)) {
-            throw new Error(t('import.collectionNotFoundChoose'));
-          }
-          const imported = await importRecipe(
-            bulkTranslate ? { url, translateTo: locale } : { url },
-          );
-          const untranslated = bulkTranslate && imported.translationFailed === true;
-          const draft =
-            bulkTranslate && imported.translation && !untranslated
-              ? {
-                  ...translatedPreviewDraft(imported.recipe, imported.translation.recipe),
-                  lang: locale,
-                }
-              : imported.recipe;
-          const recipe = await recipeStore.create(
-            draft,
-            destinationId ? { collectionId: destinationId } : undefined,
-          );
-          results.push({
-            url,
-            ok: true,
-            id: recipe.id,
-            title: recipe.title.trim() || url,
-            ...(untranslated ? { untranslated: true as const } : {}),
-          });
+          results.push(await importOne(url, destinationId));
         } catch (e) {
           const message = e instanceof Error ? e.message : t('error.importFailed');
           results.push({ url, ok: false, error: message });
@@ -127,6 +156,7 @@ export default function ImportScreen() {
         }
       }
       setSummary(results);
+      setFilter('all');
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -259,8 +289,48 @@ export default function ImportScreen() {
     setError(null);
   };
 
+  /** Re-runs one failed row, with a fresh fetch, into the same batch destination. */
+  const retryRow = async (url: string) => {
+    if (inFlight.current || summary === null) return;
+    inFlight.current = true;
+    const replace = (row: BulkResult) =>
+      setSummary((rows) => rows?.map((r) => (r.url === url ? row : r)) ?? rows);
+    setSummary(
+      (rows) =>
+        rows?.map((r) => (r.url === url && !r.ok ? { ...r, retrying: true as const } : r)) ?? rows,
+    );
+    try {
+      replace(await importOne(url, batchDestination ?? undefined));
+    } catch (e) {
+      replace({ url, ok: false, error: e instanceof Error ? e.message : t('error.importFailed') });
+    } finally {
+      inFlight.current = false;
+    }
+  };
+
   const successCount = summary?.filter((row) => row.ok).length ?? 0;
+  const attentionCount = summary?.filter(needsAttention).length ?? 0;
   const failedCount = summary === null ? 0 : summary.length - successCount;
+  const retryingRow = summary?.some((row) => !row.ok && row.retrying === true) ?? false;
+  // A filter whose last row a Retry fixed shows everything rather than an empty list.
+  const activeFilter: BulkFilter =
+    (filter === 'attention' && attentionCount === 0) || (filter === 'failed' && failedCount === 0)
+      ? 'all'
+      : filter;
+  const shownRows =
+    summary?.filter((row) =>
+      activeFilter === 'attention'
+        ? needsAttention(row)
+        : activeFilter === 'failed'
+          ? !row.ok
+          : true,
+    ) ?? [];
+  const filterClass = (active: boolean) =>
+    `rounded-full border px-3 py-1 text-sm disabled:opacity-40 ${
+      active
+        ? 'border-ink bg-ink text-page'
+        : 'border-line bg-surface text-ink hover:bg-surface-muted'
+    }`;
 
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
@@ -291,37 +361,99 @@ export default function ImportScreen() {
       {summary !== null ? (
         <>
           <h2 className="text-lg font-semibold">
-            {successCount === 0
-              ? t('import.couldNotImport')
-              : t('import.importedOf', { count: successCount, total: summary.length })}
+            {t('import.summaryImported', { count: successCount })}
           </h2>
-          <ul className="mt-3 space-y-2">
-            {summary.map((row) => (
-              <li
-                key={row.url}
-                className="rounded-xl border border-line bg-surface px-4 py-3 text-sm shadow-sm"
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              aria-pressed={activeFilter === 'attention'}
+              disabled={attentionCount === 0}
+              onClick={() => setFilter('attention')}
+              className={filterClass(activeFilter === 'attention')}
+            >
+              {t('import.summaryAttention', { count: attentionCount })}
+            </button>
+            <button
+              type="button"
+              aria-pressed={activeFilter === 'failed'}
+              disabled={failedCount === 0}
+              onClick={() => setFilter('failed')}
+              className={filterClass(activeFilter === 'failed')}
+            >
+              {t('import.summaryFailed', { count: failedCount })}
+            </button>
+            {activeFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setFilter('all')}
+                className={filterClass(false)}
               >
-                {row.ok ? (
-                  <>
-                    <Link
-                      to={`/recipe/${row.id}`}
-                      className="font-medium text-ink hover:underline"
-                    >
-                      {row.title}
-                    </Link>
-                    <p className="mt-1 break-all text-ink-subtle">{row.url}</p>
-                    {row.untranslated && (
-                      <p className="mt-1 text-ink-subtle">{t('import.savedUntranslated')}</p>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <p className="break-all text-ink">{row.url}</p>
-                    <p className="mt-1 text-danger">{row.error}</p>
-                  </>
-                )}
-              </li>
-            ))}
+                {t('import.showAll')}
+              </button>
+            )}
+          </div>
+          <ul className="mt-3 space-y-2">
+            {shownRows.map((row) => {
+              const firstWarning =
+                row.ok && row.warnings !== undefined
+                  ? row.warnings
+                      .map((warning) => importWarningText(warning, row.sections, t))
+                      .find((text) => text !== null)
+                  : undefined;
+              const border = !row.ok
+                ? 'border-danger'
+                : firstWarning !== undefined
+                  ? 'border-amber-600/70'
+                  : 'border-line';
+              return (
+                <li
+                  key={row.url}
+                  className={`rounded-xl border bg-surface px-4 py-3 text-sm shadow-sm ${border}`}
+                >
+                  {row.ok ? (
+                    <>
+                      <Link
+                        to={`/recipe/${row.id}`}
+                        className="font-medium text-ink hover:underline"
+                      >
+                        {row.title}
+                      </Link>
+                      <p className="mt-1 break-all text-ink-subtle">{row.url}</p>
+                      {firstWarning !== undefined && (
+                        <p className="mt-1 flex gap-1.5 text-ink">
+                          <span aria-hidden="true" className="text-amber-600">
+                            ⚠
+                          </span>
+                          <span>{firstWarning}</span>
+                        </p>
+                      )}
+                      {row.untranslated && (
+                        <p className="mt-1 text-ink-subtle">{t('import.savedUntranslated')}</p>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <p className="break-all text-ink">{row.url}</p>
+                      <p className="mt-1 flex gap-1.5 font-medium text-danger">
+                        <span aria-hidden="true">✕</span>
+                        <span>{t('import.rowFailed')}</span>
+                      </p>
+                      <p className="mt-0.5 text-danger">{row.error}</p>
+                      <button
+                        type="button"
+                        disabled={busy || retryingRow}
+                        aria-busy={row.retrying || undefined}
+                        onClick={() => void retryRow(row.url)}
+                        className={`${secondaryBtn} mt-2 inline-flex items-center gap-2 px-4 py-1.5 disabled:opacity-40`}
+                      >
+                        {row.retrying && <SpinnerIcon className="h-4 w-4 animate-spin" />}
+                        {row.retrying ? t('importWarning.retrying') : t('import.retryRow')}
+                      </button>
+                    </>
+                  )}
+                </li>
+              );
+            })}
           </ul>
           <button
             type="button"
@@ -333,6 +465,7 @@ export default function ImportScreen() {
           {failedCount > 0 && (
             <button
               type="button"
+              disabled={retryingRow}
               onClick={tryAgain}
               className={`${secondaryBtn} mt-2 w-full py-3`}
             >
@@ -516,10 +649,6 @@ export default function ImportScreen() {
         </>
       ) : (
         <>
-          <div className="rounded-2xl border border-line bg-accent-soft px-4 py-3 text-sm text-ink">
-            {t('import.fixBeforeSaving')}
-          </div>
-
           <ImportPreview
             result={preview}
             collectionId={collectionId}

@@ -1,3 +1,5 @@
+import type { ImportCheck } from './importCheck';
+
 export interface Ingredient {
   quantity?: number;
   unit?: string;
@@ -36,6 +38,12 @@ export interface Recipe {
    * code must keep working without it (`docs/constitutions/i18n.md`).
    */
   lang?: string;
+  /**
+   * What the import check found, when an import raised warnings. Missing is
+   * normal (a clean import, a hand-written recipe, an older client); code
+   * must keep working without it (`docs/plans/import-reliability.md`).
+   */
+  importCheck?: ImportCheck;
   createdAt: number;
   updatedAt: number;
 }

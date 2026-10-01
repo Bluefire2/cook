@@ -25,6 +25,7 @@ describe('compactRecipe', () => {
       photoId: undefined,
       galleryPhotoIds: undefined,
       lang: undefined,
+      importCheck: undefined,
     });
 
     expect(compacted).toEqual(required);
@@ -53,6 +54,7 @@ describe('compactRecipe', () => {
       photoId: 'p1',
       galleryPhotoIds: ['g1', 'g2'],
       lang: 'it',
+      importCheck: { at: 3, warnings: [{ code: 'TOO_FEW_STEPS' }] },
     });
 
     expect(compacted.description).toBe('Hot.');
@@ -63,6 +65,12 @@ describe('compactRecipe', () => {
     expect(compacted.photoId).toBe('p1');
     expect(compacted.galleryPhotoIds).toEqual(['g1', 'g2']);
     expect(compacted.lang).toBe('it');
+    expect(compacted.importCheck).toEqual({ at: 3, warnings: [{ code: 'TOO_FEW_STEPS' }] });
+  });
+
+  it('drops a malformed importCheck without dropping the recipe', () => {
+    const malformed = { at: 'later', warnings: [] } as unknown as Recipe['importCheck'];
+    expect(compactRecipe({ ...required, importCheck: malformed })).toEqual(required);
   });
 
   it('stores lang only when normalizeLang yields a tag', () => {

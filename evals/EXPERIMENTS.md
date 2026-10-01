@@ -22,6 +22,61 @@ summary, approach A.
 - Run by: <owner | agent>, model <CHAT_MODEL or default>
 ```
 
+## 2026-10-01 — Page and paste import: self-report fields, import checks, retry loop at 0
+
+- Change: `importFromSource` (page, paste, extension) now asks for
+  `PAGE_RECIPE_SCHEMA`, which is `RECIPE_SCHEMA` plus required booleans
+  `instructionsOnPage` and `ingredientsOnPage`. The prompt text is unchanged.
+  Each extraction runs `checkImport` (`server/importChecks.ts`), and an
+  attempt loop retries hard failures and blocking extraction warnings up to
+  `MAX_IMPORT_RETRIES`, which ships at 0, so every import still makes one
+  call. A thrown call is now `model_error` instead of an escaping throw.
+  `importFromImages` keeps `RECIPE_SCHEMA`, its prompt and config, one call,
+  and no checks (unit tests pin all of these).
+- Reason (not fixture-specific): spec §4.2 and §6. The checks read no
+  fixture's content; thresholds are the plan's starting values, to be
+  calibrated on the phase 1 fixtures.
+- Offline calibration (`evals/pageFixtures.test.ts`): every cached page with
+  a recipe raises no source warning for an empty-steps extraction; the three
+  page goldens raise no warnings against their own pages.
+  `import-sites/wikibooks-pancake` was hand-classified `source` in
+  `class.json` (a category overview with no method of its own) and raises
+  `INSTRUCTIONS_NOT_ON_PAGE`.
+- Command: `npm run test:import` once per side, then `-t "from cached HTML"`
+  and `-t "cached HTML|import from text"` repeats, alternating sides. Every
+  run is recorded. `eval:ocr-compare` was not run: the photo request is
+  byte-for-byte the same (unit-tested). It is required for phase 3.
+- Before (`d807bb3`): full run 26/26. Page fixtures, 8 more runs: 24/24.
+  Page + text fixtures, 4 runs: 22/24 (beef-noodle-soup `parse_error`;
+  gumbo step count 8 vs 5).
+- After, first version (`0db5ad9`, page schema with the two required
+  booleans, no ordering): full run 24/26 (beef-noodle-soup judge:
+  `prepMinutes` 305106198964720960; sweet-sour-pork photo, an unchanged
+  request, already 2/3 in the 2026-09-27 entry). Page fixtures, 8 more runs:
+  18/24, every failure beef-stew (4 `parse_error`, 1 `prepMinutes` 558, 1
+  unrecorded).
+- Diagnosis (raw-output probe on beef-stew; finish reason, length, and key
+  order only): the model writes required fields first, then the optional
+  ones, and with the booleans required `prepMinutes` landed last. A trailing
+  number sometimes runs on (`5.000000000000001e-05`, or zeros until
+  `MAX_TOKENS`, which is the `parse_error`). The parent commit does the same
+  (1 of 3 probes hit `MAX_TOKENS` on a trailing `prepMinutes`); the new
+  fields made it more frequent. The model also stopped returning
+  `description`, `notes`, and `lang`.
+- Fix: `PAGE_RECIPE_SCHEMA.propertyOrdering` puts the times early and ends on
+  the two booleans. Reason (not fixture-specific): no free-form number should
+  be the last token of the object. Photo schema untouched.
+- After, with the ordering: probe 6/6 `STOP`, with `description` and `lang`
+  back. Page + text fixtures, 4 runs: 24/24.
+- Decision: kept. The first version is the regression the ordering fixes;
+  the ordering run beats the parent on the same fixtures (24/24 vs 22/24).
+- Grounding now maps ies<->y and ves<->f/fe (review on #103), so a faithful
+  extraction of strawberries or bay leaves is no longer flagged against a
+  page that says strawberry or bay leaf, and the reverse. Offline calibration
+  in `evals/pageFixtures.test.ts` rerun: passes, no new warnings on any cached
+  page.
+- Run by: agent, model default (`CHAT_MODEL` from `.env.local`)
+
 ## 2026-09-27 — Photo import: runaway-unit check (32) and one retry
 
 - Change: `fdefa65` made `importFromImages` treat an ingredient `unit` longer

@@ -1,6 +1,7 @@
 import { t } from '../i18n';
 import { serverErrorText } from './errorText';
 import type { EncodedImage } from './image';
+import { readImportWarnings, type ImportWarning } from './importCheck';
 import { invalidateSession } from './session';
 import type { RecipeDraft } from './types';
 
@@ -14,6 +15,12 @@ export interface ImportRecipeResult {
   recipe: ExtractedRecipe;
   translation?: { lang: string; recipe: ExtractedRecipe };
   translationFailed?: true;
+  /**
+   * What the import check found on the original extraction, as codes; the
+   * words are in the catalogs. Absent for a clean import. Positions in a
+   * warning hold for the translation too, which never changes structure.
+   */
+  warnings?: ImportWarning[];
 }
 
 function drafted(recipe: ExtractedRecipe): ExtractedRecipe {
@@ -86,6 +93,7 @@ export async function importRecipe(params: {
         recipe?: ExtractedRecipe;
         translation?: { lang?: unknown; recipe?: ExtractedRecipe };
         translationFailed?: unknown;
+        warnings?: unknown;
         error?: string;
         code?: string;
         status?: number;
@@ -100,6 +108,11 @@ export async function importRecipe(params: {
   const result: ImportRecipeResult = { recipe: drafted(data.recipe) };
   if (data.translationFailed === true) {
     result.translationFailed = true;
+  }
+  // Unknown codes from a newer server are dropped, never shown as raw text.
+  const warnings = readImportWarnings(data.warnings);
+  if (warnings.length > 0) {
+    result.warnings = warnings;
   }
   const translation = data.translation;
   if (

@@ -31,6 +31,7 @@ import { photoStore } from './photoStore';
 import { withLocalWrite } from './localWrite';
 import { localWriteOverlapsPull, type SyncOutcome } from './syncEngine';
 import { compactRecipe } from './compactRecipe';
+import { reconcileImportCheck, type ImportCheck } from './importCheck';
 import { compactCollection } from './compactCollection';
 import { wouldExceedRecipeIdCap } from './collectionMembership';
 import { recipePhotoIds } from './recipePhotos';
@@ -471,6 +472,103 @@ async function discardCreatedRecipe(
   return restageBlobs(staged, result === 'ok');
 }
 
+/**
+ * An owned or shared save of a recipe whose import check is already decided.
+ * `save` reconciles it first; `replaceFromImport` replaces it.
+ */
+async function saveRecipe(recipe: Recipe): Promise<void> {
+  if (isSharedRecipe(recipe.id)) {
+    if (recipeAccess(recipe.id) !== 'editor') {
+      throw new Error(t('error.sharedViewOnly'));
+    }
+    return saveShared(recipe);
+  }
+  const previous = getRecipe(recipe.id);
+  const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
+  await withLocalWrite(async () => {
+    const held = recipePhotoIds(next);
+    holdPhotoIds(held);
+    const uploaded: string[] = [];
+    // Unset until the put is sent.
+    let putResult: Awaited<ReturnType<typeof pushOps>> | undefined;
+    let failure: unknown;
+    try {
+      upsertRecipe(next);
+      await uploadRecipePhotos(next, uploaded);
+      putResult = await pushOps([{ kind: 'recipe.put', payload: next }]);
+      if (putResult !== 'ok') {
+        throw putResult === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
+      }
+      for (const id of held) {
+        photosCommittedByPut.add(id);
+      }
+      forgetPhotosLeftForLastHolder(held);
+      // The put landed. Each replaced photo is deleted on its own, so one
+      // failure neither fails this save nor skips the photos after it.
+      // Memory already lists the new ids, so a later save will not retry.
+      try {
+        await deleteRemovedPhotos(previous, next);
+      } catch {
+        // Backstop. deleteRemovedPhotos already continues past one failure.
+      }
+    } catch (err) {
+      if (err instanceof SessionExpiredError) {
+        // The 401 cleared the library already; write nothing back into it.
+        // The session also cannot authorize a tombstone.
+        throw err;
+      }
+      // A put that returned ok is on the server. A newer in-flight save has
+      // replaced this row in memory; restoring `previous` would wipe it.
+      if (putResult !== 'ok' && getRecipe(next.id) === next) {
+        if (previous) {
+          upsertRecipe(previous);
+        } else {
+          removeRecipeLocal(next.id);
+        }
+      }
+      // Tombstone only when the put certainly did not land: it was never sent,
+      // or the server answered that it discarded it. A plain 'error' can be a
+      // dropped response after the live recipe started listing these ids, and
+      // deleting them would break it; an orphan is the cheaper mistake.
+      // Own uploads only. Ids another save still holds are claimed after this
+      // hold is released, so a sibling that fails during the delete below can
+      // leave them for whoever drops the count to zero.
+      if (putResult === undefined || isDiscardedPushReason(putResult)) {
+        rememberUploadsHeldElsewhere(uploaded);
+        await discardOrphanUploads(orphanedUploads(uploaded));
+      } else if (putResult !== 'ok') {
+        forgetPhotosLeftForLastHolder(held);
+      }
+      failure = err;
+    } finally {
+      releasePhotoIds(held);
+    }
+    if (
+      failure !== undefined &&
+      (putResult === undefined || isDiscardedPushReason(putResult))
+    ) {
+      await discardOrphanUploads(takePhotosLeftForLastHolder(held));
+    }
+    if (failure !== undefined) {
+      return { value: undefined, reconcile: false, error: failure };
+    }
+    return { value: undefined, reconcile: true };
+  });
+}
+
+/** The recipe with its import check carried from the stored one and reconciled with this edit. */
+function withReconciledImportCheck(recipe: Recipe): Recipe {
+  const previous = getRecipe(recipe.id);
+  const check = reconcileImportCheck(
+    recipe.importCheck ?? previous?.importCheck,
+    previous ?? recipe,
+    recipe,
+    Date.now(),
+  );
+  if (check === recipe.importCheck) return recipe;
+  return { ...recipe, importCheck: check };
+}
+
 export const recipeStore = {
   list(): Recipe[] {
     return listRecipes();
@@ -496,92 +594,62 @@ export const recipeStore = {
     return recipeAccess(id);
   },
 
+  /**
+   * Saves an edit. The import check is carried from the stored recipe when
+   * the caller leaves it out (the edit form has no field for it), then
+   * reconciled with the edit (`reconcileImportCheck`).
+   */
   async save(recipe: Recipe): Promise<void> {
-    if (isSharedRecipe(recipe.id)) {
-      if (recipeAccess(recipe.id) !== 'editor') {
-        throw new Error(t('error.sharedViewOnly'));
-      }
-      return saveShared(recipe);
-    }
-    const previous = getRecipe(recipe.id);
-    const next = compactRecipe({ ...recipe, updatedAt: Date.now() });
-    await withLocalWrite(async () => {
-      const held = recipePhotoIds(next);
-      holdPhotoIds(held);
-      const uploaded: string[] = [];
-      // Unset until the put is sent.
-      let putResult: Awaited<ReturnType<typeof pushOps>> | undefined;
-      let failure: unknown;
-      try {
-        upsertRecipe(next);
-        await uploadRecipePhotos(next, uploaded);
-        putResult = await pushOps([{ kind: 'recipe.put', payload: next }]);
-        if (putResult !== 'ok') {
-          throw putResult === 'signedOut' ? new SessionExpiredError() : new Error(t('error.recipeSave'));
-        }
-        for (const id of held) {
-          photosCommittedByPut.add(id);
-        }
-        forgetPhotosLeftForLastHolder(held);
-        // The put landed. Each replaced photo is deleted on its own, so one
-        // failure neither fails this save nor skips the photos after it.
-        // Memory already lists the new ids, so a later save will not retry.
-        try {
-          await deleteRemovedPhotos(previous, next);
-        } catch {
-          // Backstop. deleteRemovedPhotos already continues past one failure.
-        }
-      } catch (err) {
-        if (err instanceof SessionExpiredError) {
-          // The 401 cleared the library already; write nothing back into it.
-          // The session also cannot authorize a tombstone.
-          throw err;
-        }
-        // A put that returned ok is on the server. A newer in-flight save has
-        // replaced this row in memory; restoring `previous` would wipe it.
-        if (putResult !== 'ok' && getRecipe(next.id) === next) {
-          if (previous) {
-            upsertRecipe(previous);
-          } else {
-            removeRecipeLocal(next.id);
-          }
-        }
-        // Tombstone only when the put certainly did not land: it was never sent,
-        // or the server answered that it discarded it. A plain 'error' can be a
-        // dropped response after the live recipe started listing these ids, and
-        // deleting them would break it; an orphan is the cheaper mistake.
-        // Own uploads only. Ids another save still holds are claimed after this
-        // hold is released, so a sibling that fails during the delete below can
-        // leave them for whoever drops the count to zero.
-        if (putResult === undefined || isDiscardedPushReason(putResult)) {
-          rememberUploadsHeldElsewhere(uploaded);
-          await discardOrphanUploads(orphanedUploads(uploaded));
-        } else if (putResult !== 'ok') {
-          forgetPhotosLeftForLastHolder(held);
-        }
-        failure = err;
-      } finally {
-        releasePhotoIds(held);
-      }
-      if (
-        failure !== undefined &&
-        (putResult === undefined || isDiscardedPushReason(putResult))
-      ) {
-        await discardOrphanUploads(takePhotosLeftForLastHolder(held));
-      }
-      if (failure !== undefined) {
-        return { value: undefined, reconcile: false, error: failure };
-      }
-      return { value: undefined, reconcile: true };
+    return saveRecipe(withReconciledImportCheck(recipe));
+  },
+
+  /** Hides this recipe's import warnings, here and on every device. Not an edit. */
+  async dismissImportWarnings(id: string): Promise<void> {
+    const recipe = getRecipe(id);
+    if (!recipe) throw new Error(t('common.recipeNotFound'));
+    if (recipe.importCheck === undefined || recipe.importCheck.dismissedAt !== undefined) return;
+    await recipeStore.save({
+      ...recipe,
+      importCheck: { ...recipe.importCheck, dismissedAt: Date.now() },
     });
   },
 
+  /**
+   * Replaces a recipe's imported text with a fresh import of its source:
+   * title, description, servings, times, sections, steps, notes, `lang`, and
+   * the import check, which is the new import's or none. Identity, tags,
+   * photos, `sourceUrl`, collections and cook logs stay. On a shared recipe
+   * the editor's usual rules apply.
+   */
+  async replaceFromImport(id: string, draft: RecipeDraft, importCheck: ImportCheck | undefined): Promise<void> {
+    const existing = getRecipe(id);
+    if (!existing) throw new Error(t('common.recipeNotFound'));
+    await saveRecipe({
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt,
+      title: draft.title,
+      description: draft.description,
+      servings: draft.servings,
+      prepMinutes: draft.prepMinutes,
+      cookMinutes: draft.cookMinutes,
+      ingredientSections: draft.ingredientSections,
+      steps: draft.steps,
+      notes: draft.notes,
+      lang: draft.lang,
+      importCheck,
+      tags: existing.tags,
+      sourceUrl: existing.sourceUrl,
+      photoId: existing.photoId,
+      galleryPhotoIds: existing.galleryPhotoIds,
+    });
+  },
   /**
    * Merges a draft into the recipe with this id. Every field is named rather
    * than spread because drafts come from the `update_recipe` tool, whose schema
    * cannot express `sourceUrl`, `photoId`, `galleryPhotoIds`, or `lang` — a
    * spread would blank them. `lang` is carried from the existing recipe,
-   * like `sourceUrl`. On a shared recipe the draft never supplies photos.
+   * like `sourceUrl`, and so is the import check, which `save` reconciles. On a shared recipe the draft never supplies photos.
    * The draft is an edit of the stored recipe, including while a translation
    * is on screen.
    */
@@ -608,6 +676,7 @@ export const recipeStore = {
       notes: draft.notes,
       sourceUrl: draft.sourceUrl ?? existing.sourceUrl,
       lang: draft.lang ?? existing.lang,
+      importCheck: existing.importCheck,
       photoId,
       galleryPhotoIds,
     });
@@ -625,6 +694,8 @@ export const recipeStore = {
       return await recipeStore.create({
         ...draft,
         lang: parent.lang,
+        // A recipe from an Ask proposal was not imported.
+        importCheck: undefined,
         photoId: copied.photoId,
         galleryPhotoIds: copied.galleryPhotoIds,
       });

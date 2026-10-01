@@ -4,6 +4,7 @@ import { languageName, sameLanguage, useLocale, useT } from '../i18n';
 import { unitLabel } from '../i18n/unitLabel';
 import ChatPanel from '../components/ChatPanel';
 import CookLogCard from '../components/CookLogCard';
+import ImportWarningBanner from '../components/ImportWarningBanner';
 import { useCookLogs } from '../lib/cookLogStore';
 import { SpinnerIcon, TranslateIcon } from '../lib/icons';
 import { usePhotoUrl } from '../lib/photoStore';
@@ -362,6 +363,12 @@ export default function RecipeView() {
             {t('recipe.alreadyInLanguage')}
           </p>
         )}
+        <ImportWarningBanner
+          recipe={recipe}
+          sections={displayRecipe.ingredientSections}
+          source={source}
+          canEdit={canEdit}
+        />
       </header>
 
       <section>

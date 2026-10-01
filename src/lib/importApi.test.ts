@@ -73,6 +73,32 @@ describe('importRecipe', () => {
     expect(invalidateSpy).not.toHaveBeenCalled();
   });
 
+  it('keeps known warning codes and drops the rest', async () => {
+    respond(200, {
+      recipe: { title: 'Soup', servings: 1 },
+      warnings: [
+        { code: 'INSTRUCTIONS_NOT_ON_PAGE' },
+        { code: 'FROM_A_NEWER_SERVER' },
+        { code: 'UNGROUNDED_INGREDIENT', at: [0, 2] },
+        'junk',
+      ],
+    });
+    expect((await importRecipe({ text: 'soup' })).warnings).toEqual([
+      { code: 'INSTRUCTIONS_NOT_ON_PAGE' },
+      { code: 'UNGROUNDED_INGREDIENT', at: [0, 2] },
+    ]);
+
+    respond(200, { recipe: { title: 'Soup', servings: 1 }, warnings: 'nope' });
+    expect(await importRecipe({ text: 'soup' })).not.toHaveProperty('warnings');
+  });
+
+  it('shows the catalog text for a model failure', async () => {
+    respond(502, { error: "Couldn't read that recipe — try again.", code: 'import-model-failed' });
+    await expect(importRecipe({ url: 'https://example.com' })).rejects.toThrow(
+      "Couldn't read that recipe — try again.",
+    );
+  });
+
   it('invalidates the session on 401', async () => {
     const invalidateSpy = vi.spyOn(session, 'invalidateSession').mockImplementation(() => {});
     respond(401, { error: 'Unauthorized' });

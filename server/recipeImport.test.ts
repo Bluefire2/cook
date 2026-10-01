@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RecipeDraft } from '../src/lib/types.ts';
 import { fakeImportDeps } from '../test/fakeGemini.ts';
 import {
+  IMPORT_RETRY_DEADLINE_MS,
+  MAX_IMPORT_RETRIES,
   extractRecipeSource,
   fetchPageHtml,
   importFromHtml,
@@ -12,6 +14,8 @@ import {
   readImportTranslateTo,
   recipeImportDepsFromEnv,
   type ImportedRecipe,
+  type ImportOutcome,
+  type RecipeImportDeps,
   type RecipeTranslator,
 } from './recipeImport.ts';
 import { TRANSLATE_FAILED, type TranslateInput, type TranslateOutcome } from './translate.ts';
@@ -93,6 +97,15 @@ describe('extractRecipeSource', () => {
     expect(text).not.toContain('analytics');
     expect(text).not.toContain('color');
     expect(text).not.toContain('<');
+  });
+
+  it('strips script and style bodies whose end tag has whitespace or junk before >', () => {
+    const html =
+      '<p>Soup</p><script>var leaked = 1;</script ><STYLE>.leak{}</STYLE foo>' +
+      '<script type="x">var alsoLeaked = 2;</script\n>';
+    const text = extractRecipeSource(html);
+    expect(text.trim()).toBe('Soup');
+    expect(text).not.toContain('leak');
   });
 
   it('caps the JSON-LD path at 60,000 characters', () => {
@@ -414,7 +427,10 @@ describe('normalizeImportedRecipe', () => {
 describe('importFromSource', () => {
   it('does not call the model for blank source', async () => {
     const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
-    expect(await importFromSource('  \n\t ', deps)).toEqual({ kind: 'empty_source' });
+    expect(await importFromSource('  \n\t ', deps)).toEqual({
+      kind: 'empty_source',
+      log: { source: 'text', attempts: [] },
+    });
     expect(calls).toHaveLength(0);
   });
 
@@ -426,12 +442,39 @@ describe('importFromSource', () => {
     expect(calls[0].contents).toContain('Tomato soup: simmer tomatoes.');
   });
 
-  it('returns the normalized recipe', async () => {
-    const { deps } = fakeImportDeps(JSON.stringify({ ...MINIMAL, servings: 0, extra: true }));
+  it('returns the normalized recipe, its warnings, and how it was reached', async () => {
+    const { deps } = fakeImportDeps(
+      JSON.stringify({ ...MINIMAL, servings: 0, extra: true, instructionsOnPage: true }),
+    );
     expect(await importFromSource('soup', deps)).toEqual({
       kind: 'ok',
       recipe: { ...MINIMAL, servings: 1 },
+      warnings: [{ code: 'TOO_FEW_STEPS' }],
+      log: { source: 'text', attempts: [{ result: 'warn', codes: ['TOO_FEW_STEPS'] }] },
     });
+  });
+
+  it('asks pasted and page imports for the self-report, and never keeps it on the recipe', async () => {
+    const { deps, calls } = fakeImportDeps(
+      JSON.stringify({ ...MINIMAL, instructionsOnPage: false, ingredientsOnPage: true }),
+    );
+    const outcome = await importFromSource('soup', deps);
+    const schema = calls[0].config?.responseSchema as { properties: object; required: string[] };
+    expect(schema.properties).toHaveProperty('instructionsOnPage');
+    expect(schema.properties).toHaveProperty('ingredientsOnPage');
+    expect(schema.required).toEqual(expect.arrayContaining(['instructionsOnPage', 'ingredientsOnPage']));
+    expect(outcome.kind === 'ok' && outcome.recipe).not.toHaveProperty('instructionsOnPage');
+  });
+
+  it('orders every page-schema field, ending on the two booleans so no number comes last', async () => {
+    const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
+    await importFromSource('soup', deps);
+    const schema = calls[0].config?.responseSchema as {
+      properties: Record<string, unknown>;
+      propertyOrdering: string[];
+    };
+    expect([...schema.propertyOrdering].sort()).toEqual(Object.keys(schema.properties).sort());
+    expect(schema.propertyOrdering.slice(-2)).toEqual(['instructionsOnPage', 'ingredientsOnPage']);
   });
 
   it('reports output that is not a JSON object as a parse error', async () => {
@@ -439,18 +482,151 @@ describe('importFromSource', () => {
       const { deps } = fakeImportDeps(reply);
       expect(await importFromSource('soup', deps), String(reply)).toEqual({
         kind: 'parse_error',
+        log: { source: 'text', attempts: [{ result: 'parse_error', codes: [] }] },
       });
     }
   });
 
   it('reports the NOT_A_RECIPE sentinel', async () => {
     const { deps } = fakeImportDeps(JSON.stringify({ ...MINIMAL, title: 'NOT_A_RECIPE' }));
-    expect(await importFromSource('a poem', deps)).toEqual({ kind: 'not_a_recipe' });
+    expect(await importFromSource('a poem', deps)).toMatchObject({ kind: 'not_a_recipe' });
   });
 
   it('reports JSON with no usable title as unusable', async () => {
     const { deps } = fakeImportDeps(JSON.stringify({ ...MINIMAL, title: ' ' }));
-    expect(await importFromSource('soup', deps)).toEqual({ kind: 'unusable' });
+    expect(await importFromSource('soup', deps)).toMatchObject({ kind: 'unusable' });
+  });
+
+  it('turns a thrown model call into model_error, keeping only its status', async () => {
+    const run = scriptedDeps([Object.assign(new Error('SECRET request echo'), { status: 503 })]);
+    const outcome = await importFromSource('soup', run.deps);
+    expect(outcome).toEqual({
+      kind: 'model_error',
+      log: { source: 'text', attempts: [{ result: 'threw', codes: [] }], errorStatus: 503 },
+    });
+    expect(JSON.stringify(outcome)).not.toContain('SECRET');
+    expect(run.calls).toBe(1);
+  });
+});
+
+/** Instructions-like pasted text, so an empty `steps` reads as dropped, not missing. */
+const PASTED = 'Tomato soup\nIngredients\n6 tomatoes\nMethod\n1. Simmer.\n2. Blend.';
+const GOOD = { ...MINIMAL, steps: [{ text: 'Simmer.' }, { text: 'Blend.' }], instructionsOnPage: true };
+const NO_STEPS = { ...MINIMAL, steps: [], instructionsOnPage: true };
+
+/**
+ * `generateContent` that answers each call with the next scripted reply; an
+ * Error is thrown instead. `maxRetries` stands in for phase 3's constant.
+ */
+function scriptedDeps(
+  replies: (object | Error)[],
+  options: { maxRetries?: number; now?: () => number } = {},
+): { deps: RecipeImportDeps; calls: number } {
+  const state = { deps: fakeImportDeps('{}').deps, calls: 0 };
+  state.deps = {
+    ...state.deps,
+    ...options,
+    ai: {
+      models: {
+        generateContent: (params) => {
+          const reply = replies[Math.min(state.calls, replies.length - 1)];
+          state.calls += 1;
+          if (reply instanceof Error) return Promise.reject(reply);
+          return fakeImportDeps(JSON.stringify(reply)).deps.ai.models.generateContent(params);
+        },
+      },
+    },
+  };
+  return state;
+}
+
+describe('import attempts', () => {
+  it('ships with retries off', () => {
+    expect(MAX_IMPORT_RETRIES).toBe(0);
+  });
+
+  it('retries a throw, then returns the recipe', async () => {
+    const run = scriptedDeps([new Error('overloaded'), GOOD], { maxRetries: 2 });
+    const outcome = await importFromSource(PASTED, run.deps);
+    expect(run.calls).toBe(2);
+    expect(outcome).toMatchObject({ kind: 'ok', warnings: [] });
+    expect(outcome.log?.attempts.map((a) => a.result)).toEqual(['threw', 'ok']);
+  });
+
+  it('retries empty steps on a page that has a method', async () => {
+    const run = scriptedDeps([NO_STEPS, GOOD], { maxRetries: 2 });
+    const outcome = await importFromSource(PASTED, run.deps);
+    expect(run.calls).toBe(2);
+    expect(outcome.log?.attempts).toEqual([
+      { result: 'warn', codes: ['INSTRUCTIONS_DROPPED'] },
+      { result: 'ok', codes: [] },
+    ]);
+    expect(outcome).toMatchObject({ kind: 'ok', recipe: { steps: GOOD.steps }, warnings: [] });
+  });
+
+  it('does not retry a source failure', async () => {
+    const run = scriptedDeps([{ ...NO_STEPS, instructionsOnPage: false }, GOOD], { maxRetries: 2 });
+    const outcome = await importFromSource('Tomato soup. You need 6 tomatoes.', run.deps);
+    expect(run.calls).toBe(1);
+    expect(outcome).toMatchObject({
+      kind: 'ok',
+      warnings: [{ code: 'INSTRUCTIONS_NOT_ON_PAGE' }],
+    });
+  });
+
+  it('does not retry not_a_recipe or an advisory warning', async () => {
+    const notRecipe = scriptedDeps([{ ...MINIMAL, title: 'NOT_A_RECIPE' }, GOOD], { maxRetries: 2 });
+    expect(await importFromSource(PASTED, notRecipe.deps)).toMatchObject({ kind: 'not_a_recipe' });
+    expect(notRecipe.calls).toBe(1);
+
+    const advisory = scriptedDeps([{ ...MINIMAL, instructionsOnPage: true }, GOOD], { maxRetries: 2 });
+    expect(await importFromSource(PASTED, advisory.deps)).toMatchObject({
+      warnings: [{ code: 'TOO_FEW_STEPS' }],
+    });
+    expect(advisory.calls).toBe(1);
+  });
+
+  it('starts no attempt after the deadline', async () => {
+    let clock = 0;
+    const run = scriptedDeps([new Error('slow'), GOOD], {
+      maxRetries: 2,
+      now: () => clock,
+    });
+    const original = run.deps.ai.models.generateContent;
+    run.deps.ai.models.generateContent = (params) => {
+      clock += IMPORT_RETRY_DEADLINE_MS;
+      return original(params);
+    };
+    expect(await importFromSource(PASTED, run.deps)).toMatchObject({ kind: 'model_error' });
+    expect(run.calls).toBe(1);
+  });
+
+  it('returns the best attempt when every attempt is warned', async () => {
+    const oneStep = { ...MINIMAL, ingredientSections: [], instructionsOnPage: true };
+    const run = scriptedDeps([NO_STEPS, oneStep, NO_STEPS], { maxRetries: 2 });
+    const outcome = await importFromSource(PASTED, run.deps);
+    expect(run.calls).toBe(3);
+    // Each has one blocking warning; the one with a step wins.
+    expect(outcome).toMatchObject({ kind: 'ok', recipe: { steps: MINIMAL.steps } });
+  });
+
+  it('returns the last failure when nothing was usable', async () => {
+    const run = scriptedDeps([new Error('x'), { ...MINIMAL, title: ' ' }], { maxRetries: 1 });
+    expect(await importFromSource(PASTED, run.deps)).toMatchObject({ kind: 'unusable' });
+    expect(run.calls).toBe(2);
+  });
+
+  it('makes exactly one call for photos, even when the model throws', async () => {
+    const ok = scriptedDeps([NO_STEPS, GOOD], { maxRetries: 2 });
+    expect(await importFromImages([{ mediaType: 'image/jpeg', base64: 'AAAA' }], '', ok.deps))
+      .toMatchObject({ kind: 'ok', warnings: [] });
+    expect(ok.calls).toBe(1);
+
+    const thrown = scriptedDeps([new Error('x'), GOOD], { maxRetries: 2 });
+    await expect(
+      importFromImages([{ mediaType: 'image/jpeg', base64: 'AAAA' }], '', thrown.deps),
+    ).rejects.toThrow('x');
+    expect(thrown.calls).toBe(1);
   });
 });
 
@@ -492,7 +668,7 @@ describe('importFromImages', () => {
     expect(parts[3].inlineData).toBeUndefined();
   });
 
-  it('asks for high media resolution with the shared recipe schema', async () => {
+  it('asks for high media resolution with the recipe schema, without the page self-report', async () => {
     const photo = fakeImportDeps(JSON.stringify(MINIMAL));
     await importFromImages([JPEG], '', photo.deps);
     const text = fakeImportDeps(JSON.stringify(MINIMAL));
@@ -503,7 +679,15 @@ describe('importFromImages', () => {
     expect(config?.mediaResolution).toBe('MEDIA_RESOLUTION_HIGH');
     expect(config?.maxOutputTokens).toBe(4096);
     expect(config?.responseMimeType).toBe('application/json');
-    expect(config?.responseSchema).toBe(text.calls[0].config?.responseSchema);
+    // The page schema is the photo schema plus the two self-report fields.
+    const photoSchema = config?.responseSchema as { properties: Record<string, unknown> };
+    const pageSchema = text.calls[0].config?.responseSchema as { properties: Record<string, unknown> };
+    expect(photoSchema.properties).not.toHaveProperty('instructionsOnPage');
+    expect(photoSchema.properties).not.toHaveProperty('ingredientsOnPage');
+    const { instructionsOnPage, ingredientsOnPage, ...shared } = pageSchema.properties;
+    expect(instructionsOnPage).toBeDefined();
+    expect(ingredientsOnPage).toBeDefined();
+    expect(shared).toEqual(photoSchema.properties);
   });
 
   it('keeps the text import request unchanged', async () => {
@@ -551,7 +735,10 @@ describe('importFromImages', () => {
     const cases: [unknown, unknown][] = [
       [{ ...MINIMAL, title: 'NOT_A_RECIPE' }, { kind: 'not_a_recipe' }],
       [{ ...MINIMAL, title: ' ' }, { kind: 'unusable' }],
-      [{ ...MINIMAL, servings: 0, photoId: 'x' }, { kind: 'ok', recipe: { ...MINIMAL, servings: 1 } }],
+      [
+        { ...MINIMAL, servings: 0, photoId: 'x' },
+        { kind: 'ok', recipe: { ...MINIMAL, servings: 1 }, warnings: [] },
+      ],
     ];
     for (const [reply, outcome] of cases) {
       const { deps } = fakeImportDeps(JSON.stringify(reply));
@@ -574,10 +761,40 @@ describe('importFromHtml', () => {
 
   it('treats a page with no text as empty', async () => {
     const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
-    expect(await importFromHtml('<html><body> </body></html>', deps)).toEqual({
+    expect(await importFromHtml('<html><body> </body></html>', deps)).toMatchObject({
       kind: 'empty_source',
     });
     expect(calls).toHaveLength(0);
+  });
+
+  it('reads JSON-LD, and checks against it', async () => {
+    const node = {
+      '@type': 'Recipe',
+      name: 'Tomato soup',
+      recipeIngredient: ['6 tomatoes', '1 onion', '2 cloves garlic', 'salt', 'pepper', 'oil'],
+      recipeInstructions: [
+        { '@type': 'HowToStep', text: 'Chop.' },
+        { '@type': 'HowToStep', text: 'Simmer.' },
+      ],
+    };
+    const { deps } = fakeImportDeps(JSON.stringify({ ...MINIMAL, steps: [] }));
+    const outcome = await importFromHtml(ldBlock(JSON.stringify(node)), deps);
+    expect(outcome.log?.source).toBe('jsonld');
+    // JSON-LD has steps, so they were dropped; 1 of 6 ingredients is too few.
+    expect(outcome).toMatchObject({
+      kind: 'ok',
+      warnings: [{ code: 'INSTRUCTIONS_DROPPED' }, { code: 'INGREDIENT_COUNT_MISMATCH' }],
+    });
+  });
+
+  it('reports a page with no method as a source failure', async () => {
+    const html = '<main><h1>Tomato soup</h1><p>You need 6 tomatoes. Video below.</p></main>';
+    const { deps } = fakeImportDeps(
+      JSON.stringify({ ...MINIMAL, steps: [], instructionsOnPage: false }),
+    );
+    const outcome = await importFromHtml(html, deps);
+    expect(outcome.log?.source).toBe('text');
+    expect(outcome).toMatchObject({ kind: 'ok', warnings: [{ code: 'INSTRUCTIONS_NOT_ON_PAGE' }] });
   });
 });
 
@@ -660,6 +877,14 @@ function restoreEnv(name: 'GEMINI_API_KEY' | 'TRANSLATE_PROVIDER', value: string
   }
 }
 
+/** An outcome without its log line or warnings, for tests about translation. */
+function core(outcome: ImportOutcome): Record<string, unknown> {
+  const rest: Record<string, unknown> = { ...outcome };
+  delete rest.log;
+  delete rest.warnings;
+  return rest;
+}
+
 describe('readImportTranslateTo', () => {
   it('accepts a supported UI language, including aliases', () => {
     expect(readImportTranslateTo(undefined)).toEqual({ ok: true });
@@ -679,7 +904,7 @@ describe('import translation', () => {
   it('skips translation when the languages match', async () => {
     const { calls, translator } = prefixTranslator('it');
     const { deps } = fakeImportDeps(JSON.stringify(ITALIAN), translator);
-    await expect(importFromSource('soup', deps, 'it')).resolves.toEqual({
+    expect(core(await importFromSource('soup', deps, 'it'))).toEqual({
       kind: 'ok',
       recipe: ITALIAN,
     });
@@ -689,7 +914,7 @@ describe('import translation', () => {
   it('applies translation when the languages differ', async () => {
     const { calls, translator } = prefixTranslator('it');
     const { deps } = fakeImportDeps(JSON.stringify(ITALIAN), translator);
-    await expect(importFromSource('soup', deps, 'uk')).resolves.toEqual({
+    expect(core(await importFromSource('soup', deps, 'uk'))).toEqual({
       kind: 'ok',
       recipe: ITALIAN,
       translation: { kind: 'ok', lang: 'uk', recipe: UKRAINIAN },
@@ -702,7 +927,7 @@ describe('import translation', () => {
   it('labels a missing lang and discards the translation when detection matches', async () => {
     const { calls, translator } = prefixTranslator('uk');
     const { deps } = fakeImportDeps(JSON.stringify(MINIMAL), translator);
-    await expect(importFromSource('soup', deps, 'uk')).resolves.toEqual({
+    expect(core(await importFromSource('soup', deps, 'uk'))).toEqual({
       kind: 'ok',
       recipe: { ...MINIMAL, lang: 'uk' },
     });
@@ -714,7 +939,7 @@ describe('import translation', () => {
   it('labels a missing lang and returns the translation when detection differs', async () => {
     const { calls, translator } = prefixTranslator('it');
     const { deps } = fakeImportDeps(JSON.stringify(MINIMAL), translator);
-    await expect(importFromSource('soup', deps, 'uk')).resolves.toEqual({
+    expect(core(await importFromSource('soup', deps, 'uk'))).toEqual({
       kind: 'ok',
       recipe: ITALIAN,
       translation: { kind: 'ok', lang: 'uk', recipe: UKRAINIAN },
@@ -726,7 +951,7 @@ describe('import translation', () => {
   it('discards the translation when bare zh is detected as the UI script', async () => {
     const { calls, translator } = prefixTranslator('zh-Hans');
     const { deps } = fakeImportDeps(JSON.stringify({ ...MINIMAL, lang: 'zh' }), translator);
-    await expect(importFromSource('soup', deps, 'zh-Hans')).resolves.toEqual({
+    expect(core(await importFromSource('soup', deps, 'zh-Hans'))).toEqual({
       kind: 'ok',
       recipe: { ...MINIMAL, lang: 'zh-Hans' },
     });
@@ -742,7 +967,7 @@ describe('import translation', () => {
       ...UKRAINIAN,
       lang: 'zh-Hans',
     };
-    await expect(importFromSource('soup', deps, 'zh-Hans')).resolves.toEqual({
+    expect(core(await importFromSource('soup', deps, 'zh-Hans'))).toEqual({
       kind: 'ok',
       recipe: { ...MINIMAL, lang: 'zh-Hant' },
       translation: { kind: 'ok', lang: 'zh-Hans', recipe: traditional },
@@ -758,7 +983,7 @@ describe('import translation', () => {
     ];
     for (const translator of translators) {
       const { deps } = fakeImportDeps(JSON.stringify(ITALIAN), translator);
-      await expect(importFromSource('soup', deps, 'uk')).resolves.toEqual({
+      expect(core(await importFromSource('soup', deps, 'uk'))).toEqual({
         kind: 'ok',
         recipe: ITALIAN,
         translation: { kind: 'failed' },
@@ -772,7 +997,7 @@ describe('import translation', () => {
     const html =
       '<html><head><script>var tracking = 1;</script></head>' +
       '<body><nav>Home</nav><main><p>Simmer the tomatoes.</p></main></body></html>';
-    await expect(importFromHtml(html, deps, 'uk')).resolves.toEqual({
+    expect(core(await importFromHtml(html, deps, 'uk'))).toEqual({
       kind: 'ok',
       recipe: ITALIAN,
       translation: { kind: 'ok', lang: 'uk', recipe: UKRAINIAN },
@@ -792,9 +1017,11 @@ describe('import translation', () => {
       delete process.env.TRANSLATE_PROVIDER;
       const missing = fakeImportDeps(JSON.stringify(ITALIAN));
       const missingTranslator = recipeImportDepsFromEnv().translator;
-      await expect(
-        importFromSource('soup', { ...missing.deps, translator: missingTranslator }, 'uk'),
-      ).resolves.toEqual({
+      expect(
+        core(
+          await importFromSource('soup', { ...missing.deps, translator: missingTranslator }, 'uk'),
+        ),
+      ).toEqual({
         kind: 'ok',
         recipe: ITALIAN,
         translation: { kind: 'failed' },
@@ -804,9 +1031,15 @@ describe('import translation', () => {
       process.env.TRANSLATE_PROVIDER = 'nmt';
       const unavailable = fakeImportDeps(JSON.stringify(ITALIAN));
       const unavailableTranslator = recipeImportDepsFromEnv().translator;
-      await expect(
-        importFromSource('soup', { ...unavailable.deps, translator: unavailableTranslator }, 'uk'),
-      ).resolves.toEqual({
+      expect(
+        core(
+          await importFromSource(
+            'soup',
+            { ...unavailable.deps, translator: unavailableTranslator },
+            'uk',
+          ),
+        ),
+      ).toEqual({
         kind: 'ok',
         recipe: ITALIAN,
         translation: { kind: 'failed' },

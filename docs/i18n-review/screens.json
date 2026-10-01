@@ -104,7 +104,7 @@
   {
     "id": "import-preview",
     "route": "/import",
-    "setup": "From /import with bulk off (not under /collections/…/import), extract one recipe (a single https URL, or pasted recipe text) and stop when the \"Fix it here before saving\" banner and the form are showing. Do not press Save. Extraction calls Gemini and writes nothing. The guessed-language line, translate checkbox, failure notice, and pasted-text hint are separate entries.",
+    "setup": "From /import with bulk off (not under /collections/…/import), extract one recipe (a single https URL, or pasted recipe text) and stop when the form is showing. A clean import shows no warning box above the form. Do not press Save. Extraction calls Gemini and writes nothing. The guessed-language line, translate checkbox, failure notice, pasted-text hint, and import warnings are separate entries.",
     "needsData": false
   },
   {
@@ -136,6 +136,24 @@
     "route": "/import",
     "setup": "Import with the bulk-import checkbox on, so the batch \"Translate into …\" checkbox is visible and checked. Do not paste links and do not extract. Bulk extract saves recipes.",
     "needsData": false
+  },
+  {
+    "id": "import-preview-warnings",
+    "route": "/import",
+    "setup": "From /import with bulk off, paste recipe text that lists ingredients but has no method, for example \"Tomato soup\\n6 tomatoes\\n1 onion\\nsalt\", and extract. Stop when the \"Check these before saving:\" box with a specific warning (such as no instructions found) shows above the form. Do not press Save. Extraction calls Gemini and writes nothing. If the import returns no warning, mark skipped: needs data.",
+    "needsData": false
+  },
+  {
+    "id": "import-error-model-failed",
+    "route": "/import",
+    "setup": "The import error \"Couldn't read that recipe — try again.\" under the textarea, which shows when the model call fails. It cannot be produced on demand; if it does not happen during the run, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "import-bulk-summary",
+    "route": "/import",
+    "setup": "After a bulk import finished: the \"{n} imported\" heading, the \"need attention\" and \"failed\" filter buttons, rows with a warning line or a \"Couldn't import this recipe.\" line with its own Retry, and Show all after a filter is pressed. Bulk import saves recipes, so the review does not run one; capture this only if a bulk summary is already on screen from the person running the review, otherwise mark skipped: needs data. Do not press Retry or Try again.",
+    "needsData": true
   },
   {
     "id": "recipe-view-translate-labelled",
@@ -177,6 +195,18 @@
     "id": "recipe-view",
     "route": "/recipe/:id",
     "setup": "An owned recipe as it loads: title, ingredients, and steps. The translate chip may sit on the prep/cook line. Do not change servings, check ingredients, or advance steps. Do not tap the translate chip. Recipe content is not judged. If there is no owned recipe, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-import-warnings",
+    "route": "/recipe/<id>",
+    "setup": "An own recipe (or one shared with you as editor) that was imported with warnings and not dismissed, so the warning box shows under the title with Retry import, View original, and Dismiss. Do not press Dismiss (it writes) and do not confirm a replacement. If no recipe in the account has an undismissed import warning, mark skipped: needs data. A recipe shared with you as viewer never shows the box.",
+    "needsData": true
+  },
+  {
+    "id": "recipe-view-import-retry-sheet",
+    "route": "/recipe/<id>",
+    "setup": "From recipe-view-import-warnings, press Retry import (it calls Gemini and writes nothing) and wait for the \"Replace the ingredients and steps with the new import?\" sheet, with its body, any \"The new import has these issues too:\" list, and Replace and Cancel. Capture it, then press Cancel. Never press Replace: it overwrites the recipe.",
     "needsData": true
   },
   {

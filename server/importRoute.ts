@@ -66,6 +66,7 @@ export type ImportImagesCheck =
 const NOTHING_TO_IMPORT = 'Provide a URL, recipe text, or photos.';
 const BODY_TOO_LARGE = "That's too large to import — try fewer photos.";
 const PHOTOS_NOT_A_RECIPE = "Couldn't find a recipe in those photos.";
+const MODEL_FAILED = "Couldn't read that recipe — try again.";
 
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
@@ -174,6 +175,8 @@ function outcomeResponse(
   switch (outcome.kind) {
     case 'ok': {
       const recipe = { ...outcome.recipe, sourceUrl };
+      // Codes only; the client owns the words (i18n principle 10).
+      const warnings = outcome.warnings.length > 0 ? { warnings: outcome.warnings } : {};
       const translation = outcome.translation;
       if (translation?.kind === 'ok') {
         return Response.json({
@@ -182,12 +185,13 @@ function outcomeResponse(
             lang: translation.lang,
             recipe: { ...translation.recipe, sourceUrl },
           },
+          ...warnings,
         });
       }
       if (translation?.kind === 'failed') {
-        return Response.json({ recipe, translationFailed: true });
+        return Response.json({ recipe, translationFailed: true, ...warnings });
       }
-      return Response.json({ recipe });
+      return Response.json({ recipe, ...warnings });
     }
     case 'empty_source':
       return fail('import-empty', NOTHING_TO_IMPORT, 400);
@@ -197,6 +201,8 @@ function outcomeResponse(
       return fail('import-extract-failed', 'Extraction failed — no structured result.', 502);
     case 'unusable':
       return fail('import-unusable', 'Extraction produced an unusable recipe.', 502);
+    case 'model_error':
+      return fail('import-model-failed', MODEL_FAILED, 502);
   }
 }
 

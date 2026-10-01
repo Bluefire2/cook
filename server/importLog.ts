@@ -5,12 +5,20 @@
  * `jsonPayload.event="import"`.
  *
  * Logged: the account `sub`, how the import arrived, the page address without
- * its query string or fragment, the outcome, counts, and timing. Never logged:
+ * its query string or fragment, whether the page was read from its Recipe
+ * JSON-LD or its text, each Gemini attempt's result, the warning codes on the
+ * result, the outcome, counts, and timing. Never logged:
  * the email, recipe text, page HTML, pasted text, photo bytes, or an error
  * message (SDK errors can echo the request). `/privacy` and `/terms` describe
  * this line; change them with it.
  */
-import type { ImportOutcome, PageFetchOutcome } from './recipeImport.ts';
+import type { ImportWarningCode } from './importWarnings.ts';
+import type {
+  ImportAttempt,
+  ImportOutcome,
+  ImportSourceRead,
+  PageFetchOutcome,
+} from './recipeImport.ts';
 
 export type ImportVia = 'url' | 'paste' | 'photos' | 'extension';
 
@@ -42,6 +50,12 @@ export interface ImportLogEntry {
   ingredients?: number;
   steps?: number;
   translation?: 'ok' | 'failed';
+  /** Page and paste imports: what Gemini read. */
+  source?: ImportSourceRead;
+  /** Page and paste imports: each Gemini call's result, in order. */
+  attempts?: ImportAttempt['result'][];
+  /** Warning codes on the returned recipe. */
+  codes?: ImportWarningCode[];
   photos?: number;
   bytes?: number;
   /** A numeric HTTP status on a thrown provider error (429, 503, …), when it has one. */
@@ -77,7 +91,14 @@ export function thrownStatus(err: unknown): number | undefined {
 /** Records an `ImportOutcome` on the entry: its kind, and counts when it is a recipe. */
 export function noteImportOutcome(entry: ImportLogEntry, outcome: ImportOutcome): void {
   entry.outcome = outcome.kind;
+  const log = outcome.log;
+  if (log !== undefined) {
+    if (log.source !== undefined) entry.source = log.source;
+    entry.attempts = log.attempts.map((attempt) => attempt.result);
+    if (log.errorStatus !== undefined) entry.errorStatus = log.errorStatus;
+  }
   if (outcome.kind !== 'ok') return;
+  if (outcome.warnings.length > 0) entry.codes = outcome.warnings.map((w) => w.code);
   entry.ingredients = outcome.recipe.ingredientSections.reduce(
     (n, section) => n + section.items.length,
     0,
