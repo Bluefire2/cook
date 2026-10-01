@@ -1368,29 +1368,15 @@ export async function cascadeRecipeDelete(
 
   for (const chunk of chunkByCost(childJobs, cascadeJobCost, 400)) {
     const serverUpdatedAt = Date.now();
-    await getFirestore().runTransaction(async (tx) => {
-      // Firestore transactions reject any read after a write, so read the whole chunk first.
-      const refs = chunk.map((job) => colRef(uid, job.kind).doc(job.id));
-      const snaps = await tx.getAll(...refs);
-      chunk.forEach((job, i) => {
-        const snap = snaps[i];
-        const stored = readStoredState(
-          snap.exists ? (snap.data() as Record<string, unknown>) : undefined,
-        );
-        const writeAt = cascadeTombstoneAt(job, at, stored);
-        if (writeAt === null) {
-          return;
-        }
-        tx.set(refs[i], tombstonePayload(job.id, writeAt, serverUpdatedAt), { merge: false });
-        if (job.kind === 'photos') {
-          tx.set(
-            gcsDeletesRef(uid).doc(job.id),
-            { photoId: job.id, createdAt: Date.now() },
-            { merge: true },
-          );
-        }
-      });
-    });
+    await getFirestore().runTransaction((tx) =>
+      tombstoneChunk(
+        tx,
+        chunk,
+        tombstoneRefs(uid),
+        (stored) => chunk.map((job, i) => cascadeTombstoneAt(job, at, stored[i])),
+        serverUpdatedAt,
+      ),
+    );
   }
 
   // Query and puts are separate steps, not one transaction. putDoc
@@ -1410,6 +1396,133 @@ export async function cascadeRecipeDelete(
   return { photoIds: [...photoIds], gcsPending: photoIds.size > 0 };
 }
 
+export type TombstoneSnapshot = {
+  exists: boolean;
+  data: () => Record<string, unknown> | undefined;
+};
+
+export type TombstoneTx<Ref> = {
+  getAll: (...refs: Ref[]) => Promise<TombstoneSnapshot[]>;
+  set: (ref: Ref, data: Record<string, unknown>, options: { merge: boolean }) => void;
+};
+
+export type TombstoneRefs<Ref> = {
+  doc: (job: { kind: StoreKind; id: string }) => Ref;
+  gcsDelete: (photoId: string) => Ref;
+};
+
+function tombstoneRefs(uid: string): TombstoneRefs<DocumentReference> {
+  return {
+    doc: (job) => colRef(uid, job.kind).doc(job.id),
+    gcsDelete: (photoId) => gcsDeletesRef(uid).doc(photoId),
+  };
+}
+
+/**
+ * Tombstone one chunk of docs inside a transaction. Firestore transactions
+ * reject any read after a write ("Firestore transactions require all reads
+ * to be executed before all writes"), so the whole chunk is read with one
+ * getAll first. `writeAts` sees every stored state in the chunk and returns
+ * each job's tombstone time, or null to leave that doc. A photo tombstone
+ * also queues its `gcsDeletes` doc.
+ */
+export async function tombstoneChunk<Ref, Job extends { kind: StoreKind; id: string }>(
+  tx: TombstoneTx<Ref>,
+  jobs: Job[],
+  refs: TombstoneRefs<Ref>,
+  writeAts: (stored: Array<StoredMutationState | null>) => Array<number | null>,
+  serverUpdatedAt: number,
+): Promise<void> {
+  const docRefs = jobs.map((job) => refs.doc(job));
+  const snaps = await tx.getAll(...docRefs);
+  const decided = writeAts(
+    snaps.map((snap) => readStoredState(snap.exists ? snap.data() : undefined)),
+  );
+  jobs.forEach((job, i) => {
+    const writeAt = decided[i];
+    if (writeAt === null) {
+      return;
+    }
+    tx.set(docRefs[i], tombstonePayload(job.id, writeAt, serverUpdatedAt), { merge: false });
+    if (job.kind === 'photos') {
+      tx.set(refs.gcsDelete(job.id), { photoId: job.id, createdAt: Date.now() }, { merge: true });
+    }
+  });
+}
+
+export type ChatClearMessage = { id: string; photoIds: string[] };
+
+/**
+ * Messages a clear at `at` tombstones: live and created at or before `at`.
+ * A message created after the clear is not listed, so its photos are kept.
+ * A photo id is listed once, under the first message that names it.
+ */
+export function chatMessagesToClear(
+  docs: Array<{ id: string; data: Record<string, unknown> }>,
+  at: number,
+): ChatClearMessage[] {
+  const seen = new Set<string>();
+  const messages: ChatClearMessage[] = [];
+  for (const { id, data } of docs) {
+    const createdAt = finiteNumber(data.createdAt);
+    if (createdAt === undefined || createdAt > at || !isLiveDoc(data)) {
+      continue;
+    }
+    const photoIds: string[] = [];
+    for (const pid of Array.isArray(data.photoIds) ? data.photoIds : []) {
+      if (isUuid(pid) && !seen.has(pid)) {
+        seen.add(pid);
+        photoIds.push(pid);
+      }
+    }
+    messages.push({ id, photoIds });
+  }
+  return messages;
+}
+
+/** A message and its photos share a transaction; a photo also writes `gcsDeletes`. */
+export function chatClearMessageCost(message: ChatClearMessage): number {
+  return 1 + message.photoIds.length * cascadeJobCost({ kind: 'photos' });
+}
+
+export type ChatClearJob = {
+  kind: 'chatMessages' | 'photos';
+  id: string;
+  /** Index in the chunk of the message job this photo belongs to (its own index for a message). */
+  message: number;
+};
+
+export function chatClearJobs(messages: ChatClearMessage[]): ChatClearJob[] {
+  const jobs: ChatClearJob[] = [];
+  for (const message of messages) {
+    const index = jobs.length;
+    jobs.push({ kind: 'chatMessages', id: message.id, message: index });
+    for (const photoId of message.photoIds) {
+      jobs.push({ kind: 'photos', id: photoId, message: index });
+    }
+  }
+  return jobs;
+}
+
+/**
+ * Plain last-write-wins at `at` for every job, except that a photo is
+ * tombstoned only when its message is: a message stored newer than the clear
+ * keeps its photos.
+ */
+export function chatClearWriteAts(
+  jobs: ChatClearJob[],
+  stored: Array<StoredMutationState | null>,
+  at: number,
+): Array<number | null> {
+  const allowed = (i: number) => compareMutation(stored[i], at, 'tombstone').allow;
+  return jobs.map((job, i) => (allowed(job.message) && allowed(i) ? at : null));
+}
+
+/**
+ * A thread's messages and their photos are tombstoned together, one
+ * transaction per chunk, so a failure leaves each chunk either cleared with
+ * its photos or untouched. Only a thread above one chunk can clear partially.
+ */
 export async function clearChatForRecipe(
   uid: string,
   recipeId: string,
@@ -1418,48 +1531,23 @@ export async function clearChatForRecipe(
   const messagesSnap = await colRef(uid, 'chatMessages')
     .where('recipeId', '==', recipeId)
     .get();
+  const messages = chatMessagesToClear(
+    messagesSnap.docs.map((doc) => ({ id: doc.id, data: doc.data() })),
+    at,
+  );
 
-  const toTombstone: string[] = [];
-  const photoIds = new Set<string>();
-
-  for (const doc of messagesSnap.docs) {
-    const data = doc.data() as Record<string, unknown>;
-    const createdAt = finiteNumber(data.createdAt);
-    if (createdAt !== undefined && createdAt <= at && isLiveDoc(data)) {
-      toTombstone.push(doc.id);
-      for (const pid of (data.photoIds as string[] | undefined) ?? []) {
-        if (isUuid(pid)) {
-          photoIds.add(pid);
-        }
-      }
-    } else if (isLiveDoc(data)) {
-      for (const pid of (data.photoIds as string[] | undefined) ?? []) {
-        if (isUuid(pid)) {
-          photoIds.add(pid);
-        }
-      }
-    }
-  }
-
-  for (const chunk of chunkForBatch(toTombstone, 400)) {
+  for (const chunk of chunkByCost(messages, chatClearMessageCost, 400)) {
+    const jobs = chatClearJobs(chunk);
     const serverUpdatedAt = Date.now();
-    await getFirestore().runTransaction(async (tx) => {
-      for (const messageId of chunk) {
-        const ref = colRef(uid, 'chatMessages').doc(messageId);
-        const snap = await tx.get(ref);
-        const stored = readStoredState(
-          snap.exists ? (snap.data() as Record<string, unknown>) : undefined,
-        );
-        const cmp = compareMutation(stored, at, 'tombstone');
-        if (cmp.allow) {
-          tx.set(ref, tombstonePayload(messageId, at, serverUpdatedAt), { merge: false });
-        }
-      }
-    });
-  }
-
-  for (const photoId of photoIds) {
-    await tombstonePhotoWithGcs(uid, photoId, at);
+    await getFirestore().runTransaction((tx) =>
+      tombstoneChunk(
+        tx,
+        jobs,
+        tombstoneRefs(uid),
+        (stored) => chatClearWriteAts(jobs, stored, at),
+        serverUpdatedAt,
+      ),
+    );
   }
 }
 
