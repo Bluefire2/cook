@@ -37,3 +37,12 @@ export function writePersistedLibraryView(view: LibraryView): void {
 export function clearPersistedLibraryView(): void {
   writePersistedLibraryView(EMPTY);
 }
+
+/**
+ * Keep the search text and drop the all-collections scope. Opening one list
+ * from the index uses this, because Library reads the stored view on mount.
+ */
+export function persistScopedLibraryView(): void {
+  const { query } = readPersistedLibraryView();
+  writePersistedLibraryView({ query, browseAll: false });
+}

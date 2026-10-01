@@ -62,9 +62,12 @@ export const en = {
   'library.inviteCopyFailed': 'Invite link created, but it could not be copied',
   'library.collectionsNav': 'Collections',
   'library.recipes': 'Recipes',
+  'library.recipeCount': {
+    one: '{count} recipe',
+    other: '{count} recipes',
+  },
   'library.sharedByLabel': '{name} (shared by {email})',
   'library.sharedLabel': '{name} (shared)',
-  'library.new': 'New',
   'library.rename': 'Rename',
   'library.sharedBannerByEdit': 'Shared with you by {email}. You can edit these recipes.',
   'library.sharedBannerByView': 'Shared with you by {email}. View only.',

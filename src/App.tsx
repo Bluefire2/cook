@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
 import SyncToast from './components/SyncToast';
 import { routePaths } from './lib/routePaths';
+import CollectionsIndex from './screens/CollectionsIndex';
 import Library from './screens/Library';
 import RecipeView from './screens/RecipeView';
 import RecipeEdit from './screens/RecipeEdit';
@@ -20,7 +21,7 @@ function AppRoutes() {
         <Route path={routePaths.home} element={null} />
         <Route path={routePaths.collection} element={null} />
       </Route>
-      <Route path={routePaths.collectionsIndex} element={<Navigate to="/" replace />} />
+      <Route path={routePaths.collectionsIndex} element={<CollectionsIndex />} />
       <Route path={routePaths.collectionsUnknown} element={<Navigate to="/" replace />} />
       <Route path={routePaths.collectionImport} element={<ImportScreen />} />
       <Route
