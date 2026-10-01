@@ -51,11 +51,16 @@ export default function ShareCollectionSheet({
   const [linkBusy, setLinkBusy] = useState(false);
   // Copy link says "Saving…" only while a mint is in flight, not during revoke.
   const [mintingLink, setMintingLink] = useState(false);
+  // Set in the same turn as the mint request, before React disables the
+  // switch, so a click cannot leave the link pane before the one-time URL
+  // is on screen. The server does not return that URL again.
+  const holdPane = useRef(false);
   // Link mint/revoke errors show in the link block, not under the email form.
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkRole, setLinkRole] = useState<GrantRole>('viewer');
   // Email is the pane that opens. Switching keeps the form, a minted URL,
-  // and any request already in flight.
+  // and any request already in flight, except during a mint: the switch is
+  // held so the one-time URL is visible when the request finishes.
   const [method, setMethod] = useState<'email' | 'link'>('email');
   // The raw link is only in this state: the server never returns it again.
   const [minted, setMinted] = useState<MintedLink | null>(null);
@@ -172,6 +177,7 @@ export default function ShareCollectionSheet({
   const createLink = async () => {
     if (inFlight.current) return;
     inFlight.current = true;
+    holdPane.current = true;
     setLinkError(null);
     setLinkBusy(true);
     setMintingLink(true);
@@ -185,6 +191,7 @@ export default function ShareCollectionSheet({
       setLinkError(err instanceof Error ? err.message : t('error.sharingUpdate'));
     } finally {
       inFlight.current = false;
+      holdPane.current = false;
       setLinkBusy(false);
       setMintingLink(false);
     }
@@ -275,8 +282,12 @@ export default function ShareCollectionSheet({
         <button
           type="button"
           aria-pressed={method === 'email'}
-          onClick={() => setMethod('email')}
-          className={`flex-1 rounded-full py-2.5 font-medium ${
+          disabled={mintingLink}
+          onClick={() => {
+            if (holdPane.current) return;
+            setMethod('email');
+          }}
+          className={`flex-1 rounded-full py-2.5 font-medium disabled:opacity-40 ${
             method === 'email'
               ? 'bg-ink text-page'
               : 'border border-line-strong text-ink-muted hover:bg-surface-muted active:bg-surface-muted'
@@ -287,8 +298,12 @@ export default function ShareCollectionSheet({
         <button
           type="button"
           aria-pressed={method === 'link'}
-          onClick={() => setMethod('link')}
-          className={`flex-1 rounded-full py-2.5 font-medium ${
+          disabled={mintingLink}
+          onClick={() => {
+            if (holdPane.current) return;
+            setMethod('link');
+          }}
+          className={`flex-1 rounded-full py-2.5 font-medium disabled:opacity-40 ${
             method === 'link'
               ? 'bg-ink text-page'
               : 'border border-line-strong text-ink-muted hover:bg-surface-muted active:bg-surface-muted'
