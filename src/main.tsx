@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { clearLibrary, discardLegacyCookDb, markLoaded } from './lib/libraryMemory';
 import { fetchSession, setupSessionTriggers } from './lib/session';
+import { setupServiceWorkerUpdateChecks } from './lib/serviceWorkerUpdates';
 import { setupSyncTriggers, triggerSyncAfterSession } from './lib/syncEngine';
 import { applyLocale, settings } from './lib/settings';
 import { applyTheme } from './lib/theme';
@@ -23,6 +24,7 @@ createRoot(document.getElementById('root')!).render(
 
 setupSyncTriggers();
 setupSessionTriggers();
+setupServiceWorkerUpdateChecks();
 
 void fetchSession()
   .then((result) => {
