@@ -22,6 +22,8 @@ export type AgentState = {
   messages: AgentMessage[];
   checked: Record<string, Record<string, true>>;
   applies: Record<string, MoveApplyStatus>;
+  /** True from the moment a collection move starts until that apply settles. Survives Clear. */
+  moveBusy: boolean;
   streaming: boolean;
   error: string | null;
   toolLabel: string | null;
@@ -31,6 +33,7 @@ export const initialAgentState: AgentState = {
   messages: [],
   checked: {},
   applies: {},
+  moveBusy: false,
   streaming: false,
   error: null,
   toolLabel: null,
@@ -51,6 +54,7 @@ export function beginMoveApplyState(state: AgentState, cardId: string): AgentSta
   }
   return {
     ...state,
+    moveBusy: true,
     applies: { ...state.applies, [cardId]: { phase: 'applying' } },
   };
 }
@@ -193,8 +197,18 @@ export function toggleChecked(state: AgentState, cardId: string, itemKey: string
   return { ...state, checked };
 }
 
-export function clearThread(_state: AgentState): AgentState {
+export function clearThread(state: AgentState): AgentState {
+  if (state.moveBusy) {
+    return { ...initialAgentState, moveBusy: true };
+  }
   return { ...initialAgentState };
+}
+
+export function endMoveBusyState(state: AgentState): AgentState {
+  if (!state.moveBusy) {
+    return state;
+  }
+  return { ...state, moveBusy: false };
 }
 
 export function beginTurn(state: AgentState, userText: string): AgentState {
@@ -212,12 +226,25 @@ export function beginTurn(state: AgentState, userText: string): AgentState {
   };
 }
 
+/** Replay keeps the proposal summary. The id lists stay on the in-memory card for apply. */
+function collectionMoveReplayData(data: unknown): unknown {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    return data;
+  }
+  const record = data as Record<string, unknown>;
+  return {
+    destination: record.destination,
+    preview: record.preview,
+    total: record.total,
+  };
+}
+
 function wireCards(cards: AgentWireCard[]): AgentWireCard[] {
   return cards.map((c) => ({
     type: c.type,
     v: c.v,
     id: c.id,
-    data: c.data,
+    data: c.type === 'collection_move' ? collectionMoveReplayData(c.data) : c.data,
   }));
 }
 
@@ -288,6 +315,7 @@ type AgentAction =
   | { type: 'event'; event: AgentServerEvent }
   | { type: 'toggle'; cardId: string; itemKey: string }
   | { type: 'beginMoveApply'; cardId: string }
+  | { type: 'endMoveBusy' }
   | {
       type: 'finishMoveApply';
       cardId: string;
@@ -314,6 +342,8 @@ function reduce(current: AgentState, action: AgentAction): AgentState {
       return toggleChecked(current, action.cardId, action.itemKey);
     case 'beginMoveApply':
       return beginMoveApplyState(current, action.cardId);
+    case 'endMoveBusy':
+      return endMoveBusyState(current);
     case 'finishMoveApply':
       return finishMoveApplyState(current, action.cardId, action.status);
     case 'clear':

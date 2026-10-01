@@ -59,11 +59,13 @@ function MessageRow({
   message,
   checked,
   applies,
+  moveBusy,
   onToggle,
 }: {
   message: AgentMessage;
   checked: Record<string, Record<string, true>>;
   applies: Record<string, MoveApplyStatus>;
+  moveBusy: boolean;
   onToggle: (cardId: string, itemKey: string) => void;
 }) {
   const isUser = message.role === 'user';
@@ -91,7 +93,9 @@ function MessageRow({
           </div>
         )}
         {message.cards?.map((card) => (
-          <div key={card.id}>{renderAgentCard(card, checked, onToggle, applies)}</div>
+          <div key={card.id}>
+            {renderAgentCard(card, { checked, onToggle, applies, moveBusy })}
+          </div>
         ))}
       </div>
     </div>
@@ -231,6 +235,7 @@ export default function AssistantScreen() {
             message={message}
             checked={state.checked}
             applies={state.applies}
+            moveBusy={state.moveBusy}
             onToggle={onToggle}
           />
         ))}

@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useT } from '../../i18n';
-import { collectionStore, useCollections } from '../../lib/collectionStore';
-import { winningMembership } from '../../lib/collectionMembership';
+import { collectionStore } from '../../lib/collectionStore';
 import { useRecipes } from '../../lib/recipeStore';
 import { primaryBtn } from '../../lib/uiClasses';
 import {
@@ -11,72 +10,57 @@ import {
   getAgentSnapshot,
   type MoveApplyStatus,
 } from '../store';
-import type { CollectionMoveData } from './parse';
+import type { CollectionMoveData, CollectionMoveFrom } from './parse';
 
-function previewFromLabel(
-  from: CollectionMoveData['preview'][number]['from'],
-  tr: ReturnType<typeof useT>,
-): string {
+function fromLabel(from: CollectionMoveFrom, tr: ReturnType<typeof useT>): string {
   if (from.kind === 'unfiled') {
     return tr('library.recipes');
   }
   return from.name;
 }
 
-function resolveRow(
-  recipeId: string,
-  data: CollectionMoveData,
-  recipes: readonly { id: string; title: string }[] | undefined,
-  collections: readonly { id: string; name: string }[] | undefined,
-  membership: Map<string, string>,
-  tr: ReturnType<typeof useT>,
-): { title: string; fromLabel: string } {
-  const preview = data.preview.find((row) => row.id === recipeId);
-  const recipe = recipes?.find((r) => r.id === recipeId);
-  const title = recipe?.title ?? preview?.title ?? recipeId;
-
-  const collectionId = membership.get(recipeId);
-  if (collectionId === undefined) {
-    return {
-      title,
-      fromLabel: preview ? previewFromLabel(preview.from, tr) : tr('library.recipes'),
-    };
-  }
-  const collection = collections?.find((c) => c.id === collectionId);
-  if (collection) {
-    return { title, fromLabel: collection.name };
-  }
-  if (preview) {
-    return { title, fromLabel: previewFromLabel(preview.from, tr) };
-  }
-  return { title, fromLabel: tr('library.recipes') };
-}
-
 export default function CollectionMoveCard({
   data,
   cardId,
   apply,
+  moveBusy,
 }: {
   data: CollectionMoveData;
   cardId: string;
   apply?: MoveApplyStatus;
-  checked?: Record<string, true>;
-  onToggle?: (itemKey: string) => void;
+  moveBusy: boolean;
 }) {
   const tr = useT();
   const recipes = useRecipes();
-  const collections = useCollections();
   const [expanded, setExpanded] = useState(false);
 
-  const membership = useMemo(
-    () => (collections ? winningMembership(collections) : new Map<string, string>()),
-    [collections],
-  );
+  const titleById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const recipe of recipes ?? []) {
+      map.set(recipe.id, recipe.title);
+    }
+    return map;
+  }, [recipes]);
 
-  const libraryReady = recipes !== undefined && collections !== undefined;
+  const fromById = useMemo(() => {
+    const map = new Map<string, CollectionMoveFrom>();
+    for (const source of data.sources) {
+      map.set(source.id, source.from);
+    }
+    return map;
+  }, [data.sources]);
+
+  const previewById = useMemo(() => {
+    const map = new Map<string, CollectionMoveData['preview'][number]>();
+    for (const row of data.preview) {
+      map.set(row.id, row);
+    }
+    return map;
+  }, [data.preview]);
+
+  const libraryReady = recipes !== undefined;
   const count = data.total;
-  const destName =
-    data.destination.kind === 'collection' ? data.destination.name : undefined;
+  const destName = data.destination.kind === 'collection' ? data.destination.name : undefined;
 
   const heading =
     data.destination.kind === 'collection'
@@ -99,8 +83,9 @@ export default function CollectionMoveCard({
   const applying = apply?.phase === 'applying';
   const applied = apply?.phase === 'applied';
   const errorMessage = apply?.phase === 'error' ? apply.message : null;
+  const otherMoveBusy = moveBusy && !applying;
 
-  const buttonDisabled = !libraryReady || applying || applied;
+  const buttonDisabled = !libraryReady || applying || applied || otherMoveBusy;
 
   let buttonLabel = tr('assistant.move');
   if (applying) {
@@ -110,7 +95,7 @@ export default function CollectionMoveCard({
   }
 
   const onMove = async () => {
-    if (!libraryReady) {
+    if (!libraryReady || otherMoveBusy) {
       return;
     }
     if (!beginMoveApply()) {
@@ -138,6 +123,7 @@ export default function CollectionMoveCard({
       }
     } finally {
       endMoveApply();
+      dispatch({ type: 'endMoveBusy' });
     }
   };
 
@@ -147,11 +133,15 @@ export default function CollectionMoveCard({
       <p className="mt-1 text-sm text-ink-muted">{tr('assistant.moveLeaveCurrentCollections')}</p>
       <ul className="mt-2 space-y-1">
         {rows.map((recipeId) => {
-          const row = resolveRow(recipeId, data, recipes, collections, membership, tr);
+          const preview = previewById.get(recipeId);
+          const from = fromById.get(recipeId) ?? preview?.from;
+          const title = titleById.get(recipeId) ?? preview?.title ?? recipeId;
           return (
             <li key={recipeId} className="flex justify-between gap-2 text-sm">
-              <span className="min-w-0 truncate text-ink">{row.title}</span>
-              <span className="shrink-0 text-ink-muted">{row.fromLabel}</span>
+              <span className="min-w-0 truncate text-ink">{title}</span>
+              <span className="shrink-0 text-ink-muted">
+                {from ? fromLabel(from, tr) : tr('library.recipes')}
+              </span>
             </li>
           );
         })}
@@ -170,9 +160,7 @@ export default function CollectionMoveCard({
           {expanded ? tr('assistant.moveShowLess') : tr('assistant.moveShowAll')}
         </button>
       )}
-      {errorMessage !== null && (
-        <p className="mt-2 text-sm text-danger">{errorMessage}</p>
-      )}
+      {errorMessage !== null && <p className="mt-2 text-sm text-danger">{errorMessage}</p>}
       <button
         type="button"
         disabled={buttonDisabled}

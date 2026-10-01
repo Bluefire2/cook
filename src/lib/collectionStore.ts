@@ -470,19 +470,21 @@ export const collectionStore = {
       throw new Error(t('assistant.moveRecipesGone'));
     }
 
-    if (wouldExceedRecipeIdCap(kept)) {
-      throw new Error(t('error.collectionFull'));
-    }
-    if (dest !== 'default') {
+    if (dest === 'default') {
+      if (wouldExceedRecipeIdCap(kept)) {
+        throw new Error(t('error.collectionFull'));
+      }
+    } else {
       const destCollection = getCollection(dest);
-      if (destCollection) {
-        const union = new Set(destCollection.recipeIds);
-        for (const id of kept) {
-          union.add(id);
-        }
-        if (union.size > MAX_COLLECTION_RECIPE_IDS) {
-          throw new Error(t('error.collectionFull'));
-        }
+      if (!destCollection) {
+        throw new Error(t('error.collectionNotFound'));
+      }
+      const union = new Set(destCollection.recipeIds);
+      for (const id of kept) {
+        union.add(id);
+      }
+      if (union.size > MAX_COLLECTION_RECIPE_IDS) {
+        throw new Error(t('error.collectionFull'));
       }
     }
 

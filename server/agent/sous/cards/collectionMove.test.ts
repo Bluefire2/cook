@@ -209,12 +209,66 @@ describe('normalizeCollectionMove', () => {
     }
     expect(result.data.recipeIds).toEqual(['r3']);
   });
+
+  it('deduplicates explicit recipe ids', () => {
+    const ctx = lib(recipes, [{ id: 'col-a', name: 'Alpha', recipeIds: [] }]);
+    const result = normalizeCollectionMove(
+      { recipeIds: ['r1', 'r1', 'r3'], collectionId: 'col-a' },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.data.recipeIds).toEqual(['r1', 'r3']);
+    expect(result.data.total).toBe(2);
+    expect(result.data.sources.map((source) => source.id)).toEqual(['r1', 'r3']);
+  });
+
+  it('treats Recipes as an unfiled source when no collection has that name', () => {
+    const ctx = lib(recipes, collections);
+    const result = normalizeCollectionMove({ fromCollectionId: 'Recipes', collectionId: 'col-a' }, ctx);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.data.recipeIds).toEqual(['r3']);
+  });
+
+  it('uses an owned collection named Recipes as the source', () => {
+    const ctx = lib(recipes, [
+      ...collections,
+      { id: 'recipes-col', name: 'Recipes', recipeIds: ['r3'] },
+    ]);
+    const result = normalizeCollectionMove(
+      { fromCollectionId: 'Recipes', collectionId: 'col-a' },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.data.recipeIds).toEqual(['r3']);
+    expect(result.data.sources[0]?.from).toEqual({ kind: 'collection', name: 'Recipes' });
+  });
+
+  it('rejects an unknown source instead of claiming the recipes are already there', () => {
+    const ctx = lib(recipes, collections);
+    const result = normalizeCollectionMove({ fromCollectionId: 'Soups', collectionId: 'col-a' }, ctx);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error).toContain('unknown source collection');
+    expect(result.error).not.toContain('already in the destination');
+  });
 });
 
 describe('revalidateCollectionMove', () => {
   const baseData: CollectionMoveData = {
     destination: { kind: 'collection', id: 'col-a', name: 'Old Name' },
     recipeIds: ['r1'],
+    sources: [{ id: 'r1', from: { kind: 'unfiled' } }],
     preview: [{ id: 'r1', title: 'One', from: { kind: 'unfiled' } }],
     total: 1,
   };
@@ -259,6 +313,29 @@ describe('revalidateCollectionMove', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('accepts a replay summary that omits recipe ids', () => {
+    const ctx = lib(
+      [recipe({ id: 'r1', title: 'One' })],
+      [{ id: 'col-a', name: 'Renamed', recipeIds: [] }],
+    );
+    const result = revalidateCollectionMove(
+      {
+        destination: { kind: 'collection', id: 'col-a', name: 'Old Name' },
+        preview: [{ id: 'r1', title: 'One', from: { kind: 'unfiled' } }],
+        total: 40,
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.data.destination.kind !== 'collection') {
+      return;
+    }
+    expect(result.data.destination.name).toBe('Renamed');
+    expect(result.data.recipeIds).toEqual([]);
+    expect(collectionMoveHistoryText(result.data)).toContain('40');
+    expect(collectionMoveHistoryText(result.data)).toContain('Renamed');
+  });
+
   it('fails when a preview title exceeds 120 characters', () => {
     const ctx = lib([recipe({ id: 'r1', title: 'One' })], []);
     const result = revalidateCollectionMove(
@@ -283,6 +360,7 @@ describe('replayCards collection_move', () => {
     const cardData: CollectionMoveData = {
       destination: { kind: 'collection', id: 'col-a', name: 'Stale' },
       recipeIds: ['r1'],
+      sources: [{ id: 'r1', from: { kind: 'collection', name: 'X' } }],
       preview: [{ id: 'r1', title: 'One', from: { kind: 'collection', name: 'X' } }],
       total: 1,
     };

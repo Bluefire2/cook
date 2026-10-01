@@ -90,9 +90,9 @@ function startAgent<Ctx>(opts: {
 
 **Client layout.**
 - `src/agent/` contains `protocol.ts` (wire types, **types only**), `api.ts` (fetch plus NDJSON parser), `store.ts` (ephemeral thread), `cards/`, `AssistantScreen.tsx`, and `AssistantEntryLink.tsx`.
-- `cards/` is split so card parsing is testable without JSX. `cards/parse.ts` is pure `.ts` holding the `parse` functions and importing only `protocol.ts` types. `cards/registry.tsx` maps each type to its `parse` from `parse.ts` plus a `Component`.
+- `cards/` is split so card parsing is testable without JSX. `cards/parse.ts` is pure `.ts` holding the `parse` functions and importing only `protocol.ts` types. `cards/registry.tsx` maps each type to one `render` that parses and draws that card.
 - `src/agent/index.ts` exports only `AssistantScreen` and `AssistantEntryLink`.
-- Outbound dependencies are limited to `react`, `react-router-dom`, `src/lib/session.ts` (`onSessionReset`, `invalidateSession`), `src/lib/uiClasses.ts`, `src/lib/icons.tsx`, `collectionStore.moveRecipes` and `useCollections` from `src/lib/collectionStore.ts`, and `useRecipes` from `src/lib/recipeStore.ts`. For the shopping list, card data carries the recipe titles it needs. For `collection_move`, the collapsed preview is on the card; the expanded list reads titles from `useRecipes` and source collections from `winningMembership` over `useCollections`.
+- Outbound dependencies are limited to `react`, `react-router-dom`, `src/lib/session.ts` (`onSessionReset`, `invalidateSession`), `src/lib/uiClasses.ts`, `src/lib/icons.tsx`, `collectionStore.moveRecipes` from `src/lib/collectionStore.ts`, and `useRecipes` from `src/lib/recipeStore.ts`. For the shopping list, card data carries the recipe titles it needs. For `collection_move`, source labels are frozen on the card (`sources`, and the preview's `from`). Expanded titles still come from `useRecipes`, falling back to the preview title. Replay sends destination, preview, and total only.
 
 **Wiring points outside the modules** (the complete list):
 - `scripts/server.ts` gets one route line.
@@ -210,7 +210,7 @@ A card is emitted when the model calls a card's `toolName`. The server validates
 **Adding a card type:**
 1. Server: add `server/agent/sous/cards/<type>.ts` exporting a `CardSpec` with `type`, `version`, `toolName`, `parameters`, `rule`, `normalize`, and `historyText`, and add it to `CARD_SPECS` in `cards/index.ts`. The prompt, tool list, and call routing are all built from that array.
 2. Fixtures: add `test/fixtures/agent-cards/<type>.v<n>.json` with valid and invalid examples.
-3. Client: add a pure `parse(v, data): T | undefined` to `src/agent/cards/parse.ts`, and add `{ parse, Component }` to `src/agent/cards/registry.tsx`.
+3. Client: add a pure `parse(v, data): T | undefined` to `src/agent/cards/parse.ts`, and add one `render` entry to `src/agent/cards/registry.tsx`.
 4. Tests: `test/agentCardContract.test.ts` reads the fixtures with `node:fs` and runs them through **both** the server `normalize` and the client `parse`. That is the contract that keeps the two sides from drifting. It lives in `test/`, which `tsconfig.node.json` type-checks. It never imports the `.tsx` registry, so it needs neither JSX support in the Node tsconfig nor Node types in the app tsconfig. Bump `version` when the data shape changes. The client renders an "Update the app to see this card" fallback for an unknown type or unsupported version, and never crashes the thread.
 
 **v1 card, `shopping_list` (version 1):**

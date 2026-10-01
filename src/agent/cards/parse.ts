@@ -1,15 +1,29 @@
+export type CollectionMoveFrom =
+  | { kind: 'collection'; name: string }
+  | { kind: 'unfiled' };
+
 export type CollectionMoveData = {
   destination:
     | { kind: 'collection'; id: string; name: string }
     | { kind: 'unfiled' };
   recipeIds: string[];
+  /** Proposal-time source of every moved recipe. Replay omits this. */
+  sources: { id: string; from: CollectionMoveFrom }[];
   preview: {
     id: string;
     title: string;
-    from: { kind: 'collection'; name: string } | { kind: 'unfiled' };
+    from: CollectionMoveFrom;
   }[];
   total: number;
 };
+
+/**
+ * Locked to the server card and to `MAX_COLLECTION_RECIPE_IDS` by
+ * `test/agentCardContract.test.ts`. This file cannot import either side.
+ */
+export const COLLECTION_MOVE_MAX_IDS = 500;
+export const COLLECTION_MOVE_PREVIEW_LIMIT = 8;
+export const COLLECTION_MOVE_TITLE_MAX = 120;
 
 export type ShoppingListData = {
   title: string;
@@ -164,9 +178,7 @@ export function parseShoppingList(v: number, data: unknown): ShoppingListData | 
   return { title, recipes, sections };
 }
 
-function parseMoveFrom(
-  value: unknown,
-): CollectionMoveData['preview'][number]['from'] | undefined {
+function parseMoveFrom(value: unknown): CollectionMoveFrom | undefined {
   if (!isPlainObject(value)) {
     return undefined;
   }
@@ -216,15 +228,39 @@ export function parseCollectionMove(v: number, data: unknown): CollectionMoveDat
   }
 
   const recipeIdsRaw = data.recipeIds;
-  if (!Array.isArray(recipeIdsRaw) || recipeIdsRaw.length < 1 || recipeIdsRaw.length > 500) {
+  if (
+    !Array.isArray(recipeIdsRaw) ||
+    recipeIdsRaw.length < 1 ||
+    recipeIdsRaw.length > COLLECTION_MOVE_MAX_IDS
+  ) {
     return undefined;
   }
   const recipeIds: string[] = [];
+  const seenIds = new Set<string>();
   for (const id of recipeIdsRaw) {
-    if (typeof id !== 'string' || id === '') {
+    if (typeof id !== 'string' || id === '' || seenIds.has(id)) {
       return undefined;
     }
+    seenIds.add(id);
     recipeIds.push(id);
+  }
+
+  const sourcesRaw = data.sources;
+  if (!Array.isArray(sourcesRaw) || sourcesRaw.length !== recipeIds.length) {
+    return undefined;
+  }
+  const sources: CollectionMoveData['sources'] = [];
+  for (let i = 0; i < sourcesRaw.length; i += 1) {
+    const entry = sourcesRaw[i];
+    const id = recipeIds[i];
+    if (!isPlainObject(entry) || id === undefined || entry.id !== id) {
+      return undefined;
+    }
+    const from = parseMoveFrom(entry.from);
+    if (from === undefined) {
+      return undefined;
+    }
+    sources.push({ id, from });
   }
 
   const total = data.total;
@@ -233,7 +269,7 @@ export function parseCollectionMove(v: number, data: unknown): CollectionMoveDat
   }
 
   const previewRaw = data.preview;
-  if (!Array.isArray(previewRaw) || previewRaw.length > 8) {
+  if (!Array.isArray(previewRaw) || previewRaw.length > COLLECTION_MOVE_PREVIEW_LIMIT) {
     return undefined;
   }
   const preview: CollectionMoveData['preview'] = [];
@@ -250,7 +286,7 @@ export function parseCollectionMove(v: number, data: unknown): CollectionMoveDat
       return undefined;
     }
     const trimmedTitle = title.trim();
-    if (trimmedTitle.length > 120) {
+    if (trimmedTitle.length > COLLECTION_MOVE_TITLE_MAX) {
       return undefined;
     }
     const from = parseMoveFrom(row.from);
@@ -260,5 +296,5 @@ export function parseCollectionMove(v: number, data: unknown): CollectionMoveDat
     preview.push({ id, title: trimmedTitle, from });
   }
 
-  return { destination, recipeIds, preview, total };
+  return { destination, recipeIds, sources, preview, total };
 }

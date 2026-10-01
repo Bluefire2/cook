@@ -11,9 +11,16 @@ export type CollectionMovePreviewFrom =
   | { kind: 'collection'; name: string }
   | { kind: 'unfiled' };
 
+export type CollectionMoveSource = {
+  id: string;
+  from: CollectionMovePreviewFrom;
+};
+
 export type CollectionMoveData = {
   destination: CollectionMoveDestination;
   recipeIds: string[];
+  /** Proposal-time source of every moved recipe. Replay omits this. */
+  sources: CollectionMoveSource[];
   preview: {
     id: string;
     title: string;
@@ -22,8 +29,11 @@ export type CollectionMoveData = {
   total: number;
 };
 
-const PREVIEW_LIMIT = 8;
-const TITLE_MAX = 120;
+/** Kept in sync with the client parser by test/agentCardContract.test.ts. */
+export const COLLECTION_MOVE_PREVIEW_LIMIT = 8;
+export const COLLECTION_MOVE_TITLE_MAX = 120;
+const PREVIEW_LIMIT = COLLECTION_MOVE_PREVIEW_LIMIT;
+const TITLE_MAX = COLLECTION_MOVE_TITLE_MAX;
 const MAX_EXPLICIT_IDS = 100;
 const UNFILED_NAME_ALIASES = new Set(['recipes', 'unfiled']);
 
@@ -191,15 +201,18 @@ function selectRecipeIds(
     if (typeof fromRaw !== 'string' || fromRaw === '') {
       return { ok: false, error: 'invalid payload' };
     }
-    const fromUnfiled = normalizeNameKey(fromRaw) === 'unfiled';
+    const source = resolveSource(fromRaw, ctx.collections);
+    if (!source.ok) {
+      return source;
+    }
     const ids: string[] = [];
     for (const recipe of ctx.recipes) {
       const winner = membership.get(recipe.id);
-      if (fromUnfiled) {
+      if (source.kind === 'unfiled') {
         if (!winner) {
           ids.push(recipe.id);
         }
-      } else if (winner === fromRaw) {
+      } else if (winner === source.id) {
         ids.push(recipe.id);
       }
     }
@@ -211,6 +224,7 @@ function selectRecipeIds(
     return { ok: false, error: 'recipeIds must be 1–100' };
   }
   const ids: string[] = [];
+  const seen = new Set<string>();
   for (const id of recipeIdsRaw) {
     if (typeof id !== 'string' || id === '') {
       return { ok: false, error: 'invalid recipe id' };
@@ -218,9 +232,38 @@ function selectRecipeIds(
     if (!ctx.recipeById(id)) {
       return { ok: false, error: 'unknown recipe id' };
     }
+    if (seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
     ids.push(id);
   }
+  if (ids.length === 0) {
+    return { ok: false, error: 'recipeIds must be 1–100' };
+  }
   return { ok: true, ids };
+}
+
+function resolveSource(
+  fromRaw: string,
+  collections: readonly AgentCollection[],
+): { ok: true; kind: 'unfiled' } | { ok: true; kind: 'collection'; id: string } | { ok: false; error: string } {
+  const key = normalizeNameKey(fromRaw);
+  const nameMatches = collections.filter((c) => normalizeNameKey(c.name) === key);
+  if (nameMatches.length > 1) {
+    const names = nameMatches.map((c) => (c.name !== '' ? c.name : c.id)).join(', ');
+    return { ok: false, error: `ambiguous source collection; matches: ${names}` };
+  }
+  if (nameMatches.length === 1) {
+    return { ok: true, kind: 'collection', id: nameMatches[0]!.id };
+  }
+  if (collections.some((c) => c.id === fromRaw)) {
+    return { ok: true, kind: 'collection', id: fromRaw };
+  }
+  if (UNFILED_NAME_ALIASES.has(key)) {
+    return { ok: true, kind: 'unfiled' };
+  }
+  return { ok: false, error: `unknown source collection "${fromRaw.trim()}"` };
 }
 
 function buildMoveData(
@@ -230,17 +273,22 @@ function buildMoveData(
   membership: Map<string, string>,
   collectionById: Map<string, AgentCollection>,
 ): CollectionMoveData {
-  const preview = moveIds.slice(0, PREVIEW_LIMIT).map((id) => {
-    const recipe = ctx.recipeById(id)!;
+  const sources = moveIds.map((id) => ({
+    id,
+    from: previewFromForRecipe(id, membership, collectionById),
+  }));
+  const preview = sources.slice(0, PREVIEW_LIMIT).map((source) => {
+    const recipe = ctx.recipeById(source.id)!;
     return {
-      id,
+      id: source.id,
       title: sliceTitle(recipe.title),
-      from: previewFromForRecipe(id, membership, collectionById),
+      from: source.from,
     };
   });
   return {
     destination,
     recipeIds: moveIds,
+    sources,
     preview,
     total: moveIds.length,
   };
@@ -301,38 +349,26 @@ export function normalizeCollectionMove(
   };
 }
 
-function isValidDataShape(data: unknown): data is CollectionMoveData {
-  if (!isPlainObject(data)) {
-    return false;
-  }
-  const dest = data.destination;
+function destinationShapeOk(dest: unknown): dest is CollectionMoveDestination {
   if (!isPlainObject(dest)) {
     return false;
   }
   if (dest.kind === 'unfiled') {
-    // ok
-  } else if (dest.kind === 'collection') {
-    if (typeof dest.id !== 'string' || dest.id === '' || typeof dest.name !== 'string') {
-      return false;
-    }
-  } else {
+    return true;
+  }
+  return (
+    dest.kind === 'collection' &&
+    typeof dest.id === 'string' &&
+    dest.id !== '' &&
+    typeof dest.name === 'string'
+  );
+}
+
+function previewShapeOk(preview: unknown): boolean {
+  if (!Array.isArray(preview) || preview.length > PREVIEW_LIMIT) {
     return false;
   }
-  if (!Array.isArray(data.recipeIds)) {
-    return false;
-  }
-  if (data.recipeIds.length > MAX_COLLECTION_RECIPE_IDS) {
-    return false;
-  }
-  for (const id of data.recipeIds) {
-    if (typeof id !== 'string' || id === '') {
-      return false;
-    }
-  }
-  if (!Array.isArray(data.preview) || data.preview.length > PREVIEW_LIMIT) {
-    return false;
-  }
-  for (const row of data.preview) {
+  for (const row of preview) {
     if (!isPlainObject(row) || typeof row.id !== 'string' || typeof row.title !== 'string') {
       return false;
     }
@@ -343,10 +379,32 @@ function isValidDataShape(data: unknown): data is CollectionMoveData {
       return false;
     }
   }
-  if (typeof data.total !== 'number' || data.total !== data.recipeIds.length) {
+  return true;
+}
+
+/** Full card, or the replay summary that omits recipe ids. */
+function isValidDataShape(data: unknown): data is CollectionMoveData {
+  if (!isPlainObject(data) || !destinationShapeOk(data.destination) || !previewShapeOk(data.preview)) {
     return false;
   }
-  return true;
+  if (typeof data.total !== 'number' || !Number.isInteger(data.total)) {
+    return false;
+  }
+  if (data.total < 1 || data.total > MAX_COLLECTION_RECIPE_IDS) {
+    return false;
+  }
+  if (data.recipeIds === undefined) {
+    return true;
+  }
+  if (!Array.isArray(data.recipeIds) || data.recipeIds.length > MAX_COLLECTION_RECIPE_IDS) {
+    return false;
+  }
+  for (const id of data.recipeIds) {
+    if (typeof id !== 'string' || id === '') {
+      return false;
+    }
+  }
+  return data.total === data.recipeIds.length;
 }
 
 export function revalidateCollectionMove(
@@ -357,7 +415,8 @@ export function revalidateCollectionMove(
     return { ok: false, error: 'invalid card data' };
   }
 
-  for (const id of data.recipeIds) {
+  const recipeIds = data.recipeIds ?? [];
+  for (const id of recipeIds) {
     if (!ctx.recipeById(id)) {
       return { ok: false, error: 'recipe no longer in library' };
     }
@@ -379,7 +438,8 @@ export function revalidateCollectionMove(
     ok: true,
     data: {
       destination,
-      recipeIds: data.recipeIds,
+      recipeIds,
+      sources: data.sources ?? [],
       preview: data.preview,
       total: data.total,
     },

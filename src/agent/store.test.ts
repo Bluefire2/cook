@@ -13,6 +13,7 @@ import {
   dispatch,
   endAgentRequest,
   endMoveApply,
+  endMoveBusyState,
   finishMoveApplyState,
   getAgentSnapshot,
   isActiveAgentRequest,
@@ -30,7 +31,9 @@ vi.mock('../lib/libraryMemory', () => ({
 }));
 
 beforeEach(() => {
+  endMoveApply();
   clearAgentThread();
+  dispatch({ type: 'endMoveBusy' });
   const store = new Map<string, string>([[LOCALE_KEY, 'en']]);
   globalThis.localStorage = {
     getItem: (key) => store.get(key) ?? null,
@@ -88,6 +91,33 @@ describe('applyEvent', () => {
     const replay = messagesForReplay(state);
     expect(replay.map((m) => m.content)).toEqual(['list', 'final']);
     expect(replay[1]?.cards).toEqual([card]);
+  });
+
+  it('replays a collection move without the recipe id lists', () => {
+    let state = beginTurn(initialAgentState, 'move');
+    const data = {
+      destination: { kind: 'unfiled' },
+      recipeIds: ['r1', 'r2'],
+      sources: [{ id: 'r1', from: { kind: 'unfiled' } }],
+      preview: [{ id: 'r1', title: 'One', from: { kind: 'unfiled' } }],
+      total: 2,
+    };
+    const card = { type: 'collection_move', v: 1, id: 'c-move', data };
+    state = applyEvent(state, { t: 'card', card });
+    const replay = messagesForReplay(state);
+    expect(replay[1]?.cards).toEqual([
+      {
+        type: 'collection_move',
+        v: 1,
+        id: 'c-move',
+        data: {
+          destination: data.destination,
+          preview: data.preview,
+          total: data.total,
+        },
+      },
+    ]);
+    expect(state.messages[state.messages.length - 1]?.cards?.[0]?.data).toEqual(data);
   });
 
   it('keeps interim cards when no later assistant text arrives', () => {
@@ -202,6 +232,7 @@ describe('move apply state', () => {
     const state = stateWithMoveCard('move-1');
     const next = beginMoveApplyState(state, 'move-1');
     expect(next.applies['move-1']).toEqual({ phase: 'applying' });
+    expect(next.moveBusy).toBe(true);
   });
 
   it('beginMoveApplyState is unchanged when the card is not on the thread', () => {
@@ -219,6 +250,18 @@ describe('move apply state', () => {
       message: 'nope',
     });
     expect(errored.applies['move-1']).toEqual({ phase: 'error', message: 'nope' });
+  });
+
+  it('clearThread keeps moveBusy until the apply settles', () => {
+    let state = stateWithMoveCard('move-1');
+    state = beginMoveApplyState(state, 'move-1');
+    state = clearThread(state);
+    expect(state.messages).toEqual([]);
+    expect(state.applies).toEqual({});
+    expect(state.moveBusy).toBe(true);
+    state = endMoveBusyState(state);
+    expect(state.moveBusy).toBe(false);
+    expect(state).toEqual(initialAgentState);
   });
 
   it('finishMoveApplyState is unchanged after clearThread', () => {

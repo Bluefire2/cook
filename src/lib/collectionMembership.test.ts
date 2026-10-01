@@ -90,12 +90,19 @@ describe('moveRecipes', () => {
     expect(changed).toEqual([]);
   });
 
+  it('leaves ids already on the destination in place', () => {
+    const dest: Collection = { ...dinners, recipeIds: ['r2', 'r1'] };
+    const changed = moveRecipes([dest, lunches], ['r2', 'r1'], 'c-b', 9);
+    expect(changed.find((c) => c.id === 'c-b')).toBeUndefined();
+    expect(changed.find((c) => c.id === 'c-a')?.recipeIds).toEqual([]);
+  });
+
   it('removes a doubly-listed id from the non-destination collection', () => {
     const changed = moveRecipes([dinners, lunches], ['r1'], 'c-b', 9);
     expect(changed.find((c) => c.id === 'c-a')?.recipeIds).toEqual([]);
-    const dest = changed.find((c) => c.id === 'c-b');
-    expect(dest?.recipeIds.filter((id) => id === 'r1')).toHaveLength(1);
+    expect(changed.find((c) => c.id === 'c-b')).toBeUndefined();
     const applied = [dinners, lunches].map((c) => changed.find((x) => x.id === c.id) ?? c);
+    expect(applied.find((c) => c.id === 'c-b')?.recipeIds).toEqual(['r1', 'r2']);
     expect(winningMembership(applied).get('r1')).toBe('c-b');
   });
 

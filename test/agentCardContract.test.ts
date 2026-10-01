@@ -3,9 +3,21 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { buildAgentLibrary, type AgentRecipe } from '../server/agent/sous/library.ts';
-import { normalizeCollectionMove } from '../server/agent/sous/cards/collectionMove.ts';
+import { MAX_COLLECTION_RECIPE_IDS as SERVER_MAX_IDS } from '../server/store.ts';
+import {
+  COLLECTION_MOVE_PREVIEW_LIMIT as SERVER_PREVIEW_LIMIT,
+  COLLECTION_MOVE_TITLE_MAX as SERVER_TITLE_MAX,
+  normalizeCollectionMove,
+} from '../server/agent/sous/cards/collectionMove.ts';
 import { normalizeShoppingList } from '../server/agent/sous/cards/shoppingList.ts';
-import { parseCollectionMove, parseShoppingList } from '../src/agent/cards/parse.ts';
+import { MAX_COLLECTION_RECIPE_IDS as CLIENT_MAX_IDS } from '../src/lib/compactCollection.ts';
+import {
+  COLLECTION_MOVE_MAX_IDS,
+  COLLECTION_MOVE_PREVIEW_LIMIT,
+  COLLECTION_MOVE_TITLE_MAX,
+  parseCollectionMove,
+  parseShoppingList,
+} from '../src/agent/cards/parse.ts';
 
 type FixtureCase =
   | { ok: true; args: unknown; expect: unknown }
@@ -96,5 +108,26 @@ describe('collection_move card contract', () => {
         expect(normalized.ok === false || parsedRaw === undefined).toBe(true);
       }
     }
+  });
+
+  it('rejects duplicate recipe ids', () => {
+    const parsed = parseCollectionMove(1, {
+      destination: { kind: 'unfiled' },
+      recipeIds: ['r1', 'r1'],
+      sources: [
+        { id: 'r1', from: { kind: 'unfiled' } },
+        { id: 'r1', from: { kind: 'unfiled' } },
+      ],
+      preview: [],
+      total: 2,
+    });
+    expect(parsed).toBeUndefined();
+  });
+
+  it('shares the move caps with the server card and the collection limit', () => {
+    expect(COLLECTION_MOVE_PREVIEW_LIMIT).toBe(SERVER_PREVIEW_LIMIT);
+    expect(COLLECTION_MOVE_TITLE_MAX).toBe(SERVER_TITLE_MAX);
+    expect(COLLECTION_MOVE_MAX_IDS).toBe(CLIENT_MAX_IDS);
+    expect(COLLECTION_MOVE_MAX_IDS).toBe(SERVER_MAX_IDS);
   });
 });
