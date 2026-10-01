@@ -312,9 +312,18 @@ export default function ImportScreen() {
   const attentionCount = summary?.filter(needsAttention).length ?? 0;
   const failedCount = summary === null ? 0 : summary.length - successCount;
   const retryingRow = summary?.some((row) => !row.ok && row.retrying === true) ?? false;
+  // A filter whose last row a Retry fixed shows everything rather than an empty list.
+  const activeFilter: BulkFilter =
+    (filter === 'attention' && attentionCount === 0) || (filter === 'failed' && failedCount === 0)
+      ? 'all'
+      : filter;
   const shownRows =
     summary?.filter((row) =>
-      filter === 'attention' ? needsAttention(row) : filter === 'failed' ? !row.ok : true,
+      activeFilter === 'attention'
+        ? needsAttention(row)
+        : activeFilter === 'failed'
+          ? !row.ok
+          : true,
     ) ?? [];
   const filterClass = (active: boolean) =>
     `rounded-full border px-3 py-1 text-sm disabled:opacity-40 ${
@@ -357,23 +366,23 @@ export default function ImportScreen() {
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <button
               type="button"
-              aria-pressed={filter === 'attention'}
+              aria-pressed={activeFilter === 'attention'}
               disabled={attentionCount === 0}
               onClick={() => setFilter('attention')}
-              className={filterClass(filter === 'attention')}
+              className={filterClass(activeFilter === 'attention')}
             >
               {t('import.summaryAttention', { count: attentionCount })}
             </button>
             <button
               type="button"
-              aria-pressed={filter === 'failed'}
+              aria-pressed={activeFilter === 'failed'}
               disabled={failedCount === 0}
               onClick={() => setFilter('failed')}
-              className={filterClass(filter === 'failed')}
+              className={filterClass(activeFilter === 'failed')}
             >
               {t('import.summaryFailed', { count: failedCount })}
             </button>
-            {filter !== 'all' && (
+            {activeFilter !== 'all' && (
               <button
                 type="button"
                 onClick={() => setFilter('all')}
