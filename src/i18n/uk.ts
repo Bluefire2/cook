@@ -322,7 +322,7 @@ export const uk: Messages = {
   'saveSheet.collections': 'Колекції',
 
   'share.title': 'Поділитися «{name}»',
-  'share.byEmail': 'Поштою',
+  'share.byEmail': 'Ел. поштою',
   'share.byLink': 'Посиланням',
   'share.intro':
     'Додайте людину, яка вже має обліковий запис Sous. Редактори можуть редагувати рецепти, але не фото. Видаляти рецепти чи змінювати доступ можете лише ви.',
