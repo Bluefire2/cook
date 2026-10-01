@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import { resolveCollectionDestination } from '../lib/collectionDestination';
 import { useCollections } from '../lib/collectionStore';
+import { reconcileImportCheck, type ImportCheck } from '../lib/importCheck';
 import { photoStore } from '../lib/photoStore';
 import { recipePhotoIds, remapPhotoIds } from '../lib/recipePhotos';
 import { CreateRollbackError, recipeStore } from '../lib/recipeStore';
@@ -43,6 +44,7 @@ export default function CreateRecipeForm({
   onEditStateChange,
   submitLocked,
   hideLanguage,
+  importCheck,
 }: {
   initial: RecipeDraft;
   collectionId?: string;
@@ -61,6 +63,11 @@ export default function CreateRecipeForm({
   submitLocked?: boolean;
   /** Hides RecipeForm's language field. Import preview sets `lang` at save. */
   hideLanguage?: boolean;
+  /**
+   * The import check for a draft from the import preview. Saved on the
+   * recipe, reconciled with any edits made to `initial` before saving.
+   */
+  importCheck?: ImportCheck;
 }) {
   const t = useT();
   const collections = useCollections();
@@ -154,7 +161,14 @@ export default function CreateRecipeForm({
           submitLabel={t('recipeEdit.saveToLibrary')}
           onCancel={onCancel}
           onSubmit={async (pending) => {
-            const next = resolveLang ? replaceLang(pending, resolveLang()) : pending;
+            const withLang = resolveLang ? replaceLang(pending, resolveLang()) : pending;
+            const next =
+              importCheck === undefined
+                ? withLang
+                : {
+                    ...withLang,
+                    importCheck: reconcileImportCheck(importCheck, initial, withLang, Date.now()),
+                  };
             const existingPhotos = new Set(recipePhotoIds(initial));
             stagedPhotoIds.current = recipePhotoIds(next).filter((id) => !existingPhotos.has(id));
             setDraft(next);

@@ -380,6 +380,14 @@ describe('compactRecipeFields', () => {
     expect(compacted.galleryPhotoIds).toEqual(['g1', 'g2']);
   });
 
+  it('keeps a valid importCheck and drops a malformed one without rejecting the recipe', () => {
+    const importCheck = { at: 5, warnings: [{ code: 'TOO_FEW_STEPS' }], dismissedAt: 6 };
+    expect(compactRecipeFields({ ...required, importCheck }).importCheck).toEqual(importCheck);
+    const compacted = compactRecipeFields({ ...required, importCheck: { at: 'soon', warnings: [] } });
+    expect(compacted).not.toHaveProperty('importCheck');
+    expect(compacted.title).toBe('Soup');
+  });
+
   it('normalizes lang and omits a value it cannot understand', () => {
     expect(compactRecipeFields({ ...required, lang: 'it-IT' }).lang).toBe('it');
     expect(compactRecipeFields({ ...required, lang: 'ua' }).lang).toBe('uk');

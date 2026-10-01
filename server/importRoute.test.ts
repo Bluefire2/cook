@@ -20,7 +20,7 @@ const RECIPE = {
   title: 'Tomato soup',
   servings: 4,
   ingredientSections: [{ items: [{ item: 'tomatoes', quantity: 6 }] }],
-  steps: [{ text: 'Simmer.' }],
+  steps: [{ text: 'Simmer.' }, { text: 'Blend.' }],
   tags: ['soup'],
 };
 
@@ -223,7 +223,7 @@ describe('POST /api/import', () => {
       title: 'UK Tomato soup',
       servings: 4,
       ingredientSections: [{ items: [{ item: 'UK tomatoes', quantity: 6 }] }],
-      steps: [{ text: 'UK Simmer.' }],
+      steps: [{ text: 'UK Simmer.' }, { text: 'UK Blend.' }],
       tags: ['soup'],
       lang: 'uk',
     };
@@ -500,7 +500,7 @@ describe('POST /api/import with photos', () => {
         bytes: 4096,
         outcome: 'ok',
         ingredients: 1,
-        steps: 1,
+        steps: 2,
         status: 200,
         ms: expect.any(Number),
       },
@@ -540,9 +540,11 @@ describe('POST /api/import log line', () => {
         url: 'https://example.com/soup',
         host: 'example.com',
         fetch: 'ok',
+        source: 'text',
+        attempts: ['ok'],
         outcome: 'ok',
         ingredients: 1,
-        steps: 1,
+        steps: 2,
         status: 200,
         ms: expect.any(Number),
       },
@@ -573,24 +575,42 @@ describe('POST /api/import log line', () => {
     expect(importLogLines()[0].entry).toMatchObject({ outcome: 'ok', ingredients: 1, steps: 0 });
   });
 
-  it('logs a Gemini throw on a URL import and still lets it reach the dispatcher', async () => {
+  it('logs a Gemini throw on a URL import as model_error with its status, and answers 502', async () => {
     serve(new Response(PAGE));
-    await expect(
-      post({ url: 'https://example.com/soup' }, undefined, {
-        deps: rejectingDeps('SECRET upstream detail', 429),
-      }),
-    ).rejects.toThrow('SECRET upstream detail');
+    const result = await post({ url: 'https://example.com/soup' }, undefined, {
+      deps: rejectingDeps('SECRET upstream detail', 429),
+    });
+    expect(result.status).toBe(502);
+    expect(result.body).toMatchObject({ code: 'import-model-failed' });
+    expect(JSON.stringify(result.body)).not.toContain('SECRET');
     const lines = importLogLines();
     expect(lines.map((line) => line.entry)).toEqual([
       expect.objectContaining({
         via: 'url',
         fetch: 'ok',
-        outcome: 'threw',
+        source: 'text',
+        attempts: ['threw'],
+        outcome: 'model_error',
         errorStatus: 429,
-        status: 500,
+        status: 502,
       }),
     ]);
     expect(lines[0].raw).not.toContain('SECRET');
+  });
+
+  it('logs the warning codes on a URL import, and sends them to the client', async () => {
+    serve(new Response('<main><h1>Soup</h1><p>You need tomatoes. Watch the video.</p></main>'));
+    const result = await post(
+      { url: 'https://example.com/soup' },
+      JSON.stringify({ ...RECIPE, steps: [], instructionsOnPage: false }),
+    );
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ warnings: [{ code: 'INSTRUCTIONS_NOT_ON_PAGE' }] });
+    expect(importLogLines()[0].entry).toMatchObject({
+      source: 'text',
+      attempts: ['warn'],
+      codes: ['INSTRUCTIONS_NOT_ON_PAGE'],
+    });
   });
 
   it('logs pasted text without the text', async () => {

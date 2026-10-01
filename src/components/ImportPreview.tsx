@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { languageName, useLocale, useT } from '../i18n';
+import type { ImportCheck } from '../lib/importCheck';
 import type { ImportRecipeResult } from '../lib/importApi';
 import { importPreviewRules, translatedPreviewDraft } from '../lib/importPreview';
 import { translateRecipe } from '../lib/translateApi';
@@ -7,6 +8,7 @@ import { SpinnerIcon } from '../lib/icons';
 import type { Recipe, RecipeDraft } from '../lib/types';
 import { inputFocus } from '../lib/uiClasses';
 import CreateRecipeForm, { type CreateRecipeSubmitStatus } from './CreateRecipeForm';
+import ImportWarningList from './ImportWarningList';
 import LanguagePicker from './LanguagePicker';
 
 const noticeClass = 'rounded-2xl border border-line bg-accent-soft px-4 py-3 text-sm text-ink';
@@ -43,6 +45,10 @@ export default function ImportPreview({
   const t = useT();
   const locale = useLocale();
   const [original] = useState(result.recipe);
+  // Computed on the original extraction; positions hold for the translation too.
+  const [importCheck] = useState<ImportCheck | undefined>(() =>
+    result.warnings !== undefined ? { at: Date.now(), warnings: result.warnings } : undefined,
+  );
   const pasted = pastedImport(original);
   const [sourceLang, setSourceLang] = useState(original.lang);
   const [translationFailed, setTranslationFailed] = useState(result.translationFailed === true);
@@ -216,6 +222,17 @@ export default function ImportPreview({
 
   return (
     <>
+      {importCheck !== undefined && (
+        <div className={noticeClass} role="status">
+          <p className="font-medium">{t('importWarning.previewHeading')}</p>
+          <ImportWarningList
+            warnings={importCheck.warnings}
+            sections={shown.ingredientSections}
+            className="mt-1"
+          />
+        </div>
+      )}
+
       {translationFailed && (
         <p className={`${noticeClass} mt-3`} role="status">
           {t('import.translateFailedNotice')}
@@ -279,6 +296,7 @@ export default function ImportPreview({
         hideLanguage
         onEditStateChange={onEditStateChange}
         onSubmitStatusChange={onSubmitStatusChange}
+        importCheck={importCheck}
         onCreated={onCreated}
         onCancel={onCancel}
       />

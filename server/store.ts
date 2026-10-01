@@ -9,6 +9,7 @@ import {
   SHARED_PARENT_OWNER_SUB_FIELD,
   type PushRejectReason,
 } from './pushReasons.ts';
+import { compactImportCheck } from './importWarnings.ts';
 import { normalizeLang } from './lang.ts';
 import { TRANSLATIONS_COLLECTION, translationCacheDocIds } from './recipeTranslation.ts';
 import { canViewRecipe } from './shareAuth.ts';
@@ -252,6 +253,12 @@ export function compactRecipeFields(recipe: Record<string, unknown>): Record<str
   );
   if (galleryPhotoIds !== undefined) {
     next.galleryPhotoIds = galleryPhotoIds;
+  }
+  // Malformed is dropped, not rejected (`validateRecipePut` never checks it),
+  // so a put from an older or newer client still saves.
+  const importCheck = compactImportCheck(recipe.importCheck);
+  if (importCheck !== undefined) {
+    next.importCheck = importCheck;
   }
   return next;
 }

@@ -13,6 +13,7 @@ const ERROR_CODES = {
   'import-no-recipe': 'error.importNoRecipe',
   'import-extract-failed': 'error.importExtractFailed',
   'import-unusable': 'error.importUnusable',
+  'import-model-failed': 'error.importModelFailed',
   'import-too-many-photos': 'error.importTooManyPhotos',
   'import-bad-photo-type': 'error.importBadPhotoType',
   'import-photos-unreadable': 'error.importPhotosUnreadable',

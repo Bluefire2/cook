@@ -1,9 +1,12 @@
 # Recipe import reliability
 
-**Status:** Approved 2026-09-30, not started. Import logging, its privacy copy,
-and `scripts/import-audit.ts` are done separately in #102 (open, not
-deployed). This plan is the rest of the spec. Phase 1 is waiting on the
-reporter's failing URLs.
+**Status:** Approved 2026-09-30. Phase 2 built 2026-10-01 on
+`claude/import-reliability-plan-170fa6` (stacked on this branch), not
+deployed; see [Phase 2 implementation notes](#phase-2-implementation-notes).
+Import logging, its privacy copy, and `scripts/import-audit.ts` are done
+separately in #102 (open, not deployed). Phase 1 is still waiting on the
+reporter's failing URLs. Phase 3 waits on a deploy and log data. The spec is
+[`import-reliability-spec.md`](import-reliability-spec.md).
 
 **Branch:** `claude/import-reliability` is stacked on #102
 (`claude/import-logs`), because phase 2 extends `server/importLog.ts`. Once #102
@@ -284,6 +287,53 @@ mapped from `import-model-failed` in `src/lib/errorText.ts`. New states go in
     same batch destination.
   - **Try again** for all failed rows stays.
 
+### Phase 2 implementation notes
+
+Built as planned, with these choices and deviations:
+
+- **Modules.** The parse5 walk, `primaryRegion`, `stripToText` and the
+  Recipe JSON-LD finder moved to `server/pageScan.ts`, so `importFromHtml`
+  parses once and builds both the Gemini source and the check context. The
+  codes, `BLOCKING_IMPORT_WARNINGS`, `MIN_STEPS`, the `ImportCheck` type and
+  `compactImportCheck` live in `server/importWarnings.ts`, which is
+  dependency-free and re-exported to the client by `src/lib/importCheck.ts`
+  (the `pushReasons` pattern), so client and server validate the field the
+  same way.
+- **Outcome shape.** `ok` has required `warnings`. `attempts`, `source` and
+  `errorStatus` sit together on an optional `log` field on every outcome kind,
+  read only by `noteImportOutcome`.
+- **Photo path.** Still one call, `RECIPE_SCHEMA`, no checks, and a throw
+  still propagates to the route's own photo catch (502
+  `import-photos-failed`). Its `ok` has `warnings: []`.
+- **`EMPTY_ITEMS`** is counted on the raw model output, since
+  `normalizeImportedRecipe` drops blank items before the checks see the
+  recipe. **`MISSING_TITLE`** can only fire if normalization ever stops
+  requiring a title; a blank title is `unusable` today.
+- **Resolved records stay.** When an edit resolves every warning,
+  `reconcileImportCheck` keeps `{ at, warnings: [], editedAt }` instead of
+  deleting the field, so `scripts/import-check-report.ts` can count fixes.
+  The banner shows only while warnings remain. The count warnings, which
+  cannot be re-checked without the page, drop once the edit adds to that
+  list; `EMPTY_ITEMS` drops once the ingredients or steps change.
+- **Store API.** There is no `recipeStore.update`. `save` carries the stored
+  `importCheck` when the caller omits it and reconciles it (Edit, Ask Apply,
+  cook-log lesson promotion, editor saves). Dismiss is
+  `recipeStore.dismissImportWarnings`; Retry import's confirm calls
+  `recipeStore.replaceFromImport`, the one path that replaces the record.
+  The banner's retry workflow is a reducer (`src/lib/importRetryFlow.ts`).
+- **Bulk copy.** The summary is three controls, not one sentence: an
+  "imported" heading, then "need attention" and "failed" filter buttons, each
+  its own plural key (uk/ru use a colon form so the verb never has to agree
+  with the number). One catalog key per warning code serves the banner, the
+  preview, and the bulk row.
+- **Calibration.** Offline over the 25 cached pages (no phase 1 pages yet):
+  no source warning on any recipe page; the three goldens raise nothing.
+  `wikibooks-pancake` is a category overview with no method, now
+  `class: source`. Thresholds are unchanged from this plan.
+- **Not done here.** Live `npm run test:import` before/after (logged as
+  pending in `evals/EXPERIMENTS.md`), the browser checks, and the in-context
+  translation review. All three need a dev server and the Gemini key.
+
 ## Phase 3: Turn on retries (spec §10.3)
 
 - Once phase 2 has been deployed and has some data, set
@@ -296,8 +346,25 @@ mapped from `import-model-failed` in `src/lib/errorText.ts`. New states go in
 ## Measurement (spec §8)
 
 - **Retry efficacy, path, codes, and domain:** the `event: 'import'` log lines,
-  once 2c adds `source`, `attempts`, and `codes`. Write the saved Logs Explorer
-  queries into this doc.
+  once 2c adds `source`, `attempts`, and `codes`. Logs Explorer, project
+  `cooking-assistant-508423`, resource `cloud_run_revision`, service `sous`:
+
+  ```
+  -- every page or paste import
+  jsonPayload.event="import" AND jsonPayload.via=("url" OR "paste" OR "extension")
+  -- path taken (summarize by jsonPayload.source)
+  jsonPayload.event="import" AND jsonPayload.source:*
+  -- imports that raised a warning, by code (summarize by jsonPayload.codes)
+  jsonPayload.event="import" AND jsonPayload.codes:*
+  -- source vs extraction split for empty steps
+  jsonPayload.event="import" AND jsonPayload.codes=("INSTRUCTIONS_NOT_ON_PAGE" OR "INSTRUCTIONS_DROPPED" OR "MISSING_INSTRUCTIONS")
+  -- model failures and their provider status (429 rate limit vs 503 overload)
+  jsonPayload.event="import" AND jsonPayload.outcome="model_error"
+  -- phase 3: attempts after the first, and whether they ended clean
+  jsonPayload.event="import" AND jsonPayload.attempts:"threw"
+  -- sites that fail repeatedly (summarize by jsonPayload.host)
+  jsonPayload.event="import" AND (jsonPayload.outcome!="ok" OR jsonPayload.codes:*)
+  ```
 - **Dismissals and edits:** `scripts/import-check-report.ts` (new, owner-run,
   ADC, read-only). It prints aggregates only:
   - warnings per code;

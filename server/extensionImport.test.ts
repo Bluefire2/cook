@@ -303,6 +303,8 @@ describe('extensionImport log line', () => {
         via: 'extension',
         url: 'https://example.com/soup',
         host: 'example.com',
+        source: 'text',
+        attempts: ['not_a_recipe'],
         outcome: 'not_a_recipe',
         status: 422,
         ms: expect.any(Number),
@@ -322,5 +324,88 @@ describe('extensionImport log line', () => {
     expect(importLogEntries(log)).toEqual([
       expect.objectContaining({ via: 'extension', outcome: 'unusable', status: 502 }),
     ]);
+  });
+});
+
+describe('extensionImport warnings', () => {
+  const url = 'https://example.com/soup';
+
+  beforeEach(() => {
+    Object.assign(process.env, SESSION_ENV);
+    vi.mocked(sync.applyPushOp).mockReset();
+    vi.mocked(sync.applyPushOp).mockResolvedValue({ applied: true });
+  });
+
+  afterEach(() => {
+    vi.mocked(sync.applyPushOp).mockReset();
+    if (realApplyPushOp) {
+      vi.mocked(sync.applyPushOp).mockImplementation(realApplyPushOp);
+    }
+  });
+
+  it('answers a Gemini throw as import-model-failed, without the error text', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const response = await extensionImport(
+      authedRequest({ url, html: '<main><p>Simmer the tomatoes.</p></main>' }),
+      {
+        model: 'test-model',
+        ai: {
+          models: {
+            generateContent: () =>
+              Promise.reject(Object.assign(new Error('SECRET'), { status: 503 })),
+          },
+        },
+        translator: () => Promise.resolve({ ok: false, code: TRANSLATE_FAILED }),
+      },
+    );
+    expect(response.status).toBe(502);
+    const body: unknown = await response.json();
+    expect(body).toMatchObject({ code: 'import-model-failed' });
+    expect(JSON.stringify(body)).not.toContain('SECRET');
+    expect(sync.applyPushOp).not.toHaveBeenCalled();
+  });
+
+  it('saves the warnings on the recipe as importCheck', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { deps } = fakeImportDeps(
+      JSON.stringify({
+        title: 'Tomato soup',
+        servings: 4,
+        ingredientSections: [{ items: [{ item: 'tomatoes' }] }],
+        steps: [],
+        tags: [],
+        instructionsOnPage: false,
+      }),
+    );
+    const response = await extensionImport(
+      authedRequest({ url, html: '<main><p>You need tomatoes. Watch the video.</p></main>' }),
+      deps,
+    );
+    expect(response.status).toBe(200);
+    expect(sync.applyPushOp).toHaveBeenCalledWith('sub-1', {
+      kind: 'recipe.put',
+      payload: expect.objectContaining({
+        importCheck: { at: expect.any(Number), warnings: [{ code: 'INSTRUCTIONS_NOT_ON_PAGE' }] },
+      }),
+    });
+  });
+
+  it('saves a clean import without importCheck', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { deps } = fakeImportDeps(
+      JSON.stringify({
+        title: 'Tomato soup',
+        servings: 4,
+        ingredientSections: [{ items: [{ item: 'tomatoes' }] }],
+        steps: [{ text: 'Simmer.' }, { text: 'Blend.' }],
+        tags: [],
+      }),
+    );
+    await extensionImport(
+      authedRequest({ url, html: '<main><p>Simmer the tomatoes. Blend.</p></main>' }),
+      deps,
+    );
+    const payload = vi.mocked(sync.applyPushOp).mock.calls[0][1].payload;
+    expect(payload).not.toHaveProperty('importCheck');
   });
 });

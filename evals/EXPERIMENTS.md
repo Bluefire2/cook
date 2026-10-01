@@ -22,6 +22,34 @@ summary, approach A.
 - Run by: <owner | agent>, model <CHAT_MODEL or default>
 ```
 
+## 2026-10-01 — Page and paste import: self-report fields, import checks, retry loop at 0
+
+- Change: `importFromSource` (page, paste, extension) now asks for
+  `PAGE_RECIPE_SCHEMA`, which is `RECIPE_SCHEMA` plus required booleans
+  `instructionsOnPage` and `ingredientsOnPage`. The prompt text is unchanged.
+  Each extraction runs `checkImport` (`server/importChecks.ts`), and an
+  attempt loop retries hard failures and blocking extraction warnings up to
+  `MAX_IMPORT_RETRIES`, which ships at 0, so every import still makes one
+  call. A thrown call is now `model_error` instead of an escaping throw.
+  `importFromImages` keeps `RECIPE_SCHEMA`, its prompt and config, one call,
+  and no checks (unit tests pin all of these).
+- Reason (not fixture-specific): spec §4.2 and §6. The checks read no
+  fixture's content; thresholds are the plan's starting values, to be
+  calibrated on the phase 1 fixtures.
+- Offline calibration (`evals/pageFixtures.test.ts`): every cached page with
+  a recipe raises no source warning for an empty-steps extraction; the three
+  page goldens raise no warnings against their own pages.
+  `import-sites/wikibooks-pancake` was hand-classified `source` in
+  `class.json` (a category overview with no method of its own) and raises
+  `INSTRUCTIONS_NOT_ON_PAGE`.
+- Command: `npm run test:import` (page and text fixtures) before and after.
+  `eval:ocr-compare` is not required for this change (the photo request is
+  byte-for-byte the same), and is required for phase 3.
+- Before / After: not run yet.
+- Decision: pending owner run — the schema change touches every page import,
+  so confirm the site and text evals hold before deploying.
+- Run by: agent (offline checks only)
+
 ## 2026-09-27 — Photo import: runaway-unit check (32) and one retry
 
 - Change: `fdefa65` made `importFromImages` treat an ingredient `unit` longer

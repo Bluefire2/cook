@@ -25,12 +25,20 @@ Recipe import (web URL/paste, extension, evals) is one pipeline in
 `server/recipeImport.ts`: `importFromHtml` / `importFromSource` /
 `importFromImages` take the Gemini client and model as arguments and return an
 `ImportOutcome`; routes map outcomes to HTTP. `normalizeImportedRecipe` is the
-only cleanup of model output for import.
+only cleanup of model output for import. Page and paste imports are checked by
+`server/importChecks.ts` (pure, no I/O) against the page (`server/pageScan.ts`,
+one parse5 pass shared with `extractRecipeSource`); `ok` carries typed
+`warnings` (codes only; the words are in the catalogs), and a thrown Gemini
+call is `model_error` (502 `import-model-failed`), not a 500. Retries are the
+code constant `MAX_IMPORT_RETRIES` (0 until phase 3 of
+`docs/plans/import-reliability.md`), never an env var. Photo import runs no
+checks and makes exactly one call.
 
 Both import routes write one `event: 'import'` JSON log line per request
 (`server/importLog.ts`, `withImportLog`): the session `sub`, how the import
-arrived, the URL as `origin + pathname`, the outcome, counts, a thrown
-error's numeric `status`, and timing. Never the email, recipe or pasted text,
+arrived, the URL as `origin + pathname`, `source` (`jsonld` | `text`),
+`attempts` (each call's result), warning `codes`, the outcome, counts, a
+thrown error's numeric `status`, and timing. Never the email, recipe or pasted text,
 HTML, photo bytes, a query string, or an error message. `/privacy` (Server
 logs) and `/terms` describe exactly that line and its 30-day retention (the
 `_Default` log bucket); change them with it.
@@ -92,6 +100,12 @@ schema lock; do not "fix" it by expanding the allow-list. Sharing avoided a
 `Recipe` field (`docs/plans/shared-recipes.md`, D3); optional `Recipe.lang`
 is the first deliberate exception since `galleryPhotoIds`
 (`docs/constitutions/i18n.md`), and code must work when `lang` is missing.
+Optional `Recipe.importCheck` (typed import warnings, `server/importWarnings.ts`)
+is the second (`docs/plans/import-reliability.md`); code must work when it is
+missing, and both `compactRecipe` and `compactRecipeFields` drop a malformed
+one rather than reject the recipe. `recipeStore.save` carries it from the
+stored recipe and reconciles it with the edit; only `replaceFromImport`
+replaces it.
 Collections are a separate store kind. Grants live under
 `collections/{id}/grants/{viewerSub}` plus a reverse
 `incomingShares/{viewerSub}` index; they are REST, not LWW push. Shared
@@ -428,7 +442,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/collection-path.md` | Built on `cursor/collection-path-2d3d`. Named collections open at `/collections/<id>`. Legacy `?c=` redirects removed. Not deployed. |
 | `docs/plans/approval-email.md` | Built on `cursor/approval-email-420a`. Email the requester after an admin approves an access request. Not deployed; before deploying, set `MAIL_FROM` to a sender on a Resend-verified domain (the sandbox sender skips the send). |
 | `docs/plans/library-agent.md` | Merged (#34), not deployed. App-level assistant: read-only tools over the user's own library, modular cards (shopping list first), ephemeral threads. |
-| `docs/plans/import-reliability.md` | Approved, not started. Typed import warnings stored as optional `Recipe.importCheck`, deterministic checks, retries (off until phase 3), warning UI. Import logging was done separately (#102). Phase 1 waits on the reporter's failing URLs. |
+| `docs/plans/import-reliability.md` | Phase 2 built on `claude/import-reliability-plan-170fa6`, not deployed. Typed import warnings stored as optional `Recipe.importCheck`, deterministic checks, retries (constant at 0 until phase 3), warning UI. Import logging was done separately (#102). Phase 1 still waits on the reporter's failing URLs; phase 3 waits on a deploy and data. |
 | `docs/plans/agent-collection-moves.md` | Built, not deployed. `propose_collection_move` / `collection_move` v1 proposal card; client apply via `collectionStore.moveRecipes`. |
 | `docs/plans/html-parser-recipe-import.md` | Built on `cursor/html-parser-recipe-import-11d4`. Not deployed. Replace the hand-rolled HTML scanner in `server/recipeImport.ts` with parse5 (issue #91). |
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |

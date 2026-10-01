@@ -13,7 +13,30 @@
  * Photo import is bound by `docs/constitutions/image-import.md`.
  */
 import { GoogleGenAI, MediaResolution, Type, type Schema } from '@google/genai';
-import { parse, type DefaultTreeAdapterMap } from 'parse5';
+import {
+  checkImport,
+  groundingCorpus,
+  hasInstructionLikeContent,
+  pickBestAttempt,
+  readRecipeJsonLd,
+  type ImportFailureClass,
+  type ImportSelfReport,
+  type RecipeJsonLd,
+} from './importChecks.ts';
+import { thrownStatus } from './importLog.ts';
+import {
+  isBlockingWarning,
+  type ImportWarning,
+  type ImportWarningCode,
+} from './importWarnings.ts';
+import {
+  primaryRegion,
+  recipeJsonLdNode,
+  regionSource,
+  scanPage,
+  stripToText,
+  type PageScan,
+} from './pageScan.ts';
 import { normalizeLang, sameLanguage, toSupportedLocale, type Locale } from './lang.ts';
 import { applyTranslation, recipeSegments, translationExceedsCaps } from './recipeTranslation.ts';
 import {
@@ -75,7 +98,21 @@ export interface RecipeImportDeps {
   ai: { models: Pick<GoogleGenAI['models'], 'generateContent'> };
   model: string;
   translator: RecipeTranslator;
+  /** Test seam: overrides `MAX_IMPORT_RETRIES` for page and paste imports. */
+  maxRetries?: number;
+  /** Test seam for the retry deadline. Defaults to `Date.now`. */
+  now?: () => number;
 }
+
+/**
+ * Extra Gemini calls a page or paste import may make after the first, for a
+ * hard failure or a blocking extraction warning. A code constant, not an env
+ * var, so a deploy that replaces the env map cannot silently change it.
+ * Phase 2 of `docs/plans/import-reliability.md` ships it at 0.
+ */
+export const MAX_IMPORT_RETRIES = 0;
+/** No new attempt starts after this long, so one bulk row cannot stall the batch. */
+export const IMPORT_RETRY_DEADLINE_MS = 40_000;
 
 export const IMPORT_BAD_LANGUAGE_CODE = 'import-bad-language';
 export const IMPORT_BAD_LANGUAGE_ERROR = 'That language is not supported.';
@@ -101,16 +138,42 @@ export type ImportTranslation =
   | { kind: 'ok'; lang: string; recipe: ImportedRecipe }
   | { kind: 'failed' };
 
+/** Whether a page import read the Recipe JSON-LD or the page text. Pasted text is `text`. */
+export type ImportSourceRead = 'jsonld' | 'text';
+
+/** One Gemini call's result, for the log line only. */
+export interface ImportAttempt {
+  result: 'ok' | 'warn' | 'not_a_recipe' | 'parse_error' | 'unusable' | 'threw';
+  codes: ImportWarningCode[];
+}
+
+/** What the import log records about how the outcome was reached. Never recipe text. */
+export interface ImportOutcomeLog {
+  source?: ImportSourceRead;
+  attempts: ImportAttempt[];
+  /** A numeric status from the last thrown provider error, when it had one. */
+  errorStatus?: number;
+}
+
 export type ImportOutcome =
-  | { kind: 'ok'; recipe: ImportedRecipe; translation?: ImportTranslation }
+  | {
+      kind: 'ok';
+      recipe: ImportedRecipe;
+      translation?: ImportTranslation;
+      /** Computed on the original extraction, before translation. May be empty. */
+      warnings: ImportWarning[];
+      log?: ImportOutcomeLog;
+    }
   /** Nothing to send; Gemini is not called. */
-  | { kind: 'empty_source' }
+  | { kind: 'empty_source'; log?: ImportOutcomeLog }
   /** The model reported that the source holds no recipe. */
-  | { kind: 'not_a_recipe' }
+  | { kind: 'not_a_recipe'; log?: ImportOutcomeLog }
   /** The model's output was not a JSON object. */
-  | { kind: 'parse_error' }
+  | { kind: 'parse_error'; log?: ImportOutcomeLog }
   /** JSON, but `normalizeImportedRecipe` could not make a recipe of it. */
-  | { kind: 'unusable' };
+  | { kind: 'unusable'; log?: ImportOutcomeLog }
+  /** The Gemini call threw on the last attempt (page and paste only; photos still throw). */
+  | { kind: 'model_error'; log?: ImportOutcomeLog };
 
 export type PageFetchOutcome =
   | { kind: 'ok'; html: string }
@@ -192,146 +255,28 @@ const RECIPE_OUTPUT_CONFIG = {
   responseSchema: RECIPE_SCHEMA,
 };
 
-type HtmlElement = DefaultTreeAdapterMap['element'];
-type HtmlParent = DefaultTreeAdapterMap['parentNode'];
-
-function isHtmlElement(node: DefaultTreeAdapterMap['childNode']): node is HtmlElement {
-  return 'tagName' in node;
-}
-
-function attributeValue(element: HtmlElement, name: string): string | undefined {
-  for (const attr of element.attrs) {
-    if (attr.name === name) return attr.value;
-  }
-  return undefined;
-}
-
-/** `type` equals `application/ld+json` after trim, case-insensitively. Extra tokens do not count. */
-function isLdJsonScript(element: HtmlElement): boolean {
-  if (element.tagName !== 'script') return false;
-  const type = attributeValue(element, 'type');
-  return type !== undefined && type.trim().toLowerCase() === 'application/ld+json';
-}
-
-/** `role` equals `main` after trim, case-insensitively. `main-content` does not count. */
-function isMainRole(element: HtmlElement): boolean {
-  const role = attributeValue(element, 'role');
-  return role !== undefined && role.trim().toLowerCase() === 'main';
-}
-
-/** Original-HTML span of an element. Implied nodes the parser invented have no location. */
-function elementSource(html: string, element: HtmlElement): string | null {
-  const loc = element.sourceCodeLocation;
-  if (!loc) return null;
-  return html.slice(loc.startOffset, loc.endOffset);
-}
-
 /**
- * Raw script text, from the end of the start tag to the start of the end tag.
- * An unclosed `<script>` has no end tag and is not a JSON-LD candidate.
+ * Page and paste imports only: `RECIPE_SCHEMA` plus the model's report of what
+ * the source holds, one input to `checkImport`. The photo schema and the
+ * `api/chat.ts` copy do not get these fields.
  */
-function scriptRawText(html: string, element: HtmlElement): string | null {
-  const loc = element.sourceCodeLocation;
-  if (!loc?.startTag || !loc.endTag) return null;
-  return html.slice(loc.startTag.endOffset, loc.endTag.startOffset);
-}
+const PAGE_RECIPE_SCHEMA: Schema = {
+  ...RECIPE_SCHEMA,
+  properties: {
+    ...RECIPE_SCHEMA.properties,
+    instructionsOnPage: {
+      type: Type.BOOLEAN,
+      description: 'Whether the source material itself contains the steps to make the dish.',
+    },
+    ingredientsOnPage: {
+      type: Type.BOOLEAN,
+      description: 'Whether the source material itself contains an ingredient list.',
+    },
+  },
+  required: [...(RECIPE_SCHEMA.required ?? []), 'instructionsOnPage', 'ingredientsOnPage'],
+};
 
-/**
- * An HTML `<template>` keeps its children on `.content`. A `<template>` in
- * SVG or MathML is a foreign element with no content fragment; its children
- * are ordinary child nodes.
- */
-function isHtmlTemplate(element: HtmlElement): element is DefaultTreeAdapterMap['template'] {
-  return element.tagName === 'template' && 'content' in element;
-}
-
-/** Elements in source order, including HTML `<template>` contents. Comments are not elements. */
-function walkElements(parent: HtmlParent, visit: (element: HtmlElement) => void): void {
-  for (const child of parent.childNodes) {
-    if (!isHtmlElement(child)) continue;
-    visit(child);
-    if (isHtmlTemplate(child)) walkElements(child.content, visit);
-    walkElements(child, visit);
-  }
-}
-
-/** Script and style bodies still count; this is not `stripToText`. */
-function regionTextLength(region: string): number {
-  return region.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length;
-}
-
-/** Equal lengths keep the earlier slice (`len > bestLen`). */
-function longestSlice(regions: string[]): string | null {
-  let best: string | null = null;
-  let bestLen = -1;
-  for (const region of regions) {
-    const len = regionTextLength(region);
-    if (len > bestLen) {
-      best = region;
-      bestLen = len;
-    }
-  }
-  return best;
-}
-
-/**
- * News-article recipes live in these regions, often after a long nav that
- * would eat the 60k text cap. The longest `<article>` wins, so a header
- * teaser or a nested related-story card does not replace the story.
- * A short article beside a larger `<main>` / `role="main"` yields to that
- * region. Slices are the original HTML, not parser text.
- */
-function primaryRegion(html: string, articles: string[], mains: string[]): string {
-  const article = longestSlice(articles);
-  const main = longestSlice(mains);
-  if (article && main) {
-    if (regionTextLength(article) * 2 >= regionTextLength(main)) return article;
-    return main;
-  }
-  return article ?? main ?? html;
-}
-
-/**
- * Tag strip for the text fallback, run on a slice of the original HTML.
- * A `>` inside a quoted attribute still ends `<[^>]+>` early, so the rest
- * of that attribute can leak into the text.
- */
-function stripToText(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .slice(0, MAX_SOURCE_CHARS);
-}
-
-function collectedText(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) return value.map(collectedText).join(' ');
-  if (value && typeof value === 'object') {
-    const row = value as { text?: unknown; name?: unknown };
-    return `${collectedText(row.text)} ${collectedText(row.name)}`;
-  }
-  return '';
-}
-
-/**
- * A Recipe node that lists ingredients or steps but leaves them blank (Maangchi
- * publishes `recipeIngredient: []` and HowToSteps with only a position) is not
- * a recipe. A node that omits both fields is left alone: older fixtures and
- * partial blocks still go to Gemini as JSON-LD.
- */
-function recipeJsonLdHasBody(node: object): boolean {
-  const row = node as { recipeIngredient?: unknown; recipeInstructions?: unknown };
-  const listsIngredients = Object.prototype.hasOwnProperty.call(node, 'recipeIngredient');
-  const listsInstructions = Object.prototype.hasOwnProperty.call(node, 'recipeInstructions');
-  if (!listsIngredients && !listsInstructions) return true;
-  return (
-    collectedText(row.recipeIngredient).trim() !== '' ||
-    collectedText(row.recipeInstructions).trim() !== ''
-  );
-}
+const PAGE_RECIPE_OUTPUT_CONFIG = { ...RECIPE_OUTPUT_CONFIG, responseSchema: PAGE_RECIPE_SCHEMA };
 
 /**
  * Recipe JSON-LD fields that say nothing about how to make the dish: reader
@@ -355,6 +300,16 @@ function recipeNodeSource(node: object): string {
   return JSON.stringify(trimmed).slice(0, MAX_SOURCE_CHARS);
 }
 
+/** What Gemini reads from a scanned page, and which branch produced it. */
+function sourceFromScan(scan: PageScan): { source: string; read: ImportSourceRead } {
+  const node = recipeJsonLdNode(scan);
+  if (node !== null) {
+    return { source: recipeNodeSource(node), read: 'jsonld' };
+  }
+  const text = stripToText(regionSource(scan.html, primaryRegion(scan)));
+  return { source: text.slice(0, MAX_SOURCE_CHARS), read: 'text' };
+}
+
 /**
  * Prefers the schema.org/Recipe JSON-LD block most recipe sites embed
  * (compact and unambiguous); falls back to the page's stripped text,
@@ -364,48 +319,14 @@ function recipeNodeSource(node: object): string {
  * and minifiers emit. `@graph` is unwrapped one level. A short article
  * yields to a larger `<main>` or `role="main"`.
  *
- * parse5 (with source locations) finds the script bodies and the region
- * slices. Both are cut from the original HTML. A Recipe that exists only
- * inside a comment does not win, because a comment is not an element.
+ * parse5 (with source locations, `server/pageScan.ts`) finds the script
+ * bodies and the region slices. Both are cut from the original HTML. A Recipe
+ * that exists only inside a comment does not win, because a comment is not
+ * an element.
  */
 export function extractRecipeSource(html: string): string {
-  const scripts: string[] = [];
-  const articles: string[] = [];
-  const mains: string[] = [];
-  walkElements(parse(html, { sourceCodeLocationInfo: true }), (element) => {
-    if (isLdJsonScript(element)) {
-      const body = scriptRawText(html, element);
-      if (body !== null) scripts.push(body);
-      return;
-    }
-    const slice = elementSource(html, element);
-    if (slice === null) return;
-    if (element.tagName === 'article') articles.push(slice);
-    if (element.tagName === 'main' || isMainRole(element)) mains.push(slice);
-  });
-
-  for (const block of scripts) {
-    try {
-      const parsed: unknown = JSON.parse(block);
-      const nodes: unknown[] = Array.isArray(parsed)
-        ? parsed
-        : ((parsed as { '@graph'?: unknown[] })['@graph'] ?? [parsed]);
-      for (const node of nodes) {
-        if (typeof node !== 'object' || node === null) continue;
-        const type = (node as { '@type'?: string | string[] })['@type'];
-        const isRecipe = type === 'Recipe' || (Array.isArray(type) && type.includes('Recipe'));
-        if (isRecipe && recipeJsonLdHasBody(node)) {
-          return recipeNodeSource(node);
-        }
-      }
-    } catch {
-      // Malformed JSON-LD — keep looking.
-    }
-  }
-
-  return stripToText(primaryRegion(html, articles, mains));
+  return sourceFromScan(scanPage(html)).source;
 }
-
 /** Website URL path only. The Chrome extension sends the tab HTML instead. */
 export async function fetchPageHtml(
   rawUrl: string,
@@ -552,31 +473,140 @@ export function normalizeImportedRecipe(raw: unknown): ImportedRecipe | null {
 }
 
 /**
+ * What `checkImport` compares an extraction against: whether the source
+ * holds a method, the normalized grounding corpus, and the page's JSON-LD
+ * counts. Built once per import, before the first Gemini call.
+ */
+export interface ImportCheckContext {
+  read: ImportSourceRead;
+  sourceHasInstructions: boolean;
+  corpus: string;
+  jsonLd?: RecipeJsonLd | null;
+}
+
+/** Context for pasted text, which is its own corpus. */
+export function textCheckContext(text: string): ImportCheckContext {
+  return {
+    read: 'text',
+    sourceHasInstructions: hasInstructionLikeContent({ text }),
+    corpus: groundingCorpus({ text }),
+  };
+}
+
+/** Context for page HTML, the same one `importFromHtml` builds. Offline calibration uses it. */
+export function htmlCheckContext(html: string): ImportCheckContext {
+  const scan = scanPage(html);
+  return pageCheckContext(scan, sourceFromScan(scan).read);
+}
+
+function pageCheckContext(scan: PageScan, read: ImportSourceRead): ImportCheckContext {
+  const jsonLd = readRecipeJsonLd(scan);
+  return {
+    read,
+    sourceHasInstructions: hasInstructionLikeContent({ scan, jsonLd }),
+    corpus: groundingCorpus({ scan, jsonLd }),
+    jsonLd,
+  };
+}
+
+const PAGE_PROMPT =
+  'Extract the recipe from the source material below and save it. ' +
+  'Convert fractions to decimals for quantities. Keep step texts ' +
+  'faithful to the original but trim fluff. If the source contains ' +
+  'no recipe, save a recipe with the title "NOT_A_RECIPE".\n\n';
+
+type ExtractionAttempt =
+  | { kind: 'ok'; recipe: ImportedRecipe; warnings: ImportWarning[]; failureClass: ImportFailureClass }
+  | { kind: 'not_a_recipe' | 'parse_error' | 'unusable' | 'model_error' };
+
+/**
  * Source text (pasted, or from `extractRecipeSource`) → outcome.
- * Extraction is the one Gemini call and stays faithful to the source.
- * `translateTo`, when set, may add a translation; it never changes that call.
+ * Each attempt is one Gemini call that stays faithful to the source, then
+ * `checkImport`. A throw, unparseable or unusable output, or a blocking
+ * extraction warning starts another attempt, up to `MAX_IMPORT_RETRIES` more
+ * and never after `IMPORT_RETRY_DEADLINE_MS`. A source failure or "not a
+ * recipe" never retries. With every attempt warned, the best one wins
+ * (`pickBestAttempt`). `translateTo`, when set, may add a translation of the
+ * chosen extraction; it never changes the calls. `check` defaults to treating
+ * `source` as pasted text.
  */
 export async function importFromSource(
   source: string,
   deps: RecipeImportDeps,
   translateTo?: string,
+  check: ImportCheckContext = textCheckContext(source),
 ): Promise<ImportOutcome> {
   if (source.trim() === '') {
-    return { kind: 'empty_source' };
+    return { kind: 'empty_source', log: { source: check.read, attempts: [] } };
   }
 
-  const result = await deps.ai.models.generateContent({
-    model: deps.model,
-    contents:
-      'Extract the recipe from the source material below and save it. ' +
-      'Convert fractions to decimals for quantities. Keep step texts ' +
-      'faithful to the original but trim fluff. If the source contains ' +
-      'no recipe, save a recipe with the title "NOT_A_RECIPE".\n\n' +
-      `Source material:\n${source}`,
-    config: { ...RECIPE_OUTPUT_CONFIG },
-  });
+  const maxRetries = deps.maxRetries ?? MAX_IMPORT_RETRIES;
+  const now = deps.now ?? Date.now;
+  const started = now();
+  const log: ImportOutcomeLog = { source: check.read, attempts: [] };
+  const usable: Extract<ExtractionAttempt, { kind: 'ok' }>[] = [];
+  let last: ExtractionAttempt = { kind: 'model_error' };
 
-  return finishIfExtracted(outcomeFromModelText(result.text), translateTo, deps);
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    if (attempt > 0 && now() - started >= IMPORT_RETRY_DEADLINE_MS) break;
+    last = await extractOnce(source, deps, check, log);
+    if (last.kind === 'not_a_recipe') break;
+    if (last.kind !== 'ok') continue;
+    usable.push(last);
+    const blocks = last.warnings.some(isBlockingWarning);
+    if (!blocks || last.failureClass !== 'extraction') break;
+  }
+
+  if (usable.length > 0) {
+    const best = pickBestAttempt(usable);
+    const finished = await finishImport(best.recipe, translateTo, deps);
+    return { ...finished, warnings: best.warnings, log };
+  }
+  return { kind: last.kind === 'ok' ? 'unusable' : last.kind, log };
+}
+
+
+/** One Gemini call and its check. Records the attempt on `log`; never throws for the model. */
+async function extractOnce(
+  source: string,
+  deps: RecipeImportDeps,
+  check: ImportCheckContext,
+  log: ImportOutcomeLog,
+): Promise<ExtractionAttempt> {
+  let text: string | undefined;
+  try {
+    const result = await deps.ai.models.generateContent({
+      model: deps.model,
+      contents: `${PAGE_PROMPT}Source material:\n${source}`,
+      config: { ...PAGE_RECIPE_OUTPUT_CONFIG },
+    });
+    text = result.text;
+  } catch (err) {
+    // Only a numeric status is kept from the error: SDK messages can echo the request.
+    log.attempts.push({ result: 'threw', codes: [] });
+    const status = thrownStatus(err);
+    if (status !== undefined) log.errorStatus = status;
+    else delete log.errorStatus;
+    return { kind: 'model_error' };
+  }
+  const read = readModelText(text);
+  if (read.kind !== 'ok') {
+    log.attempts.push({ result: read.kind, codes: [] });
+    return { kind: read.kind };
+  }
+  const { warnings, failureClass } = checkImport({
+    recipe: read.recipe,
+    selfReport: read.selfReport,
+    jsonLd: check.jsonLd,
+    sourceHasInstructions: check.sourceHasInstructions,
+    corpus: check.corpus,
+    blankItems: read.blankItems,
+  });
+  log.attempts.push({
+    result: warnings.length > 0 ? 'warn' : 'ok',
+    codes: warnings.map((w) => w.code),
+  });
+  return { kind: 'ok', recipe: read.recipe, warnings, failureClass };
 }
 
 function imageImportPrompt(extraText: string): string {
@@ -633,45 +663,83 @@ export async function importFromImages(
     },
   });
 
-  return finishIfExtracted(outcomeFromModelText(result.text), translateTo, deps);
+  const read = readModelText(result.text);
+  if (read.kind !== 'ok') return { kind: read.kind };
+  // Photo import runs no checks (constitution `image-import.md`, principle 1).
+  const finished = await finishImport(read.recipe, translateTo, deps);
+  return { ...finished, warnings: [] };
 }
 
-function outcomeFromModelText(text: string | undefined): ImportOutcome {
+/** Ingredients and steps the model returned with blank text, before normalization drops them. */
+function countBlankItems(raw: Record<string, unknown>): number {
+  let blank = 0;
+  const isBlank = (row: unknown, field: string) =>
+    isPlainObject(row) && (typeof row[field] !== 'string' || row[field].trim() === '');
+  if (Array.isArray(raw.ingredientSections)) {
+    for (const section of raw.ingredientSections) {
+      if (!isPlainObject(section) || !Array.isArray(section.items)) continue;
+      blank += section.items.filter((item) => isBlank(item, 'item')).length;
+    }
+  }
+  if (Array.isArray(raw.steps)) {
+    blank += raw.steps.filter((step) => isBlank(step, 'text')).length;
+  }
+  return blank;
+}
+
+type ModelRead =
+  | {
+      kind: 'ok';
+      recipe: ImportedRecipe;
+      selfReport: ImportSelfReport;
+      blankItems: number;
+    }
+  | { kind: 'not_a_recipe' | 'parse_error' | 'unusable' };
+
+/**
+ * Parses one model response. `normalizeImportedRecipe` still strips unknown
+ * keys; the page schema's self-report is read beside it and never reaches
+ * the recipe.
+ */
+function readModelText(text: string | undefined): ModelRead {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text ?? '');
   } catch {
     return { kind: 'parse_error' };
   }
-  if (typeof parsed !== 'object' || parsed === null) {
+  if (!isPlainObject(parsed)) {
     return { kind: 'parse_error' };
   }
-  if ((parsed as { title?: unknown }).title === 'NOT_A_RECIPE') {
+  if (parsed.title === 'NOT_A_RECIPE') {
     return { kind: 'not_a_recipe' };
   }
   const recipe = normalizeImportedRecipe(parsed);
   if (recipe === null) {
     return { kind: 'unusable' };
   }
-  return { kind: 'ok', recipe };
+  const selfReport: ImportSelfReport = {};
+  if (typeof parsed.instructionsOnPage === 'boolean') {
+    selfReport.instructionsOnPage = parsed.instructionsOnPage;
+  }
+  if (typeof parsed.ingredientsOnPage === 'boolean') {
+    selfReport.ingredientsOnPage = parsed.ingredientsOnPage;
+  }
+  return { kind: 'ok', recipe, selfReport, blankItems: countBlankItems(parsed) };
 }
 
-function finishIfExtracted(
-  outcome: ImportOutcome,
-  translateTo: string | undefined,
-  deps: RecipeImportDeps,
-): Promise<ImportOutcome> {
-  if (outcome.kind !== 'ok') return Promise.resolve(outcome);
-  return finishImport(outcome.recipe, translateTo, deps);
-}
-
-/** Page HTML → outcome: `extractRecipeSource` then `importFromSource`. */
+/**
+ * Page HTML → outcome: one scan gives both what Gemini reads
+ * (`extractRecipeSource`'s branch) and what the checks compare against.
+ */
 export function importFromHtml(
   html: string,
   deps: RecipeImportDeps,
   translateTo?: string,
 ): Promise<ImportOutcome> {
-  return importFromSource(extractRecipeSource(html), deps, translateTo);
+  const scan = scanPage(html);
+  const { source, read } = sourceFromScan(scan);
+  return importFromSource(source, deps, translateTo, pageCheckContext(scan, read));
 }
 
 /**
@@ -751,13 +819,14 @@ async function translateRecipe(
  * that matches the target discards the translation and labels the original.
  * Otherwise the original is labelled with the detection and the translation
  * is returned. Provider failure, caps, and bad segments set `translation`
- * to `{ kind: 'failed' }` and still return the original.
+ * to `{ kind: 'failed' }` and still return the original. Callers add the
+ * warnings, which this never changes.
  */
 async function finishImport(
   recipe: ImportedRecipe,
   translateTo: string | undefined,
   deps: RecipeImportDeps,
-): Promise<ImportOutcome> {
+): Promise<{ kind: 'ok'; recipe: ImportedRecipe; translation?: ImportTranslation }> {
   if (translateTo === undefined) {
     return { kind: 'ok', recipe };
   }
