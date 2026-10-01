@@ -42,13 +42,35 @@ summary, approach A.
   `import-sites/wikibooks-pancake` was hand-classified `source` in
   `class.json` (a category overview with no method of its own) and raises
   `INSTRUCTIONS_NOT_ON_PAGE`.
-- Command: `npm run test:import` (page and text fixtures) before and after.
-  `eval:ocr-compare` is not required for this change (the photo request is
-  byte-for-byte the same), and is required for phase 3.
-- Before / After: not run yet.
-- Decision: pending owner run — the schema change touches every page import,
-  so confirm the site and text evals hold before deploying.
-- Run by: agent (offline checks only)
+- Command: `npm run test:import` once per side, then `-t "from cached HTML"`
+  and `-t "cached HTML|import from text"` repeats, alternating sides. Every
+  run is recorded. `eval:ocr-compare` was not run: the photo request is
+  byte-for-byte the same (unit-tested). It is required for phase 3.
+- Before (`d807bb3`): full run 26/26. Page fixtures, 8 more runs: 24/24.
+  Page + text fixtures, 4 runs: 22/24 (beef-noodle-soup `parse_error`;
+  gumbo step count 8 vs 5).
+- After, first version (`0db5ad9`, page schema with the two required
+  booleans, no ordering): full run 24/26 (beef-noodle-soup judge:
+  `prepMinutes` 305106198964720960; sweet-sour-pork photo, an unchanged
+  request, already 2/3 in the 2026-09-27 entry). Page fixtures, 8 more runs:
+  18/24, every failure beef-stew (4 `parse_error`, 1 `prepMinutes` 558, 1
+  unrecorded).
+- Diagnosis (raw-output probe on beef-stew; finish reason, length, and key
+  order only): the model writes required fields first, then the optional
+  ones, and with the booleans required `prepMinutes` landed last. A trailing
+  number sometimes runs on (`5.000000000000001e-05`, or zeros until
+  `MAX_TOKENS`, which is the `parse_error`). The parent commit does the same
+  (1 of 3 probes hit `MAX_TOKENS` on a trailing `prepMinutes`); the new
+  fields made it more frequent. The model also stopped returning
+  `description`, `notes`, and `lang`.
+- Fix: `PAGE_RECIPE_SCHEMA.propertyOrdering` puts the times early and ends on
+  the two booleans. Reason (not fixture-specific): no free-form number should
+  be the last token of the object. Photo schema untouched.
+- After, with the ordering: probe 6/6 `STOP`, with `description` and `lang`
+  back. Page + text fixtures, 4 runs: 24/24.
+- Decision: kept. The first version is the regression the ordering fixes;
+  the ordering run beats the parent on the same fixtures (24/24 vs 22/24).
+- Run by: agent, model default (`CHAT_MODEL` from `.env.local`)
 
 ## 2026-09-27 — Photo import: runaway-unit check (32) and one retry
 

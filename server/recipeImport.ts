@@ -274,6 +274,24 @@ const PAGE_RECIPE_SCHEMA: Schema = {
     },
   },
   required: [...(RECIPE_SCHEMA.required ?? []), 'instructionsOnPage', 'ingredientsOnPage'],
+  // Times early and the two booleans last. Left to itself the model wrote
+  // `prepMinutes` last, and a trailing number sometimes ran on until
+  // MAX_TOKENS (`parse_error`) or came back as 5.000000000000001e-05;
+  // a boolean cannot run on (evals/EXPERIMENTS.md, 2026-10-01).
+  propertyOrdering: [
+    'title',
+    'description',
+    'servings',
+    'prepMinutes',
+    'cookMinutes',
+    'ingredientSections',
+    'steps',
+    'tags',
+    'notes',
+    'lang',
+    'instructionsOnPage',
+    'ingredientsOnPage',
+  ],
 };
 
 const PAGE_RECIPE_OUTPUT_CONFIG = { ...RECIPE_OUTPUT_CONFIG, responseSchema: PAGE_RECIPE_SCHEMA };

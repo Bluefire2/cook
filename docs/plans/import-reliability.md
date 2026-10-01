@@ -330,9 +330,24 @@ Built as planned, with these choices and deviations:
   no source warning on any recipe page; the three goldens raise nothing.
   `wikibooks-pancake` is a category overview with no method, now
   `class: source`. Thresholds are unchanged from this plan.
-- **Not done here.** Live `npm run test:import` before/after (logged as
-  pending in `evals/EXPERIMENTS.md`), the browser checks, and the in-context
-  translation review. All three need a dev server and the Gemini key.
+- **Page schema ordering.** With the two booleans required, the model wrote
+  `prepMinutes` last, and a trailing number sometimes ran on until
+  `MAX_TOKENS` (a `parse_error`). The parent commit has the same failure,
+  less often. `PAGE_RECIPE_SCHEMA.propertyOrdering` ends on the booleans;
+  the measurements are in `evals/EXPERIMENTS.md` (2026-10-01).
+- **Video-only pages.** On a page that says "watch the video for how to make
+  it", the model sometimes turns that sentence into the only step. The import
+  then gets `TOO_FEW_STEPS` (advisory) instead of `INSTRUCTIONS_NOT_ON_PAGE`.
+  Worth a phase 1 fixture; the checks do not ground steps against the page.
+- **Verified 2026-10-01** (dev against production, throwaway recipes): paste
+  and URL previews show the specific warning and no generic banner; a clean
+  URL shows nothing; Dismiss survives a reload; Retry import → Replace fills
+  the steps; an edit that adds a step clears the warning; bulk counts,
+  filters, and per-row Retry; Library and `/cooks` render. Log lines carry
+  `source`, `attempts`, and `codes`. In-context translation review (task
+  scope, uk/ru/zh-Hans): no blockers. A shared viewer's view was not checked
+  in the browser (no second account); `showsImportWarnings` covers it in
+  unit tests.
 
 ## Phase 3: Turn on retries (spec §10.3)
 

@@ -457,6 +457,17 @@ describe('importFromSource', () => {
     expect(outcome.kind === 'ok' && outcome.recipe).not.toHaveProperty('instructionsOnPage');
   });
 
+  it('orders every page-schema field, ending on the two booleans so no number comes last', async () => {
+    const { deps, calls } = fakeImportDeps(JSON.stringify(MINIMAL));
+    await importFromSource('soup', deps);
+    const schema = calls[0].config?.responseSchema as {
+      properties: Record<string, unknown>;
+      propertyOrdering: string[];
+    };
+    expect([...schema.propertyOrdering].sort()).toEqual(Object.keys(schema.properties).sort());
+    expect(schema.propertyOrdering.slice(-2)).toEqual(['instructionsOnPage', 'ingredientsOnPage']);
+  });
+
   it('reports output that is not a JSON object as a parse error', async () => {
     for (const reply of [undefined, '', 'Sure! Here is the recipe', '42', 'null']) {
       const { deps } = fakeImportDeps(reply);
