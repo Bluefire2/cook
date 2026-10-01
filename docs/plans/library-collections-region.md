@@ -17,26 +17,38 @@ a collapsed “4 more” row for a long list.
 Feedback on those:
 
 - The full-width bar and the label-and-rule are out.
-- The boxed section is the one to keep. Collections are a list the person
-  made, or that was shared with them, so they belong in their own section.
+- The boxed section was preferred, because collections are a list the
+  person made, or that was shared with them.
 - An accordion on tabs is an unfamiliar pattern. Do not use it.
 - A long list should scroll sideways, or collections should have their own
   screen, because a disclosure does not scale.
 - Show the flow, not only the resting state.
 
+A later pass on the boxed section: do away with the box. A card around the
+collections repeats the recipe cards, and the screen is already full of
+boxes.
+
 ## Decision
 
-The library gets a boxed Collections section. Names that do not fit scroll
-sideways inside the box. The full list is a screen of its own. There is no
-accordion and no in-place “Show less”.
+Collections are a section on the page background, not a card. A label row
+and one sideways row of names sit between the header and search. Names
+that do not fit scroll sideways. The full list is a screen of its own.
+There is no accordion and no in-place “Show less”.
+
+The section has no surface fill, no border, no radius, and no rule. The
+only cards on the library are the recipe cards. Chips stay pills, because
+that is how a single collection is selected, not a container around the
+list.
 
 Rejected:
 
+- A card around the section. That is a box inside the page, above more
+  boxes.
 - Tabs, with or without an accordion. A tab underline does not survive a
   wrap, and hiding tabs behind a disclosure is not a pattern people know.
 - A full-width bar. It reads as app chrome, not as a list the person owns.
-- A label and a rule as the whole treatment. The label row is kept, but
-  only inside the box, so “New collection” is not one more name.
+- A dividing rule as the thing that makes it a section. Space under the
+  row is enough.
 - Wrapping chips into the search row. That is the current problem.
 - A “N more / Show less” disclosure. Opening it pushes the recipe list
   down and back, and it is the accordion pattern the review rejected.
@@ -54,14 +66,12 @@ A named collection’s recipes stay at `/collections/<id>`.
 
 Order of named collections stays the current one: name, then id.
 
-## The box
+## The section
 
 Shown on `/` and on `/collections/<id>`, between the header and the search
 row, whenever the library has loaded and the account has at least one
-named collection. The empty case is below.
-
-The box is a surface card with the same radius and border as a recipe
-card. It has two parts.
+named collection. The empty case is below. It sits on the page background,
+with the same horizontal padding as the header. Nothing is drawn around it.
 
 **Label row.** Folder icon, then the existing “Collections” string
 (`library.collectionsNav`). That label is a link to the index. On the
@@ -88,11 +98,11 @@ scroller scrolls the focused chip into view.
 
 Share, Rename, and Delete are not chips and must not join the scroller.
 When the open collection is owned and named, those three controls sit on a
-line inside the card, under the scroller. They open the same sheets as
-today.
+line under the scroller, as plain text actions. They open the same sheets
+as today. They do not get a bar or a card of their own.
 
-When the open collection is shared, the card does not grow those controls.
-The existing shared sentence and Leave stay under the card, outside it.
+When the open collection is shared, those three controls stay hidden. The
+existing shared sentence and Leave sit under the section.
 
 ## The index
 
@@ -112,7 +122,7 @@ Screen, top to bottom:
   `/collections/<id>`). If they opened the index directly, Back goes to
   `/`.
 - Title: Collections (`library.collectionsNav`).
-- New collection, the same sheet as the box. On success, go to the new
+- New collection, the same sheet as the section. On success, go to the new
   collection’s library route, as create does today.
 - A row for Recipes: the unfiled list, route `/`.
 - One row per named collection, in the same order as the scroller. The
@@ -130,25 +140,26 @@ open collection. A row is only a way to switch.
 ## Empty
 
 No named collections, and signed in: the library does not show the
-scroller or a link to an empty index. The box is the existing empty
-sentence (`library.collectionsEmpty`) and the New collection action.
-Signed out, the library stays as it is today and shows no box.
+scroller or a link to an empty index. The section is the existing empty
+sentence (`library.collectionsEmpty`) and the New collection action, with
+no card around them. Signed out, the library stays as it is today and
+shows no section.
 
 ## Flows
 
 ```mermaid
 flowchart TD
   lib[Library]
-  box[Collections box]
+  row[Collections section]
   index["Index /collections"]
   sheet[New collection sheet]
   named["Library /collections/id"]
-  lib --> box
-  box -->|tap Recipes| lib
-  box -->|tap a chip| named
-  box -->|swipe| box
-  box -->|tap Collections| index
-  box -->|New collection| sheet
+  lib --> row
+  row -->|tap Recipes| lib
+  row -->|tap a chip| named
+  row -->|swipe| row
+  row -->|tap Collections| index
+  row -->|New collection| sheet
   index -->|tap Recipes| lib
   index -->|tap a row| named
   index -->|New collection| sheet
@@ -156,18 +167,18 @@ flowchart TD
 ```
 
 **Switch without leaving the list.** On the library, tap Dinners in the
-box. The route becomes `/collections/<id>`, the Dinners chip is selected,
+row. The route becomes `/collections/<id>`, the Dinners chip is selected,
 and the recipe list is that collection. Search, Select, and All
 collections stay where they are. Tap Recipes to return to `/`.
 
-**A long list.** The box shows the first chips and a fade. Swipe left to
+**A long list.** The row shows the first chips and a fade. Swipe left to
 bring Guests into view. The recipe list does not move. New collection is
 still on the label row. Tap Collections to open the index instead of
-scrolling further. The index lists Recipes and every named collection.
-Tap Guests. The library opens on that collection, and the box scrolls
-Guests into view.
+scrolling further. The index lists Recipes and every named collection as
+rows, not cards. Tap Guests. The library opens on that collection, and
+the row scrolls Guests into view.
 
-**Create.** From the box or from the index, New collection opens the
+**Create.** From the section or from the index, New collection opens the
 existing sheet. Cancel closes it and changes nothing. A successful create
 opens the new collection.
 
@@ -176,9 +187,9 @@ owned collection is open. They are unchanged sheets. After a delete, the
 library returns home as it does today.
 
 **Shared.** Opening a shared collection selects its chip and shows the
-shared sentence and Leave under the box. Leave is the existing sheet.
+shared sentence and Leave under the section. Leave is the existing sheet.
 
-**Empty.** The box is the sentence and New collection. There is no
+**Empty.** The section is the sentence and New collection. There is no
 scroller and no index link until the first collection exists.
 
 ## Copy
