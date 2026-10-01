@@ -4,9 +4,7 @@ import { collectionStore } from '../../lib/collectionStore';
 import { useRecipes } from '../../lib/recipeStore';
 import { primaryBtn } from '../../lib/uiClasses';
 import {
-  beginMoveApply,
   dispatch,
-  endMoveApply,
   getAgentSnapshot,
   type MoveApplyStatus,
 } from '../store';
@@ -95,10 +93,7 @@ export default function CollectionMoveCard({
   }
 
   const onMove = async () => {
-    if (!libraryReady || otherMoveBusy) {
-      return;
-    }
-    if (!beginMoveApply()) {
+    if (!libraryReady || getAgentSnapshot().moveBusy) {
       return;
     }
     dispatch({ type: 'beginMoveApply', cardId });
@@ -122,7 +117,6 @@ export default function CollectionMoveCard({
         });
       }
     } finally {
-      endMoveApply();
       dispatch({ type: 'endMoveBusy' });
     }
   };

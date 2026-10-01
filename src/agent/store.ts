@@ -49,7 +49,7 @@ function cardIdOnThread(state: AgentState, cardId: string): boolean {
 }
 
 export function beginMoveApplyState(state: AgentState, cardId: string): AgentState {
-  if (!cardIdOnThread(state, cardId)) {
+  if (state.moveBusy || !cardIdOnThread(state, cardId)) {
     return state;
   }
   return {
@@ -378,22 +378,6 @@ export function dispatch(action: AgentAction): void {
  * still works after the screen remounts and Clear or sign-out can end it.
  */
 let activeRequest: AbortController | null = null;
-
-let moveApplyInFlight = false;
-
-/** False when another collection-move apply is already running. */
-export function beginMoveApply(): boolean {
-  if (moveApplyInFlight) {
-    return false;
-  }
-  moveApplyInFlight = true;
-  return true;
-}
-
-export function endMoveApply(): void {
-  moveApplyInFlight = false;
-}
-
 
 export function beginAgentRequest(): AbortController {
   activeRequest?.abort();

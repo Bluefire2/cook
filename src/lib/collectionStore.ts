@@ -470,11 +470,7 @@ export const collectionStore = {
       throw new Error(t('assistant.moveRecipesGone'));
     }
 
-    if (dest === 'default') {
-      if (wouldExceedRecipeIdCap(kept)) {
-        throw new Error(t('error.collectionFull'));
-      }
-    } else {
+    if (dest !== 'default') {
       const destCollection = getCollection(dest);
       if (!destCollection) {
         throw new Error(t('error.collectionNotFound'));

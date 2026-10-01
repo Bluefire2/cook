@@ -5,14 +5,12 @@ import { invalidateSession } from '../lib/session';
 import {
   applyEvent,
   beginAgentRequest,
-  beginMoveApply,
   beginMoveApplyState,
   beginTurn,
   clearAgentThread,
   clearThread,
   dispatch,
   endAgentRequest,
-  endMoveApply,
   endMoveBusyState,
   finishMoveApplyState,
   getAgentSnapshot,
@@ -31,7 +29,6 @@ vi.mock('../lib/libraryMemory', () => ({
 }));
 
 beforeEach(() => {
-  endMoveApply();
   clearAgentThread();
   dispatch({ type: 'endMoveBusy' });
   const store = new Map<string, string>([[LOCALE_KEY, 'en']]);
@@ -294,19 +291,33 @@ describe('move apply state', () => {
 });
 
 describe('move apply mutex', () => {
-  it('allows only one in-flight apply at a time', () => {
-    expect(beginMoveApply()).toBe(true);
-    expect(beginMoveApply()).toBe(false);
-    endMoveApply();
-    expect(beginMoveApply()).toBe(true);
-    endMoveApply();
+  it('beginMoveApplyState refuses while another apply is in flight', () => {
+    let state = stateWithMoveCard('move-1');
+    state = applyEvent(state, {
+      t: 'card',
+      card: { type: 'collection_move', v: 1, id: 'move-2', data: {} },
+    });
+    state = beginMoveApplyState(state, 'move-1');
+    const next = beginMoveApplyState(state, 'move-2');
+    expect(next).toBe(state);
+    expect(next.applies['move-2']).toBeUndefined();
+    state = endMoveBusyState(state);
+    expect(beginMoveApplyState(state, 'move-2').applies['move-2']).toEqual({
+      phase: 'applying',
+    });
   });
 
-  it('clearThread does not reset the in-flight mutex', () => {
-    expect(beginMoveApply()).toBe(true);
+  it('clearThread does not release the in-flight apply', () => {
+    dispatch({ type: 'begin', userText: 'move' });
+    dispatch({
+      type: 'event',
+      event: { t: 'card', card: { type: 'collection_move', v: 1, id: 'c-move', data: {} } },
+    });
+    dispatch({ type: 'beginMoveApply', cardId: 'c-move' });
     dispatch({ type: 'clear' });
-    expect(beginMoveApply()).toBe(false);
-    endMoveApply();
+    expect(getAgentSnapshot().moveBusy).toBe(true);
+    dispatch({ type: 'endMoveBusy' });
+    expect(getAgentSnapshot().moveBusy).toBe(false);
   });
 });
 
