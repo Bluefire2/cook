@@ -220,8 +220,8 @@ describe('deploy', () => {
     expect(triggers).toEqual(['workflow_dispatch']);
   });
 
-  it('package.json name stays "cook"', () => {
-    expect((JSON.parse(read('package.json')) as { name: string }).name).toBe('cook');
+  it('package.json name is "sous"', () => {
+    expect((JSON.parse(read('package.json')) as { name: string }).name).toBe('sous');
   });
 });
 
