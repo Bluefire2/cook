@@ -13,9 +13,15 @@ export type AgentMessage = {
   interim?: boolean;
 };
 
+export type MoveApplyStatus =
+  | { phase: 'applying' }
+  | { phase: 'applied'; moved: number }
+  | { phase: 'error'; message: string };
+
 export type AgentState = {
   messages: AgentMessage[];
   checked: Record<string, Record<string, true>>;
+  applies: Record<string, MoveApplyStatus>;
   streaming: boolean;
   error: string | null;
   toolLabel: string | null;
@@ -24,10 +30,44 @@ export type AgentState = {
 export const initialAgentState: AgentState = {
   messages: [],
   checked: {},
+  applies: {},
   streaming: false,
   error: null,
   toolLabel: null,
 };
+
+function cardIdOnThread(state: AgentState, cardId: string): boolean {
+  for (const message of state.messages) {
+    if (message.cards?.some((card) => card.id === cardId)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function beginMoveApplyState(state: AgentState, cardId: string): AgentState {
+  if (!cardIdOnThread(state, cardId)) {
+    return state;
+  }
+  return {
+    ...state,
+    applies: { ...state.applies, [cardId]: { phase: 'applying' } },
+  };
+}
+
+export function finishMoveApplyState(
+  state: AgentState,
+  cardId: string,
+  status: { phase: 'applied'; moved: number } | { phase: 'error'; message: string },
+): AgentState {
+  if (!cardIdOnThread(state, cardId)) {
+    return state;
+  }
+  return {
+    ...state,
+    applies: { ...state.applies, [cardId]: status },
+  };
+}
 
 function newId(): string {
   return crypto.randomUUID();
@@ -247,6 +287,12 @@ export function messagesForReplay(state: AgentState): AgentWireMessage[] {
 type AgentAction =
   | { type: 'event'; event: AgentServerEvent }
   | { type: 'toggle'; cardId: string; itemKey: string }
+  | { type: 'beginMoveApply'; cardId: string }
+  | {
+      type: 'finishMoveApply';
+      cardId: string;
+      status: { phase: 'applied'; moved: number } | { phase: 'error'; message: string };
+    }
   | { type: 'clear' }
   | { type: 'begin'; userText: string }
   | { type: 'stopped' };
@@ -266,6 +312,10 @@ function reduce(current: AgentState, action: AgentAction): AgentState {
       return applyEvent(current, action.event);
     case 'toggle':
       return toggleChecked(current, action.cardId, action.itemKey);
+    case 'beginMoveApply':
+      return beginMoveApplyState(current, action.cardId);
+    case 'finishMoveApply':
+      return finishMoveApplyState(current, action.cardId, action.status);
     case 'clear':
       return clearThread(current);
     case 'begin':
@@ -298,6 +348,22 @@ export function dispatch(action: AgentAction): void {
  * still works after the screen remounts and Clear or sign-out can end it.
  */
 let activeRequest: AbortController | null = null;
+
+let moveApplyInFlight = false;
+
+/** False when another collection-move apply is already running. */
+export function beginMoveApply(): boolean {
+  if (moveApplyInFlight) {
+    return false;
+  }
+  moveApplyInFlight = true;
+  return true;
+}
+
+export function endMoveApply(): void {
+  moveApplyInFlight = false;
+}
+
 
 export function beginAgentRequest(): AbortController {
   activeRequest?.abort();

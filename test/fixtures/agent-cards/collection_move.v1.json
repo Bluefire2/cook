@@ -1,0 +1,64 @@
+{
+  "cases": [
+    {
+      "ok": true,
+      "args": {
+        "recipeIds": ["r1"],
+        "collectionId": "c-weeknight"
+      },
+      "expect": {
+        "destination": { "kind": "collection", "id": "c-weeknight", "name": "Weeknight" },
+        "recipeIds": ["r1"],
+        "preview": [
+          {
+            "id": "r1",
+            "title": "Library title",
+            "from": { "kind": "unfiled" }
+          }
+        ],
+        "total": 1
+      }
+    },
+    {
+      "ok": true,
+      "args": {
+        "recipeIds": ["r2"],
+        "unfiled": true
+      },
+      "expect": {
+        "destination": { "kind": "unfiled" },
+        "recipeIds": ["r2"],
+        "preview": [
+          {
+            "id": "r2",
+            "title": "Second recipe",
+            "from": { "kind": "collection", "name": "Weeknight" }
+          }
+        ],
+        "total": 1
+      }
+    },
+    {
+      "ok": false,
+      "args": {
+        "recipeIds": ["r1"],
+        "collectionId": "c-weeknight",
+        "unfiled": true
+      }
+    },
+    {
+      "ok": false,
+      "args": {
+        "recipeIds": ["missing"],
+        "collectionId": "c-weeknight"
+      }
+    },
+    {
+      "ok": false,
+      "args": {
+        "recipeIds": ["r2"],
+        "collectionId": "c-weeknight"
+      }
+    }
+  ]
+}

@@ -473,4 +473,26 @@ export const zhHans: Messages = {
   'assistant.recipesHeading': '食谱：',
   'assistant.cardUnavailable': '请更新应用以查看此卡片。',
   'assistant.couldntAnswer': '助手无法回答这个问题。',
+  'assistant.moveRecipesGone': '这些食谱已不在你的库中。',
+  'assistant.preparingMove': '正在准备移动…',
+  'assistant.moveLeaveCurrentCollections': '这些食谱将离开它们当前的合集。',
+  'assistant.moveHeadingToCollection': {
+    other: '将 {count} 道食谱移到「{name}」',
+  },
+  'assistant.moveHeadingToRecipes': {
+    other: '将 {count} 道食谱移回食谱',
+  },
+  'assistant.moveAppliedToCollection': {
+    other: '已将 {count} 道食谱移到「{name}」',
+  },
+  'assistant.moveAppliedToRecipes': {
+    other: '已将 {count} 道食谱移回食谱',
+  },
+  'assistant.moveAndMore': {
+    other: '还有 {count} 道',
+  },
+  'assistant.moveShowAll': '显示全部食谱',
+  'assistant.moveShowLess': '显示更少',
+  'assistant.move': '移动',
+  'assistant.moving': '正在移动…',
 };

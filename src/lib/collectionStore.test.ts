@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { t } from '../i18n';
-import { MAX_NAMED_COLLECTIONS } from './compactCollection';
+import { MAX_COLLECTION_RECIPE_IDS, MAX_NAMED_COLLECTIONS } from './compactCollection';
 import {
   collectionPushErrorMessage,
   collectionStore,
@@ -13,7 +13,9 @@ import {
   listCollections,
   removeCollectionLocal,
   upsertCollection,
+  upsertRecipe,
 } from './libraryMemory';
+import { resetRereadScheduleForTests, setRereadQuietForTests } from './localWrite';
 import { recipeStore } from './recipeStore';
 import { installSharedRows } from './testLibrary';
 import {
@@ -453,5 +455,105 @@ describe('collectionStore after sign-out', () => {
 
     expect(getCollection('c1')?.recipeIds).toEqual(['r1']);
     expect(getCollection('c2')?.recipeIds).toEqual([]);
+  });
+});
+
+describe('collectionStore.moveRecipes', () => {
+  function minimalRecipe(id: string) {
+    return {
+      id,
+      title: id,
+      servings: 1,
+      ingredientSections: [{ items: [{ item: 'x' }] }],
+      steps: [{ text: 'x' }],
+      tags: [],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+  }
+
+  beforeEach(() => {
+    setRereadQuietForTests(0);
+  });
+
+  afterEach(() => {
+    resetRereadScheduleForTests();
+  });
+
+  it('still restores collections when the put fails and schedules a reread', async () => {
+    upsertRecipe(minimalRecipe('r1'));
+    upsertRecipe(minimalRecipe('r2'));
+    upsertCollection({ ...collection('c1', 'Soups'), recipeIds: ['r1'] });
+    upsertCollection(collection('c2', 'Stews'));
+    vi.mocked(pushOps).mockResolvedValue('error');
+    vi.mocked(pullAfterLocalWrite).mockResolvedValue('ok');
+
+    await expect(collectionStore.moveRecipes(['r1', 'r2'], 'c2')).rejects.toThrow(
+      t('error.collectionSave'),
+    );
+
+    expect(getCollection('c1')?.recipeIds).toEqual(['r1']);
+    expect(getCollection('c2')?.recipeIds).toEqual([]);
+    await vi.waitFor(() => {
+      expect(pullAfterLocalWrite).toHaveBeenCalled();
+    });
+  });
+
+  it('does not reread after sign-out', async () => {
+    async function signOut(): Promise<'signedOut'> {
+      clearLibrary();
+      return 'signedOut';
+    }
+    upsertRecipe(minimalRecipe('r1'));
+    upsertCollection({ ...collection('c1', 'Soups'), recipeIds: ['r1'] });
+    upsertCollection(collection('c2', 'Stews'));
+    vi.mocked(pushOps).mockImplementation(signOut);
+
+    await expect(collectionStore.moveRecipes(['r1'], 'c2')).rejects.toThrow(t('error.sessionExpired'));
+
+    expect(pullAfterLocalWrite).not.toHaveBeenCalled();
+  });
+
+  it('drops shared recipe ids and throws when every id was dropped', async () => {
+    installSharedRows({
+      recipes: new Map([['shared-recipe', minimalRecipe('shared-recipe')]]),
+      collections: new Map(),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map([['shared-recipe', { kind: 'shared', ownerSub: 'alice' }]]),
+      collectionOrigins: new Map(),
+    });
+    upsertCollection(collection('c1', 'Soups'));
+
+    await expect(collectionStore.moveRecipes(['shared-recipe'], 'c1')).rejects.toThrow(
+      t('assistant.moveRecipesGone'),
+    );
+    expect(pushOps).not.toHaveBeenCalled();
+  });
+
+  it('refuses a shared destination', async () => {
+    upsertRecipe(minimalRecipe('r1'));
+    installSharedRows({
+      recipes: new Map(),
+      collections: new Map([['shared', collection('shared', 'Theirs')]]),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map(),
+      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
+    });
+
+    await expect(collectionStore.moveRecipes(['r1'], 'shared')).rejects.toThrow(
+      t('error.sharedViewOnly'),
+    );
+    expect(pushOps).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the destination would exceed the recipe cap', async () => {
+    upsertCollection(collection('dest', 'Dest'));
+    const ids = Array.from({ length: MAX_COLLECTION_RECIPE_IDS + 1 }, (_, i) => `r-${i}`);
+    for (const id of ids) {
+      upsertRecipe(minimalRecipe(id));
+    }
+
+    await expect(collectionStore.moveRecipes(ids, 'dest')).rejects.toThrow(t('error.collectionFull'));
+    expect(pushOps).not.toHaveBeenCalled();
   });
 });

@@ -119,6 +119,30 @@ describe('buildAgentLibrary', () => {
     expect(lib.collectionNameFor('r1')).toBe('Main');
     expect(lib.collectionNameFor('r2')).toBe('Unfiled');
     expect(lib.truncated).toBe(false);
+    expect(lib.loadTruncated).toBe(false);
+  });
+
+  it('sets loadTruncated only from document load truncation', () => {
+    const recipes = [recipe({ id: 'a', title: 'A' })];
+    const loadCut = buildAgentLibrary(recipes, [], {
+      truncated: true,
+      maxIndexEntries: 500,
+      maxIndexChars: 40_000,
+    });
+    expect(loadCut.loadTruncated).toBe(true);
+    expect(loadCut.truncated).toBe(true);
+
+    const indexCut = buildAgentLibrary(
+      [recipe({ id: 'a', title: 'A' }), recipe({ id: 'b', title: 'B' })],
+      [],
+      {
+        truncated: false,
+        maxIndexEntries: 1,
+        maxIndexChars: 40_000,
+      },
+    );
+    expect(indexCut.loadTruncated).toBe(false);
+    expect(indexCut.truncated).toBe(true);
   });
 
   it('sets truncated when index is cut', () => {

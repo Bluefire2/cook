@@ -5,10 +5,15 @@ import { invalidateSession } from '../lib/session';
 import {
   applyEvent,
   beginAgentRequest,
+  beginMoveApply,
+  beginMoveApplyState,
   beginTurn,
   clearAgentThread,
+  clearThread,
   dispatch,
   endAgentRequest,
+  endMoveApply,
+  finishMoveApplyState,
   getAgentSnapshot,
   isActiveAgentRequest,
   initialAgentState,
@@ -182,6 +187,83 @@ describe('session reset', () => {
     expect(getAgentSnapshot().messages.length).toBeGreaterThan(0);
     invalidateSession();
     expect(getAgentSnapshot()).toEqual(initialAgentState);
+  });
+});
+
+function stateWithMoveCard(cardId: string) {
+  let state = beginTurn(initialAgentState, 'move');
+  const card = { type: 'collection_move', v: 1, id: cardId, data: {} };
+  state = applyEvent(state, { t: 'card', card });
+  return state;
+}
+
+describe('move apply state', () => {
+  it('beginMoveApplyState sets applying when the card is on the thread', () => {
+    const state = stateWithMoveCard('move-1');
+    const next = beginMoveApplyState(state, 'move-1');
+    expect(next.applies['move-1']).toEqual({ phase: 'applying' });
+  });
+
+  it('beginMoveApplyState is unchanged when the card is not on the thread', () => {
+    const state = stateWithMoveCard('move-1');
+    const next = beginMoveApplyState(state, 'other');
+    expect(next).toBe(state);
+  });
+
+  it('finishMoveApplyState sets applied or error when the card is on the thread', () => {
+    const state = stateWithMoveCard('move-1');
+    const applied = finishMoveApplyState(state, 'move-1', { phase: 'applied', moved: 3 });
+    expect(applied.applies['move-1']).toEqual({ phase: 'applied', moved: 3 });
+    const errored = finishMoveApplyState(state, 'move-1', {
+      phase: 'error',
+      message: 'nope',
+    });
+    expect(errored.applies['move-1']).toEqual({ phase: 'error', message: 'nope' });
+  });
+
+  it('finishMoveApplyState is unchanged after clearThread', () => {
+    let state = stateWithMoveCard('move-1');
+    state = beginMoveApplyState(state, 'move-1');
+    state = clearThread(state);
+    const next = finishMoveApplyState(state, 'move-1', { phase: 'applied', moved: 1 });
+    expect(next.applies).toEqual({});
+    expect(next).toBe(state);
+  });
+
+  it('dispatch wires begin and finish move apply', () => {
+    dispatch({ type: 'begin', userText: 'move' });
+    dispatch({
+      type: 'event',
+      event: {
+        t: 'card',
+        card: { type: 'collection_move', v: 1, id: 'c-move', data: {} },
+      },
+    });
+    dispatch({ type: 'beginMoveApply', cardId: 'c-move' });
+    expect(getAgentSnapshot().applies['c-move']).toEqual({ phase: 'applying' });
+    dispatch({
+      type: 'finishMoveApply',
+      cardId: 'c-move',
+      status: { phase: 'applied', moved: 2 },
+    });
+    expect(getAgentSnapshot().applies['c-move']).toEqual({ phase: 'applied', moved: 2 });
+  });
+});
+
+describe('move apply mutex', () => {
+  it('allows only one in-flight apply at a time', () => {
+    expect(beginMoveApply()).toBe(true);
+    expect(beginMoveApply()).toBe(false);
+    endMoveApply();
+    expect(beginMoveApply()).toBe(true);
+    endMoveApply();
+  });
+
+  it('clearThread does not reset the in-flight mutex', () => {
+    expect(beginMoveApply()).toBe(true);
+    dispatch({ type: 'clear' });
+    expect(beginMoveApply()).toBe(false);
+    endMoveApply();
   });
 });
 

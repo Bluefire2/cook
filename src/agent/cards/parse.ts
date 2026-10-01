@@ -1,3 +1,16 @@
+export type CollectionMoveData = {
+  destination:
+    | { kind: 'collection'; id: string; name: string }
+    | { kind: 'unfiled' };
+  recipeIds: string[];
+  preview: {
+    id: string;
+    title: string;
+    from: { kind: 'collection'; name: string } | { kind: 'unfiled' };
+  }[];
+  total: number;
+};
+
 export type ShoppingListData = {
   title: string;
   recipes: { id: string; title: string; servings: number }[];
@@ -149,4 +162,103 @@ export function parseShoppingList(v: number, data: unknown): ShoppingListData | 
   }
 
   return { title, recipes, sections };
+}
+
+function parseMoveFrom(
+  value: unknown,
+): CollectionMoveData['preview'][number]['from'] | undefined {
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+  const kind = value.kind;
+  if (kind === 'unfiled') {
+    return { kind: 'unfiled' };
+  }
+  if (kind === 'collection') {
+    const name = value.name;
+    if (typeof name !== 'string' || name.trim() === '') {
+      return undefined;
+    }
+    return { kind: 'collection', name: name.trim() };
+  }
+  return undefined;
+}
+
+function parseMoveDestination(
+  value: unknown,
+): CollectionMoveData['destination'] | undefined {
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+  const kind = value.kind;
+  if (kind === 'unfiled') {
+    return { kind: 'unfiled' };
+  }
+  if (kind === 'collection') {
+    const id = value.id;
+    const name = value.name;
+    if (typeof id !== 'string' || id === '' || typeof name !== 'string' || name.trim() === '') {
+      return undefined;
+    }
+    return { kind: 'collection', id, name: name.trim() };
+  }
+  return undefined;
+}
+
+export function parseCollectionMove(v: number, data: unknown): CollectionMoveData | undefined {
+  if (v !== 1 || !isPlainObject(data)) {
+    return undefined;
+  }
+
+  const destination = parseMoveDestination(data.destination);
+  if (destination === undefined) {
+    return undefined;
+  }
+
+  const recipeIdsRaw = data.recipeIds;
+  if (!Array.isArray(recipeIdsRaw) || recipeIdsRaw.length < 1 || recipeIdsRaw.length > 500) {
+    return undefined;
+  }
+  const recipeIds: string[] = [];
+  for (const id of recipeIdsRaw) {
+    if (typeof id !== 'string' || id === '') {
+      return undefined;
+    }
+    recipeIds.push(id);
+  }
+
+  const total = data.total;
+  if (typeof total !== 'number' || !Number.isFinite(total) || total !== recipeIds.length) {
+    return undefined;
+  }
+
+  const previewRaw = data.preview;
+  if (!Array.isArray(previewRaw) || previewRaw.length > 8) {
+    return undefined;
+  }
+  const preview: CollectionMoveData['preview'] = [];
+  for (const row of previewRaw) {
+    if (!isPlainObject(row)) {
+      return undefined;
+    }
+    const id = row.id;
+    if (typeof id !== 'string' || id === '') {
+      return undefined;
+    }
+    const title = row.title;
+    if (typeof title !== 'string' || title.trim() === '') {
+      return undefined;
+    }
+    const trimmedTitle = title.trim();
+    if (trimmedTitle.length > 120) {
+      return undefined;
+    }
+    const from = parseMoveFrom(row.from);
+    if (from === undefined) {
+      return undefined;
+    }
+    preview.push({ id, title: trimmedTitle, from });
+  }
+
+  return { destination, recipeIds, preview, total };
 }

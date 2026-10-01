@@ -34,6 +34,46 @@ export function recipesInCollection(
   return recipes.filter((recipe) => membership.get(recipe.id) === collection.id);
 }
 
+export function moveRecipes(
+  collections: readonly Collection[],
+  recipeIds: readonly string[],
+  dest: 'default' | string,
+  now: number,
+): Collection[] {
+  const wanted: string[] = [];
+  const seen = new Set<string>();
+  for (const id of recipeIds) {
+    if (id === '' || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    wanted.push(id);
+  }
+  if (wanted.length === 0) {
+    return [];
+  }
+  const wantedSet = new Set(wanted);
+
+  const changed: Collection[] = [];
+  for (const collection of collections) {
+    const before = collection.recipeIds;
+    let next = before.filter((id) => !wantedSet.has(id));
+    if (dest !== 'default' && collection.id === dest) {
+      const inDest = new Set(next);
+      for (const id of wanted) {
+        if (!inDest.has(id)) {
+          next.push(id);
+          inDest.add(id);
+        }
+      }
+    }
+    if (next.length !== before.length || next.some((id, i) => id !== before[i])) {
+      changed.push({ ...collection, recipeIds: next, updatedAt: now });
+    }
+  }
+  return changed;
+}
+
 export function moveRecipe(
   collections: readonly Collection[],
   recipeId: string,

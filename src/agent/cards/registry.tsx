@@ -1,7 +1,14 @@
 import type { ComponentType, ReactNode } from 'react';
 import { t } from '../../i18n';
 import type { AgentWireCard } from '../protocol';
-import { parseShoppingList, type ShoppingListData } from './parse';
+import type { MoveApplyStatus } from '../store';
+import CollectionMoveCard from './CollectionMoveCard';
+import {
+  parseCollectionMove,
+  parseShoppingList,
+  type CollectionMoveData,
+  type ShoppingListData,
+} from './parse';
 import ShoppingListCard from './ShoppingListCard';
 
 type CardComponentProps<T> = {
@@ -9,6 +16,7 @@ type CardComponentProps<T> = {
   cardId: string;
   checked: Record<string, true> | undefined;
   onToggle: (itemKey: string) => void;
+  apply?: MoveApplyStatus;
 };
 
 type RegistryEntry<T> = {
@@ -26,10 +34,15 @@ function cardFallback(): ReactNode {
 
 const registry: {
   shopping_list: RegistryEntry<ShoppingListData>;
+  collection_move: RegistryEntry<CollectionMoveData>;
 } = {
   shopping_list: {
     parse: parseShoppingList,
     Component: ShoppingListCard,
+  },
+  collection_move: {
+    parse: parseCollectionMove,
+    Component: CollectionMoveCard,
   },
 };
 
@@ -37,25 +50,41 @@ export function renderAgentCard(
   card: AgentWireCard,
   checked: Record<string, Record<string, true>>,
   onToggle: (cardId: string, itemKey: string) => void,
+  applies: Record<string, MoveApplyStatus>,
 ): ReactNode {
   try {
-    const entry = registry[card.type as keyof typeof registry];
-    if (!entry) {
-      return cardFallback();
+    if (card.type === 'shopping_list') {
+      const parsed = registry.shopping_list.parse(card.v, card.data);
+      if (parsed === undefined) {
+        return cardFallback();
+      }
+      const Component = registry.shopping_list.Component;
+      return (
+        <Component
+          data={parsed}
+          cardId={card.id}
+          checked={checked[card.id]}
+          onToggle={(itemKey) => onToggle(card.id, itemKey)}
+        />
+      );
     }
-    const parsed = entry.parse(card.v, card.data);
-    if (parsed === undefined) {
-      return cardFallback();
+    if (card.type === 'collection_move') {
+      const parsed = registry.collection_move.parse(card.v, card.data);
+      if (parsed === undefined) {
+        return cardFallback();
+      }
+      const Component = registry.collection_move.Component;
+      return (
+        <Component
+          data={parsed}
+          cardId={card.id}
+          checked={checked[card.id]}
+          onToggle={(itemKey) => onToggle(card.id, itemKey)}
+          apply={applies[card.id]}
+        />
+      );
     }
-    const Component = entry.Component;
-    return (
-      <Component
-        data={parsed}
-        cardId={card.id}
-        checked={checked[card.id]}
-        onToggle={(itemKey) => onToggle(card.id, itemKey)}
-      />
-    );
+    return cardFallback();
   } catch {
     return cardFallback();
   }

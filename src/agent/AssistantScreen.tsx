@@ -28,6 +28,7 @@ import {
   stopAgentRequest,
   subscribe,
   type AgentMessage,
+  type MoveApplyStatus,
 } from './store';
 
 const STARTERS = ['assistant.starterTonight', 'assistant.starterTogether'] as const;
@@ -47,6 +48,8 @@ function toolChipLabel(
       return tr('assistant.combining');
     case 'show_shopping_list':
       return tr('assistant.makingList');
+    case 'propose_collection_move':
+      return tr('assistant.preparingMove');
     default:
       return tr('assistant.working');
   }
@@ -55,10 +58,12 @@ function toolChipLabel(
 function MessageRow({
   message,
   checked,
+  applies,
   onToggle,
 }: {
   message: AgentMessage;
   checked: Record<string, Record<string, true>>;
+  applies: Record<string, MoveApplyStatus>;
   onToggle: (cardId: string, itemKey: string) => void;
 }) {
   const isUser = message.role === 'user';
@@ -86,7 +91,7 @@ function MessageRow({
           </div>
         )}
         {message.cards?.map((card) => (
-          <div key={card.id}>{renderAgentCard(card, checked, onToggle)}</div>
+          <div key={card.id}>{renderAgentCard(card, checked, onToggle, applies)}</div>
         ))}
       </div>
     </div>
@@ -225,6 +230,7 @@ export default function AssistantScreen() {
             key={message.id}
             message={message}
             checked={state.checked}
+            applies={state.applies}
             onToggle={onToggle}
           />
         ))}
