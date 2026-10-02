@@ -782,6 +782,7 @@ export default function Library() {
                 <div className="relative min-w-0 flex-1">
               <Link
                 to={`/recipe/${recipe.id}`}
+                state={{ from: libraryHref(collectionId) }}
                 className="flex gap-3 rounded-2xl border border-line bg-surface p-4 pr-14 shadow-sm hover:border-line-strong hover:bg-surface-muted active:bg-surface-muted"
               >
                 {recipe.photoId !== undefined && (

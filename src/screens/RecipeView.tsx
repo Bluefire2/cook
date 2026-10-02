@@ -1,14 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { languageName, sameLanguage, useLocale, useT } from '../i18n';
 import { unitLabel } from '../i18n/unitLabel';
 import ChatPanel from '../components/ChatPanel';
 import CookLogCard from '../components/CookLogCard';
 import ImportWarningBanner from '../components/ImportWarningBanner';
+import { libraryHref, libraryPathFromState } from '../lib/collectionHref';
 import { useCookLogs } from '../lib/cookLogStore';
 import { SpinnerIcon, TranslateIcon } from '../lib/icons';
 import { usePhotoUrl } from '../lib/photoStore';
-import { useRecipe, useRecipeAccess, useRecipeSharedBy } from '../lib/recipeStore';
+import {
+  useRecipe,
+  useRecipeAccess,
+  useRecipeCollectionId,
+  useRecipeSharedBy,
+} from '../lib/recipeStore';
 import { formatQuantity } from '../lib/quantity';
 import { sync } from '../lib/syncEngine';
 import { translateChipMode, type TranslateChipMode } from '../lib/translateChip';
@@ -144,6 +150,10 @@ export default function RecipeView() {
   const recipe = useRecipe(id);
   const access = useRecipeAccess(id);
   const sharedByEmail = useRecipeSharedBy(id);
+  const collectionId = useRecipeCollectionId(id);
+  // Back to the list the recipe was opened from; otherwise the one that files it.
+  const location = useLocation();
+  const libraryBack = libraryPathFromState(location.state) ?? libraryHref(collectionId);
   const photoUrl = usePhotoUrl(recipe?.photoId);
   useWakeLock();
 
@@ -303,7 +313,7 @@ export default function RecipeView() {
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
         <div className="flex items-center justify-between">
-          <Link to="/" className={backLink}>
+          <Link to={libraryBack} className={backLink}>
             &larr; {t('common.library')}
           </Link>
           {canEdit && (

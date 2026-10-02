@@ -50,6 +50,16 @@ export function libraryReturnPath(from: unknown): string {
   return from;
 }
 
+/**
+ * The library path a screen was opened from, carried in navigation state as
+ * `{ from }`. `undefined` when there is none or it is not a library path.
+ */
+export function libraryPathFromState(state: unknown): string | undefined {
+  if (state === null || typeof state !== 'object' || !('from' in state)) return undefined;
+  const { from } = state;
+  return typeof from === 'string' && libraryReturnPath(from) === from ? from : undefined;
+}
+
 export function libraryHref(collectionId: string | undefined): string {
   if (collectionId === undefined || collectionId === '') {
     return '/';
