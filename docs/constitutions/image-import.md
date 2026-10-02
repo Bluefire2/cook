@@ -238,7 +238,7 @@ what changed, why the change was worth it, evidence, PR link.
   imports have no other record. The report is opt-in, per import, visible
   before sending, and deleted after 180 days. *Evidence:*
   `docs/plans/import-reliability.md` phase 1 is blocked because failing
-  imports were never stored. *PR:* (fill in when opened).
+  imports were never stored. *PR:* https://github.com/Bluefire2/sous/pull/107.
 - **2026-10-01, principle 3.** *Was:* "Log counts and byte sizes only, as
   `server/stt.ts` does." *Now:* a photo import writes the shared import log
   line. Besides the counts and byte sizes, that line holds the account `sub`,
