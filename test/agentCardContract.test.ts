@@ -3,9 +3,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { buildAgentLibrary, type AgentRecipe } from '../server/agent/sous/library.ts';
-import { MAX_COLLECTION_RECIPE_IDS as SERVER_MAX_IDS } from '../server/store.ts';
 import {
-  COLLECTION_CREATE_MAX_COLLECTIONS as SERVER_CREATE_MAX_COLLECTIONS,
+  MAX_COLLECTION_RECIPE_IDS as SERVER_MAX_IDS,
+  MAX_NAMED_COLLECTIONS as SERVER_MAX_NAMED_COLLECTIONS,
+} from '../server/store.ts';
+import {
   COLLECTION_CREATE_MAX_EXPLICIT_IDS as SERVER_CREATE_MAX_IDS,
   COLLECTION_CREATE_NAME_MAX as SERVER_CREATE_NAME_MAX,
   COLLECTION_CREATE_PREVIEW_LIMIT as SERVER_CREATE_PREVIEW_LIMIT,
@@ -24,7 +26,6 @@ import {
   MAX_NAMED_COLLECTIONS,
 } from '../src/lib/compactCollection.ts';
 import {
-  COLLECTION_CREATE_MAX_COLLECTIONS,
   COLLECTION_CREATE_MAX_EXPLICIT_IDS,
   COLLECTION_CREATE_NAME_MAX,
   COLLECTION_CREATE_PREVIEW_LIMIT,
@@ -197,8 +198,7 @@ describe('collection_create card contract', () => {
     expect(COLLECTION_CREATE_NAME_MAX).toBe(SERVER_CREATE_NAME_MAX);
     expect(COLLECTION_CREATE_NAME_MAX).toBe(MAX_COLLECTION_NAME_LENGTH);
     expect(COLLECTION_CREATE_MAX_EXPLICIT_IDS).toBe(SERVER_CREATE_MAX_IDS);
-    expect(COLLECTION_CREATE_MAX_COLLECTIONS).toBe(SERVER_CREATE_MAX_COLLECTIONS);
-    expect(COLLECTION_CREATE_MAX_COLLECTIONS).toBe(MAX_NAMED_COLLECTIONS);
+    expect(SERVER_MAX_NAMED_COLLECTIONS).toBe(MAX_NAMED_COLLECTIONS);
     expect(CLIENT_MAX_IDS).toBe(SERVER_MAX_IDS);
   });
 });

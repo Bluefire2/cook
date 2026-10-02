@@ -48,6 +48,16 @@
     { "ok": false, "args": { "name": "Weeknight", "recipeIds": ["r1"] } },
     { "ok": false, "args": { "name": "Soups", "recipeIds": ["missing"] } },
     { "ok": false, "args": { "recipeIds": ["r1"] } },
-    { "ok": false, "args": { "name": "Soups", "recipeIds": [] } }
+    {
+      "ok": true,
+      "args": { "name": "Soups", "recipeIds": [] },
+      "expect": {
+        "name": "Soups",
+        "recipeIds": [],
+        "sources": [],
+        "preview": [],
+        "total": 0
+      }
+    }
   ]
 }

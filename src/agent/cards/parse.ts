@@ -33,7 +33,6 @@ export const COLLECTION_CREATE_MAX_EXPLICIT_IDS = 100;
 export const COLLECTION_CREATE_PREVIEW_LIMIT = 8;
 export const COLLECTION_CREATE_TITLE_MAX = 120;
 export const COLLECTION_CREATE_NAME_MAX = 80;
-export const COLLECTION_CREATE_MAX_COLLECTIONS = 50;
 
 export type CollectionCreateData = {
   name: string;

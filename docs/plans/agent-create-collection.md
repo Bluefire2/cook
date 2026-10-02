@@ -2,9 +2,11 @@
 
 **Status:** built, not deployed. The library assistant proposes a new owned collection; the person applies it on the card.
 
-**Trust boundary:** `propose_create_collection` emits a `collection_create` proposal card only. The person taps Create; `collectionStore.createWithRecipes` creates the collection and files the given recipes through one `pushOps`. The agent loop never writes. A name that already exists is refused, and the model is told to call `propose_collection_move` with that collection's id.
+**Constitutions applied:** client state (`docs/constitutions/client-state.md`: the new collection and the stripped source lists publish together through `writeCollections`) and i18n (`docs/constitutions/i18n.md`: every new string is in all four catalogs and `screens.json`).
 
-`recipeIds` is optional, 1–100 when present. Omitting it proposes an empty collection. Ids come from the library index or from `search_recipes` (at most 20 hits, no offset). The card does not run a second search.
+**Trust boundary:** `propose_create_collection` emits a `collection_create` proposal card only. The person taps Create; `collectionStore.createWithRecipes` creates the collection and files the given recipes through one `pushOps`. The server applies those ops one by one, not in a transaction, so the new collection's put goes first: a cap rejection then lands before any source collection is stripped. The agent loop never writes. A name that already exists among owned collections (ignoring case) is refused, here and in `collectionStore.create` and `rename`, and the model is told to call `propose_collection_move` with that collection's id.
+
+`recipeIds` is optional, at most 100. Omitting it, or passing `[]` or `null`, proposes an empty collection. Ids come from the library index or from `search_recipes` (at most 20 hits, no offset). The card does not run a second search.
 
 ## Steps
 

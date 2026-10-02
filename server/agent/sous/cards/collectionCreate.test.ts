@@ -117,9 +117,16 @@ describe('normalizeCollectionCreate', () => {
     expect(result.error).toContain('unknown recipe id');
   });
 
-  it('rejects an empty recipe id list', () => {
-    const result = normalizeCollectionCreate({ name: 'Soups', recipeIds: [] }, lib(recipes, []));
-    expect(result.ok).toBe(false);
+  it('treats an empty or null recipe id list as an empty collection', () => {
+    for (const recipeIds of [[], null]) {
+      const result = normalizeCollectionCreate({ name: 'Soups', recipeIds }, lib(recipes, []));
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.data.recipeIds).toEqual([]);
+      expect(result.data.total).toBe(0);
+    }
   });
 
   it('rejects more than 100 explicit ids', () => {
@@ -133,7 +140,7 @@ describe('normalizeCollectionCreate', () => {
     if (result.ok) {
       return;
     }
-    expect(result.error).toContain('1–100');
+    expect(result.error).toContain('at most 100');
   });
 
   it('rejects a blank or over-long name', () => {

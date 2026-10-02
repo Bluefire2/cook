@@ -1,4 +1,4 @@
-import { MAX_COLLECTION_RECIPE_IDS } from '../../../store.ts';
+import { MAX_COLLECTION_RECIPE_IDS, MAX_NAMED_COLLECTIONS } from '../../../store.ts';
 import type { CardSpec } from '../../harness/types.ts';
 import type { AgentCollection, AgentLibrary } from '../library.ts';
 import { winningMembership } from '../library.ts';
@@ -30,13 +30,11 @@ export const COLLECTION_CREATE_PREVIEW_LIMIT = 8;
 export const COLLECTION_CREATE_TITLE_MAX = 120;
 export const COLLECTION_CREATE_NAME_MAX = 80;
 export const COLLECTION_CREATE_MAX_EXPLICIT_IDS = 100;
-export const COLLECTION_CREATE_MAX_COLLECTIONS = 50;
 
 const PREVIEW_LIMIT = COLLECTION_CREATE_PREVIEW_LIMIT;
 const TITLE_MAX = COLLECTION_CREATE_TITLE_MAX;
 const NAME_MAX = COLLECTION_CREATE_NAME_MAX;
 const MAX_EXPLICIT_IDS = COLLECTION_CREATE_MAX_EXPLICIT_IDS;
-const MAX_COLLECTIONS = COLLECTION_CREATE_MAX_COLLECTIONS;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -71,16 +69,17 @@ function selectRecipeIds(
   args: Record<string, unknown>,
   ctx: AgentLibrary,
 ): { ok: true; ids: string[] } | { ok: false; error: string } {
-  if (args.recipeIds === undefined) {
+  const recipeIdsRaw = args.recipeIds;
+  // Function calls often fill an optional array with [] or null; both mean
+  // an empty collection, the same as leaving recipeIds out.
+  if (recipeIdsRaw === undefined || recipeIdsRaw === null) {
     return { ok: true, ids: [] };
   }
-  const recipeIdsRaw = args.recipeIds;
-  if (
-    !Array.isArray(recipeIdsRaw) ||
-    recipeIdsRaw.length < 1 ||
-    recipeIdsRaw.length > MAX_EXPLICIT_IDS
-  ) {
-    return { ok: false, error: 'recipeIds must be 1–100' };
+  if (!Array.isArray(recipeIdsRaw) || recipeIdsRaw.length > MAX_EXPLICIT_IDS) {
+    return { ok: false, error: 'recipeIds must be at most 100' };
+  }
+  if (recipeIdsRaw.length === 0) {
+    return { ok: true, ids: [] };
   }
   const ids: string[] = [];
   const seen = new Set<string>();
@@ -96,12 +95,6 @@ function selectRecipeIds(
     }
     seen.add(id);
     ids.push(id);
-  }
-  if (ids.length === 0) {
-    return { ok: false, error: 'recipeIds must be 1–100' };
-  }
-  if (ids.length > MAX_COLLECTION_RECIPE_IDS) {
-    return { ok: false, error: 'create exceeds 500 recipe limit' };
   }
   return { ok: true, ids };
 }
@@ -145,7 +138,7 @@ export function normalizeCollectionCreate(
   if (ctx.loadTruncated) {
     return { ok: false, error: 'library load was truncated; cannot create a collection' };
   }
-  if (ctx.collections.length >= MAX_COLLECTIONS) {
+  if (ctx.collections.length >= MAX_NAMED_COLLECTIONS) {
     return { ok: false, error: 'owned collection cap reached' };
   }
 
@@ -320,7 +313,7 @@ export const collectionCreateCard: CardSpec<AgentLibrary, CollectionCreateData> 
       recipeIds: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Owned recipe ids to file into the new collection (1–100). Omit for an empty collection.',
+        description: 'Owned recipe ids to file into the new collection (at most 100). Omit for an empty collection.',
       },
     },
     required: ['name'],

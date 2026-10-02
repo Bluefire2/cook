@@ -141,6 +141,39 @@ describe('collectionStore.create cap', () => {
   });
 });
 
+describe('collectionStore owned name uniqueness', () => {
+  it('create refuses an owned name in any case and allows a shared one', async () => {
+    upsertCollection(collection('c1', 'Soups'));
+    installSharedRows({
+      recipes: new Map(),
+      collections: new Map([['shared', collection('shared', 'Stews')]]),
+      remotePhotoIds: new Set(),
+      recipeOrigins: new Map(),
+      collectionOrigins: new Map([['shared', { kind: 'shared', ownerSub: 'alice' }]]),
+    });
+    vi.mocked(pushOps).mockResolvedValue('ok');
+
+    await expect(collectionStore.create('  soups ')).rejects.toThrow(
+      t('error.collectionNameTaken', { name: 'Soups' }),
+    );
+    expect(pushOps).not.toHaveBeenCalled();
+    expect((await collectionStore.create('Stews')).name).toBe('Stews');
+  });
+
+  it('rename refuses another owned name but allows recasing its own', async () => {
+    upsertCollection(collection('c1', 'Soups'));
+    upsertCollection(collection('c2', 'Stews'));
+    vi.mocked(pushOps).mockResolvedValue('ok');
+
+    await expect(collectionStore.rename('c2', 'SOUPS')).rejects.toThrow(
+      t('error.collectionNameTaken', { name: 'Soups' }),
+    );
+    expect(pushOps).not.toHaveBeenCalled();
+    await collectionStore.rename('c1', 'soups');
+    expect(getCollection('c1')?.name).toBe('soups');
+  });
+});
+
 describe('read-only selectors', () => {
   it('report shared origin for incoming rows and owned for local rows', () => {
     upsertCollection(collection('owned', 'Mine'));
@@ -710,6 +743,8 @@ describe('collectionStore.createWithRecipes', () => {
     expect(pushOps).toHaveBeenCalledTimes(1);
     const ops = vi.mocked(pushOps).mock.calls[0]?.[0] ?? [];
     expect(ops.map((op) => op.kind)).toEqual(['collection.put', 'collection.put']);
+    // The server applies ops one by one; the create must land before any strip.
+    expect(ops.map((op) => (op.payload as { id: string }).id)).toEqual([created.id, 'c1']);
     expect(getCollection('c1')?.recipeIds).toEqual([]);
     expect(getCollection(created.id)?.recipeIds).toEqual(['r1', 'r2']);
     expect(getCollection('shared')?.recipeIds).toEqual(['r1']);

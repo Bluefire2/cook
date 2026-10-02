@@ -66,6 +66,20 @@ export function collectionPushErrorMessage(result: RemoteResult, created = false
   return t('error.collectionSave');
 }
 
+/** Owned collection names are unique, ignoring case and outer spaces. */
+function rejectTakenName(trimmed: string, exceptId?: string): void {
+  const key = trimmed.toLowerCase();
+  const match = listCollections().find(
+    (c) =>
+      c.id !== exceptId &&
+      !isSharedCollection(c.id) &&
+      c.name.trim().toLowerCase() === key,
+  );
+  if (match) {
+    throw new Error(t('error.collectionNameTaken', { name: match.name }));
+  }
+}
+
 function saveError(result: RemoteResult, created = false): Error {
   return result === 'signedOut'
     ? new SessionExpiredError()
@@ -176,6 +190,7 @@ export const collectionStore = {
           : t('error.collectionNameLong', { max: MAX_COLLECTION_NAME_LENGTH }),
       );
     }
+    rejectTakenName(trimmed);
     if (countOwnedNamedCollections() >= MAX_NAMED_COLLECTIONS) {
       throw new Error(t('error.collectionCap', { max: MAX_NAMED_COLLECTIONS }));
     }
@@ -205,6 +220,7 @@ export const collectionStore = {
           : t('error.collectionNameLong', { max: MAX_COLLECTION_NAME_LENGTH }),
       );
     }
+    rejectTakenName(trimmed, id);
     await pushCollection(
       compactCollection({ ...existing, name: trimmed, updatedAt: Date.now() }),
       existing,
@@ -558,12 +574,8 @@ export const collectionStore = {
           : t('error.collectionNameLong', { max: MAX_COLLECTION_NAME_LENGTH }),
       );
     }
+    rejectTakenName(trimmed);
     const owned = listCollections().filter((c) => !isSharedCollection(c.id));
-    const key = trimmed.toLowerCase();
-    const nameMatch = owned.find((c) => c.name.trim().toLowerCase() === key);
-    if (nameMatch) {
-      throw new Error(t('error.collectionNameTaken', { name: nameMatch.name }));
-    }
     if (countOwnedNamedCollections() >= MAX_NAMED_COLLECTIONS) {
       throw new Error(t('error.collectionCap', { max: MAX_NAMED_COLLECTIONS }));
     }
@@ -600,7 +612,10 @@ export const collectionStore = {
     const previous = stripped
       .map((next) => owned.find((c) => c.id === next.id))
       .filter((c): c is Collection => c !== undefined);
-    const upserts = [...stripped, created];
+    // The server applies push ops one by one, not in a transaction. The new
+    // collection goes first so a cap rejection lands before any source list
+    // is stripped; otherwise a failed create would leave the recipes unfiled.
+    const upserts = [created, ...stripped];
 
     return await withLocalWrite(async () => {
       writeCollections({ upserts });
