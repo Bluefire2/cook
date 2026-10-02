@@ -26,18 +26,6 @@ export const CATALOGS: Readonly<Record<Locale, Messages>> = {
   'zh-Hans': zhHans,
 };
 
-/**
- * Short native label for each UI language, for the header language menu. Fixed
- * in every UI language (an autonym, like the menu's full names), so not in the
- * catalogs. Never a country code.
- */
-export const LOCALE_SHORT_LABELS: Readonly<Record<Locale, string>> = {
-  en: 'EN',
-  uk: 'УКР',
-  ru: 'РУС',
-  'zh-Hans': '中文',
-};
-
 export type TranslateParams = Readonly<Record<string, string | number>>;
 
 const pluralRules = new Map<Locale, Intl.PluralRules>();

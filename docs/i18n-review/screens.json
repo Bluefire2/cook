@@ -86,7 +86,7 @@
   {
     "id": "library-language-menu",
     "route": "/",
-    "setup": "On the Recipes list, signed in or out. The rightmost header control shows the current UI language's short label (EN, УКР, РУС, or 中文) with a down chevron; its name is an aria-label. Tap it so the menu under it lists every UI language by its own name, with the current one in bold and a check mark. The trigger label and the language names are the same in every UI language by design; judge the aria-label and the header around it. Choosing a language only writes cook.locale and is allowed.",
+    "setup": "On the Recipes list, signed in or out. The rightmost header control shows the current UI language's short label (EN, УКР, РУС, or 中文) with a down chevron; its name is an aria-label. Tap it so the menu under it lists every UI language by its own name, with the current one in bold and a check mark. The trigger label is the UI language's own short name, and each menu item names its language in that language, by design; judge them, the aria-label, and the header around it. Choosing a language only writes cook.locale and is allowed.",
     "needsData": false
   },
   {

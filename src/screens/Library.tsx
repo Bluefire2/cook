@@ -584,7 +584,7 @@ export default function Library() {
       <LibraryInviteToast notice={inviteNotice} />
       <header className="flex items-center justify-between py-4">
         <h1 className="text-2xl font-bold">Sous</h1>
-        <div className="flex min-w-0 flex-wrap items-center justify-end">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-y-1">
           <AssistantEntryLink />
           {user !== null && (
             <button

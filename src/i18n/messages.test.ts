@@ -5,7 +5,6 @@ import {
   formatNumber,
   languageName,
   localeDisplayName,
-  LOCALE_SHORT_LABELS,
   translate,
 } from './index';
 import { SUPPORTED_LOCALES } from './lang';
@@ -149,22 +148,21 @@ describe('languageName', () => {
   });
 });
 
-describe('LOCALE_SHORT_LABELS', () => {
-  it('has a distinct, non-empty label for every supported locale', () => {
-    expect(Object.keys(LOCALE_SHORT_LABELS).sort()).toEqual([...SUPPORTED_LOCALES].sort());
-    const labels = SUPPORTED_LOCALES.map((locale) => LOCALE_SHORT_LABELS[locale]);
-    for (const label of labels) {
-      expect(label.trim()).not.toBe('');
-    }
-    expect(new Set(labels).size).toBe(labels.length);
-  });
-});
-
 describe('localeDisplayName', () => {
   it('names each UI language in itself, capitalized as a standalone label', () => {
     expect(localeDisplayName('en')).toBe('English');
     expect(localeDisplayName('uk')).toBe('Українська');
     expect(localeDisplayName('ru')).toBe('Русский');
     expect(localeDisplayName('zh-Hans')).toBe('简体中文');
+  });
+});
+
+describe('library.languageShort', () => {
+  it('is a distinct, non-empty label in every catalog', () => {
+    const labels = SUPPORTED_LOCALES.map((locale) => translate(locale, 'library.languageShort'));
+    for (const label of labels) {
+      expect(label.trim()).not.toBe('');
+    }
+    expect(new Set(labels).size).toBe(labels.length);
   });
 });
