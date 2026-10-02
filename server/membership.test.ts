@@ -359,6 +359,8 @@ describe('architecture lock', () => {
     expect(serverTs.includes('handler: importPost')).toBe(false);
     expect(serverTs.includes('withMembership(importFeedbackPost)')).toBe(true);
     expect(serverTs.includes('handler: importFeedbackPost')).toBe(false);
+    expect(serverTs.includes('withMembership(featureRequestPost)')).toBe(true);
+    expect(serverTs.includes('handler: featureRequestPost')).toBe(false);
   });
 
   // api/import.ts is a 401 stub; Cloud Run's import route (server/importRoute.ts)
@@ -367,12 +369,14 @@ describe('architecture lock', () => {
   // access; a second use fails this count. The import feedback route
   // (server/importFeedback.ts) reads it once, after withMembership decided
   // access, to name the report's sender and its log line; it never decides
-  // access either.
-  it('assertion 6: authorizedSub in exactly four files with fixed counts', () => {
+  // access either. The feature request route (server/featureRequest.ts) does
+  // the same for a suggestion.
+  it('assertion 6: authorizedSub in exactly five files with fixed counts', () => {
     const sources = productionSources();
     expectProductionScanReady(sources);
     const expectedCounts: Record<string, number> = {
       'api/chat.ts': 5,
+      'server/featureRequest.ts': 1,
       'server/importFeedback.ts': 1,
       'server/importRoute.ts': 1,
       'server/membership.ts': 2,

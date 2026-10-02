@@ -323,6 +323,20 @@ export default function Settings() {
         </p>
       )}
 
+      {sessionStatus === 'signedIn' && (
+        <>
+          <h2 className="mt-8 text-lg font-semibold">{t('settings.feedback')}</h2>
+          <p className="mt-1 text-sm text-ink-muted">{t('settings.feedbackBody')}</p>
+          <Link
+            to="/suggest"
+            state={{ from: 'settings' }}
+            className={`${secondaryBtn} mt-3 inline-block px-4 py-2.5`}
+          >
+            {t('settings.suggestButton')}
+          </Link>
+        </>
+      )}
+
       <footer className="mt-8">
         <a
           href="/about"

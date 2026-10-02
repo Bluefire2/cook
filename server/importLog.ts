@@ -119,11 +119,16 @@ export function importLogLine(entry: ImportLogEntry): string {
  * extension page behind a login).
  */
 export function sanitizedImportError(err: unknown): Error {
+  return sanitizedError('Import failed', err);
+}
+
+/** `sanitizedImportError` with another fixed prefix, for routes that are not imports. */
+export function sanitizedError(prefix: string, err: unknown): Error {
   const rawName = err instanceof Error ? err.name : typeof err;
   const name = /^[A-Za-z]{1,40}$/.test(rawName) ? rawName : 'Error';
   const status = thrownStatus(err);
   return new Error(
-    `Import failed: ${name}${status === undefined ? '' : ` (status ${status})`}; message withheld`,
+    `${prefix}: ${name}${status === undefined ? '' : ` (status ${status})`}; message withheld`,
   );
 }
 

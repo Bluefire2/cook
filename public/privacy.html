@@ -92,6 +92,16 @@
       server log described below.
     </p>
     <p>
+      If you send a suggestion from Suggest a feature, it is stored in
+      Firestore (<code>europe-west1</code>), separately from your library, and
+      only the owner reads it. It holds your account id (<code>sub</code>);
+      the text you wrote; whether you allowed the owner to email you about it;
+      the app language; whether you opened the page from your library or from
+      Settings; and whether you use Sous as an installed app. It never holds
+      your email address. If you allow it, the owner may reply to the email
+      address you sign in with.
+    </p>
+    <p>
       No password and no Google refresh token is stored — the app only ever
       asks Google who you are.
     </p>
@@ -157,6 +167,13 @@
       text, or your note.
     </p>
     <p>
+      Sending a suggestion writes one line: your account id, whether you
+      opened the page from your library or from Settings, how long the text
+      is, whether you allowed an email reply, the response, an error code if
+      the suggestion could not be saved, and how long it took. It never
+      includes the text.
+    </p>
+    <p>
       Logs are used only to keep Sous running, to fix problems, and to
       measure how well recipe import works. They are
       stored in Google Cloud Logging, separately from your library and not
@@ -168,6 +185,8 @@
       Showing your own recipe library across devices, and answering cooking
       questions. Your information is not sold and is not used for advertising.
       Import reports you choose to send are used only to fix recipe import.
+      Suggestions you send are used only to decide what to build, and, if
+      you allow it, to reply to you.
     </p>
     <p>
       If you share a named collection, the live recipes in that folder and
@@ -245,10 +264,11 @@
       deleted on a schedule.
     </p>
     <p>
-      Server logs and import reports are the exceptions. Google Cloud Logging
-      deletes logs automatically 30 days after they are written. Logs are not
-      removed earlier, including by an account deletion request. Import
-      reports are deleted automatically about 180 days after you send them.
+      Server logs, import reports and suggestions are the exceptions. Google
+      Cloud Logging deletes logs automatically 30 days after they are
+      written. Logs are not removed earlier, including by an account deletion
+      request. Import reports are deleted automatically about 180 days after
+      you send them, and suggestions about one year after you send them.
     </p>
     <p>
       To delete all data stored for your account, email
@@ -256,7 +276,7 @@
       from the same address you use to sign in. There is no in-app delete-account
       button. A deletion request covers all of it: your access-request record,
       your membership record, any invite-link redemption recorded for your
-      account, any import reports you sent, and your stored library — recipes, chat
+      account, any import reports and suggestions you sent, and your stored library — recipes, chat
       messages, cooking progress, cook log entries (dates, ratings, notes,
       lessons and photos), photos, and cached translations — and deleting
       these also removes your access. Revoking Sous's access from your

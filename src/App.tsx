@@ -10,6 +10,7 @@ import CookLogEdit from './screens/CookLogEdit';
 import CookJournal from './screens/CookJournal';
 import ImportScreen from './screens/ImportScreen';
 import Settings from './screens/Settings';
+import SuggestFeature from './screens/SuggestFeature';
 import Admin from './screens/Admin';
 import { AssistantScreen } from './agent/index';
 
@@ -36,6 +37,7 @@ function AppRoutes() {
       <Route path="/cooks" element={<CookJournal />} />
       <Route path={routePaths.import} element={<ImportScreen />} />
       <Route path="/settings" element={<Settings />} />
+      <Route path="/suggest" element={<SuggestFeature />} />
       <Route path="/assistant" element={<AssistantScreen />} />
       <Route path="/admin" element={<Admin />} />
     </Routes>
