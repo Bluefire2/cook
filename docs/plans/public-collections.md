@@ -62,6 +62,8 @@ hover or keyboard focus explains why, and a tap opens a sheet that offers sign-i
   same 20-grant cap, an existing grant keeps its role, the owner writes nothing.
   After joining, the client pulls and opens `/collections/<id>`; Ask and chat then
   run through the ordinary share chain. A public link alone never authorizes AI.
+  Like any grant, the join copies the owner's email onto it, so the member then
+  sees who shared the collection; `/privacy` says so.
 - **Cook mode on a public recipe** (servings, ticks, current step) lives in the
   screen's state only. A visitor has no cook row to save to.
 
@@ -126,7 +128,8 @@ Client routes: `/p/:token` (`PublicCollection`), `/p/:token/r/:recipeId`
 ## Verification
 
 - `npm run build`, `npm test` (new: `server/publicLinks.test.ts`,
-  `server/publicLinksHttp.test.ts`, `src/lib/publicApi.test.ts`, the log-exclusion
+  `server/publicLinksHttp.test.ts`, `src/lib/publicApi.test.ts`, the collection-delete
+  revoke in `server/grants.test.ts` (`deleteRevokingPublicLinks`), the log-exclusion
   cases, and two invariants).
 - In the browser, with `dev` and `dev:api`: as the owner, turn a test collection
   public, copy the link, open it in a private window (signed out): recipes and
