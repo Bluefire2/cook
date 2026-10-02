@@ -780,7 +780,7 @@ export default function Library() {
         <p className="py-12 text-center text-ink-muted">{emptyCopy()}</p>
       ) : (
         <>
-          {selecting && (
+          {selecting && canSelect && (
             <label className="mb-1 flex cursor-pointer items-center gap-1">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center">
                 <input
@@ -791,9 +791,7 @@ export default function Library() {
                   className={`h-5 w-5 accent-ink ${inputFocus}`}
                 />
               </span>
-              <span className="text-sm font-medium">
-                {allOwnedSelected ? t('library.selectNone') : t('library.selectAll')}
-              </span>
+              <span className="text-sm font-medium">{t('library.selectAll')}</span>
             </label>
           )}
         <ul className="flex flex-col gap-3">
@@ -934,11 +932,11 @@ export default function Library() {
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setSelectedIds(new Set(ownedVisibleIds))}
+                onClick={toggleSelectAll}
                 disabled={!canSelect}
                 className={`${ghostBtn} disabled:opacity-40`}
               >
-                {t('library.selectAll')}
+                {allOwnedSelected ? t('library.selectNone') : t('library.selectAll')}
               </button>
               <button
                 type="button"

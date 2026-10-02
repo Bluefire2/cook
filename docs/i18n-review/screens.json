@@ -26,7 +26,7 @@
   {
     "id": "library-select",
     "route": "/",
-    "setup": "Signed in on the Recipes list or an own named collection that already shows at least one recipe card. Select is on, so a header checkbox reads Select all, each own recipe has a checkbox, and a bar shows how many are selected, Select all, Move, and Cancel. Check one own recipe so the header box is indeterminate and Move is enabled, then use the header checkbox to select every own recipe so its label reads Select none. Do not tap Move and do not change which collection a recipe is in. If the list is empty or this is a shared collection, mark skipped: needs data.",
+    "setup": "Signed in on the Recipes list or an own named collection that already shows at least one recipe card. Select is on, so a header checkbox reads Select all, each own recipe has a checkbox, and a bar shows how many are selected, Select all, Move, and Cancel. Check one own recipe so the header box is indeterminate and Move is enabled, then use the header checkbox to select every own recipe so the bar's button reads Select none. Do not tap Move and do not change which collection a recipe is in. If the list is empty or this is a shared collection, mark skipped: needs data.",
     "needsData": true
   },
   {
