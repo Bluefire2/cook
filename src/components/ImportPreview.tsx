@@ -34,6 +34,7 @@ export default function ImportPreview({
   result,
   feedbackSource,
   collectionId,
+  destinationId,
   formId,
   onSubmitStatusChange,
   onCreated,
@@ -42,6 +43,8 @@ export default function ImportPreview({
   result: ImportRecipeResult;
   feedbackSource: ImportSource;
   collectionId?: string;
+  /** Explicit destination. `null` is unfiled. `undefined` follows `collectionId`. */
+  destinationId?: string | null;
   formId?: string;
   onSubmitStatusChange?: (status: CreateRecipeSubmitStatus) => void;
   onCreated: (recipe: Recipe) => void;
@@ -312,6 +315,7 @@ export default function ImportPreview({
         formKey={displayed}
         initial={shown}
         collectionId={collectionId}
+        destinationId={destinationId}
         formId={formId}
         submitLocked={translating}
         resolveLang={resolveLang}

@@ -110,97 +110,97 @@
   {
     "id": "import-idle",
     "route": "/import",
-    "setup": "Import with an empty textarea, the bulk-import checkbox off, no photo attached, and no preview. The Add photos button is visible. Open /import (not under /collections/…/import). Do not extract.",
+    "setup": "Import with an empty textarea, the bulk-import checkbox off, no photo attached, and no preview. The Add photos button is visible. Open /import (not under /collections/…/import). Under the title, Choose a collection is showing. Do not press it, and do not extract.",
     "needsData": false
   },
   {
     "id": "import-photos",
     "route": "/import",
-    "setup": "Import with bulk off and one photo attached, so the thumbnail, its remove control, and the notes placeholder are showing. Do not extract. Adding a photo does not call Gemini and writes nothing.",
+    "setup": "Import with bulk off and one photo attached, so the thumbnail, its remove control, and the notes placeholder are showing. Choose a collection stays under the title. Do not press it, and do not extract. Adding a photo does not call Gemini and writes nothing.",
     "needsData": false
   },
   {
     "id": "import-bulk",
     "route": "/import",
-    "setup": "Import with the bulk-import checkbox on, so the bulk placeholder and hint are visible. Do not paste links and do not extract. Bulk extract saves recipes and has no preview.",
+    "setup": "Import with the bulk-import checkbox on, so the bulk placeholder and hint are visible. Choose a collection stays under the title. Do not press it, do not paste links, and do not extract. Bulk extract saves recipes and has no preview.",
     "needsData": false
   },
   {
     "id": "import-preview",
     "route": "/import",
-    "setup": "From /import with bulk off (not under /collections/…/import), extract one recipe (a single https URL, or pasted recipe text) and stop when the form is showing. A clean import shows no warning box above the form. Do not press Save. Extraction calls Gemini and writes nothing. The guessed-language line, translate checkbox, failure notice, pasted-text hint, and import warnings are separate entries.",
+    "setup": "From /import with bulk off (not under /collections/…/import), extract one recipe (a single https URL, or pasted recipe text) and stop when the form is showing. A clean import shows no warning box above the form. Choose a collection stays under the title. Do not press it, and do not press Save. Extraction calls Gemini and writes nothing. The guessed-language line, translate checkbox, failure notice, pasted-text hint, and import warnings are separate entries.",
     "needsData": false
   },
   {
     "id": "import-preview-guessed-language",
     "route": "/import",
-    "setup": "From /import with bulk off (not under /collections/…/import), extract one recipe whose language the import can guess (a single https URL). Stop when the guessed-language line (\"Looks like … Change it if that's wrong.\") and its language select are showing above the form. Do not press Save. Extraction calls Gemini and writes nothing.",
+    "setup": "From /import with bulk off (not under /collections/…/import), extract one recipe whose language the import can guess (a single https URL). Stop when the guessed-language line (\"Looks like … Change it if that's wrong.\") and its language select are showing above the form. Choose a collection stays under the title. Do not press it, and do not press Save. Extraction calls Gemini and writes nothing.",
     "needsData": false
   },
   {
     "id": "import-preview-translate-on",
     "route": "/import",
-    "setup": "Import preview for a recipe whose language differs from the UI language, with the \"Translate into …\" checkbox checked. The form shows the translated text. Do not press Save. If the extracted language matches the UI language, change the guess to another language and leave the checkbox checked. Extraction calls Gemini and writes nothing.",
+    "setup": "Import preview for a recipe whose language differs from the UI language, with the \"Translate into …\" checkbox checked. The form shows the translated text. Choose a collection stays under the title. Do not press it, and do not press Save. If the extracted language matches the UI language, change the guess to another language and leave the checkbox checked. Extraction calls Gemini and writes nothing.",
     "needsData": false
   },
   {
     "id": "import-preview-translate-failed",
     "route": "/import",
-    "setup": "Import preview when translation failed: the notice \"Couldn't translate this recipe. You can save the original.\" is showing, the translate checkbox is absent, and the form shows the original. Do not press Save. If this session cannot produce a failed translation, mark skipped: needs data.",
+    "setup": "Import preview when translation failed: the notice \"Couldn't translate this recipe. You can save the original.\" is showing, the translate checkbox is absent, and the form shows the original. Choose a collection stays under the title. Do not press it, and do not press Save. If this session cannot produce a failed translation, mark skipped: needs data.",
     "needsData": true
   },
   {
     "id": "import-preview-pasted-hint",
     "route": "/import",
-    "setup": "From /import with bulk off, paste recipe text (not a URL) in a language that differs from the UI language and extract. The translate checkbox is checked and its hint \"The original text won't be kept.\" is showing, with notice styling on the guessed-language line. Do not press Save. Extraction calls Gemini and writes nothing.",
+    "setup": "From /import with bulk off, paste recipe text (not a URL) in a language that differs from the UI language and extract. The translate checkbox is checked and its hint \"The original text won't be kept.\" is showing, with notice styling on the guessed-language line. Choose a collection stays under the title. Do not press it, and do not press Save. Extraction calls Gemini and writes nothing.",
     "needsData": false
   },
   {
     "id": "import-bulk-translate",
     "route": "/import",
-    "setup": "Import with the bulk-import checkbox on, so the batch \"Translate into …\" checkbox is visible and checked. Do not paste links and do not extract. Bulk extract saves recipes.",
+    "setup": "Import with the bulk-import checkbox on, so the batch \"Translate into …\" checkbox is visible and checked. Choose a collection stays under the title. Do not press it, do not paste links, and do not extract. Bulk extract saves recipes.",
     "needsData": false
   },
   {
     "id": "import-preview-warnings",
     "route": "/import",
-    "setup": "From /import with bulk off, paste recipe text that lists ingredients but has no method, for example \"Tomato soup\\n6 tomatoes\\n1 onion\\nsalt\", and extract. Stop when the \"Check these before saving:\" box with a specific warning (such as no instructions found) shows above the form. Do not press Save. Extraction calls Gemini and writes nothing. If the import returns no warning, mark skipped: needs data.",
+    "setup": "From /import with bulk off, paste recipe text that lists ingredients but has no method, for example \"Tomato soup\\n6 tomatoes\\n1 onion\\nsalt\", and extract. Stop when the \"Check these before saving:\" box with a specific warning (such as no instructions found) shows above the form. Choose a collection stays under the title. Do not press it, and do not press Save. Extraction calls Gemini and writes nothing. If the import returns no warning, mark skipped: needs data.",
     "needsData": false
   },
   {
     "id": "import-error-model-failed",
     "route": "/import",
-    "setup": "The import error \"Couldn't read that recipe — try again.\" under the textarea, which shows when the model call fails. It cannot be produced on demand; if it does not happen during the run, mark skipped: needs data.",
+    "setup": "The import error \"Couldn't read that recipe — try again.\" under the textarea, which shows when the model call fails. Choose a collection stays under the title. Do not press it. It cannot be produced on demand; if it does not happen during the run, mark skipped: needs data.",
     "needsData": true
   },
   {
     "id": "import-bulk-summary",
     "route": "/import",
-    "setup": "After a bulk import finished: the \"{n} imported\" heading, the \"need attention\" and \"failed\" filter buttons, rows with a warning line or a \"Couldn't import this recipe.\" line with its own Retry, and Show all after a filter is pressed. Bulk import saves recipes, so the review does not run one; capture this only if a bulk summary is already on screen from the person running the review, otherwise mark skipped: needs data. Do not press Retry or Try again.",
+    "setup": "After a bulk import finished: the \"{n} imported\" heading, the \"need attention\" and \"failed\" filter buttons, rows with a warning line or a \"Couldn't import this recipe.\" line with its own Retry, and Show all after a filter is pressed. The destination line stays under the title. Do not press Change or Choose a collection. Bulk import saves recipes, so the review does not run one; capture this only if a bulk summary is already on screen from the person running the review, otherwise mark skipped: needs data. Do not press Retry or Try again.",
     "needsData": true
   },
   {
     "id": "import-failed-feedback",
     "route": "/import",
-    "setup": "From /import with bulk off, paste https://example.com/ and press Extract recipe. Stop when the error and the \"Help fix this import\" card show under it. Open \"Add a note (optional)\" and \"What's included\". Do not press Send report: it stores a report in production Firestore. The sent and could-not-send states are not captured (mark skipped: writes data). Extraction calls Gemini and writes nothing.",
+    "setup": "From /import with bulk off, paste https://example.com/ and press Extract recipe. Stop when the error and the \"Help fix this import\" card show under it. Open \"Add a note (optional)\" and \"What's included\". Choose a collection stays under the title. Do not press it. Do not press Send report: it stores a report in production Firestore. The sent and could-not-send states are not captured (mark skipped: writes data). Extraction calls Gemini and writes nothing.",
     "needsData": false
   },
   {
     "id": "import-preview-feedback",
     "route": "/import",
-    "setup": "From /import with bulk off, paste recipe text that has a title and ingredients but no steps (for example \"Pancakes\\n\\nIngredients:\\n- 2 eggs\\n- 1 cup flour\\n- 1 cup milk\") and press Extract recipe. Stop when the preview shows the warning box and, right below it, the \"Help fix this import\" card. Open \"Add a note (optional)\" and \"What's included\". If no warning box appears, mark skipped: needs data. Do not press Send report or Save.",
+    "setup": "From /import with bulk off, paste recipe text that has a title and ingredients but no steps (for example \"Pancakes\\n\\nIngredients:\\n- 2 eggs\\n- 1 cup flour\\n- 1 cup milk\") and press Extract recipe. Stop when the preview shows the warning box and, right below it, the \"Help fix this import\" card. Open \"Add a note (optional)\" and \"What's included\". Choose a collection stays under the title. Do not press it. If no warning box appears, mark skipped: needs data. Do not press Send report or Save.",
     "needsData": true
   },
   {
     "id": "import-preview-rating",
     "route": "/import",
-    "setup": "From /import with bulk off, extract one clean recipe (a single https recipe URL, or full recipe text with steps). Scroll below the form to the \"How did this import go?\" row with thumbs up and down; their names are aria-labels. Capture it, then press thumbs down and capture the card that replaces the row. Do not press thumbs up, Send report, or Save.",
+    "setup": "From /import with bulk off, extract one clean recipe (a single https recipe URL, or full recipe text with steps). Scroll below the form to the \"How did this import go?\" row with thumbs up and down; their names are aria-labels. Capture it, then press thumbs down and capture the card that replaces the row. Choose a collection stays under the title. Do not press it. Do not press thumbs up, Send report, or Save.",
     "needsData": false
   },
   {
     "id": "import-bulk-feedback",
     "route": "/import",
-    "setup": "After a bulk import finished with at least one failed or needs-attention row: press that row's \"Report a problem\" and capture the expanded card. Bulk import saves recipes, so the review does not run one; capture this only if a bulk summary is already on screen from the person running the review, otherwise mark skipped: needs data. Do not press Send report, Retry, or Try again.",
+    "setup": "After a bulk import finished with at least one failed or needs-attention row: press that row's \"Report a problem\" and capture the expanded card. The destination line stays under the title. Do not press Change or Choose a collection. Bulk import saves recipes, so the review does not run one; capture this only if a bulk summary is already on screen from the person running the review, otherwise mark skipped: needs data. Do not press Send report, Retry, or Try again.",
     "needsData": true
   },
   {
@@ -324,9 +324,21 @@
     "needsData": true
   },
   {
+    "id": "import-from-collection",
+    "route": "/collections/:collectionId/import",
+    "setup": "Open import from one of your own named collections (the path is /collections/<id>/import, not /import). The empty form is showing, bulk is off, and under the title the line Import into {name} is showing with Change. Do not press Change, do not extract, and do not save. If you have no own named collection, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "import-destination-sheet",
+    "route": "/import",
+    "setup": "From /import (not under /collections/…/import), with the empty import form showing, press Choose a collection. The sheet title is Import into, with No collection, any collections, and Create collection. Capture the sheet, then Cancel. Do not pick No collection, pick a collection, or create one. Nothing is written.",
+    "needsData": false
+  },
+  {
     "id": "save-to-collection-sheet",
     "route": "/import",
-    "setup": "After the import preview is showing (import-preview: /import, bulk off, not under /collections/…/import), press Save. The Save to collection sheet opens and nothing is written until a destination is chosen. Capture the sheet, then Cancel. Do not pick Recipes, pick a collection, or create one. Do not reach this sheet from bulk import.",
+    "setup": "After the import preview is showing (import-preview: /import, bulk off, not under /collections/…/import), press Save. The Save to collection sheet opens and nothing is written until a destination is chosen. Choose a collection stays under the title; do not press it. Capture the sheet, then Cancel. Do not pick No collection, pick a collection, or create one. Do not reach this sheet from bulk import.",
     "needsData": false
   },
   {

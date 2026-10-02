@@ -268,6 +268,11 @@ export const ru: Messages = {
     'Вместе эти фото слишком большие — уберите одно и попробуйте ещё раз.',
   'import.saveTo': 'Импортировать рецепты в',
   'import.createAndImport': 'Создать и импортировать',
+  'import.destination': 'Импортировать в {name}',
+  'import.changeDestination': 'Изменить',
+  'import.chooseDestination': 'Выбрать коллекцию',
+  'import.destinationTitle': 'Импортировать в',
+  'import.createCollection': 'Создать коллекцию',
   'import.collectionNotFoundChoose': 'Коллекция не найдена. Выберите другую коллекцию.',
   'import.bulkRequiresCheckbox':
     'Похоже, это несколько ссылок на рецепты. Включите массовый импорт, чтобы распознать их все, или вставьте одну ссылку.',

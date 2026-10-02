@@ -35,6 +35,7 @@ export type CreateRecipeSubmitStatus = {
 export default function CreateRecipeForm({
   initial,
   collectionId,
+  destinationId,
   onCreated,
   onCancel,
   formId,
@@ -48,6 +49,10 @@ export default function CreateRecipeForm({
 }: {
   initial: RecipeDraft;
   collectionId?: string;
+  /**
+   * Explicit destination. `null` is unfiled. `undefined` follows `collectionId`.
+   */
+  destinationId?: string | null;
   onCreated: (recipe: Recipe) => void;
   onCancel: () => void;
   /** Lets a Save button outside this form submit it (the import header). */
@@ -71,7 +76,7 @@ export default function CreateRecipeForm({
 }) {
   const t = useT();
   const collections = useCollections();
-  const destination = resolveCollectionDestination(collections, collectionId);
+  const destination = resolveCollectionDestination(collections, collectionId, destinationId);
   const [draft, setDraft] = useState<RecipeDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [choosing, setChoosing] = useState(false);

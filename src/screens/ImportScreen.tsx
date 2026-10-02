@@ -105,7 +105,12 @@ export default function ImportScreen() {
     null,
   );
   const [pendingUrls, setPendingUrls] = useState<string[] | null>(null);
-  const [batchDestination, setBatchDestination] = useState<string | null | undefined>();
+  // undefined follows the URL folder; null is an explicit unfiled choice; a
+  // string overrides the folder. Kept on screen, so editing the input does
+  // not clear it.
+  const [picked, setPicked] = useState<string | null | undefined>();
+  const [choosingDestination, setChoosingDestination] = useState(false);
+  const destination = resolveCollectionDestination(collections, knownCollectionId, picked);
   const [retrying, setRetrying] = useState(false);
   const inFlight = useRef(false);
   const [summary, setSummary] = useState<BulkResult[] | null>(null);
@@ -169,7 +174,7 @@ export default function ImportScreen() {
       throw new Error(t('import.collectionNotFoundChoose'));
     }
     inFlight.current = true;
-    setBatchDestination(destinationId ?? null);
+    setPicked(destinationId ?? null);
     // A new batch numbers its attempts from 0 again.
     setReportMemory({});
     setPendingUrls(null);
@@ -294,7 +299,6 @@ export default function ImportScreen() {
       ? validated.urls
       : retrying && validated.mode === 'url' ? [validated.url] : null;
     if (urls) {
-      const destination = resolveCollectionDestination(collections, collectionId, batchDestination);
       if (destination.kind === 'choose') {
         setPendingUrls(urls);
       } else if (destination.kind === 'save') {
@@ -343,7 +347,7 @@ export default function ImportScreen() {
     setError(null);
   };
 
-  /** Re-runs one failed row, with a fresh fetch, into the same batch destination. */
+  /** Re-runs one failed row, with a fresh fetch, into the destination shown on screen. */
   const retryRow = async (url: string) => {
     if (inFlight.current || summary === null) return;
     inFlight.current = true;
@@ -355,7 +359,16 @@ export default function ImportScreen() {
         rows?.map((r) => (r.url === url && !r.ok ? { ...r, retrying: true as const } : r)) ?? rows,
     );
     try {
-      replace({ ...(await importOne(url, batchDestination ?? undefined)), attempt: next });
+      if (destination.kind !== 'save') {
+        replace({
+          url,
+          ok: false,
+          error: t('import.collectionNotFoundChoose'),
+          attempt: next,
+        });
+        return;
+      }
+      replace({ ...(await importOne(url, destination.collectionId)), attempt: next });
     } catch (e) {
       const failure = importFailureDetails(e);
       replace({
@@ -387,6 +400,13 @@ export default function ImportScreen() {
           ? !row.ok
           : true,
     ) ?? [];
+  const destinationLocked = busy || encoding || saveStatus.saving || retryingRow || pendingUrls !== null;
+  const destinationName =
+    destination.kind !== 'save'
+      ? undefined
+      : destination.collectionId === undefined
+        ? t('saveSheet.noCollection')
+        : collections?.find((collection) => collection.id === destination.collectionId)?.name;
   const filterClass = (active: boolean) =>
     `rounded-full border px-3 py-1 text-sm disabled:opacity-40 ${
       active
@@ -418,6 +438,36 @@ export default function ImportScreen() {
             </button>
           )}
         </div>
+        {destination.kind === 'loading' && (
+          <p role="status" className="mt-2 text-sm text-ink-muted">
+            {t('common.loadingCollections')}
+          </p>
+        )}
+        {destination.kind === 'save' && destinationName !== undefined && (
+          <p className="mt-2 flex flex-wrap items-baseline gap-x-3 text-sm text-ink">
+            <span>{t('import.destination', { name: destinationName })}</span>
+            <button
+              type="button"
+              disabled={destinationLocked}
+              onClick={() => setChoosingDestination(true)}
+              className="font-medium text-ink-muted underline hover:text-ink disabled:opacity-40"
+            >
+              {t('import.changeDestination')}
+            </button>
+          </p>
+        )}
+        {destination.kind === 'choose' && (
+          <p className="mt-2">
+            <button
+              type="button"
+              disabled={destinationLocked}
+              onClick={() => setChoosingDestination(true)}
+              className="text-sm font-medium text-ink underline hover:text-ink disabled:opacity-40"
+            >
+              {t('import.chooseDestination')}
+            </button>
+          </p>
+        )}
       </header>
 
       {summary !== null ? (
@@ -598,7 +648,6 @@ export default function ImportScreen() {
             onChange={(e) => {
               setInput(e.target.value);
               setRetrying(false);
-              setBatchDestination(undefined);
             }}
             rows={5}
             readOnly={busy || pendingUrls !== null}
@@ -672,7 +721,6 @@ export default function ImportScreen() {
               onChange={(e) => {
                 setBulk(e.target.checked);
                 setRetrying(false);
-                setBatchDestination(undefined);
                 setError(null);
               }}
               className={`mt-1 h-4 w-4 shrink-0 accent-ink disabled:opacity-40 ${inputFocus}`}
@@ -713,7 +761,6 @@ export default function ImportScreen() {
               }}
             />
           )}
-          {collections === undefined && <p role="status">{t('common.loadingCollections')}</p>}
           <button
             type="button"
             onClick={() => void extract()}
@@ -780,7 +827,8 @@ export default function ImportScreen() {
           <ImportPreview
             result={preview.result}
             feedbackSource={preview.source}
-            collectionId={collectionId}
+            collectionId={knownCollectionId}
+            destinationId={picked}
             formId={IMPORT_FORM_ID}
             onSubmitStatusChange={onSubmitStatusChange}
             onCreated={(recipe) => navigate(`/recipe/${recipe.id}`, { replace: true })}
@@ -788,11 +836,25 @@ export default function ImportScreen() {
           />
         </>
       )}
+      {choosingDestination && pendingUrls === null && (
+        <SaveToCollectionSheet
+          title={t('import.destinationTitle')}
+          createLabel={t('import.createCollection')}
+          onSave={(id) => {
+            setPicked(id ?? null);
+            setChoosingDestination(false);
+          }}
+          onCancel={() => setChoosingDestination(false)}
+        />
+      )}
       {pendingUrls && (
         <SaveToCollectionSheet
           title={t('import.saveTo')}
           createLabel={t('import.createAndImport')}
-          onSave={(id) => runBulk(pendingUrls, id)}
+          onSave={(id) => {
+            setPicked(id ?? null);
+            return runBulk(pendingUrls, id);
+          }}
           onCancel={() => setPendingUrls(null)}
         />
       )}
