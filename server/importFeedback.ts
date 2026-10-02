@@ -31,6 +31,7 @@ import {
   MAX_FEEDBACK_PASTE_BYTES,
   MAX_FEEDBACK_RECIPE_BYTES,
   feedbackUrl,
+  stripUrlUserinfo,
   truncateUtf8,
   type ImportFeedbackError,
   type ImportFeedbackReport,
@@ -133,7 +134,9 @@ function readResult(raw: unknown): ImportFeedbackResult | undefined {
   if (!isPlainObject(raw)) return undefined;
   const result: ImportFeedbackResult = {};
   if (typeof raw.recipeJson === 'string') {
-    const recipe = truncateUtf8(raw.recipeJson, MAX_FEEDBACK_RECIPE_BYTES);
+    // The client already cleans this; the sweep here means no client can store a
+    // `user:pass@` inside the opaque JSON (a URL draft's `sourceUrl` holds the raw link).
+    const recipe = truncateUtf8(stripUrlUserinfo(raw.recipeJson), MAX_FEEDBACK_RECIPE_BYTES);
     result.recipeJson = recipe.text;
     if (recipe.truncated || raw.recipeTruncated === true) result.recipeTruncated = true;
   }

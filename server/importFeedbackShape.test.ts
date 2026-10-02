@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { feedbackUrl, truncateUtf8 } from './importFeedbackShape.ts';
+import { feedbackUrl, stripUrlUserinfo, truncateUtf8 } from './importFeedbackShape.ts';
+
+describe('stripUrlUserinfo', () => {
+  it('removes userinfo from every http(s) link in the text', () => {
+    expect(
+      stripUrlUserinfo(
+        '{"sourceUrl":"https://user:s3cret@recipes.example/cake?x=1","notes":"see http://bob@a.example/b"}',
+      ),
+    ).toBe('{"sourceUrl":"https://recipes.example/cake?x=1","notes":"see http://a.example/b"}');
+  });
+  it('works on text cut mid-link', () => {
+    expect(stripUrlUserinfo('{"sourceUrl":"https://user:s3cret@reci')).toBe('{"sourceUrl":"https://reci');
+  });
+  it('leaves an @ after the host alone', () => {
+    const text = 'https://example.com/path@x?q=a@b#c@d';
+    expect(stripUrlUserinfo(text)).toBe(text);
+  });
+  it('leaves text without links alone', () => {
+    expect(stripUrlUserinfo('mail me at cook@example.com')).toBe('mail me at cook@example.com');
+  });
+});
 
 describe('truncateUtf8', () => {
   it('keeps short text', () => {

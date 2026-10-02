@@ -133,6 +133,20 @@ describe('readImportFeedback', () => {
     expect(parsed.fields.result?.recipeTruncated).toBe(true);
   });
 
+  it('strips credentials inside recipeJson, parsable or cut', () => {
+    const read = (recipeJson: string) => {
+      const parsed = readImportFeedback({ id: UUID, trigger: 'down', via: 'url', result: { recipeJson } });
+      if (parsed.kind !== 'report') throw new Error('expected a report');
+      return parsed.fields.result?.recipeJson;
+    };
+    expect(read('{"title":"Cake","sourceUrl":"https://user:s3cret@recipes.example/cake?x=1"}')).toBe(
+      '{"title":"Cake","sourceUrl":"https://recipes.example/cake?x=1"}',
+    );
+    expect(read('{"title":"Cake","sourceUrl":"https://user:s3cret@rec')).toBe(
+      '{"title":"Cake","sourceUrl":"https://rec',
+    );
+  });
+
   it('strips credentials from the url', () => {
     const parsed = readImportFeedback({
       id: UUID,

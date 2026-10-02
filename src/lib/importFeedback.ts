@@ -11,6 +11,7 @@ import {
   MAX_FEEDBACK_PASTE_BYTES,
   MAX_FEEDBACK_RECIPE_BYTES,
   feedbackUrl,
+  stripUrlUserinfo,
   truncateUtf8,
   type ImportFeedbackReport,
   type ImportFeedbackResult,
@@ -86,8 +87,22 @@ export function importFailureDetails(err: unknown): ImportFailure | null {
   return failure;
 }
 
+/**
+ * The extraction as JSON with no `user:pass@` in it. A URL import's draft
+ * carries the submitted address on `sourceUrl`, so that is cleaned like the
+ * report's own `url`, and the whole string is swept for any other link, before
+ * the byte cap so a cut cannot keep a secret.
+ */
+function recipeJson(recipe: RecipeDraft): string {
+  const { sourceUrl, ...rest } = recipe;
+  const cleanUrl = feedbackUrl(sourceUrl);
+  return stripUrlUserinfo(
+    JSON.stringify(cleanUrl !== undefined ? { ...rest, sourceUrl: cleanUrl } : rest),
+  );
+}
+
 function feedbackResult(input: FeedbackResultInput): ImportFeedbackResult {
-  const recipe = truncateUtf8(JSON.stringify(input.recipe), MAX_FEEDBACK_RECIPE_BYTES);
+  const recipe = truncateUtf8(recipeJson(input.recipe), MAX_FEEDBACK_RECIPE_BYTES);
   const result: ImportFeedbackResult = { recipeJson: recipe.text };
   if (recipe.truncated) result.recipeTruncated = true;
   if (input.warnings !== undefined && input.warnings.length > 0) result.warnings = input.warnings;

@@ -6,34 +6,64 @@ import { buildImportFeedback, includedSummary, type FeedbackCardInput } from '..
 import { sendImportFeedback } from '../lib/importFeedbackApi';
 import { ghostBtn, inputClass, secondaryBtn } from '../lib/uiClasses';
 
+/**
+ * What a card must keep across an unmount: its report id (the server dedupes
+ * a repeat id, so a resend never writes a second report), whether it was sent,
+ * and the note typed so far.
+ */
+export interface FeedbackCardMemory {
+  id: string;
+  sent: boolean;
+  note: string;
+  noteOpen: boolean;
+}
+
+export function newFeedbackCardMemory(): FeedbackCardMemory {
+  return { id: crypto.randomUUID(), sent: false, note: '', noteOpen: false };
+}
+
+/**
+ * Without `memory`, the card keeps it itself, which is enough where the card
+ * stays mounted for as long as its import is on screen. A parent that can
+ * unmount the card (bulk rows under a filter) owns `memory` instead.
+ */
 export default function ImportFeedbackCard({
   input,
   compact = false,
+  memory: ownedMemory,
+  onMemoryChange,
 }: {
   input: FeedbackCardInput;
   compact?: boolean;
+  memory?: FeedbackCardMemory;
+  onMemoryChange?: (memory: FeedbackCardMemory) => void;
 }) {
   const t = useT();
-  // Fixed for the card's life: a retry resends the same id and the server dedupes it.
-  const [id] = useState(() => crypto.randomUUID());
-  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [localMemory, setLocalMemory] = useState(newFeedbackCardMemory);
+  const memory = ownedMemory ?? localMemory;
+  const update = (patch: Partial<FeedbackCardMemory>) => {
+    const next = { ...memory, ...patch };
+    if (onMemoryChange !== undefined) onMemoryChange(next);
+    else setLocalMemory(next);
+  };
+  const { id, note, noteOpen } = memory;
+  const [status, setStatus] = useState<'idle' | 'sending' | 'error'>('idle');
   const [errorText, setErrorText] = useState<string | null>(null);
-  const [noteOpen, setNoteOpen] = useState(false);
-  const [note, setNote] = useState('');
 
   async function send() {
     setStatus('sending');
     setErrorText(null);
     try {
       await sendImportFeedback(buildImportFeedback({ ...input, id, comment: note }));
-      setStatus('sent');
+      // The note is disabled while sending, so `memory` is still current here.
+      update({ sent: true });
     } catch (e) {
       setStatus('error');
       setErrorText(e instanceof Error ? e.message : t('importFeedback.sendFailed'));
     }
   }
 
-  if (status === 'sent') {
+  if (memory.sent) {
     return (
       <p role="status" className="mt-3 text-sm text-ink-subtle">
         {t('importFeedback.sent')}
@@ -73,7 +103,7 @@ export default function ImportFeedbackCard({
             type="button"
             className={ghostBtn}
             aria-expanded={false}
-            onClick={() => setNoteOpen(true)}
+            onClick={() => update({ noteOpen: true })}
           >
             {t('importFeedback.addNote')}
           </button>
@@ -88,7 +118,7 @@ export default function ImportFeedbackCard({
             placeholder={t('importFeedback.notePlaceholder')}
             className={`mt-1 ${inputClass}`}
             value={note}
-            onChange={(e) => setNote(e.target.value)}
+            onChange={(e) => update({ note: e.target.value })}
             disabled={sending}
           />
         </label>

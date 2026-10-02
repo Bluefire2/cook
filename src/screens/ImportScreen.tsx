@@ -1,7 +1,10 @@
 import { useCallback, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { t as translateNow, useLocale, useT } from '../i18n';
-import ImportFeedbackCard from '../components/ImportFeedbackCard';
+import ImportFeedbackCard, {
+  newFeedbackCardMemory,
+  type FeedbackCardMemory,
+} from '../components/ImportFeedbackCard';
 import ImportPreview from '../components/ImportPreview';
 import { importWarningText } from '../components/ImportWarningList';
 import { type CreateRecipeSubmitStatus } from '../components/CreateRecipeForm';
@@ -107,7 +110,14 @@ export default function ImportScreen() {
   const inFlight = useRef(false);
   const [summary, setSummary] = useState<BulkResult[] | null>(null);
   const [filter, setFilter] = useState<BulkFilter>('all');
-  const [reportingKey, setReportingKey] = useState<string | null>(null);
+  // Bulk report cards, keyed by row and attempt. A filter switch unmounts a card,
+  // so its report id, sent flag, and note live here: coming back never mints a
+  // second report. A Retry is a new attempt and starts a fresh card.
+  const [reportMemory, setReportMemory] = useState<Record<string, FeedbackCardMemory>>({});
+  const openReport = (key: string) =>
+    setReportMemory((all) => (all[key] !== undefined ? all : { ...all, [key]: newFeedbackCardMemory() }));
+  const rememberReport = (key: string) => (memory: FeedbackCardMemory) =>
+    setReportMemory((all) => ({ ...all, [key]: memory }));
   const [saveStatus, setSaveStatus] = useState<CreateRecipeSubmitStatus>({
     locked: false,
     saving: false,
@@ -160,6 +170,8 @@ export default function ImportScreen() {
     }
     inFlight.current = true;
     setBatchDestination(destinationId ?? null);
+    // A new batch numbers its attempts from 0 again.
+    setReportMemory({});
     setPendingUrls(null);
     setBusy(true);
     setError(null);
@@ -451,6 +463,7 @@ export default function ImportScreen() {
                       .find((text) => text !== null)
                   : undefined;
               const reportKey = `${row.url}#${row.attempt}`;
+              const memory = reportMemory[reportKey];
               const canReport = row.ok
                 ? row.warnings !== undefined && row.extracted !== undefined
                 : row.failure !== undefined;
@@ -484,19 +497,21 @@ export default function ImportScreen() {
                       {row.untranslated && (
                         <p className="mt-1 text-ink-subtle">{t('import.savedUntranslated')}</p>
                       )}
-                      {canReport && reportingKey !== reportKey && (
+                      {canReport && memory === undefined && (
                         <button
                           type="button"
                           disabled={busy}
-                          onClick={() => setReportingKey(reportKey)}
+                          onClick={() => openReport(reportKey)}
                           className="mt-2 text-sm text-ink-muted underline hover:text-ink disabled:opacity-40"
                         >
                           {t('importFeedback.reportRow')}
                         </button>
                       )}
-                      {canReport && reportingKey === reportKey && row.warnings !== undefined && row.extracted !== undefined && (
+                      {canReport && memory !== undefined && row.warnings !== undefined && row.extracted !== undefined && (
                         <ImportFeedbackCard
                           compact
+                          memory={memory}
+                          onMemoryChange={rememberReport(reportKey)}
                           input={{
                             trigger: 'warnings',
                             source: { via: 'url', url: row.url },
@@ -529,19 +544,21 @@ export default function ImportScreen() {
                         {row.retrying && <SpinnerIcon className="h-4 w-4 animate-spin" />}
                         {row.retrying ? t('importWarning.retrying') : t('import.retryRow')}
                       </button>
-                      {canReport && reportingKey !== reportKey && (
+                      {canReport && memory === undefined && (
                         <button
                           type="button"
                           disabled={busy || row.retrying === true}
-                          onClick={() => setReportingKey(reportKey)}
+                          onClick={() => openReport(reportKey)}
                           className="mt-2 ml-3 text-sm text-ink-muted underline hover:text-ink disabled:opacity-40"
                         >
                           {t('importFeedback.reportRow')}
                         </button>
                       )}
-                      {canReport && reportingKey === reportKey && row.failure !== undefined && (
+                      {canReport && memory !== undefined && row.failure !== undefined && (
                         <ImportFeedbackCard
                           compact
+                          memory={memory}
+                          onMemoryChange={rememberReport(reportKey)}
                           input={{
                             trigger: 'failed',
                             source: { via: 'url', url: row.url },

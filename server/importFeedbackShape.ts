@@ -61,6 +61,16 @@ export function truncateUtf8(text: string, maxBytes: number): { text: string; tr
   return { text: new TextDecoder().decode(bytes.subarray(0, end)), truncated: true };
 }
 
+/**
+ * `text` with the `user:pass@` part of every http(s) link in it removed. For
+ * text that holds links rather than being one, such as a recipe's JSON with its
+ * `sourceUrl`; it works on truncated text too. An `@` after the host, in a path
+ * or query, is left alone.
+ */
+export function stripUrlUserinfo(text: string): string {
+  return text.replace(/\b(https?:\/\/)[^\s"\\/?#@]+@/gi, '$1');
+}
+
 /** An http(s) link with any `user:pass@` removed; query and fragment kept. */
 export function feedbackUrl(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;

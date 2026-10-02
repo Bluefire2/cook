@@ -116,6 +116,32 @@ describe('buildImportFeedback', () => {
     expect(build({ comment: 'a'.repeat(2500) }).comment?.length).toBe(2000);
   });
 
+  it('keeps a password in the link out of recipeJson', () => {
+    const report = build({
+      trigger: 'down',
+      source: { via: 'url', url: 'https://user:s3cret@recipes.example/cake?x=1' },
+      result: {
+        recipe: {
+          ...R,
+          sourceUrl: 'https://user:s3cret@recipes.example/cake?x=1',
+          notes: 'From http://bob:pw@other.example/page',
+        },
+      },
+    });
+    expect(report.url).toBe('https://recipes.example/cake?x=1');
+    const json = report.result?.recipeJson ?? '';
+    expect(json).not.toContain('s3cret');
+    expect(json).not.toContain('bob:pw');
+    const recipe = JSON.parse(json) as RecipeDraft;
+    expect(recipe.sourceUrl).toBe('https://recipes.example/cake?x=1');
+    expect(recipe.notes).toBe('From http://other.example/page');
+  });
+
+  it('drops a sourceUrl that is not an http(s) link', () => {
+    const report = build({ result: { recipe: { ...R, sourceUrl: 'javascript:alert(1)' } } });
+    expect('sourceUrl' in (JSON.parse(report.result?.recipeJson ?? '{}') as object)).toBe(false);
+  });
+
   it('drops a bad url', () => {
     expect('url' in build({ source: { via: 'url', url: 'javascript:alert(1)' } })).toBe(false);
   });
