@@ -26,6 +26,18 @@ export const CATALOGS: Readonly<Record<Locale, Messages>> = {
   'zh-Hans': zhHans,
 };
 
+/**
+ * Short native label for each UI language, for the header language menu. Fixed
+ * in every UI language (an autonym, like the menu's full names), so not in the
+ * catalogs. Never a country code.
+ */
+export const LOCALE_SHORT_LABELS: Readonly<Record<Locale, string>> = {
+  en: 'EN',
+  uk: 'УКР',
+  ru: 'РУС',
+  'zh-Hans': '中文',
+};
+
 export type TranslateParams = Readonly<Record<string, string | number>>;
 
 const pluralRules = new Map<Locale, Intl.PluralRules>();
@@ -96,6 +108,15 @@ export function languageName(tag: string, uiLocale: Locale): string | undefined 
   } catch {
     return undefined;
   }
+}
+
+/**
+ * A UI language's own name as a standalone label, first letter capitalized
+ * ("Українська", "Русский"). `Intl.DisplayNames` gives the mid-sentence form.
+ */
+export function localeDisplayName(locale: Locale): string {
+  const name = languageName(locale, locale) ?? locale;
+  return name.charAt(0).toLocaleUpperCase(locale) + name.slice(1);
 }
 
 function getLocaleSnapshot(): Locale {

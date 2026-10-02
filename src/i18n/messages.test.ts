@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { en, type PluralForms } from './en';
-import { CATALOGS, formatNumber, languageName, translate } from './index';
+import {
+  CATALOGS,
+  formatNumber,
+  languageName,
+  localeDisplayName,
+  LOCALE_SHORT_LABELS,
+  translate,
+} from './index';
 import { SUPPORTED_LOCALES } from './lang';
 
 const NON_ENGLISH = SUPPORTED_LOCALES.filter((locale) => locale !== 'en');
@@ -139,5 +146,25 @@ describe('languageName', () => {
   it('is undefined for a tag it cannot name', () => {
     expect(languageName('xx', 'en')).toBeUndefined();
     expect(languageName('!!', 'en')).toBeUndefined();
+  });
+});
+
+describe('LOCALE_SHORT_LABELS', () => {
+  it('has a distinct, non-empty label for every supported locale', () => {
+    expect(Object.keys(LOCALE_SHORT_LABELS).sort()).toEqual([...SUPPORTED_LOCALES].sort());
+    const labels = SUPPORTED_LOCALES.map((locale) => LOCALE_SHORT_LABELS[locale]);
+    for (const label of labels) {
+      expect(label.trim()).not.toBe('');
+    }
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+});
+
+describe('localeDisplayName', () => {
+  it('names each UI language in itself, capitalized as a standalone label', () => {
+    expect(localeDisplayName('en')).toBe('English');
+    expect(localeDisplayName('uk')).toBe('Українська');
+    expect(localeDisplayName('ru')).toBe('Русский');
+    expect(localeDisplayName('zh-Hans')).toBe('简体中文');
   });
 });

@@ -93,6 +93,7 @@ export const en = {
   'library.actionsFor': 'Actions for {title}',
   'library.moveTo': 'Move to…',
   'library.closeMenu': 'Close menu',
+  'library.languageMenu': 'Language: {language}',
   'library.addRecipe': 'Add recipe',
   'library.addRecipeTitle': 'Add a recipe',
   'library.importFromLink': 'Import from a link, text, or photos',

@@ -84,6 +84,12 @@
     "needsData": true
   },
   {
+    "id": "library-language-menu",
+    "route": "/",
+    "setup": "On the Recipes list, signed in or out. The rightmost header control shows the current UI language's short label (EN, УКР, РУС, or 中文) with a down chevron; its name is an aria-label. Tap it so the menu under it lists every UI language by its own name, with the current one in bold and a check mark. The trigger label and the language names are the same in every UI language by design; judge the aria-label and the header around it. Choosing a language only writes cook.locale and is allowed.",
+    "needsData": false
+  },
+  {
     "id": "import-idle",
     "route": "/import",
     "setup": "Import with an empty textarea, the bulk-import checkbox off, no photo attached, and no preview. The Add photos button is visible. Open /import (not under /collections/…/import). Do not extract.",
