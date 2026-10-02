@@ -34,7 +34,7 @@ function link(overrides: Partial<PublicLinkRecord> = {}): PublicLinkRecord {
 }
 
 function visitorDeps(overrides: Partial<PublicVisitorDependencies> = {}) {
-  const streamPhoto = vi.fn(
+  const photoResponse = vi.fn(
     async () =>
       new Response('bytes', {
         status: 200,
@@ -57,10 +57,10 @@ function visitorDeps(overrides: Partial<PublicVisitorDependencies> = {}) {
         createdAt: 1,
         updatedAt: 2,
       })),
-    streamPhoto,
+    photoResponse,
     ...overrides,
   };
-  return { deps, streamPhoto };
+  return { deps, photoResponse };
 }
 
 function get(path: string, method = 'GET'): Request {
@@ -103,26 +103,26 @@ describe('handlePublicGet', () => {
   });
 
   it('streams a listed photo from the owner tree with visitor headers', async () => {
-    const { deps, streamPhoto } = visitorDeps();
+    const { deps, photoResponse } = visitorDeps();
     const res = await handlePublicGet(
       get(`/api/public/${token}/recipes/${recipeId}/photos/${photoId}`, 'HEAD'),
       deps,
     );
     expect(res.status).toBe(200);
-    expect(streamPhoto).toHaveBeenCalledWith(ownerSub, photoId, 'HEAD');
+    expect(photoResponse).toHaveBeenCalledWith(ownerSub, photoId, 'HEAD');
     expect(res.headers.get('Referrer-Policy')).toBe('no-referrer');
     expect(res.headers.get('Cache-Control')).toBe('private, no-store');
   });
 
   it('never streams a photo the recipe does not list', async () => {
-    const { deps, streamPhoto } = visitorDeps();
+    const { deps, photoResponse } = visitorDeps();
     const other = '66666666-6666-4666-8666-666666666666';
     const res = await handlePublicGet(
       get(`/api/public/${token}/recipes/${recipeId}/photos/${other}`),
       deps,
     );
     expect(res.status).toBe(404);
-    expect(streamPhoto).not.toHaveBeenCalled();
+    expect(photoResponse).not.toHaveBeenCalled();
   });
 });
 

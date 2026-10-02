@@ -271,6 +271,11 @@ export const uk: Messages = {
   'import.photosTotalTooLarge': 'Разом ці фото завеликі — приберіть одне і спробуйте ще раз.',
   'import.saveTo': 'Імпортувати рецепти до',
   'import.createAndImport': 'Створити й імпортувати',
+  'import.destination': 'Імпортувати до {name}',
+  'import.changeDestination': 'Змінити',
+  'import.chooseDestination': 'Вибрати колекцію',
+  'import.destinationTitle': 'Імпортувати до',
+  'import.createCollection': 'Створити колекцію',
   'import.collectionNotFoundChoose': 'Колекцію не знайдено. Виберіть іншу колекцію.',
   'import.bulkRequiresCheckbox':
     'Схоже, це кілька посилань на рецепти. Увімкніть масовий імпорт, щоб розпізнати їх усі, або вставте одне посилання.',

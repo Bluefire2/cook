@@ -272,6 +272,11 @@ export const en = {
     'Those photos are too large together — remove one and try again.',
   'import.saveTo': 'Import recipes to',
   'import.createAndImport': 'Create and import',
+  'import.destination': 'Import into {name}',
+  'import.changeDestination': 'Change',
+  'import.chooseDestination': 'Choose a collection',
+  'import.destinationTitle': 'Import into',
+  'import.createCollection': 'Create collection',
   'import.collectionNotFoundChoose': 'Collection not found. Choose another collection.',
   'import.bulkRequiresCheckbox':
     'This looks like several recipe links. Turn on bulk import to extract them all, or paste a single link.',

@@ -14,7 +14,7 @@ import {
   storeUnavailable,
   type RequireMemberResult,
 } from './membership.ts';
-import { streamStoredPhoto } from './photos.ts';
+import { storedPhotoResponse } from './photos.ts';
 import { joinPublicLink, type PublicJoinOutcome } from './publicJoin.ts';
 import {
   ensurePublicLink,
@@ -63,7 +63,7 @@ function visitorUnavailable(): Response {
 
 function withVisitorHeaders(response: Response): Response {
   for (const [key, value] of Object.entries(VISITOR_HEADERS)) {
-    // `streamStoredPhoto` sets its own Cache-Control, which is already no-store.
+    // `storedPhotoResponse` sets its own Cache-Control, which is already no-store.
     if (key !== 'Cache-Control') {
       response.headers.set(key, value);
     }
@@ -93,7 +93,7 @@ async function readJsonBody(req: Request): Promise<Record<string, unknown> | nul
 // ---------------------------------------------------------------------------
 
 export type PublicVisitorDependencies = PublicReadDependencies & {
-  streamPhoto: (ownerSub: string, photoId: string, method: string) => Promise<Response>;
+  photoResponse: (ownerSub: string, photoId: string, method: string) => Promise<Response>;
 };
 
 const liveVisitorDependencies: PublicVisitorDependencies = {
@@ -101,7 +101,7 @@ const liveVisitorDependencies: PublicVisitorDependencies = {
   ownerAdmitted: sharingOwnerAdmitted,
   readCollection: (ownerSub, collectionId) => readDocData(ownerSub, 'collections', collectionId),
   readRecipes: (ownerSub, ids) => readDocsData(ownerSub, 'recipes', ids),
-  streamPhoto: streamStoredPhoto,
+  photoResponse: storedPhotoResponse,
 };
 
 export async function handlePublicGet(
@@ -121,7 +121,7 @@ export async function handlePublicGet(
     if (allowed === null) {
       return visitorNotFound();
     }
-    return withVisitorHeaders(await deps.streamPhoto(allowed.ownerSub, path.photoId, req.method));
+    return withVisitorHeaders(await deps.photoResponse(allowed.ownerSub, path.photoId, req.method));
   } catch (err) {
     console.error('publicGet store error:', err instanceof Error ? err.name : 'unknown');
     return visitorUnavailable();

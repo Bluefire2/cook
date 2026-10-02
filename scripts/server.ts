@@ -16,7 +16,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { basename, extname, isAbsolute, relative, resolve } from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, type Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { POST as chatPost } from '../api/chat.ts';
@@ -423,6 +423,30 @@ async function dispatchFetch(
   await writeFetchResponse(nodeRes, response);
 }
 
+/**
+ * Pipes a route's response body to the client. When the client is already
+ * gone, `pipeline` throws ERR_STREAM_UNABLE_TO_PIPE without touching the
+ * body, which would leave its upstream (a GCS read, a model stream) open
+ * until it fails on a stream nobody listens to, killing the process. So a
+ * gone client cancels the body instead. (Cancel the web stream itself:
+ * destroying a `Readable.fromWeb` over a `Readable.toWeb` body that still
+ * holds data throws ERR_INVALID_STATE from Node's adapter.) When the client
+ * leaves mid-response, `pipeline` destroys the body and rejects; the extra
+ * listener absorbs anything the body emits after that.
+ */
+export async function pipeResponseBody(
+  body: ReadableStream<Uint8Array>,
+  destination: Writable,
+): Promise<void> {
+  if (destination.destroyed) {
+    await body.cancel().catch(() => {});
+    return;
+  }
+  const source = Readable.fromWeb(body);
+  source.on('error', () => {});
+  await pipeline(source, destination);
+}
+
 async function writeFetchResponse(nodeRes: ServerResponse, response: Response): Promise<void> {
   nodeRes.statusCode = response.status;
   const setCookies = response.headers.getSetCookie();
@@ -444,7 +468,7 @@ async function writeFetchResponse(nodeRes: ServerResponse, response: Response): 
   }
 
   try {
-    await pipeline(Readable.fromWeb(response.body), nodeRes);
+    await pipeResponseBody(response.body, nodeRes);
   } catch (err) {
     console.error(err);
     nodeRes.destroy();

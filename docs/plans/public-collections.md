@@ -86,7 +86,7 @@ Client routes: `/p/:token` (`PublicCollection`), `/p/:token/r/:recipeId`
 
 - Server: `server/publicLinks.ts` (records, read chain, Firestore),
   `server/publicJoin.ts` (join; kept apart so `grants.ts` can import
-  `publicLinks.ts`), `server/publicLinksHttp.ts`, `streamStoredPhoto` in
+  `publicLinks.ts`), `server/publicLinksHttp.ts`, `storedPhotoResponse` in
   `server/photos.ts`, the cascade in `server/grants.ts`, routing and `/p` headers in
   `scripts/server.ts`.
 - Client: `src/lib/publicApi.ts`, `src/lib/usePublicCollection.ts`,
