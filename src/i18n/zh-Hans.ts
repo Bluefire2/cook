@@ -240,6 +240,11 @@ export const zhHans: Messages = {
   'import.photosTotalTooLarge': '这些照片加起来太大——去掉一张再试。',
   'import.saveTo': '把食谱导入到',
   'import.createAndImport': '创建并导入',
+  'import.destination': '导入到{name}',
+  'import.changeDestination': '更改',
+  'import.chooseDestination': '选择合集',
+  'import.destinationTitle': '导入到',
+  'import.createCollection': '创建合集',
   'import.collectionNotFoundChoose': '找不到合集。请另选一个合集。',
   'import.bulkRequiresCheckbox':
     '这看起来是多个食谱链接。打开批量导入来全部提取，或只粘贴一个链接。',
