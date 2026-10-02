@@ -29,6 +29,11 @@ export type CreateRecipeSubmitStatus = {
   locked: boolean;
   /** A write is in flight and the collection sheet is not already showing it. */
   saving: boolean;
+  /**
+   * A submitted draft is waiting on a save, a retry, or the collection sheet.
+   * A destination changed now would be used by Try again.
+   */
+  pending: boolean;
 };
 
 /** Owns a staged creation draft until saved or explicitly abandoned. */
@@ -103,9 +108,10 @@ export default function CreateRecipeForm({
   const headerLocked =
     destination.kind === 'loading' || draft !== null || !canSubmit || submitLocked === true;
   const saving = busy && !choosing;
+  const pending = draft !== null;
   useLayoutEffect(() => {
-    onSubmitStatusChange?.({ locked: headerLocked, saving });
-  }, [headerLocked, saving, onSubmitStatusChange]);
+    onSubmitStatusChange?.({ locked: headerLocked, saving, pending });
+  }, [headerLocked, saving, pending, onSubmitStatusChange]);
   useEffect(() => {
     if (error) failureRef.current?.scrollIntoView({ block: 'center' });
   }, [error]);

@@ -125,22 +125,19 @@ export default function ImportScreen() {
   const [saveStatus, setSaveStatus] = useState<CreateRecipeSubmitStatus>({
     locked: false,
     saving: false,
+    pending: false,
   });
   const onSubmitStatusChange = useCallback((status: CreateRecipeSubmitStatus) => {
     setSaveStatus((prev) =>
-      prev.locked === status.locked && prev.saving === status.saving ? prev : status,
+      prev.locked === status.locked && prev.saving === status.saving && prev.pending === status.pending
+        ? prev
+        : status,
     );
   }, []);
-  // Before a destination is chosen, Back follows the collection in the URL.
-  // Once one is chosen, including an explicit unfiled choice, Back follows
-  // that, unless the collection was deleted.
-  const pickedCollectionId =
-    picked && collections?.some((c) => c.id === picked)
-      ? picked
-      : undefined;
-  const backTo = libraryHref(
-    picked === undefined ? knownCollectionId : pickedCollectionId,
-  );
+  // Back follows the destination on screen: the collection in the URL until
+  // one is chosen, then the choice. Unfiled, or a chosen collection that was
+  // deleted, goes back to Recipes.
+  const backTo = libraryHref(destination.kind === 'save' ? destination.collectionId : undefined);
 
   /** One bulk row: import the URL with a fresh fetch and save it to the batch destination. */
   const importOne = async (url: string, destinationId: string | undefined): Promise<BulkResult> => {
@@ -356,7 +353,11 @@ export default function ImportScreen() {
     setError(null);
   };
 
-  /** Re-runs one failed row, with a fresh fetch, into the destination shown on screen. */
+  /**
+   * Re-runs one failed row, with a fresh fetch, into the destination shown on
+   * screen: the batch's collection (Change is locked on the summary), or a new
+   * choice if that collection was deleted.
+   */
   const retryRow = async (url: string) => {
     if (inFlight.current || summary === null) return;
     inFlight.current = true;
@@ -409,7 +410,17 @@ export default function ImportScreen() {
           ? !row.ok
           : true,
     ) ?? [];
-  const destinationLocked = busy || encoding || saveStatus.saving || retryingRow || pendingUrls !== null;
+  // A held preview draft would be retried into whatever is picked now.
+  const destinationLocked =
+    busy ||
+    encoding ||
+    saveStatus.saving ||
+    (preview !== null && saveStatus.pending) ||
+    retryingRow ||
+    pendingUrls !== null;
+  // A batch's rows retry into the batch's collection, so it cannot be changed
+  // while the summary shows. If that collection is deleted, Choose still works.
+  const changeLocked = destinationLocked || summary !== null;
   // Unfiled is the sheet's own label, not "Import into {name}": that label is
   // a phrase, and stuffing it into the sentence does not read in every language.
   let destinationLabel: string | undefined;
@@ -452,7 +463,8 @@ export default function ImportScreen() {
             </button>
           )}
         </div>
-        {destination.kind === 'loading' && (
+        {/* The preview's form shows its own loading line. */}
+        {destination.kind === 'loading' && preview === null && (
           <p role="status" className="mt-2 text-sm text-ink-muted">
             {t('common.loadingCollections')}
           </p>
@@ -462,7 +474,7 @@ export default function ImportScreen() {
             <span>{destinationLabel}</span>
             <button
               type="button"
-              disabled={destinationLocked}
+              disabled={changeLocked}
               onClick={() => setChoosingDestination(true)}
               className="font-medium text-ink-muted underline hover:text-ink disabled:opacity-40"
             >
@@ -866,10 +878,7 @@ export default function ImportScreen() {
         <SaveToCollectionSheet
           title={t('import.saveTo')}
           createLabel={t('import.createAndImport')}
-          onSave={(id) => {
-            setPicked(id ?? null);
-            return runBulk(pendingUrls, id);
-          }}
+          onSave={(id) => runBulk(pendingUrls, id)}
           onCancel={() => setPendingUrls(null)}
         />
       )}
