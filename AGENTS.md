@@ -79,9 +79,19 @@ holds the text, `contactOk`, and three context fields, never the email; the
 read-only `scripts/feature-requests.ts` looks the email up from `sub` only
 when `contactOk` is true. The `feature_request` log line never holds the
 text. `/privacy` describes both; change it with them, and change the schema
-section in the plan with `FeatureRequestDoc`. Because suggestions and import
-reports sit outside `users/{uid}`, an account deletion request needs the
-plan's owner step to remove them.
+section in the plan with `FeatureRequestDoc`. Suggestions and import reports
+sit outside `users/{uid}`; `scripts/delete-account-data.ts` removes them with
+the rest of an account (see Account deletion).
+
+**Account deletion.** A deletion request is the manual procedure in
+README.md: deny access, then `scripts/delete-account-data.ts <sub>` (dry run,
+then `--apply`), then the GCS photo prefix. `server/accountDeletion.ts`
+classifies every Firestore collection in `FIRESTORE_COLLECTIONS` and has one
+step per top-level collection that holds a member's data, run in
+`ACCOUNT_DELETION_ORDER`. A new collection must be classified there (and get
+a step if it is personal and top-level); `scripts/invariants.test.ts` fails on
+an unclassified `.collection(...)` name, and TypeScript on a missing step.
+`/privacy` promises what a deletion request covers; change it with the steps.
 
 No server log line may contain an email address or a link token. Invite
 (`/invite/<token>`) and collection-link (`/c/<token>`) pages send
@@ -477,10 +487,8 @@ is `server/mcp/`; `scripts/server.ts` imports only `server/mcp/index.ts`.
 - **Storage.** Top-level `mcpAuthCodes/{sha256(code)}` and
   `mcpTokens/{sha256(token)}`, each with `expireAt` for a TTL policy (owner
   step, after deploy), and `users/{sub}/mcpGrants/{grantId}`. Because codes
-  and tokens sit outside `users/{uid}`, an account deletion request runs
-  `scripts/delete-mcp-data.ts <sub>` (dry run, then `--apply`; README step 7),
-  which deletes every collection in `MCP_ACCOUNT_DATA`. A new MCP collection
-  goes in that list; `scripts/invariants.test.ts` fails otherwise.
+  and tokens sit outside `users/{uid}`, the account deletion script has a
+  step for each (see Account deletion); a new MCP collection needs one too.
 - **Rate limits.** Per instance, per `sub` and grant: 300 reads and 60 writes
   an hour (`admitTranslateCall`'s window, own buckets); uncached client
   metadata fetches at 30 a minute.

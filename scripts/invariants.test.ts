@@ -3,7 +3,13 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { MCP_ACCOUNT_DATA } from '../server/mcp/oauth/store.ts';
+import {
+  ACCOUNT_DELETION_ORDER,
+  ACCOUNT_DELETION_STEPS,
+  FIRESTORE_COLLECTIONS,
+  personalTopLevelCollections,
+} from '../server/accountDeletion.ts';
+import { STORE_KINDS } from '../server/sync.ts';
 
 // Rules from AGENTS.md that a grep can check. Each failure message names the
 // rule so the fix is to follow it, not to loosen the check.
@@ -226,42 +232,55 @@ describe('auth surfaces (Auth and Public MCP in AGENTS.md)', () => {
   });
 });
 
-describe('account deletion covers connected apps (Public MCP in AGENTS.md)', () => {
-  it('every collection server/mcp/ writes is in MCP_ACCOUNT_DATA', () => {
-    // /privacy promises a deletion request removes connected apps and their
-    // tokens; scripts/delete-mcp-data.ts deletes exactly MCP_ACCOUNT_DATA.
-    const files = filesUnder('server/mcp', ['.ts']).filter((path) => !isTestFile(path));
+describe('account deletion covers every collection (server/accountDeletion.ts)', () => {
+  it('every Firestore collection the code uses is classified in FIRESTORE_COLLECTIONS', () => {
+    // /privacy promises a deletion request removes all of a member's data. A
+    // collection nobody classified is one the deletion script never visits.
+    const files = ['server', 'api', 'scripts']
+      .flatMap((dir) => filesUnder(dir, ['.ts']))
+      .filter((path) => !isTestFile(path));
     const constants = new Map<string, string>();
     for (const path of files) {
-      for (const match of read(path).matchAll(/export const (\w+) = '([^']+)';/g)) {
+      for (const match of read(path).matchAll(/(?:export )?const (\w+) = '([^']+)';/g)) {
         constants.set(match[1], match[2]);
       }
     }
-    const listed = new Set<string>(MCP_ACCOUNT_DATA.map((entry) => entry.collection));
     const offenders: string[] = [];
     for (const path of files) {
       for (const match of read(path).matchAll(/\.collection\(([^)]*)\)/g)) {
         const arg = match[1].trim();
-        // listMcpAccountData walks MCP_ACCOUNT_DATA itself.
-        if (arg === 'entry.collection') continue;
+        // store.ts colRef(uid, kind): a StoreKind, checked below.
+        if (path === 'server/store.ts' && arg === 'kind') continue;
+        // accountDeletion.ts takes the name as a PersonalTopLevel, typed against the registry.
+        if (path === 'server/accountDeletion.ts' && arg === 'collection') continue;
         const name = /^'[^']+'$/.test(arg) ? arg.slice(1, -1) : constants.get(arg);
-        // `users` is only the parent of users/{sub}/mcpGrants, which the
-        // users/{sub} recursive delete also removes.
-        if (name === undefined || (name !== 'users' && !listed.has(name))) {
+        if (name === undefined || !Object.hasOwn(FIRESTORE_COLLECTIONS, name)) {
           offenders.push(`${path}: .collection(${arg})`);
         }
       }
     }
     expect(offenders).toEqual([]);
+    for (const kind of STORE_KINDS) {
+      expect(FIRESTORE_COLLECTIONS[kind]).toMatchObject({ scope: 'nested', parent: 'users/{sub}' });
+    }
   });
 
-  it('the README deletion procedure runs scripts/delete-mcp-data.ts', () => {
+  it('runs a step for each personal top-level collection, once, with users last', () => {
+    expect([...ACCOUNT_DELETION_ORDER].sort()).toEqual(personalTopLevelCollections().sort());
+    expect(Object.keys(ACCOUNT_DELETION_STEPS).sort()).toEqual(personalTopLevelCollections().sort());
+    expect(ACCOUNT_DELETION_ORDER.at(-1)).toBe('users');
+    expect(ACCOUNT_DELETION_ORDER[0]).toBe('incomingShares');
+  });
+
+  it('the README deletion procedure runs scripts/delete-account-data.ts and deletes the photos', () => {
     const readme = read('README.md');
     const start = readme.indexOf('**Manual deletion procedure (operator)');
     const end = readme.indexOf('There is **no automated purge job**', start);
     expect(start).toBeGreaterThan(-1);
-    expect(readme.slice(start, end)).toContain('scripts/delete-mcp-data.ts');
-    expect(existsSync(join(repoRoot, 'scripts/delete-mcp-data.ts'))).toBe(true);
+    const procedure = readme.slice(start, end);
+    expect(procedure).toContain('scripts/delete-account-data.ts');
+    expect(procedure).toContain('gcloud storage rm --recursive');
+    expect(existsSync(join(repoRoot, 'scripts/delete-account-data.ts'))).toBe(true);
   });
 });
 

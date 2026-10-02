@@ -16,9 +16,9 @@
  * is I/O.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import type { DocumentReference, Transaction } from '@google-cloud/firestore';
+import type { Transaction } from '@google-cloud/firestore';
 import { randomToken } from '../../session.ts';
-import { chunkForBatch, getStoreFirestore } from '../../store.ts';
+import { getStoreFirestore } from '../../store.ts';
 import {
   ACCESS_TOKEN_PREFIX,
   ACCESS_TOKEN_TTL_MS,
@@ -33,19 +33,6 @@ import { readStoredScopes } from '../scopes.ts';
 export const MCP_AUTH_CODES_COLLECTION = 'mcpAuthCodes';
 export const MCP_TOKENS_COLLECTION = 'mcpTokens';
 export const MCP_GRANTS_COLLECTION = 'mcpGrants';
-
-/**
- * Every collection this module writes, and how an account deletion finds one
- * member's documents in it. `scripts/delete-mcp-data.ts` deletes exactly
- * these. `accountData.test.ts` fails when a collection is written under
- * `server/mcp/` without being listed here, because `/privacy` promises that a
- * deletion request covers connected apps and their tokens.
- */
-export const MCP_ACCOUNT_DATA = [
-  { collection: MCP_AUTH_CODES_COLLECTION, where: 'top-level', field: 'sub' },
-  { collection: MCP_TOKENS_COLLECTION, where: 'top-level', field: 'sub' },
-  { collection: MCP_GRANTS_COLLECTION, where: 'users/{sub}' },
-] as const;
 
 export type StoredAuthCode = {
   sub: string;
@@ -445,31 +432,6 @@ export async function listLiveGrants(sub: string): Promise<StoredGrant[]> {
     if (grant !== null && grant.revokedAt === undefined) grants.push(grant);
   }
   return grants.sort((a, b) => b.createdAt - a.createdAt);
-}
-
-/** One member's documents in every `MCP_ACCOUNT_DATA` collection, for account deletion. */
-export async function listMcpAccountData(
-  sub: string,
-): Promise<{ collection: string; refs: DocumentReference[] }[]> {
-  return Promise.all(
-    MCP_ACCOUNT_DATA.map(async (entry) => {
-      const query =
-        entry.where === 'top-level'
-          ? db().collection(entry.collection).where(entry.field, '==', sub)
-          : db().collection('users').doc(sub).collection(entry.collection);
-      const snap = await query.get();
-      return { collection: entry.collection, refs: snap.docs.map((doc) => doc.ref) };
-    }),
-  );
-}
-
-/** Deletes in batches under Firestore's 500-write cap. */
-export async function deleteDocs(refs: DocumentReference[]): Promise<void> {
-  for (const chunk of chunkForBatch(refs, 400)) {
-    const batch = db().batch();
-    for (const ref of chunk) batch.delete(ref);
-    await batch.commit();
-  }
 }
 
 /** Settings → Disconnect. Its tokens stop working on the very next call. */

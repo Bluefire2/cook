@@ -433,20 +433,41 @@ their client push it back on the next sync.
    denies access immediately.
 2. Wait at least 60 seconds and confirm denial: their `/api/auth/session` must
    return `user: null` and sync must **401** before you delete anything else.
-3. Delete `members/{sub}` if you only revoked in step 1 (a revoked row is
-   still stored personal data).
-4. Recursively delete the `users/{sub}` subtree. The console does **not**
-   delete subcollections when you delete a parent document; use Firestore
-   `recursiveDelete`:
+3. Find the account's `sub` if you don't have it:
+   `node --env-file=.env.local scripts/import-audit.ts <email>` prints it.
+4. Delete everything in Firestore with one script. Dry run first; it prints
+   what each step would change, as counts only:
 
    ```bash
-   node -e "const {Firestore}=require('@google-cloud/firestore');const db=new Firestore({projectId:'cooking-assistant-508423'});db.recursiveDelete(db.doc('users/'+process.argv[1])).then(()=>console.log('deleted'),(e)=>{console.error(e.message);process.exit(1)})" <SUB>
+   node --env-file=.env.local scripts/delete-account-data.ts <SUB>
+   node --env-file=.env.local scripts/delete-account-data.ts <SUB> --apply
    ```
 
-   Requires Application Default Credentials with quota project
+   `--apply` refuses while `members/{sub}` is still active or the profile's
+   email is in `ALLOWED_EMAILS` (so it needs `.env.local`). It runs each step
+   in `ACCOUNT_DELETION_ORDER` (`server/accountDeletion.ts`), reads each one
+   back, and exits non-zero if anything remains:
+   - **Sharing as a viewer:** each forward grant in an owner's tree is
+     tombstoned through the same transaction as a revoke or leave (the
+     tombstone drops their email), then `incomingShares/{sub}` is deleted.
+   - **Sharing as an owner:** every viewer's incoming share pointing at them
+     is tombstoned without their email. This reads the grants in their own
+     tree, which is why `users` runs last.
+   - `collectionLinks` they own, `importFeedback` and `featureRequests` they
+     sent, and MCP `mcpAuthCodes` and `mcpTokens` are deleted.
+   - **Invites:** ones they minted are deleted; on one they redeemed from
+     someone else, `redeemedBy` is removed, and the invite still counts
+     toward its minter's limit.
+   - `accessRequests/{sub}` and `members/{sub}` are deleted, then the whole
+     `users/{sub}` tree with `recursiveDelete`, including `mcpGrants` and
+     cached translations.
+
+   Their opaque `sub` stays where it is part of someone else's record:
+   `approvedBy` and `decidedBy`, sharing tombstones, and other viewers' own
+   chat and cook rows. Their email, name, and content do not. Requires
+   Application Default Credentials with quota project
    `cooking-assistant-508423` (see [Local development](#local-development)).
-5. Delete `accessRequests/{sub}` (single document).
-6. Remove photo objects (Firestore does not touch GCS):
+5. Remove photo objects (Firestore does not touch GCS):
 
    ```bash
    gcloud storage rm --recursive gs://sous-photos-cooking-assistant-508423/users/<SUB>/ --project=cooking-assistant-508423
@@ -456,22 +477,8 @@ their client push it back on the next sync.
    `C:\Users\chern\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd`
    instead of `gcloud`.
 
-7. Delete connected-app data. Authorization codes and tokens are top-level
-   (`mcpAuthCodes`, `mcpTokens`, found by `sub`), so step 4 does not reach
-   them. Dry run, then apply; the apply reads back and fails if anything
-   remains:
-
-   ```bash
-   node --env-file=.env.local scripts/delete-mcp-data.ts <SUB>
-   node --env-file=.env.local scripts/delete-mcp-data.ts <SUB> --apply
-   ```
-
-   It also deletes `users/{sub}/mcpGrants`, so it works before or after
-   step 4. Run it after step 2: before that, a connected app could still
-   refresh and mint a new token.
-
-8. Verify all five are gone: `members/{sub}`, `accessRequests/{sub}`, the
-   `users/{sub}` subtree, the bucket prefix under `users/<SUB>/`, and
-   connected-app data (a dry run of step 7 prints 0 for every collection).
+6. Verify: a dry run of step 4 prints 0 on every line, and the bucket prefix
+   under `users/<SUB>/` is empty. Server logs are not deleted; Cloud Logging
+   drops them after 30 days, as `/privacy` says.
 
 There is **no automated purge job** for access-request or membership records.

@@ -221,13 +221,12 @@ as an owner step.
 
 **Account deletion.** `/privacy` promises that a deletion request covers
 connected apps and their tokens, but codes and tokens sit outside
-`users/{sub}`. `MCP_ACCOUNT_DATA` in `oauth/store.ts` lists every MCP
-collection and how a member's documents are found in it, and
-`scripts/delete-mcp-data.ts <sub>` (dry run, then `--apply`, reading back
-afterwards) deletes them. It is step 7 of the README's manual deletion
-procedure. `scripts/invariants.test.ts` fails if `server/mcp/` writes a
-collection that isn't in the list, or if the README procedure stops naming
-the script.
+`users/{sub}`. `server/accountDeletion.ts` has a step for `mcpAuthCodes`
+and `mcpTokens` (deleted by `sub`); `mcpGrants` goes with the `users/{sub}`
+tree. `scripts/delete-account-data.ts <sub>` runs them with every other
+collection (README.md, "Manual deletion procedure"), and
+`scripts/invariants.test.ts` fails on any collection the code uses that
+`FIRESTORE_COLLECTIONS` does not classify.
 
 - **Token endpoint.** Every exchange checks PKCE S256, that `redirect_uri`
   and `client_id` match the code, and that `resource` is absent or equal to
