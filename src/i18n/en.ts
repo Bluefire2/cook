@@ -91,6 +91,7 @@ export const en = {
   'library.empty': 'No recipes yet. Import your first one!',
   'library.collectionsEmpty': 'Put recipes in a collection to share them with people who have a Sous account.',
   'library.actionsFor': 'Actions for {title}',
+  'library.collectionActions': 'Actions for {name}',
   'library.moveTo': 'Move to…',
   'library.closeMenu': 'Close menu',
   'library.languageMenu': 'Language: English',

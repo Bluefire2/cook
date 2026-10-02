@@ -1,10 +1,10 @@
-import { useLayoutEffect, useRef, useState, type FocusEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useT } from '../i18n';
 import { libraryHref } from '../lib/collectionHref';
 import { FolderIcon, SharedIcon } from '../lib/icons';
 import type { Collection } from '../lib/types';
-import { chipClass } from '../lib/uiClasses';
+import { chipClass, menuItem, menuItemDanger } from '../lib/uiClasses';
 
 function edgeMask(lead: boolean, trail: boolean): string | undefined {
   if (!lead && !trail) return undefined;
@@ -22,6 +22,124 @@ function revealChip(chip: HTMLElement, scroller: HTMLElement) {
   const rightInset = chipBox.right - scrollerBox.right;
   if (leftInset < pad) scroller.scrollLeft += leftInset - pad;
   else if (rightInset > -pad) scroller.scrollLeft += rightInset + pad;
+}
+
+/**
+ * Share, rename, and delete for the open owned collection. The sheets stay
+ * in Library's flow; this only discloses the three actions.
+ */
+function CollectionActionsMenu({
+  name,
+  onShare,
+  onRename,
+  onDelete,
+}: {
+  name: string;
+  onShare: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const firstActionRef = useRef<HTMLButtonElement>(null);
+  const label = t('library.collectionActions', { name });
+
+  const dismiss = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  const choose = (action: () => void) => {
+    setOpen(false);
+    action();
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    firstActionRef.current?.focus({ preventScroll: true });
+    // Capture phase, and stopped, so Library's own Escape handling (closing a
+    // recipe menu, leaving Select) does not also run. Only while focus is in
+    // the menu: an Escape meant for something else closes the menu and passes
+    // through.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (!wrapperRef.current?.contains(document.activeElement)) {
+        setOpen(false);
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [open]);
+
+  const onBlur = (event: FocusEvent<HTMLDivElement>) => {
+    if (open && !event.currentTarget.contains(event.relatedTarget)) {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative shrink-0" onBlur={onBlur}>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        onClick={() => setOpen((value) => !value)}
+        className="flex h-11 w-11 items-center justify-center rounded-full text-xl leading-none text-ink-subtle hover:bg-surface-muted hover:text-ink active:bg-surface-muted"
+      >
+        ⋮
+      </button>
+      {open && (
+        <>
+          <button
+            type="button"
+            aria-label={t('library.closeMenu')}
+            tabIndex={-1}
+            onClick={dismiss}
+            className="fixed inset-0 z-10 cursor-default"
+          />
+          <div
+            id={panelId}
+            role="group"
+            aria-label={label}
+            className="absolute top-full right-0 z-20 mt-1 w-48 overflow-hidden rounded-xl border border-line bg-surface shadow-xl"
+          >
+            <button
+              ref={firstActionRef}
+              type="button"
+              onClick={() => choose(onShare)}
+              className={menuItem}
+            >
+              {t('common.share')}
+            </button>
+            <button
+              type="button"
+              onClick={() => choose(onRename)}
+              className={`${menuItem} border-t border-line`}
+            >
+              {t('library.rename')}
+            </button>
+            <button
+              type="button"
+              onClick={() => choose(onDelete)}
+              className={`${menuItemDanger} border-t border-line`}
+            >
+              {t('common.delete')}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -94,6 +212,9 @@ export default function CollectionSection({
 
   const mask = edgeMask(edges.lead, edges.trail);
   const recipesActive = !browseAll && currentId === undefined;
+  const owned = showOwnedActions
+    ? collections.find((collection) => collection.id === currentId)
+    : undefined;
 
   return (
     <section className="mb-3" aria-labelledby="collections-label">
@@ -107,13 +228,24 @@ export default function CollectionSection({
           <FolderIcon className="block h-5 w-5 shrink-0" />
           {t('library.collectionsNav')}
         </Link>
-        <button
-          type="button"
-          onClick={onCreate}
-          className="shrink-0 rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
-        >
-          {t('common.newCollection')}
-        </button>
+        <div className="flex shrink-0 items-center">
+          <button
+            type="button"
+            onClick={onCreate}
+            className="shrink-0 rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
+          >
+            {t('common.newCollection')}
+          </button>
+          {owned !== undefined && (
+            <CollectionActionsMenu
+              key={owned.id}
+              name={owned.name}
+              onShare={onShare}
+              onRename={onRename}
+              onDelete={onDelete}
+            />
+          )}
+        </div>
       </div>
       <div
         ref={scrollerRef}
@@ -153,31 +285,6 @@ export default function CollectionSection({
           );
         })}
       </div>
-      {showOwnedActions && (
-        <div className="mt-1 flex flex-wrap items-center">
-          <button
-            type="button"
-            onClick={onShare}
-            className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
-          >
-            {t('common.share')}
-          </button>
-          <button
-            type="button"
-            onClick={onRename}
-            className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
-          >
-            {t('library.rename')}
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="rounded-full px-3 py-1.5 text-sm text-danger hover:text-ink"
-          >
-            {t('common.delete')}
-          </button>
-        </div>
-      )}
     </section>
   );
 }
