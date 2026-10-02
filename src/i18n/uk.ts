@@ -97,6 +97,7 @@ export const uk: Messages = {
     other: 'Вибрано {count} рецепта',
   },
   'library.selectAll': 'Вибрати всі',
+  'library.selectNone': 'Скасувати вибір',
   'library.moveSelected': 'Перемістити',
   'library.moveManyTitle': {
     one: 'Перемістити {count} рецепт',

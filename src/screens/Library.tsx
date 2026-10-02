@@ -112,6 +112,7 @@ export default function Library() {
   const [inviteQuota, setInviteQuota] = useState<{ id: number; message: string } | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLAnchorElement>(null);
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const scoped =
     allRecipes === undefined || collections === undefined
@@ -170,6 +171,13 @@ export default function Library() {
           .filter((recipe) => !recipeStore.isShared(recipe.id))
           .map((recipe) => recipe.id);
   const canSelect = ownedVisibleIds.length > 0;
+  const ownedSelectedCount = ownedVisibleIds.reduce(
+    (count, id) => count + (selectedIds.has(id) ? 1 : 0),
+    0,
+  );
+  const allOwnedSelected =
+    ownedVisibleIds.length > 0 && ownedSelectedCount === ownedVisibleIds.length;
+  const someOwnedSelected = ownedSelectedCount > 0 && !allOwnedSelected;
   // Undefined while the library is still loading, so a refresh does not
   // clear a selection that has not been shown yet. An empty string means
   // the list is loaded and no owned recipe is on screen.
@@ -197,6 +205,10 @@ export default function Library() {
       }
       return next;
     });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds(allOwnedSelected ? new Set() : new Set(ownedVisibleIds));
   };
 
   const remove = async (id: string) => {
@@ -501,6 +513,11 @@ export default function Library() {
     firstActionRef.current?.focus({ preventScroll: true });
   }, [menuId]);
 
+  useEffect(() => {
+    const input = selectAllRef.current;
+    if (input) input.indeterminate = someOwnedSelected;
+  }, [someOwnedSelected, selecting]);
+
   // A search or All collections change hides recipes. Drop checks for ids
   // that are no longer on screen; changing collection clears the set itself.
   useEffect(() => {
@@ -762,6 +779,23 @@ export default function Library() {
       ) : recipes.length === 0 ? (
         <p className="py-12 text-center text-ink-muted">{emptyCopy()}</p>
       ) : (
+        <>
+          {selecting && (
+            <label className="mb-1 flex cursor-pointer items-center gap-1">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  checked={allOwnedSelected}
+                  onChange={toggleSelectAll}
+                  className={`h-5 w-5 accent-ink ${inputFocus}`}
+                />
+              </span>
+              <span className="text-sm font-medium">
+                {allOwnedSelected ? t('library.selectNone') : t('library.selectAll')}
+              </span>
+            </label>
+          )}
         <ul className="flex flex-col gap-3">
           {recipes.map((recipe) => {
             const shared = recipeStore.isShared(recipe.id);
@@ -864,6 +898,7 @@ export default function Library() {
             );
           })}
         </ul>
+        </>
       )}
 
       {sessionStatus === 'signedIn' && recipes !== undefined && !selecting && (
