@@ -443,13 +443,19 @@ their client push it back on the next sync.
    node --env-file=.env.local scripts/delete-account-data.ts <SUB> --apply
    ```
 
-   `--apply` refuses while `members/{sub}` is still active or the profile's
-   email is in `ALLOWED_EMAILS` (so it needs `.env.local`). It runs each step
-   in `ACCOUNT_DELETION_ORDER` (`server/accountDeletion.ts`), reads each one
-   back, and exits non-zero if anything remains:
+   `--apply` refuses while `members/{sub}` is still active or any email
+   stored for them (profile, membership, access request) is in
+   `ALLOWED_EMAILS`, read from `.env.local`, which must match the deployed
+   allowlist. When no email is stored for the `sub` at all, it refuses until
+   you check the deployed allowlist by hand and add `--not-owner`. It runs
+   each step in `ACCOUNT_DELETION_ORDER` (`server/accountDeletion.ts`), reads
+   each one back, and exits non-zero if anything remains:
    - **Sharing as a viewer:** each forward grant in an owner's tree is
      tombstoned through the same transaction as a revoke or leave (the
-     tombstone drops their email), then `incomingShares/{sub}` is deleted.
+     tombstone drops their email), and one that transaction cannot read is
+     overwritten with a clean tombstone. Only then is `incomingShares/{sub}`
+     deleted. A share row that names no owner or collection, even in its id,
+     stops the step before anything changes.
    - **Sharing as an owner:** every viewer's incoming share pointing at them
      is tombstoned without their email. This reads the grants in their own
      tree, which is why `users` runs last.

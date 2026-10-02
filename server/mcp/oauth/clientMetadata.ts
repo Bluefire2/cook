@@ -16,6 +16,7 @@ import type { LookupAddress } from 'node:dns';
 import { admitTranslateCall } from '../../recipeTranslation.ts';
 import {
   CLIENT_METADATA_CACHE_MS,
+  CLIENT_METADATA_FETCHES_PER_MEMBER_PER_MINUTE,
   CLIENT_METADATA_FETCHES_PER_MINUTE,
   CLIENT_METADATA_MAX_BYTES,
   CLIENT_METADATA_TIMEOUT_MS,
@@ -90,7 +91,7 @@ type CacheEntry = { expires: number; client: ClientMetadata };
 
 const cache = new Map<string, CacheEntry>();
 const CACHE_MAX_SIZE = 200;
-/** One bucket for the whole instance: a rate on outbound fetches, not on members. */
+/** One bucket per member, and one (`'all'`) for the instance. */
 const fetchBuckets = new Map<string, number[]>();
 
 /** Test hook: clears the per-instance cache and fetch rate. */
@@ -101,6 +102,8 @@ export function resetClientMetadataForTest(): void {
 
 export async function resolveClientMetadata(
   clientId: string,
+  /** The signed-in member asking, whose fetch budget an uncached fetch spends. */
+  sub: string,
   deps: ClientMetadataDependencies,
 ): Promise<ClientMetadataResult> {
   const url = parseClientIdUrl(clientId);
@@ -112,7 +115,10 @@ export async function resolveClientMetadata(
   if (cached !== undefined && cached.expires > now) {
     return { ok: true, client: cached.client };
   }
-  if (!admitTranslateCall(fetchBuckets, 'all', now, CLIENT_METADATA_FETCHES_PER_MINUTE, 60_000)) {
+  if (
+    !admitTranslateCall(fetchBuckets, `member:${sub}`, now, CLIENT_METADATA_FETCHES_PER_MEMBER_PER_MINUTE, 60_000) ||
+    !admitTranslateCall(fetchBuckets, 'all', now, CLIENT_METADATA_FETCHES_PER_MINUTE, 60_000)
+  ) {
     return { ok: false, reason: 'rate_limited' };
   }
   const fetched = await deps.fetchDocument(url);

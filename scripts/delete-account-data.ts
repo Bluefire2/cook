@@ -4,13 +4,16 @@
  * `server/accountDeletion.ts`), in order, reading each back. Step 4 of the
  * manual deletion procedure in README.md; photos in GCS are step 5.
  *
- *   node --env-file=.env.local scripts/delete-account-data.ts <sub> [--apply]
+ *   node --env-file=.env.local scripts/delete-account-data.ts <sub> [--apply] [--not-owner]
  *
  * Dry run unless `--apply`: prints what each step would change. `--apply`
  * refuses while the member still has access (active in `members/{sub}`, or an
- * address in `ALLOWED_EMAILS`), because a signed-in client could push its
- * library back; deny access first (README steps 1–2). Prints counts only,
- * never document ids, emails, or contents.
+ * address stored for them in `ALLOWED_EMAILS`), because a signed-in client
+ * could push its library back; deny access first (README steps 1–2).
+ * `ALLOWED_EMAILS` comes from the env file, so it must match the deployed one.
+ * When no email is stored for the sub at all, `--apply` refuses unless
+ * `--not-owner` says the operator checked the deployed allowlist by hand.
+ * Prints counts only, never document ids, emails, or contents.
  *
  * Uses GOOGLE_CLOUD_PROJECT and ADC like dev:api, so it targets the real
  * database unless FIRESTORE_EMULATOR_HOST is set.
@@ -28,13 +31,16 @@ const REFUSAL_TEXT = {
   'bad-sub': 'That is not a Firestore document id.',
   'no-allowlist': 'ALLOWED_EMAILS is not set, so an owner cannot be ruled out. Run with --env-file=.env.local.',
   'still-member': 'members/{sub} is still active. Revoke access first (README steps 1–2).',
-  owner: "The profile's email is in ALLOWED_EMAILS. Remove it from the deployed allowlist first.",
+  owner: 'An email stored for this sub is in ALLOWED_EMAILS. Remove it from the deployed allowlist first.',
+  'no-email':
+    'No email is stored for this sub (no profile, membership, or access request), so an owner cannot be ruled out. ' +
+    'Check the deployed ALLOWED_EMAILS by hand, then pass --not-owner.',
 } as const;
 
 const apply = process.argv.includes('--apply');
 const sub = process.argv.slice(2).find((arg) => !arg.startsWith('--'));
 if (sub === undefined || sub.trim() === '') {
-  console.error('Usage: node --env-file=.env.local scripts/delete-account-data.ts <sub> [--apply]');
+  console.error('Usage: node --env-file=.env.local scripts/delete-account-data.ts <sub> [--apply] [--not-owner]');
   process.exit(2);
 }
 // Before any read: a path-like value would address some other document.
@@ -44,7 +50,12 @@ if (!isSafeFirestoreDocumentId(sub)) {
 }
 
 const subject = await readDeletionSubject(sub);
-const refusal = deletionRefusal({ sub, ...subject, allowedRaw: allowedEmails() });
+const refusal = deletionRefusal({
+  sub,
+  ...subject,
+  allowedRaw: allowedEmails(),
+  notOwnerConfirmed: process.argv.includes('--not-owner'),
+});
 
 let total = 0;
 for (const name of ACCOUNT_DELETION_ORDER) {

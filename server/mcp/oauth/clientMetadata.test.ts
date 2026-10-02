@@ -69,7 +69,7 @@ describe('resolveClientMetadata', () => {
 
   it('never fetches a malformed client_id', async () => {
     const fetchDocument = vi.fn<FetchDocument>();
-    expect(await resolveClientMetadata('http://claude.ai/x', { now: () => 0, fetchDocument })).toEqual({
+    expect(await resolveClientMetadata('http://claude.ai/x', 'sub-1', { now: () => 0, fetchDocument })).toEqual({
       ok: false,
       reason: 'bad_client_id',
     });
@@ -80,23 +80,35 @@ describe('resolveClientMetadata', () => {
     const fetchDocument = vi.fn<FetchDocument>(async () => ({ ok: true, body: CLAUDE_CODE_DOC }));
     let now = 1_000;
     const deps = { now: () => now, fetchDocument };
-    expect((await resolveClientMetadata(CLAUDE_CODE, deps)).ok).toBe(true);
+    expect((await resolveClientMetadata(CLAUDE_CODE, 'sub-1', deps)).ok).toBe(true);
     now += 9 * 60 * 1000;
-    expect((await resolveClientMetadata(CLAUDE_CODE, deps)).ok).toBe(true);
+    expect((await resolveClientMetadata(CLAUDE_CODE, 'sub-1', deps)).ok).toBe(true);
     expect(fetchDocument).toHaveBeenCalledTimes(1);
     now += 2 * 60 * 1000;
-    await resolveClientMetadata(CLAUDE_CODE, deps);
+    await resolveClientMetadata(CLAUDE_CODE, 'sub-1', deps);
     expect(fetchDocument).toHaveBeenCalledTimes(2);
   });
 
-  it('does not cache a failure, and caps uncached fetches at 30 a minute', async () => {
+  it('does not cache a failure, and caps one member at 10 uncached fetches a minute', async () => {
     const fetchDocument = vi.fn<FetchDocument>(async () => ({ ok: false, reason: 'fetch_failed' }));
     const deps = { now: () => 5_000, fetchDocument };
-    for (let i = 0; i < 30; i++) {
-      expect(await resolveClientMetadata(CLAUDE_CODE, deps)).toEqual({ ok: false, reason: 'fetch_failed' });
+    for (let i = 0; i < 10; i++) {
+      expect(await resolveClientMetadata(CLAUDE_CODE, 'sub-1', deps)).toEqual({ ok: false, reason: 'fetch_failed' });
     }
-    expect(await resolveClientMetadata(CLAUDE_CODE, deps)).toEqual({ ok: false, reason: 'rate_limited' });
-    expect(fetchDocument).toHaveBeenCalledTimes(30);
+    expect(await resolveClientMetadata(CLAUDE_CODE, 'sub-1', deps)).toEqual({ ok: false, reason: 'rate_limited' });
+    // Another member still has their own budget.
+    expect(await resolveClientMetadata(CLAUDE_CODE, 'sub-2', deps)).toEqual({ ok: false, reason: 'fetch_failed' });
+    expect(fetchDocument).toHaveBeenCalledTimes(11);
+  });
+
+  it('caps the instance at 60 uncached fetches a minute across members', async () => {
+    const fetchDocument = vi.fn<FetchDocument>(async () => ({ ok: false, reason: 'fetch_failed' }));
+    const deps = { now: () => 5_000, fetchDocument };
+    for (let i = 0; i < 60; i++) {
+      await resolveClientMetadata(CLAUDE_CODE, `sub-${i % 6}`, deps);
+    }
+    expect(await resolveClientMetadata(CLAUDE_CODE, 'sub-new', deps)).toEqual({ ok: false, reason: 'rate_limited' });
+    expect(fetchDocument).toHaveBeenCalledTimes(60);
   });
 });
 

@@ -141,7 +141,7 @@ export type AuthorizeDependencies = {
   origin: () => string;
   nonce: () => string;
   identity: (req: Request) => Promise<VisitorMembership>;
-  resolveClient: (clientId: string) => Promise<ClientMetadataResult>;
+  resolveClient: (clientId: string, sub: string) => Promise<ClientMetadataResult>;
   createGrant: typeof createGrantWithCode;
 };
 
@@ -151,7 +151,7 @@ const liveDependencies: AuthorizeDependencies = {
   origin: publicOrigin,
   nonce: () => randomToken(16),
   identity: visitorMembership,
-  resolveClient: (clientId) => resolveClientMetadata(clientId, liveClientMetadataDependencies),
+  resolveClient: (clientId, sub) => resolveClientMetadata(clientId, sub, liveClientMetadataDependencies),
   createGrant: createGrantWithCode,
 };
 
@@ -250,7 +250,7 @@ async function consentContext(
     return { kind: 'response', response: invitationOnly(identity, deps.now()) };
   }
   // Only now, with a member session, does Sous fetch a URL the client chose.
-  const resolved = await deps.resolveClient(tx.clientId);
+  const resolved = await deps.resolveClient(tx.clientId, identity.sub);
   if (!resolved.ok) {
     entry.outcome = `client_${resolved.reason}`;
     return {

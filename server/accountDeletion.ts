@@ -23,18 +23,17 @@
 import { FieldValue, type DocumentReference, type Firestore } from '@google-cloud/firestore';
 import { isAllowed } from './allowlist.ts';
 import {
+  grantCascadeRevoke,
   grantColRef,
   incomingShareCascadeDoc,
   incomingShareRef,
   incomingSharesCol,
-  isLiveGrant,
   isSafeFirestoreDocumentId,
-  parseGrantDoc,
   parseIncomingShareDoc,
   shareGrantId,
 } from './grants.ts';
 import { revokeGrantInFirestore } from './grantsHttp.ts';
-import { chunkForBatch, getStoreFirestore } from './store.ts';
+import { chunkForBatch, getStoreFirestore, isUuid } from './store.ts';
 
 export type CollectionEntry =
   /** Holds a member's data; `ACCOUNT_DELETION_STEPS` has a step for it. */
@@ -124,24 +123,29 @@ export interface DeletionStep {
 
 // --- Pure decisions -------------------------------------------------------
 
-export type DeletionRefusal = 'bad-sub' | 'still-member' | 'owner' | 'no-allowlist';
+export type DeletionRefusal = 'bad-sub' | 'still-member' | 'owner' | 'no-allowlist' | 'no-email';
 
 /**
  * Whether `--apply` may run. Access must already be denied (README steps 1–2):
  * a member who is still active, or an address in `ALLOWED_EMAILS`, could push
  * their library back on the next sync. A blank allowlist cannot rule out an
- * owner, so it refuses too.
+ * owner, so it refuses too, and so does a sub with no email on record
+ * (`emails` is every address stored for it: profile, membership, access
+ * request) unless the operator checked the allowlist by hand and says so
+ * (`notOwnerConfirmed`).
  */
 export function deletionRefusal(input: {
   sub: string;
   memberStatus: string | undefined;
-  profileEmail: string | undefined;
+  emails: readonly string[];
   allowedRaw: string;
+  notOwnerConfirmed: boolean;
 }): DeletionRefusal | null {
   if (!isSafeFirestoreDocumentId(input.sub)) return 'bad-sub';
   if (input.allowedRaw.trim() === '') return 'no-allowlist';
   if (input.memberStatus === 'active') return 'still-member';
-  if (input.profileEmail !== undefined && isAllowed(input.profileEmail, true, input.allowedRaw)) return 'owner';
+  if (input.emails.some((email) => isAllowed(email, true, input.allowedRaw))) return 'owner';
+  if (input.emails.length === 0 && !input.notOwnerConfirmed) return 'no-email';
   return null;
 }
 
@@ -171,6 +175,38 @@ export function ownerShareNeedsTombstone(raw: unknown): boolean {
     return true;
   }
   return share.deletedAt === undefined || share.ownerEmail !== undefined;
+}
+
+/**
+ * The owner and collection a viewer's incoming share row points at: from its
+ * fields, or, when those cannot be read, from its id
+ * (`${ownerSub}_${collectionId}`; collection ids are UUIDs, which hold no
+ * `_`). Null when neither names a usable path, which stops the step.
+ */
+export function viewerShareTarget(docId: string, raw: unknown): { ownerSub: string; collectionId: string } | null {
+  const share = parseIncomingShareDoc(raw);
+  if (share !== undefined) {
+    return isSafeFirestoreDocumentId(share.ownerSub)
+      ? { ownerSub: share.ownerSub, collectionId: share.collectionId }
+      : null;
+  }
+  const cut = docId.lastIndexOf('_');
+  if (cut <= 0) return null;
+  const ownerSub = docId.slice(0, cut);
+  const collectionId = docId.slice(cut + 1);
+  return isSafeFirestoreDocumentId(ownerSub) && isUuid(collectionId) ? { ownerSub, collectionId } : null;
+}
+
+/**
+ * A deleted viewer's forward grant, in an owner's tree, is done when it is
+ * gone or is a tombstone without an email. Anything else, including a
+ * document that cannot be parsed, still needs overwriting.
+ */
+export function forwardGrantNeedsTombstone(raw: unknown): boolean {
+  if (raw === undefined) return false;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return true;
+  const doc = raw as Record<string, unknown>;
+  return typeof doc.deletedAt !== 'number' || 'email' in doc;
 }
 
 // --- Firestore ------------------------------------------------------------
@@ -267,37 +303,65 @@ const invitesStep: DeletionStep = {
   },
 };
 
+type ViewerShares = {
+  rows: number;
+  /** Rows that name no owner or collection: the step refuses rather than lose track of a grant. */
+  unreadable: number;
+  /** Forward grants that still hold this viewer, by path. */
+  pending: { ownerSub: string; collectionId: string }[];
+};
+
+async function viewerShares(sub: string): Promise<ViewerShares> {
+  const items = await incomingSharesCol(sub).get();
+  let unreadable = 0;
+  const pending: { ownerSub: string; collectionId: string }[] = [];
+  for (const doc of items.docs) {
+    const target = viewerShareTarget(doc.id, doc.data());
+    if (target === null) {
+      unreadable += 1;
+      continue;
+    }
+    const forward = await grantColRef(target.ownerSub, target.collectionId).doc(sub).get();
+    if (forwardGrantNeedsTombstone(forward.exists ? forward.data() : undefined)) pending.push(target);
+  }
+  return { rows: items.size, unreadable, pending };
+}
+
 /**
  * The member as a viewer: each incoming share's forward grant, in its
  * owner's tree, is tombstoned through the same transaction as an owner's
- * revoke or a viewer's leave (the tombstone drops the viewer's email), then
- * `incomingShares/{sub}` is deleted.
+ * revoke or a viewer's leave (the tombstone drops the viewer's email); a
+ * forward grant that transaction leaves alone (unparseable, or an old
+ * tombstone that kept the email) is overwritten with a clean tombstone. A
+ * share row whose owner and collection cannot be read even from its id stops
+ * the step before anything changes. Only then is `incomingShares/{sub}`
+ * deleted: once the index is gone, nothing leads back to those grants.
  */
 const incomingSharesStep: DeletionStep = {
   async inventory(sub) {
-    const items = await incomingSharesCol(sub).get();
-    let liveForward = 0;
-    for (const doc of items.docs) {
-      const share = parseIncomingShareDoc(doc.data());
-      if (share === undefined) continue;
-      const forward = await grantColRef(share.ownerSub, share.collectionId).doc(sub).get();
-      if (isLiveGrant(parseGrantDoc(forward.exists ? forward.data() : undefined, sub))) liveForward += 1;
-    }
+    const shares = await viewerShares(sub);
     return [
-      { label: 'incomingShares/{sub}/items', count: items.size },
-      { label: "live forward grants in owners' trees (tombstoned)", count: liveForward },
+      { label: 'incomingShares/{sub}/items', count: shares.rows },
+      { label: 'incoming shares naming no owner or collection (--apply refuses)', count: shares.unreadable },
+      { label: "forward grants in owners' trees still holding this viewer (tombstoned)", count: shares.pending.length },
     ];
   },
-  async apply(sub) {
-    const items = await incomingSharesCol(sub).get();
-    for (const doc of items.docs) {
-      const share = parseIncomingShareDoc(doc.data());
-      if (share === undefined) continue;
-      await revokeGrantInFirestore(share.ownerSub, share.collectionId, sub);
+  async apply(sub, now) {
+    const before = await viewerShares(sub);
+    if (before.unreadable > 0) {
+      fail('incomingShares', [{ label: 'incoming shares naming no owner or collection', count: before.unreadable }]);
     }
-    // Every forward grant must be a tombstone before its index goes.
-    const before = await incomingSharesStep.inventory(sub);
-    if (before[1]!.count > 0) fail('incomingShares', [before[1]!]);
+    for (const { ownerSub, collectionId } of before.pending) {
+      await revokeGrantInFirestore(ownerSub, collectionId, sub);
+    }
+    for (const { ownerSub, collectionId } of (await viewerShares(sub)).pending) {
+      await grantColRef(ownerSub, collectionId).doc(sub).set(grantCascadeRevoke(null, sub, now), { merge: false });
+    }
+    // Every forward grant must be clean before its index goes.
+    const after = await viewerShares(sub);
+    if (after.pending.length > 0) {
+      fail('incomingShares', [{ label: 'forward grants still holding this viewer', count: after.pending.length }]);
+    }
     await db().recursiveDelete(db().collection('incomingShares').doc(sub));
     await assertGone('incomingShares', incomingSharesStep, sub);
   },
@@ -392,18 +456,21 @@ export const ACCOUNT_DELETION_ORDER: readonly PersonalTopLevel[] = [
   'users',
 ];
 
-/** What `deletionRefusal` needs, read live. */
+/** What `deletionRefusal` needs, read live: the membership status and every email stored for the sub. */
 export async function readDeletionSubject(
   sub: string,
-): Promise<{ memberStatus: string | undefined; profileEmail: string | undefined }> {
-  const [member, profile] = await Promise.all([
+): Promise<{ memberStatus: string | undefined; emails: string[] }> {
+  const [member, profile, request] = await Promise.all([
     db().collection('members').doc(sub).get(),
     db().collection('users').doc(sub).get(),
+    db().collection('accessRequests').doc(sub).get(),
   ]);
   const status = member.exists ? member.get('status') : undefined;
-  const email = profile.exists ? profile.get('email') : undefined;
+  const emails = [member, profile, request]
+    .map((snap) => (snap.exists ? snap.get('email') : undefined))
+    .filter((email): email is string => typeof email === 'string' && email.trim() !== '');
   return {
     memberStatus: typeof status === 'string' ? status : undefined,
-    profileEmail: typeof email === 'string' ? email : undefined,
+    emails: [...new Set(emails)],
   };
 }

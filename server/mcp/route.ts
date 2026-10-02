@@ -23,11 +23,12 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
-import { loadAgentLibrary } from '../agent/index.ts';
+import { loadAgentLibrary, narrowAgentRecipe } from '../agent/index.ts';
 import { publicOrigin } from '../env.ts';
 import { readBoundedText } from '../membership.ts';
 import { admitTranslateCall } from '../recipeTranslation.ts';
-import { putDoc, updateOwnRecipe } from '../store.ts';
+import { isSafeFirestoreDocumentId } from '../grants.ts';
+import { isLiveDoc, putDoc, readDocsData, updateOwnRecipe } from '../store.ts';
 import {
   MCP_BODY_LIMIT,
   MCP_LIBRARY_LIMITS,
@@ -70,6 +71,16 @@ export type McpRouteDependencies = {
 function liveToolContext(sub: string): McpToolContext {
   return {
     loadLibrary: () => loadAgentLibrary(sub, MCP_LIBRARY_LIMITS),
+    readRecipes: async (ids) => {
+      // A model-sent id that is not a plain document id would address another path.
+      const safe = ids.filter((id) => isSafeFirestoreDocumentId(id));
+      const docs = await readDocsData(sub, 'recipes', safe);
+      const byId = new Map(safe.map((id, i) => [id, docs[i]]));
+      return ids.map((id) => {
+        const doc = byId.get(id);
+        return isLiveDoc(doc) ? (narrowAgentRecipe({ ...doc, id }) ?? undefined) : undefined;
+      });
+    },
     createRecipe: async (id, payload, now) => (await putDoc(sub, 'recipes', id, payload, now)).applied,
     updateRecipe: (id, expectedVersion, apply) => updateOwnRecipe(sub, id, expectedVersion, apply),
     newId: () => randomUUID(),

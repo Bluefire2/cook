@@ -221,9 +221,11 @@ function issueTokenPair(
 }
 
 /**
- * Consent: in one transaction, revoke any live grant this member already has
- * for this client, create the new grant, and create its authorization code.
- * Returns the raw code once.
+ * Consent: in one transaction, delete every grant this member already has for
+ * this client (live or revoked), create the new grant, and create its
+ * authorization code. Returns the raw code once. Deleting rather than marking
+ * the old grants revoked keeps this query to about one row however often an
+ * app reconnects; a token whose grant is gone is refused like a revoked one.
  */
 export async function createGrantWithCode(
   input: {
@@ -242,12 +244,7 @@ export async function createGrantWithCode(
   const code = randomToken(32);
   await db().runTransaction(async (tx) => {
     const existing = await tx.get(grantsCol(input.sub).where('clientId', '==', input.clientId));
-    for (const doc of existing.docs) {
-      const grant = readGrantDoc(doc.id, doc.data() as Record<string, unknown>);
-      if (grant !== null && grant.revokedAt === undefined) {
-        tx.update(doc.ref, { revokedAt: now });
-      }
-    }
+    for (const doc of existing.docs) tx.delete(doc.ref);
     const grant: Record<string, unknown> = {
       clientId: input.clientId,
       clientHost: input.clientHost,

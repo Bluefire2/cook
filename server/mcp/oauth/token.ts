@@ -9,7 +9,14 @@
  */
 import { publicOrigin } from '../../env.ts';
 import { memberFromIdentity, readBoundedText } from '../../membership.ts';
-import { ACCESS_TOKEN_TTL_MS, REFRESH_REUSE_GRACE_MS, resourceUrl, type McpScope } from '../config.ts';
+import { admitTranslateCall } from '../../recipeTranslation.ts';
+import {
+  ACCESS_TOKEN_TTL_MS,
+  OAUTH_TOKEN_LOOKUPS_PER_MINUTE,
+  REFRESH_REUSE_GRACE_MS,
+  resourceUrl,
+  type McpScope,
+} from '../config.ts';
 import { clientHostOf, noteHandledError, withMcpOAuthLog, type McpOAuthLogEntry } from '../log.ts';
 import { parseScopes, scopeString } from '../scopes.ts';
 import { parseClientIdUrl } from './clientId.ts';
@@ -81,6 +88,14 @@ function unavailable(): Response {
   return oauthJson({ error: 'temporarily_unavailable' }, 503);
 }
 
+/** Over the lookup cap: 503, not `invalid_grant`, so a client keeps its tokens and retries. */
+function rateLimited(entry: McpOAuthLogEntry): Response {
+  entry.outcome = 'rate_limited';
+  const res = unavailable();
+  res.headers.set('Retry-After', '60');
+  return res;
+}
+
 async function readForm(req: Request): Promise<URLSearchParams | null> {
   const contentType = req.headers.get('content-type');
   if (contentType === null || !contentType.toLowerCase().startsWith('application/x-www-form-urlencoded')) {
@@ -92,6 +107,8 @@ async function readForm(req: Request): Promise<URLSearchParams | null> {
 
 export type TokenDependencies = {
   now: () => number;
+  /** Whether one more store lookup fits under `OAUTH_TOKEN_LOOKUPS_PER_MINUTE`. */
+  admitLookup: (now: number) => boolean;
   origin: () => string;
   admit: (identity: { sub: string; email: string }) => Promise<Admission>;
   redeemCode: (
@@ -114,8 +131,16 @@ async function admitIdentity(identity: { sub: string; email: string }): Promise<
   return access.kind === 'ok' ? 'ok' : access.kind;
 }
 
+const lookupBuckets = new Map<string, number[]>();
+
+/** Test hook: clears the per-instance lookup window. */
+export function resetOAuthTokenRateLimitForTest(): void {
+  lookupBuckets.clear();
+}
+
 const liveDependencies: TokenDependencies = {
   now: () => Date.now(),
+  admitLookup: (now) => admitTranslateCall(lookupBuckets, 'all', now, OAUTH_TOKEN_LOOKUPS_PER_MINUTE, 60_000),
   origin: publicOrigin,
   admit: admitIdentity,
   redeemCode: (codeHash, check, admit, now) => redeemAuthCode(codeHash, check, admit, authCodeDecision, now),
@@ -182,9 +207,11 @@ async function exchangeCode(
     stored.clientId === clientId && stored.redirectUri === redirectUri && verifyS256(verifier, stored.codeChallenge)
       ? 'ok'
       : 'mismatch';
+  const now = deps.now();
+  if (!deps.admitLookup(now)) return rateLimited(entry);
   let outcome: IssueOutcome;
   try {
-    outcome = await deps.redeemCode(hashSecret(code), check, deps.admit, deps.now());
+    outcome = await deps.redeemCode(hashSecret(code), check, deps.admit, now);
   } catch (err) {
     noteHandledError(entry, err);
     entry.outcome = 'unavailable';
@@ -219,9 +246,11 @@ async function refresh(
     }
     requested = parsed.scopes;
   }
+  const now = deps.now();
+  if (!deps.admitLookup(now)) return rateLimited(entry);
   let outcome: IssueOutcome;
   try {
-    outcome = await deps.rotate(hashSecret(refreshToken), { clientId, requested }, deps.admit, deps.now());
+    outcome = await deps.rotate(hashSecret(refreshToken), { clientId, requested }, deps.admit, now);
   } catch (err) {
     noteHandledError(entry, err);
     entry.outcome = 'unavailable';
@@ -266,8 +295,10 @@ export async function handleRevokePost(req: Request, deps: TokenDependencies): P
       entry.outcome = 'invalid_request';
       return tokenError('invalid_request', 'token is required');
     }
+    const now = deps.now();
+    if (!deps.admitLookup(now)) return rateLimited(entry);
     try {
-      entry.clientHost = await deps.revoke(hashSecret(token), deps.now());
+      entry.clientHost = await deps.revoke(hashSecret(token), now);
     } catch (err) {
       noteHandledError(entry, err);
       entry.outcome = 'unavailable';

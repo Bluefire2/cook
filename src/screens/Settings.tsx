@@ -153,26 +153,7 @@ function ConnectedApps() {
       )}
       {loadError !== null && <p className="mt-3 text-sm text-danger">{loadError}</p>}
       {apps !== null && apps.length === 0 && (
-        <div className="mt-3 rounded-2xl border border-line bg-surface p-4 shadow-sm">
-          <p className="text-sm">{t('settings.connectedAppsEmpty')}</p>
-          <label className="mt-2 block text-xs text-ink-muted" htmlFor="mcp-server-url">
-            {t('settings.connectedAppsServerUrl')}
-          </label>
-          <input
-            id="mcp-server-url"
-            className={`${inputClass} mt-1 font-mono text-sm`}
-            readOnly
-            value={serverUrl}
-            onFocus={(event) => event.currentTarget.select()}
-          />
-          <button
-            type="button"
-            onClick={() => void copyServerUrl()}
-            className={`${secondaryBtn} mt-2 px-3 py-1.5 text-sm`}
-          >
-            {copied ? t('admin.copied') : t('admin.copy')}
-          </button>
-        </div>
+        <p className="mt-3 text-sm">{t('settings.connectedAppsEmpty')}</p>
       )}
       {apps !== null && apps.length > 0 && (
         <ul className="mt-3 space-y-2">
@@ -214,6 +195,26 @@ function ConnectedApps() {
         </ul>
       )}
       {disconnectError !== null && <p className="mt-2 text-sm text-danger">{disconnectError}</p>}
+      {/* Always shown: a second app needs the address as much as the first. */}
+      <div className="mt-3 rounded-2xl border border-line bg-surface p-4 shadow-sm">
+        <label className="block text-xs text-ink-muted" htmlFor="mcp-server-url">
+          {t('settings.connectedAppsServerUrl')}
+        </label>
+        <input
+          id="mcp-server-url"
+          className={`${inputClass} mt-1 font-mono text-sm`}
+          readOnly
+          value={serverUrl}
+          onFocus={(event) => event.currentTarget.select()}
+        />
+        <button
+          type="button"
+          onClick={() => void copyServerUrl()}
+          className={`${secondaryBtn} mt-2 px-3 py-1.5 text-sm`}
+        >
+          {copied ? t('admin.copied') : t('admin.copy')}
+        </button>
+      </div>
     </section>
   );
 }

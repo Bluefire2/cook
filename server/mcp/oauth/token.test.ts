@@ -82,6 +82,7 @@ const ISSUED: IssueOutcome = {
 function deps(overrides: Partial<TokenDependencies> = {}): TokenDependencies {
   return {
     now: () => NOW,
+    admitLookup: () => true,
     origin: () => ORIGIN,
     admit: async () => 'ok',
     redeemCode: vi.fn(async () => ISSUED),
@@ -221,6 +222,31 @@ describe('handleTokenPost', () => {
       }
     }
     expect(JSON.parse(lines[1]!)).toMatchObject({ event: 'mcp_oauth', step: 'token', grantType: 'refresh_token', outcome: 'ok' });
+  });
+});
+
+describe('the lookup cap', () => {
+  it('answers 503 with Retry-After, before any store call, on every grant type and on revoke', async () => {
+    const d = deps({ admitLookup: () => false });
+    const responses = [
+      await handleTokenPost(form(CODE_GRANT), d),
+      await handleTokenPost(form({ grant_type: 'refresh_token', refresh_token: 'sous_rt_old' }), d),
+      await handleRevokePost(form({ token: 'sous_at_whatever' }), d),
+    ];
+    for (const res of responses) {
+      expect(res.status).toBe(503);
+      expect(res.headers.get('Retry-After')).toBe('60');
+    }
+    expect(d.redeemCode).not.toHaveBeenCalled();
+    expect(d.rotate).not.toHaveBeenCalled();
+    expect(d.revoke).not.toHaveBeenCalled();
+  });
+
+  it('is not spent on a request rejected before the store', async () => {
+    const admitLookup = vi.fn(() => true);
+    await handleTokenPost(form({ grant_type: 'password' }), deps({ admitLookup }));
+    await handleTokenPost(form({ ...CODE_GRANT, client_id: 'http://x.example/c' }), deps({ admitLookup }));
+    expect(admitLookup).not.toHaveBeenCalled();
   });
 });
 

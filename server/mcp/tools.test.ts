@@ -33,18 +33,26 @@ function recipe(overrides: Partial<AgentRecipe> & { id: string; title: string })
 function fakeContext(
   recipes: AgentRecipe[],
   collections: AgentCollection[] = [],
-): McpToolContext & { docs: Map<string, Record<string, unknown>>; created: string[] } {
+  opts: { loadCap?: number } = {},
+): McpToolContext & { docs: Map<string, Record<string, unknown>>; created: string[]; directReads: string[][] } {
   const docs = new Map<string, Record<string, unknown>>(recipes.map((r) => [r.id, { ...r }]));
   const created: string[] = [];
+  const directReads: string[][] = [];
+  const loaded = opts.loadCap === undefined ? recipes : recipes.slice(0, opts.loadCap);
   return {
     docs,
     created,
+    directReads,
     async loadLibrary() {
-      return buildAgentLibrary(recipes, collections, {
-        truncated: false,
+      return buildAgentLibrary(loaded, collections, {
+        truncated: loaded.length < recipes.length,
         maxIndexEntries: 500,
         maxIndexChars: 40_000,
       });
+    },
+    async readRecipes(ids) {
+      directReads.push([...ids]);
+      return ids.map((id) => recipes.find((r) => r.id === id));
     },
     async createRecipe(id, payload) {
       docs.set(id, payload);
@@ -129,6 +137,20 @@ describe('get_recipes', () => {
     for (const key of ['photoId', 'galleryPhotoIds', 'createdAt', 'updatedAt', 'importCheck', 'lang']) {
       expect(got).not.toHaveProperty(key);
     }
+    expect(ctx.directReads).toEqual([]);
+  });
+
+  it('reads ids a capped library left out directly, in the order asked', async () => {
+    const R3 = '55555555-5555-4555-8555-555555555555';
+    const ctx = fakeContext([recipe({ id: R1, title: 'Loaded' }), recipe({ id: R2, title: 'Past the cap' })], [], {
+      loadCap: 1,
+    });
+    const out = await run('get_recipes', { ids: [R2, R1, R3] }, ctx);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect((out.data.recipes as { title: string }[]).map((r) => r.title)).toEqual(['Past the cap', 'Loaded']);
+    expect(out.data.missingIds).toEqual([R3]);
+    expect(ctx.directReads).toEqual([[R2, R3]]);
   });
 
   it('rejects zero or more than eight ids', async () => {

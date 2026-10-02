@@ -34,6 +34,7 @@ function toolContext(): McpToolContext {
         [],
         { truncated: false, maxIndexEntries: 500, maxIndexChars: 40_000 },
       ),
+    readRecipes: vi.fn(async (ids: readonly string[]) => ids.map(() => undefined)),
     createRecipe: vi.fn(async () => true),
     updateRecipe: vi.fn(async () => ({ kind: 'not_found' as const })),
     newId: () => '33333333-3333-4333-8333-333333333333',

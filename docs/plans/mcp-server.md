@@ -193,7 +193,8 @@ Each redirect URI must be either https, or an http loopback (`127.0.0.1`,
 
 Caching and limits:
 - Cache per URL for 10 minutes, in memory.
-- Allow at most 30 uncached fetches per minute per instance.
+- Allow at most 10 uncached fetches per minute per member, and 60 per
+  minute per instance.
 
 Redirect matching is an exact string match, except loopback URIs, which are
 compared with the port ignored (RFC 8252 §7.3, applied to `localhost` too for
@@ -241,8 +242,10 @@ collection (README.md, "Manual deletion procedure"), and
   its rotation, the result is `invalid_grant` without revoking: that is a
   concurrent refresh, not theft. Presented later, it revokes the grant. A
   refresh can narrow scopes, never widen them.
-- **Consent for a client that already has a live grant** replaces it: the
-  old grant is revoked in the same transaction.
+- **Consent for a client that already has a grant** replaces it: the old
+  grants for that client, live or revoked, are deleted in the same
+  transaction, so reconnecting never piles up rows for the next consent to
+  read. A token whose grant is gone is refused like a revoked one.
 - **Each `/mcp` call:**
   1. Read the bearer from `Authorization` only, never a cookie.
   2. Read the token and the grant in one `getAll`.
@@ -594,3 +597,23 @@ Each is the smallest change that fit the real code; none widens access.
 - **Shared code.** `server/access.ts` now exports `pageHtml` for the consent
   pages, and `server/agent/index.ts` also exports `narrowAgentRecipe`,
   `AgentCollection`, `SearchRecipesArgs` and `SearchRecipeHit`.
+
+From the PR review (2026-10-02):
+
+- **`/oauth/token` and `/oauth/revoke` cap their store lookups** at 120 a
+  minute per instance, all callers together (they are unauthenticated, so
+  there is no member to key on). Over the cap is 503 `temporarily_unavailable`
+  with `Retry-After: 60`, never `invalid_grant`, so a client keeps its
+  tokens. A request refused before the store (bad form, unknown grant type,
+  malformed `client_id`) spends nothing. The cost: someone flooding the
+  endpoint can delay real refreshes on that instance for a minute.
+- **Client metadata fetches are budgeted per member** (10 a minute) under an
+  instance ceiling (60), instead of one shared 30, so one member cannot use up
+  everyone's consent fetches.
+- **`get_recipes` reads directly** any id the capped library load (2000
+  recipes) left out, so a recipe past the cap is returned, not reported in
+  `missingIds`.
+- **Consent deletes the client's earlier grants** instead of marking them
+  revoked (see Tokens and grants).
+- **Settings shows the server address in every state**, not only when no app
+  is connected, so a second app can be added.

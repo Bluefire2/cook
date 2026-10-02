@@ -5,7 +5,7 @@
  * Tool failures are results with a stable code, never thrown and never HTTP
  * errors, so the model can recover.
  */
-import type { AgentLibrary } from '../agent/index.ts';
+import type { AgentLibrary, AgentRecipe } from '../agent/index.ts';
 import { narrowAgentRecipe, searchRecipesPage, winningMembership } from '../agent/index.ts';
 import { isUuid, type OwnRecipeUpdateResult } from '../store.ts';
 import type { McpScope } from './config.ts';
@@ -30,6 +30,12 @@ export type McpToolOutcome =
 export interface McpToolContext {
   /** The caller's own live recipes and collections. */
   loadLibrary(): Promise<AgentLibrary>;
+  /**
+   * The caller's own live recipes by id, read directly, in the order asked;
+   * `undefined` for a missing, deleted, or unreadable one. For ids a capped
+   * `loadLibrary` left out.
+   */
+  readRecipes(ids: readonly string[]): Promise<Array<AgentRecipe | undefined>>;
   /** Writes a new recipe into the caller's tree. False when the store refused it. */
   createRecipe(id: string, payload: Record<string, unknown>, now: number): Promise<boolean>;
   updateRecipe(
@@ -281,16 +287,27 @@ const getTool: McpToolSpec = {
     if (errors.length > 0 || ids === undefined) return invalid(errors);
 
     const library = await ctx.loadLibrary();
-    const recipes = [];
+    const found = ids.map((id) => library.recipeById(id));
+    // A capped library can leave out a recipe that exists: read those directly
+    // rather than report them missing.
+    const unseen = ids.filter((_, i) => found[i] === undefined);
+    if (library.loadTruncated && unseen.length > 0) {
+      const direct = await ctx.readRecipes(unseen);
+      let next = 0;
+      for (let i = 0; i < ids.length; i += 1) {
+        if (found[i] === undefined) found[i] = direct[next++];
+      }
+    }
+    const recipes: ReturnType<typeof toMcpRecipe>[] = [];
     const missingIds: string[] = [];
-    for (const id of ids) {
-      const recipe = library.recipeById(id);
+    ids.forEach((id, i) => {
+      const recipe = found[i];
       if (recipe === undefined) {
         missingIds.push(id);
       } else {
         recipes.push(toMcpRecipe(recipe, library.collectionNameFor(id)));
       }
-    }
+    });
     const data: Record<string, unknown> = { recipes };
     if (missingIds.length > 0) data.missingIds = missingIds;
     return { ok: true, data, recipes: recipes.length };

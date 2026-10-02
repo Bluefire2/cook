@@ -69,4 +69,17 @@ export const MAX_CLIENT_NAME_CHARS = 100;
 export const CLIENT_METADATA_TIMEOUT_MS = 3_000;
 export const CLIENT_METADATA_MAX_BYTES = 5 * 1024;
 export const CLIENT_METADATA_CACHE_MS = 10 * 60 * 1000;
-export const CLIENT_METADATA_FETCHES_PER_MINUTE = 30;
+/**
+ * Uncached client metadata fetches, per container instance: each member has
+ * their own budget, under an instance-wide ceiling one member cannot reach
+ * alone, so nobody can use up everyone else's consent fetches.
+ */
+export const CLIENT_METADATA_FETCHES_PER_MEMBER_PER_MINUTE = 10;
+export const CLIENT_METADATA_FETCHES_PER_MINUTE = 60;
+/**
+ * Store lookups by `/oauth/token` and `/oauth/revoke`, per container instance,
+ * all callers together (they are unauthenticated, so there is no member to
+ * key on). A handful of members refresh about once an hour each; this only
+ * bounds junk traffic, at most four instances' worth.
+ */
+export const OAUTH_TOKEN_LOOKUPS_PER_MINUTE = 120;

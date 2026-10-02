@@ -241,19 +241,22 @@ describe('account deletion covers every collection (server/accountDeletion.ts)',
       .filter((path) => !isTestFile(path));
     const constants = new Map<string, string>();
     for (const path of files) {
-      for (const match of read(path).matchAll(/(?:export )?const (\w+) = '([^']+)';/g)) {
-        constants.set(match[1], match[2]);
+      for (const match of read(path).matchAll(/(?:export )?const (\w+) = (['"`])([^'"`$]+)\2;/g)) {
+        constants.set(match[1], match[3]);
       }
     }
+    // An argument that is neither a plain string nor a known constant (a
+    // template with a substitution, a variable) is an offender, so the check
+    // fails closed; exempt one below only when its type already pins it.
     const offenders: string[] = [];
     for (const path of files) {
-      for (const match of read(path).matchAll(/\.collection\(([^)]*)\)/g)) {
+      for (const match of read(path).matchAll(/\.collection(?:Group)?\(([^)]*)\)/g)) {
         const arg = match[1].trim();
         // store.ts colRef(uid, kind): a StoreKind, checked below.
         if (path === 'server/store.ts' && arg === 'kind') continue;
         // accountDeletion.ts takes the name as a PersonalTopLevel, typed against the registry.
         if (path === 'server/accountDeletion.ts' && arg === 'collection') continue;
-        const name = /^'[^']+'$/.test(arg) ? arg.slice(1, -1) : constants.get(arg);
+        const name = /^(['"`])[^'"`$]+\1$/.test(arg) ? arg.slice(1, -1) : constants.get(arg);
         if (name === undefined || !Object.hasOwn(FIRESTORE_COLLECTIONS, name)) {
           offenders.push(`${path}: .collection(${arg})`);
         }

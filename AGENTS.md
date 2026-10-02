@@ -491,7 +491,9 @@ is `server/mcp/`; `scripts/server.ts` imports only `server/mcp/index.ts`.
   step for each (see Account deletion); a new MCP collection needs one too.
 - **Rate limits.** Per instance, per `sub` and grant: 300 reads and 60 writes
   an hour (`admitTranslateCall`'s window, own buckets); uncached client
-  metadata fetches at 30 a minute.
+  metadata fetches at 10 a minute per member and 60 per instance; store
+  lookups by `/oauth/token` and `/oauth/revoke` at 120 a minute per instance
+  (503 with `Retry-After`).
 
 ## Agent module
 
