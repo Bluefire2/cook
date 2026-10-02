@@ -77,6 +77,8 @@ export const ru: Messages = {
   'library.actionsFor': 'Действия для «{title}»',
   'library.moveTo': 'Переместить в…',
   'library.closeMenu': 'Закрыть меню',
+  'library.languageMenu': 'Язык: русский',
+  'library.languageShort': 'РУС',
   'library.addRecipe': 'Добавить рецепт',
   'library.addRecipeTitle': 'Добавить рецепт',
   'library.importFromLink': 'Импортировать по ссылке, из текста или с\u00a0фото',

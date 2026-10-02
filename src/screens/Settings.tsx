@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { isSupportedLocale, languageName, SUPPORTED_LOCALES, t as translate, useLocale, useT } from '../i18n';
+import { isSupportedLocale, localeDisplayName, SUPPORTED_LOCALES, t as translate, useLocale, useT } from '../i18n';
 import { exportLibrary, importLibrary } from '../lib/backup';
 import { createMemberInvite } from '../lib/inviteApi';
 import { relativeAgoLabel } from '../lib/relativeTime';
@@ -275,7 +275,7 @@ export default function Settings() {
       >
         {SUPPORTED_LOCALES.map((code) => (
           <option key={code} value={code}>
-            {languageName(code, code) ?? code}
+            {localeDisplayName(code)}
           </option>
         ))}
       </select>

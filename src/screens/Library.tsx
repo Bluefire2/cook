@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useT } from '../i18n';
 import CollectionSection from '../components/CollectionSection';
 import CreateCollectionSheet from '../components/CreateCollectionSheet';
+import LanguageMenu from '../components/LanguageMenu';
 import LibraryInviteToast, {
   type LibraryInviteNotice,
 } from '../components/LibraryInviteToast';
@@ -583,7 +584,7 @@ export default function Library() {
       <LibraryInviteToast notice={inviteNotice} />
       <header className="flex items-center justify-between py-4">
         <h1 className="text-2xl font-bold">Sous</h1>
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-y-1">
           <AssistantEntryLink />
           {user !== null && (
             <button
@@ -617,6 +618,7 @@ export default function Library() {
           >
             <SettingsIcon className="block h-5 w-5" />
           </Link>
+          <LanguageMenu />
         </div>
       </header>
 
@@ -709,8 +711,10 @@ export default function Library() {
         </div>
       )}
 
+      {/* The search keeps at least 14rem so its placeholder isn't clipped;
+          narrower than that, the buttons wrap under it. */}
       {showSwitcher ? (
-        <div className="mb-4 flex items-center gap-2">
+        <div className="mb-4 flex flex-wrap items-center gap-2">
           <input
             type="search"
             placeholder={
@@ -722,27 +726,29 @@ export default function Library() {
             }
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className={`${inputClass} min-w-0 flex-1`}
+            className={`${inputClass} min-w-0 flex-1 basis-56 text-ellipsis`}
           />
-          {selectControl}
-          <button
-            type="button"
-            onClick={() => setBrowseAll((on) => !on)}
-            className={`${chipClass(browseAll)} shrink-0`}
-          >
-            {t('library.allCollections')}
-          </button>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {selectControl}
+            <button
+              type="button"
+              onClick={() => setBrowseAll((on) => !on)}
+              className={`${chipClass(browseAll)} shrink-0`}
+            >
+              {t('library.allCollections')}
+            </button>
+          </div>
         </div>
       ) : (
-        <div className="mb-4 flex items-center gap-2">
+        <div className="mb-4 flex flex-wrap items-center gap-2">
           <input
             type="search"
             placeholder={t('library.search')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className={`${inputClass} min-w-0 flex-1`}
+            className={`${inputClass} min-w-0 flex-1 basis-56 text-ellipsis`}
           />
-          {selectControl}
+          {selectControl && <div className="ml-auto flex shrink-0">{selectControl}</div>}
         </div>
       )}
 
