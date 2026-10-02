@@ -1,6 +1,6 @@
 # Import feedback
 
-Status: built on claude/recipe-import-feedback-0eb055, not deployed. TTL policy not applied.
+Status: built on claude/recipe-import-feedback-0eb055, not deployed. TTL policy applied 2026-10-01.
 
 ## Goal
 
@@ -189,7 +189,7 @@ Every request writes one line with these fields:
 
 ## Owner steps (not for the implementer; recorded so they are not lost)
 
-1. **TTL policy.** Before the first deploy that contains this feature, run
+1. **TTL policy.** Done 2026-10-01 (the state read `CREATING` right after; it becomes `ACTIVE`). Recorded for a new database or project: before the first deploy that contains this feature, run
    `gcloud firestore fields ttls update expireAt --collection-group=importFeedback --enable-ttl --project=cooking-assistant-508423`.
    - Confirm it with
      `gcloud firestore fields ttls list --collection-group=importFeedback --project=cooking-assistant-508423`.
@@ -197,7 +197,7 @@ Every request writes one line with these fields:
      `C:\Users\chern\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd`.
      It is not on PATH, and the machine's default project is a different one, so
      always pass `--project`.
-   - Until the policy exists, `/privacy`'s 180-day promise is false.
+   - Without the policy, `/privacy`'s 180-day promise is false.
 2. **Account deletion request:**
    1. Get the account's `sub` with `node --env-file=.env.local scripts/import-audit.ts <email>`.
    2. In the Firestore console, open `importFeedback`, filter `sub == <sub>`, and
