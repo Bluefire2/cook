@@ -401,12 +401,17 @@ export default function ImportScreen() {
           : true,
     ) ?? [];
   const destinationLocked = busy || encoding || saveStatus.saving || retryingRow || pendingUrls !== null;
-  const destinationName =
-    destination.kind !== 'save'
-      ? undefined
-      : destination.collectionId === undefined
-        ? t('saveSheet.noCollection')
-        : collections?.find((collection) => collection.id === destination.collectionId)?.name;
+  // Unfiled is the sheet's own label, not "Import into {name}": that label is
+  // a phrase, and stuffing it into the sentence does not read in every language.
+  let destinationLabel: string | undefined;
+  if (destination.kind === 'save') {
+    if (destination.collectionId === undefined) {
+      destinationLabel = t('saveSheet.noCollection');
+    } else {
+      const name = collections?.find((collection) => collection.id === destination.collectionId)?.name;
+      if (name !== undefined) destinationLabel = t('import.destination', { name });
+    }
+  }
   const filterClass = (active: boolean) =>
     `rounded-full border px-3 py-1 text-sm disabled:opacity-40 ${
       active
@@ -443,9 +448,9 @@ export default function ImportScreen() {
             {t('common.loadingCollections')}
           </p>
         )}
-        {destination.kind === 'save' && destinationName !== undefined && (
+        {destination.kind === 'save' && destinationLabel !== undefined && (
           <p className="mt-2 flex flex-wrap items-baseline gap-x-3 text-sm text-ink">
-            <span>{t('import.destination', { name: destinationName })}</span>
+            <span>{destinationLabel}</span>
             <button
               type="button"
               disabled={destinationLocked}
