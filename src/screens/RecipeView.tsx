@@ -6,8 +6,6 @@ import CookLogCard from '../components/CookLogCard';
 import ImportWarningBanner from '../components/ImportWarningBanner';
 import {
   askButtonClass,
-  CoverPhoto,
-  GalleryFrame,
   GallerySection,
   IngredientsSection,
   NotesSection,
@@ -71,8 +69,18 @@ function TranslateChip({
   );
 }
 
+// This screen's two <img> tags stay as written on main rather than using
+// RecipeBody's CoverPhoto / GalleryFrame: their URLs can be object URLs of
+// photos picked on this device, which code scanning tracks (alerts #13, #14).
 function GalleryImage({ photoId }: { photoId: string }) {
-  return <GalleryFrame url={usePhotoUrl(photoId)} />;
+  const url = usePhotoUrl(photoId);
+  return (
+    <div className="overflow-hidden rounded-xl bg-surface-muted shadow-sm">
+      {url && (
+        <img src={url} alt="" className="aspect-square w-full object-cover" />
+      )}
+    </div>
+  );
 }
 
 export default function RecipeView() {
@@ -258,7 +266,13 @@ export default function RecipeView() {
             {sharedLine}
           </p>
         )}
-        <CoverPhoto url={photoUrl} />
+        {photoUrl && (
+          <img
+            src={photoUrl}
+            alt=""
+            className="mt-3 h-52 w-full rounded-2xl object-cover shadow-sm"
+          />
+        )}
         <h1 className="mt-2 text-2xl font-bold">{displayRecipe.title}</h1>
         {displayRecipe.description && (
           <p className="mt-1 text-ink-muted">{displayRecipe.description}</p>
