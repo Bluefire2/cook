@@ -87,6 +87,7 @@ export const zhHans: Messages = {
     other: '已选 {count} 个食谱',
   },
   'library.selectAll': '全选',
+  'library.selectNone': '取消全选',
   'library.moveSelected': '移动',
   'library.moveManyTitle': {
     other: '移动 {count} 个食谱',
@@ -479,6 +480,7 @@ export const zhHans: Messages = {
   'error.collectionCap': '你最多可以有 {max} 个合集。',
   'error.collectionNameEmpty': '给这个合集起个名字。',
   'error.collectionNameLong': '名称请少于 {max} 个字符。',
+  'error.collectionNameTaken': '已经有名为「{name}」的合集。',
   'error.sharingLoad': '无法加载分享。',
   'error.sharingUpdate': '无法更新分享。',
   'error.sharingUnavailable': '分享暂时不可用。',
@@ -594,6 +596,17 @@ export const zhHans: Messages = {
   'assistant.moveShowLess': '显示更少',
   'assistant.move': '移动',
   'assistant.moving': '正在移动…',
+  'assistant.preparingCollection': '正在准备合集…',
+  'assistant.createHeading': {
+    other: '创建「{name}」，包含 {count} 道食谱',
+  },
+  'assistant.createHeadingEmpty': '创建「{name}」',
+  'assistant.createApplied': {
+    other: '已创建「{name}」，包含 {count} 道食谱',
+  },
+  'assistant.createAppliedEmpty': '已创建「{name}」',
+  'assistant.create': '创建',
+  'assistant.creating': '正在创建…',
   'public.badge': '公开合集',
   'public.signIn': '登录',
   'public.signInWithGoogle': '使用 Google 登录',

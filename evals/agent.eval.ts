@@ -4,6 +4,7 @@ import { googleModel } from '../server/agent/harness/google.ts';
 import { startAgent } from '../server/agent/harness/run.ts';
 import type { AgentEvent } from '../server/agent/harness/types.ts';
 import { CARD_SPECS } from '../server/agent/sous/cards/index.ts';
+import type { CollectionCreateData } from '../server/agent/sous/cards/collectionCreate.ts';
 import type { CollectionMoveData } from '../server/agent/sous/cards/collectionMove.ts';
 import type { ShoppingListData } from '../server/agent/sous/cards/shoppingList.ts';
 import { buildAgentLibrary, type AgentRecipe } from '../server/agent/sous/library.ts';
@@ -225,6 +226,26 @@ describe('library assistant (live Gemini)', () => {
         id: 'eval-weeknight',
         name: 'Weeknight',
       });
+    },
+    60_000,
+  );
+
+  it(
+    'proposes a new Soups collection that already contains the soup recipe',
+    async () => {
+      const events = await runLibraryAssistant(
+        `Create a collection named Soups and put ${RECIPE_SOUP} in it.`,
+      );
+
+      const createCards = events.filter(
+        (e): e is Extract<AgentEvent, { t: 'card' }> =>
+          e.t === 'card' && e.card.type === 'collection_create',
+      );
+      expect(createCards.length).toBeGreaterThan(0);
+
+      const data = createCards[0]!.card.data as CollectionCreateData;
+      expect(data.name).toBe('Soups');
+      expect(data.recipeIds).toContain(RECIPE_SOUP);
     },
     60_000,
   );

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useT } from '../i18n';
 import CollectionSection from '../components/CollectionSection';
@@ -170,6 +170,17 @@ export default function Library() {
           .filter((recipe) => !recipeStore.isShared(recipe.id))
           .map((recipe) => recipe.id);
   const canSelect = ownedVisibleIds.length > 0;
+  // The selection the bar, Move, and the header act on. A search can hide a
+  // checked recipe one render before the effect below drops it from
+  // selectedIds; counting only what is on screen keeps them in agreement.
+  // While the library loads nothing is on screen, so keep the whole set.
+  const activeSelectedIds =
+    recipes === undefined
+      ? [...selectedIds]
+      : ownedVisibleIds.filter((id) => selectedIds.has(id));
+  const allOwnedSelected =
+    canSelect && activeSelectedIds.length === ownedVisibleIds.length;
+  const someOwnedSelected = activeSelectedIds.length > 0 && !allOwnedSelected;
   // Undefined while the library is still loading, so a refresh does not
   // clear a selection that has not been shown yet. An empty string means
   // the list is loaded and no owned recipe is on screen.
@@ -198,6 +209,19 @@ export default function Library() {
       return next;
     });
   };
+
+  const toggleSelectAll = () => {
+    setSelectedIds(allOwnedSelected ? new Set() : new Set(ownedVisibleIds));
+  };
+
+  // indeterminate is DOM-only. A ref callback also sets it on an input that
+  // remounts while someOwnedSelected is unchanged, which an effect would miss.
+  const selectAllRef = useCallback(
+    (input: HTMLInputElement | null) => {
+      if (input) input.indeterminate = someOwnedSelected;
+    },
+    [someOwnedSelected],
+  );
 
   const remove = async (id: string) => {
     dispatch({ type: 'close' });
@@ -762,109 +786,125 @@ export default function Library() {
       ) : recipes.length === 0 ? (
         <p className="py-12 text-center text-ink-muted">{emptyCopy()}</p>
       ) : (
-        <ul className="flex flex-col gap-3">
-          {recipes.map((recipe) => {
-            const shared = recipeStore.isShared(recipe.id);
-            const checked = selectedIds.has(recipe.id);
-            return (
-              <li key={recipe.id} className="flex items-start gap-1">
-                {selecting && !shared && (
-                  <label className="mt-3 flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      aria-label={t('library.selectRecipe', { title: recipe.title })}
-                      onChange={() => toggleSelected(recipe.id)}
-                      className={`h-5 w-5 accent-ink ${inputFocus}`}
-                    />
-                  </label>
-                )}
-                <div className="relative min-w-0 flex-1">
-              <Link
-                to={`/recipe/${recipe.id}`}
-                state={{ from: libraryHref(collectionId) }}
-                className="flex gap-3 rounded-2xl border border-line bg-surface p-4 pr-14 shadow-sm hover:border-line-strong hover:bg-surface-muted active:bg-surface-muted"
-              >
-                {recipe.photoId !== undefined && (
-                  <CardThumb photoId={recipe.photoId} />
-                )}
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-lg font-semibold">{recipe.title}</h2>
-                  {recipe.description && (
-                    <p className="mt-1 line-clamp-2 text-sm text-ink-muted">
-                      {recipe.description}
-                    </p>
+        <>
+          {selecting && canSelect && (
+            <label className="mb-1 flex cursor-pointer items-center gap-1">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  checked={allOwnedSelected}
+                  onChange={toggleSelectAll}
+                  className={`h-5 w-5 accent-ink ${inputFocus}`}
+                />
+              </span>
+              <span className="text-sm font-medium">{t('library.selectAll')}</span>
+            </label>
+          )}
+          <ul className="flex flex-col gap-3">
+            {recipes.map((recipe) => {
+              const shared = recipeStore.isShared(recipe.id);
+              const checked = selectedIds.has(recipe.id);
+              return (
+                <li key={recipe.id} className="flex items-start gap-1">
+                  {selecting && !shared && (
+                    <label className="mt-3 flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        aria-label={t('library.selectRecipe', { title: recipe.title })}
+                        onChange={() => toggleSelected(recipe.id)}
+                        className={`h-5 w-5 accent-ink ${inputFocus}`}
+                      />
+                    </label>
                   )}
-                  {recipe.tags.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {recipe.tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="rounded-full bg-surface-muted px-2 py-0.5 text-xs text-ink-muted"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </Link>
-
-              {!shared && !selecting && (
-              <button
-                type="button"
-                aria-label={t('library.actionsFor', { title: recipe.title })}
-                aria-expanded={menuId === recipe.id}
-                onClick={(event) => {
-                  menuTriggerRef.current = event.currentTarget;
-                  setMenuId(menuId === recipe.id ? null : recipe.id);
-                }}
-                className="absolute top-2 right-2 flex h-11 w-11 items-center justify-center rounded-full text-xl leading-none text-ink-subtle hover:bg-surface-muted active:bg-surface-muted"
-              >
-                ⋯
-              </button>
-              )}
-
-              {menuId === recipe.id && !shared && !selecting && (
-                <div
-                  role="group"
-                  aria-label={t('library.actionsFor', { title: recipe.title })}
-                  className="absolute top-13 right-3 z-20 w-40 overflow-hidden rounded-xl border border-line bg-surface shadow-xl"
+                  <div className="relative min-w-0 flex-1">
+                <Link
+                  to={`/recipe/${recipe.id}`}
+                  state={{ from: libraryHref(collectionId) }}
+                  className="flex gap-3 rounded-2xl border border-line bg-surface p-4 pr-14 shadow-sm hover:border-line-strong hover:bg-surface-muted active:bg-surface-muted"
                 >
-                  <Link
-                    to={`/recipe/${recipe.id}/edit`}
-                    ref={firstActionRef}
-                    className={menuItem}
+                  {recipe.photoId !== undefined && (
+                    <CardThumb photoId={recipe.photoId} />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-lg font-semibold">{recipe.title}</h2>
+                    {recipe.description && (
+                      <p className="mt-1 line-clamp-2 text-sm text-ink-muted">
+                        {recipe.description}
+                      </p>
+                    )}
+                    {recipe.tags.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {recipe.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded-full bg-surface-muted px-2 py-0.5 text-xs text-ink-muted"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </Link>
+
+                {!shared && !selecting && (
+                <button
+                  type="button"
+                  aria-label={t('library.actionsFor', { title: recipe.title })}
+                  aria-expanded={menuId === recipe.id}
+                  onClick={(event) => {
+                    menuTriggerRef.current = event.currentTarget;
+                    setMenuId(menuId === recipe.id ? null : recipe.id);
+                  }}
+                  className="absolute top-2 right-2 flex h-11 w-11 items-center justify-center rounded-full text-xl leading-none text-ink-subtle hover:bg-surface-muted active:bg-surface-muted"
+                >
+                  ⋯
+                </button>
+                )}
+
+                {menuId === recipe.id && !shared && !selecting && (
+                  <div
+                    role="group"
+                    aria-label={t('library.actionsFor', { title: recipe.title })}
+                    className="absolute top-13 right-3 z-20 w-40 overflow-hidden rounded-xl border border-line bg-surface shadow-xl"
                   >
-                    {t('common.edit')}
-                  </Link>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuId(null);
-                      dispatch({ type: 'openMove', recipeIds: [recipe.id] });
-                    }}
-                    className={`${menuItem} border-t border-line`}
-                  >
-                    {t('library.moveTo')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuId(null);
-                      dispatch({ type: 'openDeleteRecipe', recipeId: recipe.id });
-                    }}
-                    className={`${menuItemDanger} border-t border-line`}
-                  >
-                    {t('common.delete')}
-                  </button>
-                </div>
-              )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                    <Link
+                      to={`/recipe/${recipe.id}/edit`}
+                      ref={firstActionRef}
+                      className={menuItem}
+                    >
+                      {t('common.edit')}
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuId(null);
+                        dispatch({ type: 'openMove', recipeIds: [recipe.id] });
+                      }}
+                      className={`${menuItem} border-t border-line`}
+                    >
+                      {t('library.moveTo')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuId(null);
+                        dispatch({ type: 'openDeleteRecipe', recipeId: recipe.id });
+                      }}
+                      className={`${menuItemDanger} border-t border-line`}
+                    >
+                      {t('common.delete')}
+                    </button>
+                  </div>
+                )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </>
       )}
 
       {sessionStatus === 'signedIn' && recipes !== undefined && !selecting && (
@@ -895,23 +935,23 @@ export default function Library() {
         <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-page px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <div className="mx-auto flex max-w-xl flex-col gap-2">
             <p className="text-sm font-medium">
-              {t('library.selectedCount', { count: selectedIds.size })}
+              {t('library.selectedCount', { count: activeSelectedIds.length })}
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setSelectedIds(new Set(ownedVisibleIds))}
+                onClick={toggleSelectAll}
                 disabled={!canSelect}
                 className={`${ghostBtn} disabled:opacity-40`}
               >
-                {t('library.selectAll')}
+                {allOwnedSelected ? t('library.selectNone') : t('library.selectAll')}
               </button>
               <button
                 type="button"
-                disabled={selectedIds.size === 0}
+                disabled={activeSelectedIds.length === 0}
                 onClick={() => {
                   setMenuId(null);
-                  dispatch({ type: 'openMove', recipeIds: [...selectedIds] });
+                  dispatch({ type: 'openMove', recipeIds: activeSelectedIds });
                 }}
                 className={`${primaryBtn} px-4 py-2 text-sm disabled:opacity-40`}
               >

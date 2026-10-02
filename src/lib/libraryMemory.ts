@@ -633,12 +633,31 @@ export function getCollection(id: string): Collection | undefined {
 }
 
 export function upsertCollection(collection: Collection): void {
-  publishChanges({
-    collections: withEntry(snapshot.collections, collection.id, collection),
-    collectionOrigins: snapshot.collectionOrigins.has(collection.id)
-      ? snapshot.collectionOrigins
-      : withEntry(snapshot.collectionOrigins, collection.id, { kind: 'own' }),
-  });
+  writeCollections({ upserts: [collection] });
+}
+
+/**
+ * Upserts owned collections and drops `removeIds` in one publish.
+ * A new id is stored as an own origin. An id that already has an origin
+ * keeps it.
+ */
+export function writeCollections(input: {
+  upserts: readonly Collection[];
+  removeIds?: readonly string[];
+}): void {
+  let collections = snapshot.collections;
+  let origins = snapshot.collectionOrigins;
+  for (const collection of input.upserts) {
+    collections = withEntry(collections, collection.id, collection);
+    if (!origins.has(collection.id)) {
+      origins = withEntry(origins, collection.id, { kind: 'own' });
+    }
+  }
+  if (input.removeIds !== undefined && input.removeIds.length > 0) {
+    collections = without(collections, input.removeIds);
+    origins = without(origins, input.removeIds);
+  }
+  publishChanges({ collections, collectionOrigins: origins });
 }
 
 export function removeCollectionLocal(id: string): void {
