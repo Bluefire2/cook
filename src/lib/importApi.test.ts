@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { serverErrorText } from './errorText';
 import { IMPORT_JPEG_QUALITY, IMPORT_MAX_EDGE_PX } from './image';
 import {
   checkImportPhotoBytes,
@@ -106,6 +107,40 @@ describe('importRecipe', () => {
       'Please sign in again — your session expired.',
     );
     expect(invalidateSpy).toHaveBeenCalled();
+  });
+
+  it('attaches code, status, and siteStatus to a failed import', async () => {
+    const body = {
+      error: 'The site refused the request (403). Try pasting the recipe text instead.',
+      code: 'import-refused',
+      status: 403,
+    };
+    respond(422, body);
+    const err = await importRecipe({ url: 'https://example.com' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toMatchObject({ code: 'import-refused', status: 422, siteStatus: 403 });
+    expect((err as Error).message).toBe(
+      serverErrorText(body, 'error.importFailedStatus', { status: 422 }),
+    );
+  });
+
+  it('a failure without a JSON body carries only its status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('Internal Server Error', { status: 500 })),
+    );
+    const err = await importRecipe({ url: 'https://example.com' }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 500 });
+    expect('code' in (err as object)).toBe(false);
+    expect('siteStatus' in (err as object)).toBe(false);
+  });
+
+  it('a 401 carries no status', async () => {
+    vi.spyOn(session, 'invalidateSession').mockImplementation(() => {});
+    respond(401, {});
+    const err = await importRecipe({ url: 'https://example.com' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect('status' in (err as object)).toBe(false);
   });
 });
 

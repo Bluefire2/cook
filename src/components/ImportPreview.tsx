@@ -2,12 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { languageName, useLocale, useT } from '../i18n';
 import type { ImportCheck } from '../lib/importCheck';
 import type { ImportRecipeResult } from '../lib/importApi';
+import type { ImportSource } from '../lib/importFeedback';
 import { importPreviewRules, translatedPreviewDraft } from '../lib/importPreview';
 import { translateRecipe } from '../lib/translateApi';
 import { SpinnerIcon } from '../lib/icons';
 import type { Recipe, RecipeDraft } from '../lib/types';
 import { inputFocus } from '../lib/uiClasses';
 import CreateRecipeForm, { type CreateRecipeSubmitStatus } from './CreateRecipeForm';
+import ImportFeedbackCard from './ImportFeedbackCard';
+import ImportFeedbackRating from './ImportFeedbackRating';
 import ImportWarningList from './ImportWarningList';
 import LanguagePicker from './LanguagePicker';
 
@@ -29,6 +32,7 @@ function pastedImport(recipe: RecipeDraft): boolean {
  */
 export default function ImportPreview({
   result,
+  feedbackSource,
   collectionId,
   formId,
   onSubmitStatusChange,
@@ -36,6 +40,7 @@ export default function ImportPreview({
   onCancel,
 }: {
   result: ImportRecipeResult;
+  feedbackSource: ImportSource;
   collectionId?: string;
   formId?: string;
   onSubmitStatusChange?: (status: CreateRecipeSubmitStatus) => void;
@@ -219,6 +224,12 @@ export default function ImportPreview({
       ? t('import.looksLike', { language: guessedName ?? sourceLang })
       : t('import.couldNotTellLanguage');
   const shown = displayed === 'translated' && held ? held.recipe : original;
+  // A report always carries the extraction (`original`), never the person's edits.
+  const feedbackResult = {
+    recipe: original,
+    translationFailed,
+    translatedTo: held !== undefined && !translationFailed ? held.target : undefined,
+  };
 
   return (
     <>
@@ -231,6 +242,17 @@ export default function ImportPreview({
             className="mt-1"
           />
         </div>
+      )}
+      {importCheck !== undefined && (
+        <ImportFeedbackCard
+          compact
+          input={{
+            trigger: 'warnings',
+            source: feedbackSource,
+            locale,
+            result: { ...feedbackResult, warnings: importCheck.warnings },
+          }}
+        />
       )}
 
       {translationFailed && (
@@ -300,6 +322,11 @@ export default function ImportPreview({
         onCreated={onCreated}
         onCancel={onCancel}
       />
+      {importCheck === undefined && (
+        <ImportFeedbackRating
+          input={{ source: feedbackSource, locale, result: feedbackResult }}
+        />
+      )}
     </>
   );
 }

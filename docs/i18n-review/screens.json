@@ -162,6 +162,30 @@
     "needsData": true
   },
   {
+    "id": "import-failed-feedback",
+    "route": "/import",
+    "setup": "From /import with bulk off, paste https://example.com/ and press Extract recipe. Stop when the error and the \"Help fix this import\" card show under it. Open \"Add a note (optional)\" and \"What's included\". Do not press Send report: it stores a report in production Firestore. The sent and could-not-send states are not captured (mark skipped: writes data). Extraction calls Gemini and writes nothing.",
+    "needsData": false
+  },
+  {
+    "id": "import-preview-feedback",
+    "route": "/import",
+    "setup": "From /import with bulk off, paste recipe text that has a title and ingredients but no steps (for example \"Pancakes\\n\\nIngredients:\\n- 2 eggs\\n- 1 cup flour\\n- 1 cup milk\") and press Extract recipe. Stop when the preview shows the warning box and, right below it, the \"Help fix this import\" card. Open \"Add a note (optional)\" and \"What's included\". If no warning box appears, mark skipped: needs data. Do not press Send report or Save.",
+    "needsData": true
+  },
+  {
+    "id": "import-preview-rating",
+    "route": "/import",
+    "setup": "From /import with bulk off, extract one clean recipe (a single https recipe URL, or full recipe text with steps). Scroll below the form to the \"How did this import go?\" row with thumbs up and down; their names are aria-labels. Capture it, then press thumbs down and capture the card that replaces the row. Do not press thumbs up, Send report, or Save.",
+    "needsData": false
+  },
+  {
+    "id": "import-bulk-feedback",
+    "route": "/import",
+    "setup": "After a bulk import finished with at least one failed or needs-attention row: press that row's \"Report a problem\" and capture the expanded card. Bulk import saves recipes, so the review does not run one; capture this only if a bulk summary is already on screen from the person running the review, otherwise mark skipped: needs data. Do not press Send report, Retry, or Try again.",
+    "needsData": true
+  },
+  {
     "id": "recipe-view-translate-labelled",
     "route": "/recipe/:id",
     "setup": "An owned recipe whose language label differs from the UI language, so the meta line (prep/cook, or the line alone when the recipe has no times) shows the idle chip \"{language} · Translate\". Do not tap the chip. If every owned recipe is unlabelled or already in the UI language, mark skipped: needs data.",
