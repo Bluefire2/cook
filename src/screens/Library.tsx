@@ -44,6 +44,7 @@ import { useMountedFlow } from '../lib/useMountedFlow';
 import { useSyncStatus } from '../lib/syncEngine';
 import { AssistantEntryLink } from '../agent/index';
 import {
+  backLink,
   chipClass,
   dangerBtn,
   ghostBtn,
@@ -863,6 +864,20 @@ export default function Library() {
             );
           })}
         </ul>
+      )}
+
+      {sessionStatus === 'signedIn' && recipes !== undefined && !selecting && (
+        // Quiet on purpose: after the last card, centered so the + button never covers it.
+        <p className="mt-6 text-center text-sm text-ink-subtle">
+          {t('library.suggestPrompt')}{' '}
+          <Link
+            to="/suggest"
+            state={{ from: 'library' }}
+            className={`${backLink} inline-block py-3 underline underline-offset-2`}
+          >
+            {t('library.suggestLink')}
+          </Link>
+        </p>
       )}
 
       {menuId !== null && !selecting && (

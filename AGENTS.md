@@ -68,6 +68,19 @@ read-only. Storage location and the full field-by-field schema are in
 `docs/plans/import-feedback.md` (Where reports are stored, Report schema);
 change that section with `ImportFeedbackDoc`.
 
+Feature requests (`docs/plans/feature-requests.md`): a member sends a
+suggestion from `/suggest` (`POST /api/feature-request`,
+`server/featureRequest.ts`, `withMembership`), opened from a muted line under
+the library list or the Feedback section in Settings; there is no header
+control. Suggestions live in top-level Firestore `featureRequests/{id}`
+(client UUID, `create()`, gRPC 6 is success), never under `users/{uid}`,
+never synced or backed up, with a one-year TTL on `expireAt`. A suggestion
+holds the text, `contactOk`, and three context fields, never the email; the
+read-only `scripts/feature-requests.ts` looks the email up from `sub` only
+when `contactOk` is true. The `feature_request` log line never holds the
+text. `/privacy` describes both; change it with them, and change the schema
+section in the plan with `FeatureRequestDoc`.
+
 No server log line may contain an email address or a link token. Invite
 (`/invite/<token>`) and collection-link (`/c/<token>`) pages send
 `Referrer-Policy: no-referrer` so the token never rides a `Referer`, and the
@@ -469,6 +482,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/library-agent.md` | Merged (#34), not deployed. App-level assistant: read-only tools over the user's own library, modular cards (shopping list first), ephemeral threads. |
 | `docs/plans/import-reliability.md` | Phase 2 built on `claude/import-reliability-plan-170fa6`, not deployed. Typed import warnings stored as optional `Recipe.importCheck`, deterministic checks, retries (constant at 0 until phase 3), warning UI. Import logging is #102 (merged, not deployed). Phase 1 still waits on the reporter's failing URLs; phase 3 waits on a deploy and data. |
 | `docs/plans/import-feedback.md` | Merged (#107), not deployed. Optional import reports after a failed or flagged import, 👍/👎 on clean previews, stored in Firestore `importFeedback` for 180 days. TTL policy on `expireAt` applied 2026-10-01. |
+| `docs/plans/feature-requests.md` | Built on `claude/feature-requests`, not deployed. `/suggest` page, stored in Firestore `featureRequests` for one year; TTL policy on `expireAt` is an owner step. |
 | `docs/plans/agent-collection-moves.md` | Built, not deployed. `propose_collection_move` / `collection_move` v1 proposal card; client apply via `collectionStore.moveRecipes`. |
 | `docs/plans/html-parser-recipe-import.md` | Built on `cursor/html-parser-recipe-import-11d4`. Not deployed. Replace the hand-rolled HTML scanner in `server/recipeImport.ts` with parse5 (issue #91). |
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |

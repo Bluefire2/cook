@@ -20,7 +20,7 @@
   {
     "id": "library-populated",
     "route": "/",
-    "setup": "Signed in on the Recipes list (/) or an own named collection (/collections/<id>) that already shows at least one recipe card. Prefer / when it has cards. The collections section sits on the page background between the header and search: a Collections label with a folder icon (it links to the index), New collection on the right, and one sideways row of chips starting with Recipes. On an owned named collection, Share, Rename, and Delete are plain text under the chips. There is no card around the section. Do not press New collection, Share, Rename, or Delete, and do not create a recipe. If nothing is listed, mark skipped: needs data. A signed-in header shows the Ask (chat bubble) and Invite (person with a plus) icons before Cooks; their names are aria-labels. Do not click Invite.",
+    "setup": "Signed in on the Recipes list (/) or an own named collection (/collections/<id>) that already shows at least one recipe card. Prefer / when it has cards. The collections section sits on the page background between the header and search: a Collections label with a folder icon (it links to the index), New collection on the right, and one sideways row of chips starting with Recipes. On an owned named collection, Share, Rename, and Delete are plain text under the chips. There is no card around the section. Do not press New collection, Share, Rename, or Delete, and do not create a recipe. If nothing is listed, mark skipped: needs data. A signed-in header shows the Ask (chat bubble) and Invite (person with a plus) icons before Cooks; their names are aria-labels. Do not click Invite. Below the last card, a centered muted line reads \"Missing something?\" followed by a Suggest a feature link; scroll to it and check it fits on one or two lines. Do not open it here.",
     "needsData": true
   },
   {
@@ -62,7 +62,25 @@
   {
     "id": "settings",
     "route": "/settings",
-    "setup": "Settings while signed in, with the language picker visible under Appearance. Do not export, import a backup, refresh in order to force a toast, or sign out.",
+    "setup": "Settings while signed in, with the language picker visible under Appearance. Scroll to the Feedback section above the About, Privacy, and Terms links; it has one line of text and a Suggest a feature button. Do not export, import a backup, refresh in order to force a toast, or sign out.",
+    "needsData": false
+  },
+  {
+    "id": "suggest",
+    "route": "/suggest",
+    "setup": "Signed in, Suggest a feature page opened from the library link (back link says Library). Shows an intro line, the Your idea box with its placeholder, the email-me checkbox with its hint, a collapsed \"What's included\" disclosure (open it), and a disabled Send suggestion button. Type at least 3850 characters (e.g. repeat a short sentence) so the characters-left count appears under the box, then clear it. Do not press Send.",
+    "needsData": false
+  },
+  {
+    "id": "suggest-sent",
+    "route": "/suggest",
+    "setup": "Signed in, after sending a suggestion: the form is replaced by the thanks line, a back link button, and Suggest something else. Only reach this against a dev server using the Firestore emulator (FIRESTORE_EMULATOR_HOST); against real Firestore, mark skipped: needs data rather than sending.",
+    "needsData": true
+  },
+  {
+    "id": "suggest-signed-out",
+    "route": "/suggest",
+    "setup": "Signed out, open /suggest directly: the title, a sentence asking you to sign in, and the Google sign-in button. Do not press it.",
     "needsData": false
   },
   {
