@@ -512,6 +512,7 @@ export const en = {
   'error.collectionCap': 'You can have up to {max} collections.',
   'error.collectionNameEmpty': 'Name this collection.',
   'error.collectionNameLong': 'Keep the name under {max} characters.',
+  'error.collectionNameTaken': 'A collection named {name} already exists.',
   'error.sharingLoad': "Couldn't load sharing.",
   'error.sharingUpdate': "Couldn't update sharing.",
   'error.sharingUnavailable': 'Sharing is temporarily unavailable.',
@@ -635,6 +636,19 @@ export const en = {
   'assistant.moveShowLess': 'Show fewer',
   'assistant.move': 'Move',
   'assistant.moving': 'Moving…',
+  'assistant.preparingCollection': 'Preparing a collection…',
+  'assistant.createHeading': {
+    one: 'Create {name} with {count} recipe',
+    other: 'Create {name} with {count} recipes',
+  },
+  'assistant.createHeadingEmpty': 'Create {name}',
+  'assistant.createApplied': {
+    one: 'Created {name} with {count} recipe',
+    other: 'Created {name} with {count} recipes',
+  },
+  'assistant.createAppliedEmpty': 'Created {name}',
+  'assistant.create': 'Create',
+  'assistant.creating': 'Creating…',
 } as const satisfies Record<string, string | PluralForms>;
 
 type EnMessages = typeof en;
