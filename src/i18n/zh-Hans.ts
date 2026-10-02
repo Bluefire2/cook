@@ -87,6 +87,7 @@ export const zhHans: Messages = {
     other: '已选 {count} 个食谱',
   },
   'library.selectAll': '全选',
+  'library.selectNone': '取消全选',
   'library.moveSelected': '移动',
   'library.moveManyTitle': {
     other: '移动 {count} 个食谱',

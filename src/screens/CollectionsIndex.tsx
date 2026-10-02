@@ -2,7 +2,7 @@ import { useMemo, useReducer } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import CreateCollectionSheet from '../components/CreateCollectionSheet';
 import { useT } from '../i18n';
-import { libraryHref, libraryReturnPath } from '../lib/collectionHref';
+import { libraryHref, libraryPathFromState } from '../lib/collectionHref';
 import { recipeCounts } from '../lib/collectionMembership';
 import { collectionStore, useCollections } from '../lib/collectionStore';
 import {
@@ -18,13 +18,6 @@ import { useSession } from '../lib/session';
 import { useMountedFlow } from '../lib/useMountedFlow';
 import type { Collection } from '../lib/types';
 import { backLink } from '../lib/uiClasses';
-
-function fromPath(state: unknown): unknown {
-  if (state !== null && typeof state === 'object' && 'from' in state) {
-    return state.from;
-  }
-  return undefined;
-}
 
 /**
  * The list of collections. Rows only switch; share, rename, and delete stay
@@ -88,7 +81,7 @@ export default function CollectionsIndex() {
   return (
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
-        <Link to={libraryReturnPath(fromPath(location.state))} className={backLink}>
+        <Link to={libraryPathFromState(location.state) ?? '/'} className={backLink}>
           &larr; {t('common.library')}
         </Link>
         <h1 className="mt-2 text-2xl font-bold">{t('library.collectionsNav')}</h1>

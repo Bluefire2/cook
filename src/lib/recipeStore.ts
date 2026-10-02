@@ -24,7 +24,12 @@ import {
   upsertCollection,
   type LibraryAccess,
 } from './libraryMemory';
-import { selectRecipe, selectRecipeAccess, selectRecipeSharedBy } from './librarySelectors';
+import {
+  selectRecipe,
+  selectRecipeAccess,
+  selectRecipeCollectionId,
+  selectRecipeSharedBy,
+} from './librarySelectors';
 import { useLibrarySelect, useLibrarySlice } from './useLibrary';
 import { fetchPhotoBlobOutcome, postPhoto, pushOps, type RemoteResult } from './remote';
 import { photoStore } from './photoStore';
@@ -871,6 +876,14 @@ export function useRecipe(id: string | undefined): Recipe | null | undefined {
 /** Reactive email of whoever shared this recipe with you, when known. */
 export function useRecipeSharedBy(id: string | undefined): string | undefined {
   return useLibrarySelect(selectRecipeSharedBy(id));
+}
+
+/**
+ * Reactive collection this recipe is filed in. `undefined` while the library
+ * is loading and when the recipe is unfiled.
+ */
+export function useRecipeCollectionId(id: string | undefined): string | undefined {
+  return useLibrarySelect(selectRecipeCollectionId(id));
 }
 
 /** Reactive access to one recipe; `undefined` when it is not in the library. */

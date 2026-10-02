@@ -110,6 +110,7 @@ export const en = {
     other: '{count} recipes selected',
   },
   'library.selectAll': 'Select all',
+  'library.selectNone': 'Select none',
   'library.moveSelected': 'Move',
   'library.moveManyTitle': {
     one: 'Move {count} recipe',
