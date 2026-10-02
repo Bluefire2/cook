@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { MCP_ACCOUNT_DATA } from '../server/mcp/oauth/store.ts';
 
 // Rules from AGENTS.md that a grep can check. Each failure message names the
 // rule so the fix is to follow it, not to loosen the check.
@@ -197,6 +198,70 @@ describe('server', () => {
       .filter((path) => !isTestFile(path))
       .flatMap((path) => matchingLines(path, /\bResponse\.redirect\s*\(/));
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('auth surfaces (Auth and Public MCP in AGENTS.md)', () => {
+  const productionTs = () =>
+    ['server', 'api', 'scripts']
+      .flatMap((dir) => filesUnder(dir, ['.ts']))
+      .filter((path) => !isTestFile(path));
+
+  it('header-session auth stays extension-only', () => {
+    // The X-Sous-Session exception is POST /api/extension/import alone; session.ts
+    // defines readHeaderSession and membership.ts wraps it.
+    const users = productionTs()
+      .filter((path) => matchingLines(path, /\b(?:readHeaderSession|requireHeaderMember)\b/).length > 0)
+      .sort();
+    expect(users).toEqual(['server/extensionImport.ts', 'server/membership.ts', 'server/session.ts']);
+  });
+
+  it('under server/mcp/, only the consent pages and the Settings routes touch cookies or sessions', () => {
+    // /mcp and /oauth/token read a bearer or a form body, never a cookie.
+    const offenders = productionTs()
+      .filter((path) => path.startsWith('server/mcp/'))
+      .filter((path) => path !== 'server/mcp/oauth/authorize.ts' && path !== 'server/mcp/grantsHttp.ts')
+      .flatMap((path) => matchingLines(path, /\b(?:readSession|readCookie|requireMember)\b/));
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('account deletion covers connected apps (Public MCP in AGENTS.md)', () => {
+  it('every collection server/mcp/ writes is in MCP_ACCOUNT_DATA', () => {
+    // /privacy promises a deletion request removes connected apps and their
+    // tokens; scripts/delete-mcp-data.ts deletes exactly MCP_ACCOUNT_DATA.
+    const files = filesUnder('server/mcp', ['.ts']).filter((path) => !isTestFile(path));
+    const constants = new Map<string, string>();
+    for (const path of files) {
+      for (const match of read(path).matchAll(/export const (\w+) = '([^']+)';/g)) {
+        constants.set(match[1], match[2]);
+      }
+    }
+    const listed = new Set<string>(MCP_ACCOUNT_DATA.map((entry) => entry.collection));
+    const offenders: string[] = [];
+    for (const path of files) {
+      for (const match of read(path).matchAll(/\.collection\(([^)]*)\)/g)) {
+        const arg = match[1].trim();
+        // listMcpAccountData walks MCP_ACCOUNT_DATA itself.
+        if (arg === 'entry.collection') continue;
+        const name = /^'[^']+'$/.test(arg) ? arg.slice(1, -1) : constants.get(arg);
+        // `users` is only the parent of users/{sub}/mcpGrants, which the
+        // users/{sub} recursive delete also removes.
+        if (name === undefined || (name !== 'users' && !listed.has(name))) {
+          offenders.push(`${path}: .collection(${arg})`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('the README deletion procedure runs scripts/delete-mcp-data.ts', () => {
+    const readme = read('README.md');
+    const start = readme.indexOf('**Manual deletion procedure (operator)');
+    const end = readme.indexOf('There is **no automated purge job**', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(readme.slice(start, end)).toContain('scripts/delete-mcp-data.ts');
+    expect(existsSync(join(repoRoot, 'scripts/delete-mcp-data.ts'))).toBe(true);
   });
 });
 

@@ -202,12 +202,18 @@ No refresh tokens, no extra Google APIs, no Auth.js.
   cookie is not dependably attached to an extension-initiated request. Do not
   extend header auth to any other route, and do not add
   `Access-Control-Allow-Credentials` to this one.
+- **MCP bearer tokens are a separate family**, not the session token: `/mcp`
+  reads only `Authorization: Bearer sous_at_…` and `/oauth/token` only its
+  form body; neither reads a cookie, and no cookie route reads a bearer. See
+  Public MCP.
 - **Other cookies**, all HttpOnly, SameSite=Lax, HMAC-signed with
   `SESSION_SECRET`, 10 minutes, each its own `v` family so one never verifies
   as another: `sous_oauth` (oauth transaction), `sous_invite` (app invite
   hop), `sous_collection_link` (collection link hop, `v: 'clink'`,
-  **`Path=/c`**, carries the link's sha256 id, never the token). A new flow
-  gets a new cookie name and family; do not reuse one.
+  **`Path=/c`**, carries the link's sha256 id, never the token),
+  `sous_mcp_authz` (MCP authorization request hop, `v: 'mcpauthz'`,
+  **`Path=/oauth`**). A new flow gets a new cookie name and family; do not
+  reuse one.
 - OAuth callback **must not** use `Response.redirect()` (immutable Headers;
   `Set-Cookie` would be dropped). Build a `Response` with a `Location` header
   and always clear `sous_oauth`.
@@ -415,11 +421,80 @@ it exercises the real delete path.
 - Polling sync, Firestore listeners, WebSockets
 - Conflict-merge UI (LWW is the product)
 
+## Public MCP
+
+A remote MCP server lets a member's AI app (claude.ai, Claude Code, any MCP
+client) read and edit their own recipes (`docs/plans/mcp-server.md`). The code
+is `server/mcp/`; `scripts/server.ts` imports only `server/mcp/index.ts`.
+
+- **Routes.** `POST /mcp` (Streamable HTTP, stateless, JSON responses; `GET`
+  and `DELETE` are 405), `GET /.well-known/oauth-protected-resource[/mcp]`,
+  `GET /.well-known/oauth-authorization-server`, `GET /oauth/authorize`,
+  `GET|POST /oauth/consent`, `POST /oauth/token`, `POST /oauth/revoke`, and
+  for Settings `GET /api/mcp/grants` and `POST /api/mcp/grants/revoke`
+  (cookie session). The dispatcher matches the non-`/api/` ones
+  (`matchMcpRoute`) before the static and SPA fallback, also with
+  `staticRoot: null`. Vite proxies `^/mcp$`, `^/oauth/` and
+  `^/\.well-known/oauth-` to 3001, and the PWA denylist covers them.
+- **Its own OAuth 2.1 server.** Clients identify with Client ID Metadata
+  Documents (CIMD); there is no dynamic client registration and no client
+  database. The authorization server metadata must keep
+  `client_id_metadata_document_supported: true` and `"none"` in
+  `token_endpoint_auth_methods_supported`, or Claude falls back to DCR, which
+  Sous does not offer. PKCE S256 only. The consent step is server HTML
+  (English, i18n principle 9) following the `/c/join` pattern: the
+  `sous_mcp_authz` hop cookie, a nonce, `sameOriginPost`, `Referrer-Policy:
+  same-origin`, `frame-ancestors 'none'`. Sous fetches a client's metadata
+  document only once a member session exists, through the SSRF-safe pinned
+  fetch in `oauth/clientMetadata.ts`.
+- **Tokens.** Opaque `sous_at_` (1 h) and `sous_rt_` (30 days, rotated on
+  every use) tokens, stored only as sha256 hashes; they are not HMAC-signed
+  and do not depend on `SESSION_SECRET`. `/mcp` reads the bearer from
+  `Authorization` only and `/oauth/token` reads only its form body; neither
+  reads a cookie. The `X-Sous-Session` header exception stays
+  extension-only. Every `/mcp` call re-reads the token and its grant (no
+  cache, so a revoke works on the next call), then runs `memberFromIdentity`
+  on the grant's `{ sub, email }`: denied is 401 with `WWW-Authenticate:
+  Bearer … resource_metadata=…`, unknown is 503, never 401. A write tool on a
+  read-only grant is 403 `insufficient_scope` (step-up). The gate runs before
+  the MCP SDK, so a refusal is never a 200 tool error.
+- **Tools.** `search_recipes`, `get_recipes`, `list_collections`
+  (`recipes:read`), `create_recipe`, `update_recipe` (`recipes:write`), own
+  tree only, via the agent's `loadAgentLibrary`. No delete, no collection
+  writes, no photos, sharing, cook log, chat, translation, or import.
+  `update_recipe` needs the stored `updatedAt` as `version` (else
+  `conflict`), patches fields, and writes through `updateOwnRecipe`; the
+  server stamps every time (`nextRecipeUpdatedAt`). Input is validated
+  strictly (`server/mcp/recipeInput.ts`), never repaired.
+- **SDK.** `@modelcontextprotocol/sdk`, low-level `Server` plus
+  `WebStandardStreamableHTTPServerTransport`, built per request. Its
+  transitive dependencies (express, hono, …) ship in the image unused.
+- **Logs.** One `event: 'mcp'` line per `/mcp` request and one `event:
+  'mcp_oauth'` line per authorize, consent, token or revoke step
+  (`server/mcp/log.ts`). Never arguments, recipe text, tokens, codes,
+  `state`, the email, or a full `redirect_uri`. `/privacy` and `/terms`
+  describe them, and connected apps; change them with it.
+- **Storage.** Top-level `mcpAuthCodes/{sha256(code)}` and
+  `mcpTokens/{sha256(token)}`, each with `expireAt` for a TTL policy (owner
+  step, after deploy), and `users/{sub}/mcpGrants/{grantId}`. Because codes
+  and tokens sit outside `users/{uid}`, an account deletion request runs
+  `scripts/delete-mcp-data.ts <sub>` (dry run, then `--apply`; README step 7),
+  which deletes every collection in `MCP_ACCOUNT_DATA`. A new MCP collection
+  goes in that list; `scripts/invariants.test.ts` fails otherwise.
+- **Rate limits.** Per instance, per `sub` and grant: 300 reads and 60 writes
+  an hour (`admitTranslateCall`'s window, own buckets); uncached client
+  metadata fetches at 30 a minute.
+
 ## Agent module
 
 The library assistant (`POST /api/agent`, screen `/assistant`) is a module.
 Public entry points are `agentPost` from `server/agent/index.ts` and
-`AssistantScreen` / `AssistantEntryLink` from `src/agent/index.ts`. Nothing
+`AssistantScreen` / `AssistantEntryLink` from `src/agent/index.ts`.
+`server/agent/index.ts` also exports the agent's read surface over a member's
+own library, which the MCP tools reuse: `loadAgentLibrary`,
+`narrowAgentRecipe`, `winningMembership`, `searchRecipesPage` (the agent's
+`searchRecipes` is its first page), and the `AgentLibrary`, `AgentRecipe`,
+`AgentCollection`, `SearchRecipesArgs` and `SearchRecipeHit` types. Nothing
 outside those directories imports agent internals. Wiring outside the module
 is one route line in `scripts/server.ts`, one route in `src/App.tsx`,
 `<AssistantEntryLink />` in `src/screens/Library.tsx`, `listLiveDocs` in
@@ -488,6 +563,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/agent-collection-moves.md` | Built, not deployed. `propose_collection_move` / `collection_move` v1 proposal card; client apply via `collectionStore.moveRecipes`. |
 | `docs/plans/html-parser-recipe-import.md` | Built on `cursor/html-parser-recipe-import-11d4`. Not deployed. Replace the hand-rolled HTML scanner in `server/recipeImport.ts` with parse5 (issue #91). |
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |
+| `docs/plans/mcp-server.md` | Built on `claude/llm-api-vs-mcp-04b215`, not deployed. Remote MCP server at `/mcp` with its own OAuth 2.1 authorization server (CIMD clients, no DCR): search, get, list collections, create and edit (with a version check) over the member's own recipes. No delete. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not

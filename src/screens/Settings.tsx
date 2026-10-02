@@ -1,7 +1,13 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { isSupportedLocale, localeDisplayName, SUPPORTED_LOCALES, t as translate, useLocale, useT } from '../i18n';
 import { exportLibrary, importLibrary } from '../lib/backup';
+import {
+  disconnectApp,
+  listConnectedApps,
+  mcpServerUrl,
+  type ConnectedApp,
+} from '../lib/connectedAppsApi';
 import { createMemberInvite } from '../lib/inviteApi';
 import { relativeAgoLabel } from '../lib/relativeTime';
 import { notifyImportComplete, sync, useSyncStatus } from '../lib/syncEngine';
@@ -77,6 +83,137 @@ function MemberInvite() {
           </button>
         </div>
       )}
+    </section>
+  );
+}
+
+/**
+ * AI apps connected through the MCP server. The list is this component's own
+ * state, loaded when Settings opens; nothing else reads it.
+ */
+function ConnectedApps() {
+  const t = useT();
+  const [apps, setApps] = useState<ConnectedApp[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const mountedRef = useRef(true);
+  const serverUrl = mcpServerUrl(window.location.origin);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    let cancelled = false;
+    listConnectedApps().then(
+      (list) => {
+        if (!cancelled) setApps(list);
+      },
+      (e: unknown) => {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : translate('common.somethingWentWrong'));
+      },
+    );
+    return () => {
+      cancelled = true;
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const disconnect = async (app: ConnectedApp) => {
+    setPendingId(app.id);
+    setDisconnectError(null);
+    try {
+      await disconnectApp(app.id);
+      if (mountedRef.current) {
+        setApps((current) => current?.filter((row) => row.id !== app.id) ?? current);
+      }
+    } catch {
+      if (mountedRef.current) {
+        setDisconnectError(translate('settings.connectedAppsDisconnectError', { app: app.clientHost }));
+      }
+    } finally {
+      if (mountedRef.current) setPendingId(null);
+    }
+  };
+
+  const copyServerUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(serverUrl);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <section>
+      <h2 className="mt-8 text-lg font-semibold">{t('settings.connectedApps')}</h2>
+      <p className="mt-1 text-sm text-ink-muted">{t('settings.connectedAppsIntro')}</p>
+      {apps === null && loadError === null && (
+        <p className="mt-3 text-sm text-ink-muted">{t('common.loading')}</p>
+      )}
+      {loadError !== null && <p className="mt-3 text-sm text-danger">{loadError}</p>}
+      {apps !== null && apps.length === 0 && (
+        <div className="mt-3 rounded-2xl border border-line bg-surface p-4 shadow-sm">
+          <p className="text-sm">{t('settings.connectedAppsEmpty')}</p>
+          <label className="mt-2 block text-xs text-ink-muted" htmlFor="mcp-server-url">
+            {t('settings.connectedAppsServerUrl')}
+          </label>
+          <input
+            id="mcp-server-url"
+            className={`${inputClass} mt-1 font-mono text-sm`}
+            readOnly
+            value={serverUrl}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+          <button
+            type="button"
+            onClick={() => void copyServerUrl()}
+            className={`${secondaryBtn} mt-2 px-3 py-1.5 text-sm`}
+          >
+            {copied ? t('admin.copied') : t('admin.copy')}
+          </button>
+        </div>
+      )}
+      {apps !== null && apps.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {apps.map((app) => (
+            <li key={app.id} className="rounded-2xl border border-line bg-surface p-4 shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium">{app.clientHost}</p>
+                  {app.clientName !== undefined && (
+                    <p className="truncate text-sm text-ink-muted">
+                      {t('settings.connectedAppsSelfName', { name: app.clientName })}
+                    </p>
+                  )}
+                  <p className="mt-1 text-sm">
+                    {app.canEdit ? t('settings.connectedAppsCanEdit') : t('settings.connectedAppsCanRead')}
+                  </p>
+                  <p className="mt-1 text-xs text-ink-muted">
+                    {t('settings.connectedAppsConnected', { time: relativeAgoLabel(app.createdAt) })}
+                  </p>
+                  {app.lastUsedAt !== undefined && (
+                    <p className="text-xs text-ink-muted">
+                      {t('settings.connectedAppsLastUsed', { time: relativeAgoLabel(app.lastUsedAt) })}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void disconnect(app)}
+                  disabled={pendingId !== null}
+                  className={`${secondaryBtn} shrink-0 px-3 py-1.5 text-sm disabled:opacity-40`}
+                >
+                  {pendingId === app.id
+                    ? t('settings.connectedAppsDisconnecting')
+                    : t('settings.connectedAppsDisconnect')}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {disconnectError !== null && <p className="mt-2 text-sm text-danger">{disconnectError}</p>}
     </section>
   );
 }
@@ -239,6 +376,8 @@ export default function Settings() {
           </div>
         </>
       )}
+
+      {sessionStatus === 'signedIn' && <ConnectedApps />}
 
       <h2 className="mt-8 text-lg font-semibold">{t('settings.appearance')}</h2>
       <div className="mt-3 flex gap-2">

@@ -456,7 +456,22 @@ their client push it back on the next sync.
    `C:\Users\chern\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd`
    instead of `gcloud`.
 
-7. Verify all four are gone: `members/{sub}`, `accessRequests/{sub}`, the
-   `users/{sub}` subtree, and the bucket prefix under `users/<SUB>/`.
+7. Delete connected-app data. Authorization codes and tokens are top-level
+   (`mcpAuthCodes`, `mcpTokens`, found by `sub`), so step 4 does not reach
+   them. Dry run, then apply; the apply reads back and fails if anything
+   remains:
+
+   ```bash
+   node --env-file=.env.local scripts/delete-mcp-data.ts <SUB>
+   node --env-file=.env.local scripts/delete-mcp-data.ts <SUB> --apply
+   ```
+
+   It also deletes `users/{sub}/mcpGrants`, so it works before or after
+   step 4. Run it after step 2: before that, a connected app could still
+   refresh and mint a new token.
+
+8. Verify all five are gone: `members/{sub}`, `accessRequests/{sub}`, the
+   `users/{sub}` subtree, the bucket prefix under `users/<SUB>/`, and
+   connected-app data (a dry run of step 7 prints 0 for every collection).
 
 There is **no automated purge job** for access-request or membership records.

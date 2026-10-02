@@ -8,7 +8,9 @@
  * by `scripts/dev-api-server.ts`. With `staticRoot: null`, `/privacy`,
  * `/terms`, and `/about` return 404 on this port; Vite serves `public/` on
  * :5173 in dev. `/invite/:token` and the collection-link pages under `/c/`
- * are handled here in both modes (Vite proxies `/invite` and `/c/`).
+ * are handled here in both modes (Vite proxies `/invite` and `/c/`), as are
+ * the MCP server's `/mcp`, `/oauth/*`, and `/.well-known/oauth-*` (Vite
+ * proxies those too).
  *
  * Requires Node 22.18+ for native TypeScript type stripping.
  */
@@ -52,6 +54,7 @@ import { inviteLandingGet } from '../server/invites.ts';
 import { withMembership } from '../server/membership.ts';
 import { photosGet, photosPost } from '../server/photos.ts';
 import { agentPost } from '../server/agent/index.ts';
+import { matchMcpRoute, mcpGrantsGet, mcpGrantsRevokePost } from '../server/mcp/index.ts';
 import { sttPost } from '../server/stt.ts';
 import { translatePost } from '../server/translateRoute.ts';
 import {
@@ -96,6 +99,8 @@ const apiRoutes: ApiRoute[] = [
   { method: 'POST', path: '/api/shared/leave', handler: sharedLeavePost },
   { method: 'POST', path: '/api/extension/import', handler: extensionImport },
   { method: 'OPTIONS', path: '/api/extension/import', handler: extensionImportOptions },
+  { method: 'GET', path: '/api/mcp/grants', handler: mcpGrantsGet },
+  { method: 'POST', path: '/api/mcp/grants/revoke', handler: mcpGrantsRevokePost },
 ];
 
 const PUBLIC_HTML: Record<string, string> = {
@@ -177,6 +182,20 @@ async function handleRequest(
 
     if (decodedPath.startsWith('/api/')) {
       await handleApi(nodeReq, nodeRes, decodedPath, method);
+      return;
+    }
+
+    const mcpHandler = matchMcpRoute(decodedPath, method);
+    if (mcpHandler !== null) {
+      if (mcpHandler === 'notFound') {
+        sendText(nodeReq, nodeRes, 404, 'Not found');
+        return;
+      }
+      if (mcpHandler === 'wrongMethod') {
+        sendText(nodeReq, nodeRes, 405, 'Method not allowed');
+        return;
+      }
+      await dispatchFetch(nodeReq, nodeRes, decodedPath, method, mcpHandler);
       return;
     }
 

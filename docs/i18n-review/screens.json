@@ -90,6 +90,24 @@
     "needsData": true
   },
   {
+    "id": "settings-connected-apps-empty",
+    "route": "/settings",
+    "setup": "Settings while signed in, scrolled to Connected apps (after Library, before Appearance), in an account with no connected AI apps: the intro sentence, \"No apps connected.\", the server address label, the read-only https://…/mcp field, and Copy. Copy only touches the clipboard. Do not connect an app to change this state. If the account already has a connected app, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "settings-connected-apps-list",
+    "route": "/settings",
+    "setup": "Settings while signed in, scrolled to Connected apps, in an account with at least one connected AI app (connected from Claude or another MCP client through the consent page at /oauth/consent). Each row shows the app's host, a quoted \"Calls itself …\" line when the app named itself, Can read or Can read and edit, Connected … and Last used … times, and a Disconnect button. Do not press Disconnect (it revokes the app). If no app is connected, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "settings-connected-apps-disconnect-error",
+    "route": "/settings",
+    "setup": "Settings while signed in, Connected apps showing a list, after Disconnect failed: the row stays and a red \"Couldn't disconnect <host>. Try again.\" line shows under the list. Reaching it needs a revoke request that fails (for example the API dev server stopped after the list loaded); a successful press revokes the app, so do not press Disconnect against a working server. If the state cannot be reached without revoking, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
     "id": "admin",
     "route": "/admin",
     "setup": "The admin page as an owner sees it: pending, approved, declined, and invites. Do not approve, decline, mint, copy in a way that creates an invite, or revoke. If this session is not an owner, capture the error line the page already shows; do not change membership.",

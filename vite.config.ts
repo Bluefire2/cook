@@ -11,6 +11,10 @@ export default defineConfig({
       '/invite': 'http://localhost:3001',
       // Regex key: a plain '/c' prefix would also catch the SPA's /cooks.
       '^/c/': 'http://localhost:3001',
+      // The MCP server: its endpoint, the OAuth pages, and discovery.
+      '^/mcp$': 'http://localhost:3001',
+      '^/oauth/': 'http://localhost:3001',
+      '^/\\.well-known/oauth-': 'http://localhost:3001',
     },
   },
   plugins: [
@@ -41,6 +45,9 @@ export default defineConfig({
           /^\/about$/,
           /^\/invite\//,
           /^\/c\//,
+          /^\/mcp$/,
+          /^\/oauth\//,
+          /^\/\.well-known\//,
         ],
       },
       manifest: {
