@@ -1,4 +1,4 @@
-import { Storage } from '@google-cloud/storage';
+import { Storage, type File } from '@google-cloud/storage';
 import type { Transaction } from '@google-cloud/firestore';
 import { Readable } from 'node:stream';
 import { Transform } from 'node:stream';
@@ -612,6 +612,28 @@ export async function photosPost(req: Request): Promise<Response> {
   }
 }
 
+/**
+ * Reads a whole photo object into memory (uploads are capped at
+ * MAX_PHOTO_BYTES), or null when it is gone. Never hand GCS's
+ * `createReadStream()` to a response: when the client hangs up, destroying
+ * that stream makes the library call `agent.destroy()` on its shared
+ * keep-alive agent, which aborts every other in-flight GCS read, and either
+ * a late `aborted` error or an `ERR_STREAM_UNABLE_TO_PIPE` thrown inside the
+ * library then crashes the process. `download()` consumes the stream itself
+ * with its errors handled, and nothing here destroys it early.
+ */
+async function downloadPhotoBytes(file: File): Promise<Buffer | null> {
+  try {
+    const [buffer] = await file.download();
+    return buffer;
+  } catch (err: unknown) {
+    if (gcsErrorCode(err) === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
 export async function photosGet(req: Request): Promise<Response> {
   if (photoBucket() === null) {
     return photoStorageUnavailable();
@@ -676,9 +698,6 @@ export async function photosGet(req: Request): Promise<Response> {
     return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
   }
 
-  const nodeStream = file.createReadStream();
-  const webStream = Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
-
   const headers: Record<string, string> = {
     'Content-Type': contentType,
     'Cache-Control': 'private, no-store',
@@ -690,11 +709,14 @@ export async function photosGet(req: Request): Promise<Response> {
   }
 
   if (req.method === 'HEAD') {
-    nodeStream.destroy();
     return new Response(null, { status: 200, headers });
   }
 
-  return new Response(webStream, { status: 200, headers });
+  const bytes = await downloadPhotoBytes(file);
+  if (bytes === null) {
+    return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+  }
+  return new Response(bytes, { status: 200, headers });
   } catch (err) {
     console.error('photosGet store error:', err);
     return storeUnavailable();
