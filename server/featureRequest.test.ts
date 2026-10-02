@@ -10,10 +10,16 @@ const UUID = '00000000-0000-4000-8000-000000000000';
 const NOW = 1_700_000_000_000;
 const CTX = { authorizedSub: 'sub-1' };
 
+/** An in-memory store: `create` rejects a repeat id with gRPC 6, like Firestore. */
 function fakeDeps() {
-  const create = vi.fn<FeatureRequestDeps['create']>(async () => {});
-  const deps: FeatureRequestDeps = { create, now: () => NOW };
-  return { deps, create };
+  const docs = new Map<string, { sub: string }>();
+  const create = vi.fn<FeatureRequestDeps['create']>(async (id, doc) => {
+    if (docs.has(id)) throw Object.assign(new Error('6 ALREADY_EXISTS: x'), { code: 6 });
+    docs.set(id, doc);
+  });
+  const sentBy = vi.fn<FeatureRequestDeps['sentBy']>(async (id, sub) => docs.get(id)?.sub === sub);
+  const deps: FeatureRequestDeps = { create, sentBy, now: () => NOW };
+  return { deps, create, sentBy, docs };
 }
 
 function request(body: unknown, rawBody?: string): Request {
@@ -164,7 +170,7 @@ describe('featureRequestPost', () => {
     expect(JSON.parse(loggedLines()[0])).toMatchObject({ status: 500 });
   });
 
-  it('rate-limits each sub to 5 an hour', async () => {
+  it('rate-limits each sub to 5 new suggestions an hour', async () => {
     const { deps } = fakeDeps();
     const post = (sub: string) =>
       featureRequestPost(
@@ -179,6 +185,76 @@ describe('featureRequestPost', () => {
     expect(limited.status).toBe(429);
     expect(await limited.json()).toMatchObject({ code: 'feature-request-rate-limited' });
     expect((await post('sub-2')).status).toBe(204);
+  });
+
+  it('frees the window after an hour', async () => {
+    const { deps } = fakeDeps();
+    let now = NOW;
+    deps.now = () => now;
+    const post = () => featureRequestPost(request({ id: crypto.randomUUID(), text: 'x' }), CTX, deps);
+    for (let i = 0; i < 5; i++) await post();
+    expect((await post()).status).toBe(429);
+    now += 60 * 60 * 1000;
+    expect((await post()).status).toBe(204);
+  });
+
+  it('does not spend a slot on a store failure', async () => {
+    const { deps, create } = fakeDeps();
+    create.mockRejectedValue(Object.assign(new Error('14 UNAVAILABLE'), { code: 14 }));
+    for (let i = 0; i < 6; i++) {
+      const failed = await featureRequestPost(request({ id: crypto.randomUUID(), text: 'x' }), CTX, deps);
+      expect(failed.status).toBe(503);
+    }
+    create.mockReset();
+    create.mockResolvedValue(undefined);
+    const ok = await featureRequestPost(request({ id: crypto.randomUUID(), text: 'x' }), CTX, deps);
+    expect(ok.status).toBe(204);
+  });
+
+  it('does not spend a slot on a resend', async () => {
+    const { deps, docs } = fakeDeps();
+    for (let i = 0; i < 4; i++) {
+      await featureRequestPost(request({ id: crypto.randomUUID(), text: 'x' }), CTX, deps);
+    }
+    for (let i = 0; i < 3; i++) {
+      expect((await featureRequestPost(request({ id: UUID, text: 'x' }), CTX, deps)).status).toBe(204);
+    }
+    expect(docs.size).toBe(5);
+    // Only the first of the three created a document: 4 + 1 slots, so the window is full now.
+    const over = await featureRequestPost(request({ id: crypto.randomUUID(), text: 'x' }), CTX, deps);
+    expect(over.status).toBe(429);
+  });
+
+  it('answers a resend of a stored suggestion with 204 when the window is full', async () => {
+    const { deps, create } = fakeDeps();
+    for (let i = 0; i < 4; i++) {
+      await featureRequestPost(request({ id: crypto.randomUUID(), text: 'x' }), CTX, deps);
+    }
+    expect((await featureRequestPost(request({ id: UUID, text: 'x' }), CTX, deps)).status).toBe(204);
+    create.mockClear();
+    const resend = await featureRequestPost(request({ id: UUID, text: 'x' }), CTX, deps);
+    expect(resend.status).toBe(204);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("does not let a full window confirm another sub's suggestion", async () => {
+    const { deps } = fakeDeps();
+    await featureRequestPost(request({ id: UUID, text: 'x' }), { authorizedSub: 'sub-2' }, deps);
+    for (let i = 0; i < 5; i++) {
+      await featureRequestPost(request({ id: crypto.randomUUID(), text: 'x' }), CTX, deps);
+    }
+    expect((await featureRequestPost(request({ id: UUID, text: 'x' }), CTX, deps)).status).toBe(429);
+  });
+
+  it('answers 503 when a full window cannot check for a resend', async () => {
+    const { deps, sentBy } = fakeDeps();
+    for (let i = 0; i < 5; i++) {
+      await featureRequestPost(request({ id: crypto.randomUUID(), text: 'x' }), CTX, deps);
+    }
+    sentBy.mockRejectedValueOnce(Object.assign(new Error('14 UNAVAILABLE: secret'), { code: 14 }));
+    const response = await featureRequestPost(request({ id: UUID, text: 'x' }), CTX, deps);
+    expect(response.status).toBe(503);
+    expect(JSON.parse(loggedLines().at(-1) ?? '{}')).toMatchObject({ errorCode: 14, status: 503 });
   });
 
   it('logs one line with no text', async () => {

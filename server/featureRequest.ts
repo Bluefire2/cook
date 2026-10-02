@@ -12,6 +12,11 @@
  * `docs/plans/feature-requests.md` (Suggestion schema); keep it in step with
  * `FeatureRequestDoc`.
  *
+ * At most `FEATURE_REQUEST_RATE_LIMIT` new suggestions per sub per hour, per
+ * container instance. Only a newly created document uses a slot: a store
+ * failure or a duplicate gives it back, and once the window is full a resend
+ * of a suggestion this sub already stored still gets its 204.
+ *
  * One `event: 'feature_request'` log line per request holds the `sub`, where
  * the page was opened from, the text's length, `contactOk`, and the status.
  * Never the text. `/privacy` describes the stored suggestion and this line;
@@ -22,7 +27,6 @@ import {
   isFeatureRequestFrom,
   type FeatureRequestFrom,
 } from './featureRequestShape.ts';
-import { isAlreadyExists } from './importFeedback.ts';
 import { sanitizedError } from './importLog.ts';
 import { toSupportedLocale } from './lang.ts';
 import {
@@ -30,8 +34,7 @@ import {
   storeUnavailable,
   type MembershipHandlerContext,
 } from './membership.ts';
-import { admitTranslateCall } from './recipeTranslation.ts';
-import { getStoreFirestore, isUuid } from './store.ts';
+import { getStoreFirestore, isAlreadyExists, isUuid } from './store.ts';
 
 export const FEATURE_REQUEST_COLLECTION = 'featureRequests';
 export const MAX_FEATURE_REQUEST_BODY_BYTES = 16 * 1024;
@@ -61,6 +64,8 @@ export type ReadFeatureRequest =
 
 export interface FeatureRequestDeps {
   create(id: string, doc: FeatureRequestDoc): Promise<void>;
+  /** Whether `featureRequests/{id}` exists and was sent by `sub`. */
+  sentBy(id: string, sub: string): Promise<boolean>;
   now(): number;
 }
 
@@ -75,12 +80,33 @@ interface FeatureRequestLogEntry {
   ms?: number;
 }
 
-/** Per container instance, separate from translation's and import feedback's buckets. */
-const rateBuckets = new Map<string, number[]>();
+/** Per container instance: when each sub's slots in the current window were taken. */
+const sendTimes = new Map<string, number[]>();
 
-/** Test hook: clears the per-instance rate-limit buckets. */
+/** Test hook: clears the per-instance rate-limit windows. */
 export function resetFeatureRequestRateLimitForTest(): void {
-  rateBuckets.clear();
+  sendTimes.clear();
+}
+
+/** The sub's slots still inside the window, as the live array in `sendTimes`. */
+function recentSends(sub: string, now: number): number[] {
+  const fresh = (sendTimes.get(sub) ?? []).filter(
+    (at) => now - at < FEATURE_REQUEST_RATE_WINDOW_MS,
+  );
+  sendTimes.set(sub, fresh);
+  return fresh;
+}
+
+/** Gives back a slot taken at `at` whose write created nothing. */
+function releaseSend(sub: string, at: number): void {
+  const list = sendTimes.get(sub);
+  const index = list?.indexOf(at) ?? -1;
+  if (list !== undefined && index >= 0) list.splice(index, 1);
+}
+
+function grpcCode(err: unknown): number | undefined {
+  const code = typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined;
+  return typeof code === 'number' ? code : undefined;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -114,6 +140,10 @@ function defaultDeps(): FeatureRequestDeps {
         .doc(id)
         .create(doc)
         .then(() => {}),
+    sentBy: async (id, sub) => {
+      const snapshot = await getStoreFirestore().collection(FEATURE_REQUEST_COLLECTION).doc(id).get();
+      return snapshot.exists && snapshot.get('sub') === sub;
+    },
     now: Date.now,
   };
 }
@@ -171,16 +201,17 @@ async function handleFeatureRequest(
   entry.contactOk = fields.contactOk;
 
   const now = deps.now();
-  // Generic sliding window; reused from translation with its own buckets.
-  if (
-    !admitTranslateCall(
-      rateBuckets,
-      sub,
-      now,
-      FEATURE_REQUEST_RATE_LIMIT,
-      FEATURE_REQUEST_RATE_WINDOW_MS,
-    )
-  ) {
+  const recent = recentSends(sub, now);
+  if (recent.length >= FEATURE_REQUEST_RATE_LIMIT) {
+    // A full window must not turn a resend after a lost response into a
+    // failure: if this sub already stored this id, it was sent.
+    try {
+      if (await deps.sentBy(parsed.id, sub)) return new Response(null, { status: 204 });
+    } catch (err) {
+      const code = grpcCode(err);
+      if (code !== undefined) entry.errorCode = code;
+      return storeUnavailable();
+    }
     return fail('feature-request-rate-limited', 'Too many suggestions', 429);
   }
 
@@ -192,12 +223,16 @@ async function handleFeatureRequest(
     createdAt: now,
     expireAt: new Date(now + FEATURE_REQUEST_RETENTION_MS),
   };
+  // Take the slot before the write so parallel sends cannot overshoot the
+  // cap, and give it back unless a new document was created.
+  recent.push(now);
   try {
     await deps.create(parsed.id, doc);
   } catch (err) {
+    releaseSend(sub, now);
     if (isAlreadyExists(err)) return new Response(null, { status: 204 });
-    const code = typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined;
-    if (typeof code === 'number') entry.errorCode = code;
+    const code = grpcCode(err);
+    if (code !== undefined) entry.errorCode = code;
     return storeUnavailable();
   }
   return new Response(null, { status: 204 });

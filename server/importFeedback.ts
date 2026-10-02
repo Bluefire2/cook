@@ -48,7 +48,7 @@ import {
   type MembershipHandlerContext,
 } from './membership.ts';
 import { admitTranslateCall } from './recipeTranslation.ts';
-import { getStoreFirestore, isUuid } from './store.ts';
+import { getStoreFirestore, isAlreadyExists, isUuid } from './store.ts';
 
 export const IMPORT_FEEDBACK_COLLECTION = 'importFeedback';
 export const MAX_IMPORT_FEEDBACK_BODY_BYTES = 512 * 1024;
@@ -188,11 +188,6 @@ export function readImportFeedback(body: unknown): ReadImportFeedback {
   const locale = toSupportedLocale(body.locale);
   if (locale !== undefined) fields.locale = locale;
   return { kind: 'report', id: body.id, fields };
-}
-
-/** Firestore's ALREADY_EXISTS from `create()`: the Admin SDK's numeric gRPC code 6. */
-export function isAlreadyExists(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 6;
 }
 
 function defaultDeps(): ImportFeedbackDeps {

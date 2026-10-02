@@ -31,7 +31,11 @@ sixth crowds narrow phones.
   whether Sous runs as an installed app. Nothing else: no user agent, URL, recipe, or
   library data. A "What's included" disclosure on the page says exactly this.
 - Kept for one year, then deleted by a Firestore TTL policy.
-- 5 suggestions per member per hour per container instance.
+- At most 5 new suggestions per member per hour, per container instance. Only a newly
+  created document uses a slot: a store failure (503) or a repeat id gives it back. When
+  the window is full, a resend of an id this member already stored is still 204 (checked
+  with a read), so a lost response on the 5th send never looks like a failure. Any other
+  send is 429.
 - The text box takes focus on open only with a fine pointer, so a phone keyboard does
   not cover the intro and the contact choice.
 
@@ -72,7 +76,8 @@ Never stored: email address, display name, user agent, IP, URL, or any library d
 `{ id, text, contactOk, from?, locale?, standalone? }`, at most 16 KiB. A non-object
 body, a non-UUID id, or empty text is 400 `feature-request-bad-request`; over 16 KiB is
 413 `feature-request-too-large`; over the rate limit is 429
-`feature-request-rate-limited`; a store failure is 503. Success is 204 with no body.
+`feature-request-rate-limited` (except a resend of the sender's own stored id, which is
+204); a store failure is 503. Success is 204 with no body.
 Anything else that throws is rethrown as `sanitizedError('Feature request failed', …)`
 so the dispatcher never logs the text.
 
@@ -102,3 +107,14 @@ list stored data in general and is unchanged.
 
    `--days` defaults to 30. The script warns when a document is more than 3 days past
    `expireAt`, which means the TTL policy is not applied.
+
+3. **Account deletion request.** `/privacy` promises that a deletion request covers
+   suggestions. They sit in top-level `featureRequests`, outside `users/{uid}`, so
+   deleting the account's tree does not remove them:
+   1. Get the account's `sub` with `node --env-file=.env.local scripts/import-audit.ts <email>`.
+   2. Optionally list what will go with
+      `node --env-file=.env.local scripts/feature-requests.ts --days 366 --email <email>`.
+   3. In the Firestore console, open `featureRequests`, filter `sub == <sub>`, and delete
+      each document.
+
+   Do the same for `importFeedback` (`docs/plans/import-feedback.md`, Owner steps).

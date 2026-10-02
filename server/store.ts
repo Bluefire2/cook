@@ -36,6 +36,11 @@ export function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_RE.test(value);
 }
 
+/** Firestore's ALREADY_EXISTS from `create()`: the Admin SDK's numeric gRPC code 6. */
+export function isAlreadyExists(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 6;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

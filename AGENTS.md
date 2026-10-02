@@ -79,7 +79,9 @@ holds the text, `contactOk`, and three context fields, never the email; the
 read-only `scripts/feature-requests.ts` looks the email up from `sub` only
 when `contactOk` is true. The `feature_request` log line never holds the
 text. `/privacy` describes both; change it with them, and change the schema
-section in the plan with `FeatureRequestDoc`.
+section in the plan with `FeatureRequestDoc`. Because suggestions and import
+reports sit outside `users/{uid}`, an account deletion request needs the
+plan's owner step to remove them.
 
 No server log line may contain an email address or a link token. Invite
 (`/invite/<token>`) and collection-link (`/c/<token>`) pages send
