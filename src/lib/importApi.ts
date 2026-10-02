@@ -1,5 +1,5 @@
 import { t } from '../i18n';
-import { serverErrorText } from './errorText';
+import { serverError } from './errorText';
 import type { EncodedImage } from './image';
 import { readImportWarnings, type ImportWarning } from './importCheck';
 import { invalidateSession } from './session';
@@ -100,8 +100,11 @@ export async function importRecipe(params: {
       }
     | null;
   if (!response.ok || !data?.recipe) {
-    throw new Error(
-      serverErrorText(data, 'error.importFailedStatus', { status: response.status }),
+    // `status` and `siteStatus` ride along for an import report; the words are unchanged.
+    throw Object.assign(
+      serverError(data, 'error.importFailedStatus', { status: response.status }),
+      { status: response.status },
+      typeof data?.status === 'number' ? { siteStatus: data.status } : {},
     );
   }
 

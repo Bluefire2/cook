@@ -21,6 +21,7 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { POST as chatPost } from '../api/chat.ts';
 import { importPost } from '../server/importRoute.ts';
+import { importFeedbackPost } from '../server/importFeedback.ts';
 import {
   authCallbackGoogle,
   authSession,
@@ -72,6 +73,7 @@ interface ApiRoute {
 const apiRoutes: ApiRoute[] = [
   { method: 'POST', path: '/api/chat', handler: withMembership(chatPost) },
   { method: 'POST', path: '/api/import', handler: withMembership(importPost) },
+  { method: 'POST', path: '/api/import-feedback', handler: withMembership(importFeedbackPost) },
   { method: 'POST', path: '/api/stt', handler: sttPost },
   { method: 'POST', path: '/api/agent', handler: agentPost },
   { method: 'POST', path: '/api/translate', handler: translatePost },

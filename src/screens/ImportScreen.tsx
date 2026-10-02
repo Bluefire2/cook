@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { t as translateNow, useLocale, useT } from '../i18n';
+import ImportFeedbackCard from '../components/ImportFeedbackCard';
 import ImportPreview from '../components/ImportPreview';
 import { importWarningText } from '../components/ImportWarningList';
 import { type CreateRecipeSubmitStatus } from '../components/CreateRecipeForm';
@@ -18,13 +19,18 @@ import {
   type ImportRecipeResult,
 } from '../lib/importApi';
 import type { ImportWarning } from '../lib/importCheck';
+import {
+  importFailureDetails,
+  type ImportFailure,
+  type ImportSource,
+} from '../lib/importFeedback';
 import { translatedPreviewDraft } from '../lib/importPreview';
 import {
   parseImportInput,
   validateImportInput,
 } from '../lib/importInput';
 import { recipeStore } from '../lib/recipeStore';
-import type { IngredientSection } from '../lib/types';
+import type { IngredientSection, RecipeDraft } from '../lib/types';
 import { backLink, inputFocus, primaryBtn, secondaryBtn } from '../lib/uiClasses';
 
 const IMPORT_FORM_ID = 'import-recipe-form';
@@ -35,15 +41,29 @@ type BulkResult =
       ok: true;
       id: string;
       title: string;
+      /** 0 for the first import of the row; each Retry adds one, so a card is per attempt. */
+      attempt: number;
       untranslated?: true;
       /** The import check's warnings, saved on the recipe as `importCheck`. */
       warnings?: ImportWarning[];
+      /** The original extraction, kept only for a report on a flagged row. */
+      extracted?: RecipeDraft;
+      translatedTo?: string;
       /** The saved recipe's ingredients, so a warning can name one. */
       sections: IngredientSection[];
     }
-  | { url: string; ok: false; error: string; retrying?: true };
+  | {
+      url: string;
+      ok: false;
+      error: string;
+      attempt: number;
+      failure?: ImportFailure;
+      retrying?: true;
+    };
 
 type BulkFilter = 'all' | 'attention' | 'failed';
+
+type ScreenError = { message: string; feedback?: { source: ImportSource; failure: ImportFailure } };
 
 function needsAttention(row: BulkResult): boolean {
   return row.ok && row.warnings !== undefined;
@@ -77,14 +97,17 @@ export default function ImportScreen() {
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(
     null,
   );
-  const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<ImportRecipeResult | null>(null);
+  const [error, setError] = useState<ScreenError | null>(null);
+  const [preview, setPreview] = useState<{ result: ImportRecipeResult; source: ImportSource } | null>(
+    null,
+  );
   const [pendingUrls, setPendingUrls] = useState<string[] | null>(null);
   const [batchDestination, setBatchDestination] = useState<string | null | undefined>();
   const [retrying, setRetrying] = useState(false);
   const inFlight = useRef(false);
   const [summary, setSummary] = useState<BulkResult[] | null>(null);
   const [filter, setFilter] = useState<BulkFilter>('all');
+  const [reportingKey, setReportingKey] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<CreateRecipeSubmitStatus>({
     locked: false,
     saving: false,
@@ -122,9 +145,11 @@ export default function ImportScreen() {
       ok: true,
       id: recipe.id,
       title: recipe.title.trim() || url,
+      attempt: 0,
       sections: recipe.ingredientSections,
       ...(untranslated ? { untranslated: true as const } : {}),
-      ...(warnings !== undefined ? { warnings } : {}),
+      ...(warnings !== undefined ? { warnings, extracted: imported.recipe } : {}),
+      ...(bulkTranslate && imported.translation && !untranslated ? { translatedTo: locale } : {}),
     };
   };
 
@@ -146,10 +171,11 @@ export default function ImportScreen() {
           results.push(await importOne(url, destinationId));
         } catch (e) {
           const message = e instanceof Error ? e.message : t('error.importFailed');
-          results.push({ url, ok: false, error: message });
+          const failure = importFailureDetails(e);
+          results.push({ url, ok: false, error: message, attempt: 0, ...(failure ? { failure } : {}) });
           if (message === translateNow('error.sessionExpired') || (destinationId && !collectionStore.get(destinationId))) {
             for (const rest of urls.slice(i + 1)) {
-              results.push({ url: rest, ok: false, error: message });
+              results.push({ url: rest, ok: false, error: message, attempt: 0 });
             }
             break;
           }
@@ -171,7 +197,7 @@ export default function ImportScreen() {
 
   const addPhotos = async (files: File[]) => {
     const { accepted, overflow } = fitImportPhotos(photosRef.current.length, files);
-    setError(overflow ? t('import.photoLimit') : null);
+    setError(overflow ? { message: t('import.photoLimit') } : null);
     setRetrying(false);
     if (accepted.length === 0) return;
     setEncoding(true);
@@ -181,7 +207,7 @@ export default function ImportScreen() {
         try {
           image = await encodeImageForImport(file);
         } catch {
-          setError(t('import.photoUnreadable'));
+          setError({ message: t('import.photoUnreadable') });
           continue;
         }
         const check = checkImportPhotoBytes(
@@ -189,11 +215,11 @@ export default function ImportScreen() {
           image,
         );
         if (check === 'photo_too_large') {
-          setError(t('import.photoTooLarge'));
+          setError({ message: t('import.photoTooLarge') });
           continue;
         }
         if (check === 'total_too_large') {
-          setError(t('import.photosTotalTooLarge'));
+          setError({ message: t('import.photosTotalTooLarge') });
           continue;
         }
         setPhotoList([
@@ -221,16 +247,23 @@ export default function ImportScreen() {
       setError(null);
       inFlight.current = true;
       setBusy(true);
+      // Photos only ever report their count: never the photos or the typed notes.
+      const source: ImportSource = { via: 'photos', photos: photosRef.current.length };
       try {
-        setPreview(
-          await importRecipe({
+        setPreview({
+          result: await importRecipe({
             images: photosRef.current.map((p) => p.image),
             text: input.trim() || undefined,
             translateTo: locale,
           }),
-        );
+          source,
+        });
       } catch (e) {
-        setError(e instanceof Error ? e.message : t('error.importFailed'));
+        const failure = importFailureDetails(e);
+        setError({
+          message: e instanceof Error ? e.message : t('error.importFailed'),
+          ...(failure ? { feedback: { source, failure } } : {}),
+        });
       } finally {
         inFlight.current = false;
         setBusy(false);
@@ -241,7 +274,7 @@ export default function ImportScreen() {
     if (parsed.kind === 'empty') return;
     const validated = validateImportInput(parsed, bulk);
     if (!validated.ok) {
-      setError(validated.error);
+      setError({ message: validated.error });
       return;
     }
     setError(null);
@@ -256,7 +289,7 @@ export default function ImportScreen() {
         try {
           await runBulk(urls, destination.collectionId);
         } catch (e) {
-          setError(e instanceof Error ? e.message : t('error.importFailed'));
+          setError({ message: e instanceof Error ? e.message : t('error.importFailed') });
           setPendingUrls(urls);
         }
       }
@@ -265,15 +298,24 @@ export default function ImportScreen() {
     if (validated.mode === 'bulk') return;
     inFlight.current = true;
     setBusy(true);
+    const source: ImportSource =
+      validated.mode === 'url'
+        ? { via: 'url', url: validated.url }
+        : { via: 'paste', pastedText: validated.text };
     try {
-      setPreview(
-        await importRecipe({
+      setPreview({
+        result: await importRecipe({
           ...(validated.mode === 'url' ? { url: validated.url } : { text: validated.text }),
           translateTo: locale,
         }),
-      );
+        source,
+      });
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('error.importFailed'));
+      const failure = importFailureDetails(e);
+      setError({
+        message: e instanceof Error ? e.message : t('error.importFailed'),
+        ...(failure ? { feedback: { source, failure } } : {}),
+      });
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -293,6 +335,7 @@ export default function ImportScreen() {
   const retryRow = async (url: string) => {
     if (inFlight.current || summary === null) return;
     inFlight.current = true;
+    const next = (summary.find((r) => r.url === url)?.attempt ?? 0) + 1;
     const replace = (row: BulkResult) =>
       setSummary((rows) => rows?.map((r) => (r.url === url ? row : r)) ?? rows);
     setSummary(
@@ -300,9 +343,16 @@ export default function ImportScreen() {
         rows?.map((r) => (r.url === url && !r.ok ? { ...r, retrying: true as const } : r)) ?? rows,
     );
     try {
-      replace(await importOne(url, batchDestination ?? undefined));
+      replace({ ...(await importOne(url, batchDestination ?? undefined)), attempt: next });
     } catch (e) {
-      replace({ url, ok: false, error: e instanceof Error ? e.message : t('error.importFailed') });
+      const failure = importFailureDetails(e);
+      replace({
+        url,
+        ok: false,
+        error: e instanceof Error ? e.message : t('error.importFailed'),
+        attempt: next,
+        ...(failure ? { failure } : {}),
+      });
     } finally {
       inFlight.current = false;
     }
@@ -400,6 +450,10 @@ export default function ImportScreen() {
                       .map((warning) => importWarningText(warning, row.sections, t))
                       .find((text) => text !== null)
                   : undefined;
+              const reportKey = `${row.url}#${row.attempt}`;
+              const canReport = row.ok
+                ? row.warnings !== undefined && row.extracted !== undefined
+                : row.failure !== undefined;
               const border = !row.ok
                 ? 'border-danger'
                 : firstWarning !== undefined
@@ -430,6 +484,32 @@ export default function ImportScreen() {
                       {row.untranslated && (
                         <p className="mt-1 text-ink-subtle">{t('import.savedUntranslated')}</p>
                       )}
+                      {canReport && reportingKey !== reportKey && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => setReportingKey(reportKey)}
+                          className="mt-2 text-sm text-ink-muted underline hover:text-ink disabled:opacity-40"
+                        >
+                          {t('importFeedback.reportRow')}
+                        </button>
+                      )}
+                      {canReport && reportingKey === reportKey && row.warnings !== undefined && row.extracted !== undefined && (
+                        <ImportFeedbackCard
+                          compact
+                          input={{
+                            trigger: 'warnings',
+                            source: { via: 'url', url: row.url },
+                            locale,
+                            result: {
+                              recipe: row.extracted,
+                              warnings: row.warnings,
+                              translationFailed: row.untranslated === true,
+                              translatedTo: row.translatedTo,
+                            },
+                          }}
+                        />
+                      )}
                     </>
                   ) : (
                     <>
@@ -449,6 +529,27 @@ export default function ImportScreen() {
                         {row.retrying && <SpinnerIcon className="h-4 w-4 animate-spin" />}
                         {row.retrying ? t('importWarning.retrying') : t('import.retryRow')}
                       </button>
+                      {canReport && reportingKey !== reportKey && (
+                        <button
+                          type="button"
+                          disabled={busy || row.retrying === true}
+                          onClick={() => setReportingKey(reportKey)}
+                          className="mt-2 ml-3 text-sm text-ink-muted underline hover:text-ink disabled:opacity-40"
+                        >
+                          {t('importFeedback.reportRow')}
+                        </button>
+                      )}
+                      {canReport && reportingKey === reportKey && row.failure !== undefined && (
+                        <ImportFeedbackCard
+                          compact
+                          input={{
+                            trigger: 'failed',
+                            source: { via: 'url', url: row.url },
+                            locale,
+                            failure: row.failure,
+                          }}
+                        />
+                      )}
                     </>
                   )}
                 </li>
@@ -582,8 +683,18 @@ export default function ImportScreen() {
           )}
           {error && (
             <p className="mt-2 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
-              {error}
+              {error.message}
             </p>
+          )}
+          {error?.feedback && (
+            <ImportFeedbackCard
+              input={{
+                trigger: 'failed',
+                source: error.feedback.source,
+                locale,
+                failure: error.feedback.failure,
+              }}
+            />
           )}
           {collections === undefined && <p role="status">{t('common.loadingCollections')}</p>}
           <button
@@ -650,7 +761,8 @@ export default function ImportScreen() {
       ) : (
         <>
           <ImportPreview
-            result={preview}
+            result={preview.result}
+            feedbackSource={preview.source}
             collectionId={collectionId}
             formId={IMPORT_FORM_ID}
             onSubmitStatusChange={onSubmitStatusChange}

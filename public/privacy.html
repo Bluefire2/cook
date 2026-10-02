@@ -51,7 +51,7 @@
   </head>
   <body>
     <h1>Privacy policy</h1>
-    <p class="muted">Last updated: 30 September 2026</p>
+    <p class="muted">Last updated: 1 October 2026</p>
 
     <h2>What is stored</h2>
     <p>
@@ -74,6 +74,22 @@
       account and are deleted when their recipe is deleted. Translations of
       recipes shared with you are not stored; they are translated again each
       session. Photos used only to import a recipe are not kept.
+    </p>
+    <p>
+      If an import goes wrong, or you mark an import with a thumbs down, you
+      can choose to send an import report. Nothing is sent unless you press
+      Send report. A report is stored in Firestore
+      (<code>europe-west1</code>), separately from your library, and only the
+      owner reads it, to fix recipe import. It holds your account id
+      (<code>sub</code>); how the recipe arrived; the full link you imported,
+      including anything after a <code>?</code> or <code>#</code>; for pasted
+      text, the text you pasted; for photos, how many there were; the error
+      you saw, if any; what the import returned, including the recipe text it
+      extracted and codes for any problems the import check found; whether
+      translation worked; the note you add, if any; and the app language. It
+      never holds your email address, the photos, or the notes you typed with
+      them. A thumbs up is not stored as a report; it is only counted in the
+      server log described below.
     </p>
     <p>
       No password and no Google refresh token is stored — the app only ever
@@ -132,6 +148,15 @@
       photos.
     </p>
     <p>
+      Rating an import or sending an import report writes one more line: your
+      account id, whether it was a report or a thumbs up, how the recipe
+      arrived, the site's host name (not the full address), codes for any
+      problems the import check found, whether you added a note, the
+      response, an error code if the report could not be saved, and how long
+      it took. It never includes the rest of the link, the recipe text, pasted
+      text, or your note.
+    </p>
+    <p>
       Logs are used only to keep Sous running, to fix problems, and to
       measure how well recipe import works. They are
       stored in Google Cloud Logging, separately from your library and not
@@ -142,6 +167,7 @@
     <p>
       Showing your own recipe library across devices, and answering cooking
       questions. Your information is not sold and is not used for advertising.
+      Import reports you choose to send are used only to fix recipe import.
     </p>
     <p>
       If you share a named collection, the live recipes in that folder and
@@ -219,9 +245,10 @@
       deleted on a schedule.
     </p>
     <p>
-      Server logs are the exception: Google Cloud Logging deletes them
-      automatically 30 days after they are written. They are not removed
-      earlier, including by an account deletion request.
+      Server logs and import reports are the exceptions. Google Cloud Logging
+      deletes logs automatically 30 days after they are written. Logs are not
+      removed earlier, including by an account deletion request. Import
+      reports are deleted automatically about 180 days after you send them.
     </p>
     <p>
       To delete all data stored for your account, email
@@ -229,7 +256,7 @@
       from the same address you use to sign in. There is no in-app delete-account
       button. A deletion request covers all of it: your access-request record,
       your membership record, any invite-link redemption recorded for your
-      account, and your stored library — recipes, chat
+      account, any import reports you sent, and your stored library — recipes, chat
       messages, cooking progress, cook log entries (dates, ratings, notes,
       lessons and photos), photos, and cached translations — and deleting
       these also removes your access. Revoking Sous's access from your
