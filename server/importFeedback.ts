@@ -8,6 +8,9 @@
  * `users/{uid}`: it is for the owner and must not sync or back up. `expireAt`
  * drives the 180-day Firestore TTL policy. The id is the client's UUID and
  * the write is `create()`, so a resend after a lost response is a no-op.
+ * The stored fields and their limits are documented field by field in
+ * `docs/plans/import-feedback.md` (Report schema); keep it in step with
+ * `ImportFeedbackDoc`.
  *
  * Validation is lenient: a malformed field is dropped or truncated and the
  * report still stored, because broken extractions are the reports that

@@ -97,6 +97,96 @@ blocked on exactly this.
     - `import_feedback` is a new log line, and AGENTS.md says those pages change with
       the log lines.
 
+## Where reports are stored
+
+| | |
+| --- | --- |
+| GCP project | `cooking-assistant-508423` |
+| Database | Firestore Native, `(default)`, region `europe-west1` (the same database as the library) |
+| Collection | `importFeedback`, top level. Not under `users/{uid}`. |
+| Document id | A UUID v4 that the client generates for each report card. A retry from the same card reuses it. |
+| Writer | Only `POST /api/import-feedback` (`server/importFeedback.ts`), through the Admin SDK, with `create()`. A repeat id counts as success. No client writes Firestore directly. |
+| Readers | The owner, through `scripts/import-feedback.ts` (read-only) or the Firestore console. The app never reads reports back. |
+| Retention | A Firestore TTL policy on `expireAt` deletes each report about 180 days after `createdAt`. Applying the policy is an owner step (see Owner steps). |
+| Not stored | 👍 ratings. They write only the `import_feedback` log line. |
+
+Reports never sync, pull, or go into a backup. Nothing in `src/lib/syncEngine.ts`,
+`server/sync.ts`, or `src/lib/backup.ts` touches this collection.
+
+## Report schema
+
+The source of truth is `ImportFeedbackDoc` in `server/importFeedback.ts`, together
+with the wire types in `server/importFeedbackShape.ts`. The server validates every
+field leniently: a malformed field is dropped or truncated, and the rest of the
+report is still stored. An absent field is omitted, never stored as `null` or
+`undefined`.
+
+### Document `importFeedback/{id}`
+
+| Field | Type | Present | Meaning and limits |
+| --- | --- | --- | --- |
+| `v` | `1` | always | Schema version. |
+| `sub` | string | always | The sender's Google account `sub`, taken from the session and never from the request body. |
+| `createdAt` | number | always | Server time, in milliseconds since the epoch. |
+| `expireAt` | Timestamp | always | `createdAt + 180 days`. The TTL field. |
+| `trigger` | `'failed'` \| `'warnings'` \| `'down'` | always | `failed`: `/api/import` returned an error. `warnings`: the import check flagged the result. `down`: a 👎 on a clean preview. |
+| `via` | `'url'` \| `'paste'` \| `'photos'` | always | How the recipe arrived. Bulk rows are `url`. |
+| `url` | string | when the import had a link | The full http(s) link as submitted, including any query and fragment, with `user:pass@` removed. At most 2,048 characters; a longer link is dropped. |
+| `pastedText` | string | `via: 'paste'` only | The text the person pasted, cut to at most 150,000 UTF-8 bytes without splitting a character. |
+| `pastedTruncated` | `true` | when `pastedText` was cut | |
+| `photos` | integer 1–4 | `via: 'photos'` only | How many photos were sent. The photos and the notes typed with them are never stored (`docs/constitutions/image-import.md`, principle 3). |
+| `error` | map | `failed` reports | See `error` below. Omitted when no part of it is valid. |
+| `result` | map | `warnings` and `down` reports | See `result` below. Omitted when no part of it is valid. |
+| `comment` | string | when the person wrote a note | Trimmed, at most 2,000 characters. |
+| `locale` | `'en'` \| `'uk'` \| `'ru'` \| `'zh-Hans'` | normally | The UI language when the report was sent. |
+
+### `error`
+
+| Field | Type | Meaning and limits |
+| --- | --- | --- |
+| `code` | string matching `^[a-z0-9-]{1,64}$` | The machine code from `/api/import`, for example `import-no-recipe` or `import-refused`. Absent when the response had none, such as the dispatcher's plain-text 500. |
+| `status` | integer 100–599 | The HTTP status `/api/import` answered with. |
+| `siteStatus` | integer 100–599 | The recipe site's own status, when it refused the fetch (`import-refused`). |
+| `message` | string, at most 500 characters | The error text the person saw, in their UI language. |
+
+### `result`
+
+| Field | Type | Meaning and limits |
+| --- | --- | --- |
+| `recipeJson` | string | `JSON.stringify` of the original extraction (`RecipeDraft`), before any edit the person made in the preview. Capped at 200,000 UTF-8 bytes, so a truncated value may not parse. It is a string, not a map, because a broken extraction would fail draft validation, and broken extractions are what reports are for. |
+| `recipeTruncated` | `true` | Set when `recipeJson` was cut. |
+| `warnings` | array of `{ code, at? }` | The import check's warnings, read with `readImportWarnings` (`server/importWarnings.ts`). `code` is an `ImportWarningCode`. `at` is `[section, item]` in `ingredientSections`. |
+| `translationFailed` | `true` | Translation was requested and failed. |
+| `translatedTo` | supported locale | The language the preview was translated into. |
+
+### Request bodies (`POST /api/import-feedback`)
+
+- **A report** is the document above, minus `v`, `sub`, `createdAt`, and
+  `expireAt`, plus the id: `{ id, trigger, via, url?, pastedText?,
+  pastedTruncated?, photos?, error?, result?, comment?, locale? }`
+  (`ImportFeedbackReport`). Answers 204, even for a repeat id.
+- **A 👍** is `{ trigger: 'up', via, url? }` (`ImportRatingUp`). Nothing is
+  stored. Answers 204.
+- **Errors:**
+  - 400 `feedback-bad-request`: the body is not an object, `trigger` or `via` is
+    unknown, or a report's `id` is not a UUID.
+  - 413 `feedback-too-large`: the body is over 512 KiB.
+  - 429 `feedback-rate-limited`: more than 20 requests an hour from one `sub`, per
+    instance.
+  - 503: the store failed.
+  - 401: the membership gate (`withMembership`) refused the request.
+
+### Log line
+
+Every request writes one line with these fields:
+`{ event: 'import_feedback', sub, trigger, via, host?, codes?, hasComment?, status, errorCode?, ms }`.
+
+- `host` is the link's host name only.
+- `codes` are the warning codes.
+- `errorCode` is a numeric gRPC code, set when the store write failed.
+- The line never contains the link's path or query, recipe text, pasted text, the
+  comment, or an error message.
+
 ## Owner steps (not for the implementer; recorded so they are not lost)
 
 1. **TTL policy.** Before the first deploy that contains this feature, run

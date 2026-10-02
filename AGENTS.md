@@ -64,7 +64,9 @@ TTL policy (owner step in the plan). A 👍 stores nothing and only writes the
 an error escape: a store failure is 503, anything else is rethrown as
 `sanitizedImportError`. `/privacy` and `/terms` describe reports and that
 line; change them with it. `scripts/import-feedback.ts` reads reports,
-read-only.
+read-only. Storage location and the full field-by-field schema are in
+`docs/plans/import-feedback.md` (Where reports are stored, Report schema);
+change that section with `ImportFeedbackDoc`.
 
 No server log line may contain an email address or a link token. Invite
 (`/invite/<token>`) and collection-link (`/c/<token>`) pages send
