@@ -1,4 +1,4 @@
-import { Storage, type File } from '@google-cloud/storage';
+import { Storage } from '@google-cloud/storage';
 import type { Transaction } from '@google-cloud/firestore';
 import { Readable } from 'node:stream';
 import { Transform } from 'node:stream';
@@ -612,26 +612,105 @@ export async function photosPost(req: Request): Promise<Response> {
   }
 }
 
+export type PhotoDownload =
+  | { kind: 'bytes'; bytes: Buffer }
+  | { kind: 'missing' }
+  | { kind: 'too-large' }
+  | { kind: 'failed'; status: number };
+
 /**
- * Reads a whole photo object into memory (uploads are capped at
- * MAX_PHOTO_BYTES), or null when it is gone. Never hand GCS's
- * `createReadStream()` to a response: when the client hangs up, destroying
- * that stream makes the library call `agent.destroy()` on its shared
- * keep-alive agent, which aborts every other in-flight GCS read, and either
- * a late `aborted` error or an `ERR_STREAM_UNABLE_TO_PIPE` thrown inside the
- * library then crashes the process. `download()` consumes the stream itself
- * with its errors handled, and nothing here destroys it early.
+ * Reads a response body up to `maxBytes`. A longer body is cancelled and
+ * reported as too large, so the rest of the object is never buffered.
  */
-async function downloadPhotoBytes(file: File): Promise<Buffer | null> {
+export async function readCappedBytes(
+  body: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): Promise<{ ok: true; bytes: Buffer } | { ok: false; reason: 'too-large' }> {
+  const reader = body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
   try {
-    const [buffer] = await file.download();
-    return buffer;
-  } catch (err: unknown) {
-    if (gcsErrorCode(err) === 404) {
-      return null;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        return { ok: true, bytes: Buffer.concat(chunks) };
+      }
+      if (value === undefined || value.byteLength === 0) {
+        continue;
+      }
+      if (total + value.byteLength > maxBytes) {
+        await reader.cancel();
+        return { ok: false, reason: 'too-large' };
+      }
+      total += value.byteLength;
+      chunks.push(Buffer.from(value));
     }
-    throw err;
+  } finally {
+    reader.releaseLock();
   }
+}
+
+function declaredContentLength(response: Response): number | null {
+  const raw = response.headers.get('content-length');
+  if (raw === null || !/^\d+$/.test(raw)) {
+    return null;
+  }
+  const n = Number(raw);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/** Maps a media response to bytes, missing, too large, or a failed status. */
+export async function photoBytesFromResponse(
+  response: Response,
+  maxBytes: number,
+): Promise<PhotoDownload> {
+  if (response.status === 404) {
+    await response.body?.cancel();
+    return { kind: 'missing' };
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
+    return { kind: 'failed', status: response.status };
+  }
+  const declared = declaredContentLength(response);
+  if (declared !== null && declared > maxBytes) {
+    await response.body?.cancel();
+    return { kind: 'too-large' };
+  }
+  if (response.body === null) {
+    return { kind: 'bytes', bytes: Buffer.alloc(0) };
+  }
+  const read = await readCappedBytes(response.body, maxBytes);
+  if (!read.ok) {
+    return { kind: 'too-large' };
+  }
+  return { kind: 'bytes', bytes: read.bytes };
+}
+
+function gcsMediaUrl(baseUrl: string, bucket: string, objectPath: string): string {
+  return `${baseUrl.replace(/\/$/, '')}/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectPath)}?alt=media`;
+}
+
+/**
+ * Downloads one object without the storage library's read stream. That
+ * stream's error path destroys teeny-request's process-wide keep-alive
+ * agent and aborts every other GCS call in the process. The body is capped
+ * at MAX_PHOTO_BYTES, the same limit as an upload.
+ */
+async function downloadPhotoBytes(bucket: string, objectPath: string): Promise<PhotoDownload> {
+  const storage = getStorage();
+  const url = gcsMediaUrl(storage.baseUrl, bucket, objectPath);
+  const token = await storage.authClient.getAccessToken();
+  if (token == null || token === '') {
+    throw new Error('GCS photo download failed');
+  }
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Accept-Encoding': 'identity',
+    },
+  });
+  return photoBytesFromResponse(response, MAX_PHOTO_BYTES);
 }
 
 export async function photosGet(req: Request): Promise<Response> {
@@ -681,10 +760,10 @@ export async function photosGet(req: Request): Promise<Response> {
 }
 
 /**
- * One live photo of `uid` from GCS, or 404. HEAD reads only metadata; GET
- * downloads the whole object (`downloadPhotoBytes`), never a GCS read stream.
- * The caller has already decided the request may read it. Throws on store
- * errors.
+ * One live photo of `uid` from GCS, or 404 (413 over MAX_PHOTO_BYTES). HEAD
+ * reads only metadata; GET downloads the capped object (`downloadPhotoBytes`),
+ * never the storage library's read stream. The caller has already decided
+ * the request may read it. Throws on store and download errors.
  */
 export async function storedPhotoResponse(
   uid: string,
@@ -722,6 +801,9 @@ export async function storedPhotoResponse(
   };
   const size =
     typeof data.size === 'number' && Number.isFinite(data.size) ? data.size : null;
+  if (size !== null && isPhotoByteCountTooLarge(size)) {
+    return jsonError('Payload too large', 413);
+  }
   if (size !== null) {
     headers['Content-Length'] = String(size);
   }
@@ -730,9 +812,16 @@ export async function storedPhotoResponse(
     return new Response(null, { status: 200, headers });
   }
 
-  const bytes = await downloadPhotoBytes(file);
-  if (bytes === null) {
+  const downloaded = await downloadPhotoBytes(bucketName, gcsObjectPath(uid, photoId));
+  if (downloaded.kind === 'missing') {
     return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
   }
-  return new Response(bytes, { status: 200, headers });
+  if (downloaded.kind === 'too-large') {
+    return jsonError('Payload too large', 413);
+  }
+  if (downloaded.kind === 'failed') {
+    throw Object.assign(new Error('GCS photo download failed'), { status: downloaded.status });
+  }
+  headers['Content-Length'] = String(downloaded.bytes.length);
+  return new Response(downloaded.bytes, { status: 200, headers });
 }
