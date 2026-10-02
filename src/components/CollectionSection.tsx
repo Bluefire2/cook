@@ -1,10 +1,11 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type FocusEvent } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useT } from '../i18n';
 import { libraryHref } from '../lib/collectionHref';
 import { FolderIcon, SharedIcon } from '../lib/icons';
 import type { Collection } from '../lib/types';
 import { chipClass, menuItem, menuItemDanger } from '../lib/uiClasses';
+import { useDisclosureMenu } from '../lib/useDisclosureMenu';
 
 function edgeMask(lead: boolean, trail: boolean): string | undefined {
   if (!lead && !trail) return undefined;
@@ -40,60 +41,18 @@ function CollectionActionsMenu({
   onDelete: () => void;
 }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
-  const panelId = useId();
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const firstActionRef = useRef<HTMLButtonElement>(null);
+  const { open, panelId, wrapperRef, initialItemRef, triggerProps, close, choose, onBlur } =
+    useDisclosureMenu();
   const label = t('library.collectionActions', { name });
 
-  const dismiss = () => {
-    setOpen(false);
-    triggerRef.current?.focus();
-  };
-
-  const choose = (action: () => void) => {
-    setOpen(false);
-    action();
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    firstActionRef.current?.focus({ preventScroll: true });
-    // Capture phase, and stopped, so Library's own Escape handling (closing a
-    // recipe menu, leaving Select) does not also run. Only while focus is in
-    // the menu: an Escape meant for something else closes the menu and passes
-    // through.
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      if (!wrapperRef.current?.contains(document.activeElement)) {
-        setOpen(false);
-        return;
-      }
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      setOpen(false);
-      triggerRef.current?.focus();
-    };
-    document.addEventListener('keydown', onKeyDown, true);
-    return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [open]);
-
-  const onBlur = (event: FocusEvent<HTMLDivElement>) => {
-    if (open && !event.currentTarget.contains(event.relatedTarget)) {
-      setOpen(false);
-    }
-  };
-
   return (
-    <div ref={wrapperRef} className="relative shrink-0" onBlur={onBlur}>
+    // The negative margin keeps the 44px target from making the label row
+    // taller than it is when no owned collection is open.
+    <div ref={wrapperRef} className="relative -my-1.5 shrink-0" onBlur={onBlur}>
       <button
-        ref={triggerRef}
+        {...triggerProps}
         type="button"
         aria-label={label}
-        aria-expanded={open}
-        aria-controls={open ? panelId : undefined}
-        onClick={() => setOpen((value) => !value)}
         className="flex h-11 w-11 items-center justify-center rounded-full text-xl leading-none text-ink-subtle hover:bg-surface-muted hover:text-ink active:bg-surface-muted"
       >
         ⋮
@@ -104,7 +63,7 @@ function CollectionActionsMenu({
             type="button"
             aria-label={t('library.closeMenu')}
             tabIndex={-1}
-            onClick={dismiss}
+            onClick={close}
             className="fixed inset-0 z-10 cursor-default"
           />
           <div
@@ -114,7 +73,7 @@ function CollectionActionsMenu({
             className="absolute top-full right-0 z-20 mt-1 w-48 overflow-hidden rounded-xl border border-line bg-surface shadow-xl"
           >
             <button
-              ref={firstActionRef}
+              ref={initialItemRef}
               type="button"
               onClick={() => choose(onShare)}
               className={menuItem}
@@ -151,7 +110,7 @@ export default function CollectionSection({
   sharedLabels,
   currentId,
   browseAll,
-  showOwnedActions,
+  ownedName,
   onCreate,
   onShare,
   onRename,
@@ -163,7 +122,8 @@ export default function CollectionSection({
   sharedLabels: ReadonlyMap<string, string>;
   currentId: string | undefined;
   browseAll: boolean;
-  showOwnedActions: boolean;
+  /** Name of the open collection when it is owned and named; undefined otherwise. */
+  ownedName: string | undefined;
   onCreate: () => void;
   onShare: () => void;
   onRename: () => void;
@@ -212,9 +172,6 @@ export default function CollectionSection({
 
   const mask = edgeMask(edges.lead, edges.trail);
   const recipesActive = !browseAll && currentId === undefined;
-  const owned = showOwnedActions
-    ? collections.find((collection) => collection.id === currentId)
-    : undefined;
 
   return (
     <section className="mb-3" aria-labelledby="collections-label">
@@ -236,10 +193,10 @@ export default function CollectionSection({
           >
             {t('common.newCollection')}
           </button>
-          {owned !== undefined && (
+          {ownedName !== undefined && (
             <CollectionActionsMenu
-              key={owned.id}
-              name={owned.name}
+              key={currentId}
+              name={ownedName}
               onShare={onShare}
               onRename={onRename}
               onDelete={onDelete}

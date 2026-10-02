@@ -698,7 +698,7 @@ export default function Library() {
           sharedLabels={sharedLabels}
           currentId={currentId}
           browseAll={browseAll}
-          showOwnedActions={Boolean(named && !namedIsShared)}
+          ownedName={named && !namedIsShared ? named.name : undefined}
           onCreate={() => dispatch({ type: 'startCreate' })}
           onShare={() => dispatch({ type: 'openShare' })}
           onRename={() =>
