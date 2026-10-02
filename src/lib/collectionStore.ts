@@ -27,7 +27,8 @@ import {
   upsertCollection,
   type LibraryAccess,
 } from './libraryMemory';
-import { useLibrarySlice } from './useLibrary';
+import { selectRecipeCollectionId } from './librarySelectors';
+import { useLibrarySelect, useLibrarySlice } from './useLibrary';
 import {
   addCollectionGrant,
   createCollectionLink,
@@ -554,5 +555,13 @@ export function useCollections(): Collection[] | undefined {
 /** True when the rows on screen came from a pull that included shared collections. */
 export function useFullPull(): boolean {
   return useLibrarySlice('fullPull');
+}
+
+/**
+ * Collection this recipe is filed in. `undefined` while the library is
+ * loading and when the recipe is unfiled.
+ */
+export function useRecipeCollectionId(id: string | undefined): string | undefined {
+  return useLibrarySelect(selectRecipeCollectionId(id));
 }
 

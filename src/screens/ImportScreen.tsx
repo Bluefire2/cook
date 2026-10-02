@@ -88,7 +88,6 @@ export default function ImportScreen() {
     collections?.some((c) => c.id === collectionId && !collectionStore.isShared(c.id))
       ? collectionId
       : undefined;
-  const backTo = libraryHref(knownCollectionId);
   const [input, setInput] = useState('');
   const [bulk, setBulk] = useState(false);
   const [bulkTranslate, setBulkTranslate] = useState(true);
@@ -127,6 +126,11 @@ export default function ImportScreen() {
       prev.locked === status.locked && prev.saving === status.saving ? prev : status,
     );
   }, []);
+  // Before a batch, Back follows the collection in the URL. Once a batch has
+  // chosen one, including an explicit unfiled choice, Back follows that.
+  const backTo = libraryHref(
+    batchDestination === undefined ? knownCollectionId : (batchDestination ?? undefined),
+  );
 
   /** One bulk row: import the URL with a fresh fetch and save it to the batch destination. */
   const importOne = async (url: string, destinationId: string | undefined): Promise<BulkResult> => {

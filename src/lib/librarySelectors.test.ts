@@ -5,10 +5,11 @@ import {
   getSnapshot,
   replaceFromPullWithShared,
   restoreSnapshot,
+  upsertCollection,
   upsertCookLog,
 } from './libraryMemory';
 import * as selectors from './librarySelectors';
-import type { Recipe } from './types';
+import type { Collection, Recipe } from './types';
 
 function recipe(id: string): Recipe {
   return {
@@ -112,7 +113,42 @@ describe('library selectors', () => {
     expect(selectors.selectCookLog('log-1')(snapshot)?.id).toBe('log-1');
     expect(selectors.selectCookRow('r1')(snapshot)?.servings).toBe(2);
     expect(selectors.selectPendingBlob('photo-1')(snapshot)).toBeInstanceOf(Blob);
+    expect(selectors.selectRecipeCollectionId('r1')(snapshot)).toBeUndefined();
     restoreSnapshot({ ...snapshot, loaded: false });
     expect(selectors.selectRecipe('r1')(getSnapshot())).toBeUndefined();
+    expect(selectors.selectRecipeCollectionId('r1')(getSnapshot())).toBeUndefined();
+  });
+
+  it('selectRecipeCollectionId returns the list the recipe is filed in', () => {
+    seed();
+    const dinners: Collection = {
+      id: 'c-b',
+      name: 'Dinners',
+      recipeIds: ['r1'],
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const lunches: Collection = {
+      id: 'c-a',
+      name: 'Lunches',
+      recipeIds: ['r1', 's1'],
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    upsertCollection(dinners);
+    upsertCollection(lunches);
+    const select = selectors.selectRecipeCollectionId('r1');
+    expect(select(getSnapshot())).toBe('c-a');
+    expect(selectors.selectRecipeCollectionId('s1')(getSnapshot())).toBe('c-a');
+    expect(selectors.selectRecipeCollectionId('absent')(getSnapshot())).toBeUndefined();
+    const filed = select(getSnapshot());
+    upsertCookLog({
+      id: 'log-2',
+      recipeId: 's1',
+      cookedOn: '2026-09-21',
+      createdAt: 2,
+      updatedAt: 2,
+    });
+    expect(Object.is(select(getSnapshot()), filed)).toBe(true);
   });
 });

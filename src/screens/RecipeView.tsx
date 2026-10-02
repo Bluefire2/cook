@@ -5,6 +5,8 @@ import { unitLabel } from '../i18n/unitLabel';
 import ChatPanel from '../components/ChatPanel';
 import CookLogCard from '../components/CookLogCard';
 import ImportWarningBanner from '../components/ImportWarningBanner';
+import { libraryHref } from '../lib/collectionHref';
+import { useRecipeCollectionId } from '../lib/collectionStore';
 import { useCookLogs } from '../lib/cookLogStore';
 import { SpinnerIcon, TranslateIcon } from '../lib/icons';
 import { usePhotoUrl } from '../lib/photoStore';
@@ -144,6 +146,7 @@ export default function RecipeView() {
   const recipe = useRecipe(id);
   const access = useRecipeAccess(id);
   const sharedByEmail = useRecipeSharedBy(id);
+  const collectionId = useRecipeCollectionId(id);
   const photoUrl = usePhotoUrl(recipe?.photoId);
   useWakeLock();
 
@@ -303,7 +306,7 @@ export default function RecipeView() {
     <div className="mx-auto max-w-xl px-4 pb-24">
       <header className="py-4">
         <div className="flex items-center justify-between">
-          <Link to="/" className={backLink}>
+          <Link to={libraryHref(collectionId)} className={backLink}>
             &larr; {t('common.library')}
           </Link>
           {canEdit && (
