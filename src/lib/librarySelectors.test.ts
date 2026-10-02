@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { winningMembership } from './collectionMembership';
 import {
   addPendingBlob,
   clearLibrary,
@@ -141,7 +142,11 @@ describe('library selectors', () => {
     expect(select(getSnapshot())).toBe('c-a');
     expect(selectors.selectRecipeCollectionId('s1')(getSnapshot())).toBe('c-a');
     expect(selectors.selectRecipeCollectionId('absent')(getSnapshot())).toBeUndefined();
-    const filed = select(getSnapshot());
+    // The same answer the library's own membership gives.
+    const membership = winningMembership([...getSnapshot().collections.values()]);
+    for (const id of ['r1', 's1', 'absent']) {
+      expect(selectors.selectRecipeCollectionId(id)(getSnapshot())).toBe(membership.get(id));
+    }
     upsertCookLog({
       id: 'log-2',
       recipeId: 's1',
@@ -149,6 +154,6 @@ describe('library selectors', () => {
       createdAt: 2,
       updatedAt: 2,
     });
-    expect(Object.is(select(getSnapshot()), filed)).toBe(true);
+    expect(select(getSnapshot())).toBe('c-a');
   });
 });

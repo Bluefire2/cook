@@ -127,9 +127,14 @@ export default function ImportScreen() {
     );
   }, []);
   // Before a batch, Back follows the collection in the URL. Once a batch has
-  // chosen one, including an explicit unfiled choice, Back follows that.
+  // chosen one, including an explicit unfiled choice, Back follows that, unless
+  // the collection was deleted during the batch.
+  const batchCollectionId =
+    batchDestination && collections?.some((c) => c.id === batchDestination)
+      ? batchDestination
+      : undefined;
   const backTo = libraryHref(
-    batchDestination === undefined ? knownCollectionId : (batchDestination ?? undefined),
+    batchDestination === undefined ? knownCollectionId : batchCollectionId,
   );
 
   /** One bulk row: import the URL with a fresh fetch and save it to the batch destination. */
@@ -485,6 +490,7 @@ export default function ImportScreen() {
                     <>
                       <Link
                         to={`/recipe/${row.id}`}
+                        state={{ from: backTo }}
                         className="font-medium text-ink hover:underline"
                       >
                         {row.title}
