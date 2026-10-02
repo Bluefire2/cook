@@ -486,6 +486,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/import-feedback.md` | Merged (#107), not deployed. Optional import reports after a failed or flagged import, 👍/👎 on clean previews, stored in Firestore `importFeedback` for 180 days. TTL policy on `expireAt` applied 2026-10-01. |
 | `docs/plans/feature-requests.md` | Built on `claude/feature-requests`, not deployed. `/suggest` page, stored in Firestore `featureRequests` for one year; TTL policy on `expireAt` is an owner step. |
 | `docs/plans/agent-collection-moves.md` | Built, not deployed. `propose_collection_move` / `collection_move` v1 proposal card; client apply via `collectionStore.moveRecipes`. |
+| `docs/plans/agent-create-collection.md` | Built, not deployed. `propose_create_collection` / `collection_create` v1 proposal card; client apply via `collectionStore.createWithRecipes` in one push. |
 | `docs/plans/html-parser-recipe-import.md` | Built on `cursor/html-parser-recipe-import-11d4`. Not deployed. Replace the hand-rolled HTML scanner in `server/recipeImport.ts` with parse5 (issue #91). |
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |
 

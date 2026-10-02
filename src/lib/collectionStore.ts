@@ -25,6 +25,7 @@ import {
   removeCollectionLocal,
   sortCollections,
   upsertCollection,
+  writeCollections,
   type LibraryAccess,
 } from './libraryMemory';
 import { useLibrarySlice } from './useLibrary';
@@ -534,6 +535,89 @@ export const collectionStore = {
           upsertCollection(collection);
         }
         return { value: { moved: 0 }, reconcile: false, error: err, reread: 'always' };
+      }
+    });
+  },
+
+  /**
+   * Creates one owned collection and files `recipeIds` into it as one push.
+   * Recipes leave their current owned collections in that same write.
+   * Every id must still be an owned recipe; a missing or shared id fails
+   * before anything is written. An empty list creates an empty collection.
+   * A duplicate name, the collection cap, or the recipe cap also fails first.
+   */
+  async createWithRecipes(
+    name: string,
+    recipeIds: readonly string[],
+  ): Promise<{ id: string; moved: number }> {
+    const trimmed = compactCollectionName(name);
+    if (trimmed === undefined) {
+      throw new Error(
+        name.trim() === ''
+          ? t('error.collectionNameEmpty')
+          : t('error.collectionNameLong', { max: MAX_COLLECTION_NAME_LENGTH }),
+      );
+    }
+    const owned = listCollections().filter((c) => !isSharedCollection(c.id));
+    const key = trimmed.toLowerCase();
+    const nameMatch = owned.find((c) => c.name.trim().toLowerCase() === key);
+    if (nameMatch) {
+      throw new Error(t('error.collectionNameTaken', { name: nameMatch.name }));
+    }
+    if (countOwnedNamedCollections() >= MAX_NAMED_COLLECTIONS) {
+      throw new Error(t('error.collectionCap', { max: MAX_NAMED_COLLECTIONS }));
+    }
+
+    const kept: string[] = [];
+    const seen = new Set<string>();
+    for (const id of recipeIds) {
+      if (id === '' || seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      if (isSharedRecipe(id) || !getRecipe(id)) {
+        throw new Error(t('assistant.moveRecipesGone'));
+      }
+      kept.push(id);
+    }
+    if (recipeIds.length > 0 && kept.length === 0) {
+      throw new Error(t('assistant.moveRecipesGone'));
+    }
+    if (wouldExceedRecipeIdCap(kept)) {
+      throw new Error(t('error.collectionFull'));
+    }
+
+    const now = Date.now();
+    const id = crypto.randomUUID();
+    const created = compactCollection({
+      id,
+      name: trimmed,
+      recipeIds: kept,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const stripped = moveRecipes(owned, kept, 'default', now).map(compactCollection);
+    const previous = stripped
+      .map((next) => owned.find((c) => c.id === next.id))
+      .filter((c): c is Collection => c !== undefined);
+    const upserts = [...stripped, created];
+
+    return await withLocalWrite(async () => {
+      writeCollections({ upserts });
+      try {
+        const result = await pushOps(
+          upserts.map((payload) => ({ kind: 'collection.put' as const, payload })),
+        );
+        if (result !== 'ok') {
+          throw saveError(result, true);
+        }
+        return { value: { id, moved: kept.length }, reconcile: true };
+      } catch (err) {
+        if (err instanceof SessionExpiredError) {
+          throw err;
+        }
+        writeCollections({ upserts: previous, removeIds: [id] });
+        return { value: { id, moved: 0 }, reconcile: false, error: err, reread: 'always' };
       }
     });
   },

@@ -438,6 +438,24 @@
     "needsData": true
   },
   {
+    "id": "assistant-collection-create",
+    "route": "/assistant",
+    "setup": "Signed in, with a collection-create card already on screen showing the pending Create state (heading, the line that recipes leave their current collections when recipes are included, preview rows, and the Create button). If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "assistant-collection-create-applied",
+    "route": "/assistant",
+    "setup": "Signed in, with a collection-create card already on screen showing the applied sentence after Create. If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "assistant-collection-create-error",
+    "route": "/assistant",
+    "setup": "Signed in, with a collection-create card already on screen showing an error line after a failed create. If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
+    "needsData": true
+  },
+  {
     "id": "assistant-collection-move-error",
     "route": "/assistant",
     "setup": "Signed in, with a collection-move card already on screen showing an error line after a failed move. If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
