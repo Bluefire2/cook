@@ -1,6 +1,6 @@
 # Import feedback
 
-Status: built on claude/recipe-import-feedback-0eb055, not deployed. TTL policy applied 2026-10-01.
+Status: merged (#107), not deployed. TTL policy applied 2026-10-01.
 
 ## Goal
 
