@@ -8,6 +8,7 @@ import {
   cacheSizeForTest,
   clearMembershipCache,
   lookupMemberForTest,
+  memberFromIdentity,
   visitorMembership,
 } from './membership.ts';
 import { signSession } from './session.ts';
@@ -300,6 +301,50 @@ describe('visitorMembership', () => {
       email: 'm@example.com',
       isOwner: false,
     });
+  });
+});
+
+describe('memberFromIdentity', () => {
+  const sub = 'identity-sub';
+
+  beforeEach(() => {
+    process.env.ALLOWED_EMAILS = 'owner@example.com';
+    clearMembershipCache(sub);
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('an owner short-circuits without a member read', async () => {
+    const spy = vi.spyOn(members, 'readMember');
+    expect(await memberFromIdentity({ sub: 'owner-sub', email: 'Owner@Example.com' })).toEqual({
+      kind: 'ok',
+      sub: 'owner-sub',
+      email: 'Owner@Example.com',
+      isOwner: true,
+    });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('an active member is ok, a missing or revoked one denied, a throw unknown', async () => {
+    const spy = vi
+      .spyOn(members, 'readMember')
+      .mockResolvedValueOnce({ sub, status: 'active', approvedAt: 1, approvedBy: 'owner' });
+    expect(await memberFromIdentity({ sub, email: 'm@example.com' })).toEqual({
+      kind: 'ok',
+      sub,
+      email: 'm@example.com',
+      isOwner: false,
+    });
+    clearMembershipCache(sub);
+    spy.mockResolvedValueOnce(null);
+    expect(await memberFromIdentity({ sub, email: 'm@example.com' })).toEqual({ kind: 'denied' });
+    spy.mockResolvedValueOnce({ sub, status: 'revoked', approvedAt: 1, approvedBy: 'owner' });
+    expect(await memberFromIdentity({ sub, email: 'm@example.com' })).toEqual({ kind: 'denied' });
+    spy.mockRejectedValueOnce(new Error('down'));
+    expect(await memberFromIdentity({ sub, email: 'm@example.com' })).toEqual({ kind: 'unknown' });
   });
 });
 

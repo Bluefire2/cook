@@ -3,6 +3,13 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import {
+  ACCOUNT_DELETION_ORDER,
+  ACCOUNT_DELETION_STEPS,
+  FIRESTORE_COLLECTIONS,
+  personalTopLevelCollections,
+} from '../server/accountDeletion.ts';
+import { STORE_KINDS } from '../server/sync.ts';
 
 // Rules from AGENTS.md that a grep can check. Each failure message names the
 // rule so the fix is to follow it, not to loosen the check.
@@ -197,6 +204,86 @@ describe('server', () => {
       .filter((path) => !isTestFile(path))
       .flatMap((path) => matchingLines(path, /\bResponse\.redirect\s*\(/));
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('auth surfaces (Auth and Public MCP in AGENTS.md)', () => {
+  const productionTs = () =>
+    ['server', 'api', 'scripts']
+      .flatMap((dir) => filesUnder(dir, ['.ts']))
+      .filter((path) => !isTestFile(path));
+
+  it('header-session auth stays extension-only', () => {
+    // The X-Sous-Session exception is POST /api/extension/import alone; session.ts
+    // defines readHeaderSession and membership.ts wraps it.
+    const users = productionTs()
+      .filter((path) => matchingLines(path, /\b(?:readHeaderSession|requireHeaderMember)\b/).length > 0)
+      .sort();
+    expect(users).toEqual(['server/extensionImport.ts', 'server/membership.ts', 'server/session.ts']);
+  });
+
+  it('under server/mcp/, only the consent pages and the Settings routes touch cookies or sessions', () => {
+    // /mcp and /oauth/token read a bearer or a form body, never a cookie.
+    const offenders = productionTs()
+      .filter((path) => path.startsWith('server/mcp/'))
+      .filter((path) => path !== 'server/mcp/oauth/authorize.ts' && path !== 'server/mcp/grantsHttp.ts')
+      .flatMap((path) => matchingLines(path, /\b(?:readSession|readCookie|requireMember)\b/));
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('account deletion covers every collection (server/accountDeletion.ts)', () => {
+  it('every Firestore collection the code uses is classified in FIRESTORE_COLLECTIONS', () => {
+    // /privacy promises a deletion request removes all of a member's data. A
+    // collection nobody classified is one the deletion script never visits.
+    const files = ['server', 'api', 'scripts']
+      .flatMap((dir) => filesUnder(dir, ['.ts']))
+      .filter((path) => !isTestFile(path));
+    const constants = new Map<string, string>();
+    for (const path of files) {
+      for (const match of read(path).matchAll(/(?:export )?const (\w+) = (['"`])([^'"`$]+)\2;/g)) {
+        constants.set(match[1], match[3]);
+      }
+    }
+    // An argument that is neither a plain string nor a known constant (a
+    // template with a substitution, a variable) is an offender, so the check
+    // fails closed; exempt one below only when its type already pins it.
+    const offenders: string[] = [];
+    for (const path of files) {
+      for (const match of read(path).matchAll(/\.collection(?:Group)?\(([^)]*)\)/g)) {
+        const arg = match[1].trim();
+        // store.ts colRef(uid, kind): a StoreKind, checked below.
+        if (path === 'server/store.ts' && arg === 'kind') continue;
+        // accountDeletion.ts takes the name as a PersonalTopLevel, typed against the registry.
+        if (path === 'server/accountDeletion.ts' && arg === 'collection') continue;
+        const name = /^(['"`])[^'"`$]+\1$/.test(arg) ? arg.slice(1, -1) : constants.get(arg);
+        if (name === undefined || !Object.hasOwn(FIRESTORE_COLLECTIONS, name)) {
+          offenders.push(`${path}: .collection(${arg})`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+    for (const kind of STORE_KINDS) {
+      expect(FIRESTORE_COLLECTIONS[kind]).toMatchObject({ scope: 'nested', parent: 'users/{sub}' });
+    }
+  });
+
+  it('runs a step for each personal top-level collection, once, with users last', () => {
+    expect([...ACCOUNT_DELETION_ORDER].sort()).toEqual(personalTopLevelCollections().sort());
+    expect(Object.keys(ACCOUNT_DELETION_STEPS).sort()).toEqual(personalTopLevelCollections().sort());
+    expect(ACCOUNT_DELETION_ORDER.at(-1)).toBe('users');
+    expect(ACCOUNT_DELETION_ORDER[0]).toBe('incomingShares');
+  });
+
+  it('the README deletion procedure runs scripts/delete-account-data.ts and deletes the photos', () => {
+    const readme = read('README.md');
+    const start = readme.indexOf('**Manual deletion procedure (operator)');
+    const end = readme.indexOf('There is **no automated purge job**', start);
+    expect(start).toBeGreaterThan(-1);
+    const procedure = readme.slice(start, end);
+    expect(procedure).toContain('scripts/delete-account-data.ts');
+    expect(procedure).toContain('gcloud storage rm --recursive');
+    expect(existsSync(join(repoRoot, 'scripts/delete-account-data.ts'))).toBe(true);
   });
 });
 

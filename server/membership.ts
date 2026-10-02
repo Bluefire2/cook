@@ -100,7 +100,21 @@ async function memberFromSession(sessionResult: ReadSessionResult): Promise<Requ
   if (sessionResult.status !== 'ok') {
     return { kind: 'denied' };
   }
-  const { sub, email } = sessionResult.session;
+  return memberFromIdentity(sessionResult.session);
+}
+
+/**
+ * The admission decision for an identity that has already been authenticated:
+ * a verified session cookie, or a live MCP grant (`server/mcp/resourceAuth.ts`),
+ * which carries the `sub` and email of the session that consented. Owners
+ * short-circuit before any member read; members go through the 60 s
+ * active-member cache. Denied is never mixed with unknown.
+ */
+export async function memberFromIdentity(identity: {
+  sub: string;
+  email: string;
+}): Promise<RequireMemberResult> {
+  const { sub, email } = identity;
   const allowedRaw = allowedEmails();
   const ownerCheck = accessDecision({
     email,
