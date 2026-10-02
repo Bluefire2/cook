@@ -131,15 +131,15 @@ export default function ImportScreen() {
       prev.locked === status.locked && prev.saving === status.saving ? prev : status,
     );
   }, []);
-  // Before a batch, Back follows the collection in the URL. Once a batch has
-  // chosen one, including an explicit unfiled choice, Back follows that, unless
-  // the collection was deleted during the batch.
-  const batchCollectionId =
-    batchDestination && collections?.some((c) => c.id === batchDestination)
-      ? batchDestination
+  // Before a destination is chosen, Back follows the collection in the URL.
+  // Once one is chosen, including an explicit unfiled choice, Back follows
+  // that, unless the collection was deleted.
+  const pickedCollectionId =
+    picked && collections?.some((c) => c.id === picked)
+      ? picked
       : undefined;
   const backTo = libraryHref(
-    batchDestination === undefined ? knownCollectionId : batchCollectionId,
+    picked === undefined ? knownCollectionId : pickedCollectionId,
   );
 
   /** One bulk row: import the URL with a fresh fetch and save it to the batch destination. */
