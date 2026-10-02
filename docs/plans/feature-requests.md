@@ -109,12 +109,7 @@ list stored data in general and is unchanged.
    `expireAt`, which means the TTL policy is not applied.
 
 3. **Account deletion request.** `/privacy` promises that a deletion request covers
-   suggestions. They sit in top-level `featureRequests`, outside `users/{uid}`, so
-   deleting the account's tree does not remove them:
-   1. Get the account's `sub` with `node --env-file=.env.local scripts/import-audit.ts <email>`.
-   2. Optionally list what will go with
-      `node --env-file=.env.local scripts/feature-requests.ts --days 366 --email <email>`.
-   3. In the Firestore console, open `featureRequests`, filter `sub == <sub>`, and delete
-      each document.
-
-   Do the same for `importFeedback` (`docs/plans/import-feedback.md`, Owner steps).
+   suggestions. They sit in top-level `featureRequests`, outside `users/{uid}`;
+   `scripts/delete-account-data.ts` deletes them with the rest of the account's data
+   (README.md, "Manual deletion procedure"). To see what will go first, run
+   `node --env-file=.env.local scripts/feature-requests.ts --days 366 --email <email>`.

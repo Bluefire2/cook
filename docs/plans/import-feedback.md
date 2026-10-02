@@ -198,10 +198,9 @@ Every request writes one line with these fields:
      It is not on PATH, and the machine's default project is a different one, so
      always pass `--project`.
    - Without the policy, `/privacy`'s 180-day promise is false.
-2. **Account deletion request:**
-   1. Get the account's `sub` with `node --env-file=.env.local scripts/import-audit.ts <email>`.
-   2. In the Firestore console, open `importFeedback`, filter `sub == <sub>`, and
-      delete each document.
+2. **Account deletion request:** `scripts/delete-account-data.ts` deletes the
+   member's reports with the rest of their data (README.md, "Manual deletion
+   procedure").
 
 ## Implementation
 

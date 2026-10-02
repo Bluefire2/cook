@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { compactImportCheck, IMPORT_WARNING_CODES, MAX_IMPORT_WARNINGS } from './importWarnings.ts';
+import {
+  compactImportCheck,
+  IMPORT_WARNING_CODES,
+  MAX_IMPORT_WARNINGS,
+  reconcileImportCheck,
+} from './importWarnings.ts';
 
 describe('compactImportCheck', () => {
   it('has the ten codes from the spec', () => {
@@ -54,5 +59,29 @@ describe('compactImportCheck', () => {
     ]) {
       expect(compactImportCheck(raw), JSON.stringify(raw)).toBeUndefined();
     }
+  });
+});
+
+describe('reconcileImportCheck (server copy)', () => {
+  // The client suite (src/lib/importCheck.test.ts) covers each warning code
+  // through the re-export; this pins that a stored document shape fits too.
+  it('reconciles a stored recipe document the way recipeStore.save does', () => {
+    const stored = {
+      id: 'r1',
+      title: 'Soup',
+      servings: 2,
+      ingredientSections: [{ items: [{ item: 'tomatoes' }] }],
+      steps: [],
+      tags: [],
+      serverUpdatedAt: 5,
+    };
+    const check = { at: 1, warnings: [{ code: 'MISSING_INSTRUCTIONS' as const }] };
+    const retagged = { ...stored, tags: ['x'] };
+    expect(reconcileImportCheck(check, stored, retagged, 9)).toBe(check);
+    expect(reconcileImportCheck(check, stored, { ...stored, steps: [{ text: 'Simmer.' }] }, 9)).toEqual({
+      at: 1,
+      warnings: [],
+      editedAt: 9,
+    });
   });
 });

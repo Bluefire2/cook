@@ -119,11 +119,10 @@ Client routes: `/p/:token` (`PublicCollection`), `/p/:token/r/:recipeId`
 
    `/privacy` (Server logs) promises that public-link requests are left out.
 
-2. **Account deletion request.** `/privacy` promises that a deletion request covers
-   public links. They sit in top-level `publicLinks`, outside `users/{uid}`: in the
-   Firestore console, filter `publicLinks` on `ownerSub == <sub>` (get the `sub`
-   with `scripts/import-audit.ts <email>`) and delete each document. Do this beside
-   the `featureRequests` and `importFeedback` steps.
+2. **Account deletion request.** `publicLinks` is classified in
+   `server/accountDeletion.ts` and deleted by `ownerSub` with the rest of the
+   account by `scripts/delete-account-data.ts` (README.md, manual deletion
+   procedure). No separate step.
 
 ## Verification
 

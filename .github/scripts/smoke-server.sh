@@ -20,6 +20,13 @@ status_of() {
   return 0
 }
 
+# Same as status_of, for a POST with an empty JSON body.
+post_status_of() {
+  curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST \
+    -H 'Content-Type: application/json' -d '{}' "${BASE_URL}$1" || true
+  return 0
+}
+
 content_type_of() {
   curl -s -o /dev/null -w '%{content_type}' --max-time 10 "${BASE_URL}$1" || true
   return 0
@@ -32,6 +39,17 @@ expect_status() {
     printf 'ok    %s %s\n' "$got" "$path"
   else
     printf 'FAIL  %s %s (want %s)\n' "$got" "$path" "$want"
+    failures=$((failures + 1))
+  fi
+}
+
+expect_post_status() {
+  local path="$1" want="$2" got
+  got="$(post_status_of "$path")"
+  if [[ "$got" == "$want" ]]; then
+    printf 'ok    %s POST %s\n' "$got" "$path"
+  else
+    printf 'FAIL  %s POST %s (want %s)\n' "$got" "$path" "$want"
     failures=$((failures + 1))
   fi
 }
@@ -75,6 +93,15 @@ expect_html /settings
 # unknown (503) or a crash (500).
 expect_status /api/sync/pull 401
 expect_status /api/sync/shared 401
+
+# MCP: discovery documents are public; /mcp refuses a caller with no bearer
+# token with 401 (the challenge that starts an MCP client's sign-in), never
+# 503 or 500, and has no GET.
+expect_status /.well-known/oauth-protected-resource/mcp 200
+expect_status /.well-known/oauth-protected-resource 200
+expect_status /.well-known/oauth-authorization-server 200
+expect_post_status /mcp 401
+expect_status /mcp 405
 
 if (( failures > 0 )); then
   printf '%d smoke check(s) failed\n' "$failures"

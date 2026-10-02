@@ -29,6 +29,9 @@ import {
   compactRecipeFields,
   MAX_RECIPE_LANG_CHARS,
   compareMutation,
+  nextRecipeUpdatedAt,
+  ownRecipeUpdateDecision,
+  recipeDocBody,
   SHARED_PARENT_OWNER_SUB_FIELD,
   sharedParentMarkerForWrite,
   sharedParentOwnerFromCandidate,
@@ -1327,5 +1330,68 @@ describe('foldListLiveDocsCandidate', () => {
     acc = foldListLiveDocsCandidate(acc, live({ id: 'c' }, 10), limits);
     acc = foldListLiveDocsCandidate(acc, live({ id: 'd' }, 10), limits);
     expect(acc.docs.map((d) => d.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('recipeDocBody', () => {
+  it('compacts the payload and stamps identity and both clocks', () => {
+    const body = recipeDocBody(
+      {
+        id: 'ignored',
+        createdAt: 1,
+        updatedAt: 999,
+        title: 'Soup',
+        servings: 2,
+        ingredientSections: [],
+        steps: [],
+        tags: [],
+        stray: 'dropped',
+        deletedAt: 5,
+      },
+      'r1',
+      20,
+      30,
+    );
+    expect(body).toEqual({
+      id: 'r1',
+      createdAt: 1,
+      updatedAt: 20,
+      serverUpdatedAt: 30,
+      title: 'Soup',
+      servings: 2,
+      ingredientSections: [],
+      steps: [],
+      tags: [],
+    });
+  });
+});
+
+describe('nextRecipeUpdatedAt', () => {
+  it('is now when the stored clock is behind', () => {
+    expect(nextRecipeUpdatedAt(100, 500)).toBe(500);
+  });
+
+  it('is past the stored clock even when that clock is ahead of now', () => {
+    expect(nextRecipeUpdatedAt(10_000, 500)).toBe(10_001);
+    expect(nextRecipeUpdatedAt(500, 500)).toBe(501);
+  });
+});
+
+describe('ownRecipeUpdateDecision', () => {
+  const live = { id: 'r1', title: 'Soup', updatedAt: 42, createdAt: 1 };
+
+  it('is not_found for a missing or tombstoned doc', () => {
+    expect(ownRecipeUpdateDecision(undefined, 42)).toEqual({ kind: 'not_found' });
+    expect(ownRecipeUpdateDecision({ ...live, deletedAt: 50 }, 42)).toEqual({ kind: 'not_found' });
+    expect(ownRecipeUpdateDecision({ id: 'r1', title: 'Soup' }, 42)).toEqual({ kind: 'not_found' });
+  });
+
+  it('is conflict with the current version when the version differs', () => {
+    expect(ownRecipeUpdateDecision(live, 41)).toEqual({ kind: 'conflict', version: 42 });
+    expect(ownRecipeUpdateDecision(live, 43)).toEqual({ kind: 'conflict', version: 42 });
+  });
+
+  it('is ok with the stored doc when the version matches', () => {
+    expect(ownRecipeUpdateDecision(live, 42)).toEqual({ kind: 'ok', stored: live, storedUpdatedAt: 42 });
   });
 });
