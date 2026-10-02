@@ -3,8 +3,11 @@ import { useT } from '../i18n';
 import { ThumbDownIcon, ThumbUpIcon } from '../lib/icons';
 import { ratingUp, type FeedbackCardInput } from '../lib/importFeedback';
 import { sendImportFeedback } from '../lib/importFeedbackApi';
-import { ghostIconBtn } from '../lib/uiClasses';
 import ImportFeedbackCard from './ImportFeedbackCard';
+
+/** Smaller than `ghostIconBtn`: a footnote under Save, not a header control. */
+const ratingIconBtn =
+  'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-ink-muted hover:bg-surface-muted hover:text-ink active:bg-surface-muted';
 
 export default function ImportFeedbackRating({
   input,
@@ -16,7 +19,7 @@ export default function ImportFeedbackRating({
 
   if (choice === 'up') {
     return (
-      <p role="status" className="mt-6 text-sm text-ink-subtle">
+      <p role="status" className="mt-3 text-right text-xs text-ink-muted">
         {t('importFeedback.ratingThanks')}
       </p>
     );
@@ -25,28 +28,30 @@ export default function ImportFeedbackRating({
     return <ImportFeedbackCard input={{ ...input, trigger: 'down' }} />;
   }
   return (
-    <div className="mt-6 flex items-center gap-2 text-sm text-ink-subtle">
+    <div className="mt-3 flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs text-ink-muted">
       <span>{t('importFeedback.ratingPrompt')}</span>
-      <button
-        type="button"
-        className={ghostIconBtn}
-        aria-label={t('importFeedback.ratingUp')}
-        onClick={() => {
-          setChoice('up');
-          // Best effort: a lost thumbs-up costs nothing, so the person sees no error.
-          void sendImportFeedback(ratingUp(input.source)).catch(() => {});
-        }}
-      >
-        <ThumbUpIcon className="h-5 w-5" />
-      </button>
-      <button
-        type="button"
-        className={ghostIconBtn}
-        aria-label={t('importFeedback.ratingDown')}
-        onClick={() => setChoice('down')}
-      >
-        <ThumbDownIcon className="h-5 w-5" />
-      </button>
+      <span className="inline-flex items-center">
+        <button
+          type="button"
+          className={ratingIconBtn}
+          aria-label={t('importFeedback.ratingUp')}
+          onClick={() => {
+            setChoice('up');
+            // Best effort: a lost thumbs-up costs nothing, so the person sees no error.
+            void sendImportFeedback(ratingUp(input.source)).catch(() => {});
+          }}
+        >
+          <ThumbUpIcon className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          className={ratingIconBtn}
+          aria-label={t('importFeedback.ratingDown')}
+          onClick={() => setChoice('down')}
+        >
+          <ThumbDownIcon className="h-4 w-4" />
+        </button>
+      </span>
     </div>
   );
 }
