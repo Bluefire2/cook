@@ -811,3 +811,45 @@ export async function revokeCollectionLink(
     body: JSON.stringify({ id: linkId }),
   });
 }
+
+export type PublicLinkHttpResult =
+  | { kind: 'ok'; url: string | null }
+  | { kind: 'signedOut' }
+  | { kind: 'error'; message: string; status?: number };
+
+/** Owner public-link REST: `{ url }`, null while the collection is not public. */
+async function publicLinkRequest(path: string, init?: RequestInit): Promise<PublicLinkHttpResult> {
+  const result = await sharingRequest(path, init);
+  if (result.kind !== 'ok') {
+    return result;
+  }
+  const url = (result.body as { url?: unknown } | null)?.url;
+  if (url !== null && typeof url !== 'string') {
+    return { kind: 'error', message: t('error.sharingUpdate') };
+  }
+  return { kind: 'ok', url };
+}
+
+export async function getCollectionPublicLink(collectionId: string): Promise<PublicLinkHttpResult> {
+  return publicLinkRequest(`/api/collections/${encodeURIComponent(collectionId)}/public`);
+}
+
+export async function enableCollectionPublicLink(
+  collectionId: string,
+): Promise<PublicLinkHttpResult> {
+  return publicLinkRequest(`/api/collections/${encodeURIComponent(collectionId)}/public`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: '{}',
+  });
+}
+
+export async function disableCollectionPublicLink(
+  collectionId: string,
+): Promise<PublicLinkHttpResult> {
+  return publicLinkRequest(`/api/collections/${encodeURIComponent(collectionId)}/public/revoke`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: '{}',
+  });
+}

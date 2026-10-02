@@ -81,10 +81,12 @@ when `contactOk` is true. The `feature_request` log line never holds the
 text. `/privacy` describes both; change it with them, and change the schema
 section in the plan with `FeatureRequestDoc`. Because suggestions and import
 reports sit outside `users/{uid}`, an account deletion request needs the
-plan's owner step to remove them.
+plan's owner step to remove them, and the account's `publicLinks` too
+(`docs/plans/public-collections.md`, Owner steps).
 
 No server log line may contain an email address or a link token. Invite
-(`/invite/<token>`) and collection-link (`/c/<token>`) pages send
+(`/invite/<token>`), collection-link (`/c/<token>`), and public-collection
+(`/p/<token>`, `/api/public/<token>`) pages send
 `Referrer-Policy: no-referrer` so the token never rides a `Referer`, and the
 `link-token-requests` exclusion on the `_Default` sink
 (`scripts/logExclusions.ts`, applied with `node
@@ -297,6 +299,28 @@ or downgrades anyone; the owner's row switch does), the
 link writes nothing. Unknown, revoked, expired, deleted collection, and
 unadmitted owner are one generic 404 page. The OAuth callback is unchanged.
 
+**Public collections** (`docs/plans/public-collections.md`,
+`server/publicLinks.ts`, `publicLinksHttp.ts`, `publicJoin.ts`) are the one
+place data is served without a session. The owner turns a named collection's
+unlisted link on or off under `/api/collections/:id/public` (owner only, 404
+for anyone else); top-level `publicLinks/{sha256(token)}` keeps the token so
+the owner can copy it again. `GET /api/public/<token>` and
+`…/recipes/<id>/photos/<id>` recheck live link → admitted owner → live
+collection → listed live recipe (→ listed photo) on every request, cache
+nothing, and answer one generic 404. They return recipe fields only, never an
+email, `sub`, chat, cook row, or cook log, and never reach a model. The client
+side is separate screens (`/p/:token`, `/p/:token/r/:recipeId`, `/p`) that
+keep the snapshot in component state, never `libraryMemory`; AI controls
+there are locked (`src/components/LockedAi.tsx`), and
+`scripts/invariants.test.ts` keeps AI and library-writing imports out of
+them. Sign-in from `/p` returns to `/p` with the token in sessionStorage, so
+it never rides the OAuth round trip. A signed-in member can `POST
+/api/public/join { token }` to become a viewer through the collection-link
+redeem path (`keepRole`, same cap); AI then runs through that grant. A new
+feature on a recipe page decides separately whether it belongs on
+`PublicRecipe`; shared display pieces live in `src/components/RecipeBody.tsx`.
+Collection delete revokes the public link in the grant-cascade transaction.
+
 Collection delete tombstones live grants in the same transaction. Forward
 grants carry an internal `active` flag, and the cascade time is
 `grantCascadeAt`, not the client `updatedAt`. Grants written before `active`
@@ -487,6 +511,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/feature-requests.md` | Built on `claude/feature-requests`, not deployed. `/suggest` page, stored in Firestore `featureRequests` for one year; TTL policy on `expireAt` is an owner step. |
 | `docs/plans/agent-collection-moves.md` | Built, not deployed. `propose_collection_move` / `collection_move` v1 proposal card; client apply via `collectionStore.moveRecipes`. |
 | `docs/plans/html-parser-recipe-import.md` | Built on `cursor/html-parser-recipe-import-11d4`. Not deployed. Replace the hand-rolled HTML scanner in `server/recipeImport.ts` with parse5 (issue #91). |
+| `docs/plans/public-collections.md` | Built on `claude/read-only-unauthenticated-mode-204be2`, not deployed. Unlisted public link per named collection, readable signed out; AI locked; members can add it as viewers. Apply the widened log exclusion before deploying. |
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,

@@ -296,13 +296,13 @@
   {
     "id": "share-collection-sheet",
     "route": "/collections/:collectionId",
-    "setup": "Open one of your own named collections (not a shared-with-you folder) and tap Share. Under the title, two buttons: \"By email\" (pressed) and \"With a link\". Do not press \"With a link\"; the link controls are a separate screen. The sheet shows a two-sentence intro about editors and who can delete, the email row with a role menu (Viewer / Editor) and the Share button, then a \"People with access\" heading. The first row is your own email with an Owner badge. Each other row shows an email, a role menu (Viewer / Editor) and Remove; on a phone the email is on its own line above the controls. With nobody else added the list says \"Nobody else can see this yet.\" below the Owner row. Opening the sheet only reads the grant list. Prefer a collection whose sheet says \"Nobody else can see this yet.\" Do not type an email, and do not add, change a role, or remove a person. If every own collection already lists grantees, redact those emails before judging (your own email on the Owner row is fine), or mark skipped: shows another member's data. If you have no own named collection, mark skipped: needs data. Do not create one.",
+    "setup": "Open one of your own named collections (not a shared-with-you folder) and tap Share. Under the title, three buttons: \"By email\" (pressed), \"With a link\", and \"Public\". Do not press \"With a link\" or \"Public\"; their controls are separate screens. The sheet shows a two-sentence intro about editors and who can delete, the email row with a role menu (Viewer / Editor) and the Share button, then a \"People with access\" heading. The first row is your own email with an Owner badge. Each other row shows an email, a role menu (Viewer / Editor) and Remove; on a phone the email is on its own line above the controls. With nobody else added the list says \"Nobody else can see this yet.\" below the Owner row. Opening the sheet only reads the grant list. Prefer a collection whose sheet says \"Nobody else can see this yet.\" Do not type an email, and do not add, change a role, or remove a person. If every own collection already lists grantees, redact those emails before judging (your own email on the Owner row is fine), or mark skipped: shows another member's data. If you have no own named collection, mark skipped: needs data. Do not create one.",
     "needsData": true
   },
   {
     "id": "share-collection-sheet-links",
     "route": "/collections/:collectionId",
-    "setup": "In the Share sheet of one of your own named collections, press \"With a link\" (it is not pressed when the sheet opens). \"By email\" stays visible and is not pressed. There is no separate \"Share by link\" heading. The sheet shows the sentence about joining until you revoke the link or 7 days pass, the role menu (Viewer / Editor) for people who join by link, the Copy link button, and the live-link list. The email form and the people list are not on this screen. Opening the sheet only reads the link list. With no live links the list says \"No live links.\"; if the collection already has live links, each row shows Viewer link or Editor link, an \"expires in …\" line, and Revoke, and one sentence under the list says someone you remove can still rejoin with a live link until it is revoked; capture that too. Link errors (for example the live-link cap) show under the Copy link row. Do not press Copy link (it creates a link) and do not press Revoke. If you have no own named collection, mark skipped: needs data.",
+    "setup": "In the Share sheet of one of your own named collections, press \"With a link\" (it is not pressed when the sheet opens). \"By email\" and \"Public\" stay visible and are not pressed. There is no separate \"Share by link\" heading. The sheet shows the sentence about joining until you revoke the link or 7 days pass, the role menu (Viewer / Editor) for people who join by link, the Copy link button, and the live-link list. The email form and the people list are not on this screen. Opening the sheet only reads the link list. With no live links the list says \"No live links.\"; if the collection already has live links, each row shows Viewer link or Editor link, an \"expires in …\" line, and Revoke, and one sentence under the list says someone you remove can still rejoin with a live link until it is revoked; capture that too. Link errors (for example the live-link cap) show under the Copy link row. Do not press Copy link (it creates a link) and do not press Revoke. If you have no own named collection, mark skipped: needs data.",
     "needsData": true
   },
   {
@@ -454,5 +454,41 @@
     "route": "/assistant",
     "setup": "Signed in, with a reply in progress and a tool chip under the question, such as Searching recipes… or Reading collections…. If that state is not already showing, do not send a message to create it; mark skipped: needs data.",
     "needsData": true
+  },
+  {
+    "id": "share-collection-sheet-public",
+    "route": "/collections/:collectionId",
+    "setup": "In the Share sheet of one of your own named collections, press \"Public\" (the third button, not pressed when the sheet opens). The pane shows a sentence that anyone with the link can read the recipes without signing in but cannot change anything or use the assistant, and that the link works until you turn it off. If the collection is not public it then says \"This collection is not public.\" and shows a \"Create public link\" button: do not press it (it writes). If the collection is already public it shows a \"Public link\" label, the URL in a read-only field, Copy, a red \"Turn off\" button, and a sentence that turning it off stops the link at once and turning it on again gives a new link: capture that too, but do not press Turn off. Opening the pane only reads. If you have no own named collection, mark skipped: needs data.",
+    "needsData": true
+  },
+  {
+    "id": "public-collection",
+    "route": "/p/:token",
+    "setup": "Reaching it needs a public link on one of your own named collections. Creating one writes to production, so do it only when the person who starts the run opts in for that run (for example \"include public link\"): open Share on one own named collection with no grantees, press \"Public\", then \"Create public link\", and list the link created in the report. After the run, press \"Turn off\" in the same pane and list that too. Without the opt-in, mark skipped: needs opt-in. Never paste or share the URL. Open the link in a private window (signed out). The header shows \"Sous\", a grayed chat-bubble button, a \"Sign in\" link, and the language menu. Hover the gray chat bubble (or focus it with Tab): a dark tooltip says to sign in to use the assistant and translation; capture it. Below the header: the collection name, \"Public collection\", and the recipe cards (or \"No recipes in this collection yet.\"). Do not press Sign in. The recipes are your own, so no redaction is needed.",
+    "needsData": true
+  },
+  {
+    "id": "public-collection-locked-sheet",
+    "route": "/p/:token",
+    "setup": "On the signed-out public collection page (see public-collection; same opt-in), tap the gray chat bubble. A sheet opens with a title about signing in to use the assistant, a paragraph saying asking, translating, and the library assistant are for Sous members and that Sous is invitation-only (sign in with Google, then request access), a \"Sign in with Google\" button, and \"Not now\". Do not press Sign in with Google.",
+    "needsData": true
+  },
+  {
+    "id": "public-collection-member",
+    "route": "/p/:token",
+    "setup": "The same public link opened while signed in (see public-collection; same opt-in). The header has the gray chat bubble and the language menu but no Sign in link, and under \"Public collection\" there is an \"Add to my library\" button. Hover the chat bubble: the tooltip says to add the collection to your library to use the assistant and translation. Then tap the chat bubble: the sheet title says to add the collection first, a paragraph explains it appears next to your own collections and can be left at any time, with \"Add to my library\" and \"Not now\". Do not press Add to my library.",
+    "needsData": true
+  },
+  {
+    "id": "public-recipe",
+    "route": "/p/:token/r/:recipeId",
+    "setup": "From the signed-out public collection page (see public-collection; same opt-in), open a recipe. The top row is a back link with the collection name and \"Sign in\". Below: the photo if any, title, times, Ingredients with the servings stepper, Steps, Notes, and at the bottom right a grayed \"Ask\" pill. Prefer a recipe whose language differs from the UI language (or one with no language set) so a grayed translate chip shows under the title; hover it and capture the tooltip, then hover the Ask pill and capture its tooltip (it opens upward). Changing servings, ticking ingredients, or tapping steps is fine here: it stays in the page and writes nothing.",
+    "needsData": true
+  },
+  {
+    "id": "public-link-missing",
+    "route": "/p/:token",
+    "setup": "Open /p/ followed by any 43 letters (for example /p/ and \"a\" 43 times) in a signed-out window. No such link exists, so the page shows \"Sous\", the gray chat bubble, Sign in, the language menu, and one sentence saying the link does not work and the collection may have been made private or deleted. Needs no data and writes nothing.",
+    "needsData": false
   }
 ]

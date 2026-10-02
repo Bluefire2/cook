@@ -17,7 +17,12 @@ export default defineConfig({
     {
       name: 'legal-html',
       configureServer(server) {
-        server.middlewares.use((req, _res, next) => {
+        server.middlewares.use((req, res, next) => {
+          // Same headers scripts/server.ts sends for public collection pages.
+          if (req.url === '/p' || req.url?.startsWith('/p/')) {
+            res.setHeader('Referrer-Policy', 'no-referrer');
+            res.setHeader('X-Robots-Tag', 'noindex');
+          }
           if (req.url === '/privacy' || req.url?.startsWith('/privacy?')) {
             req.url = '/privacy.html';
           } else if (req.url === '/terms' || req.url?.startsWith('/terms?')) {
@@ -41,6 +46,9 @@ export default defineConfig({
           /^\/about$/,
           /^\/invite\//,
           /^\/c\//,
+          // Public collection pages need the server's no-referrer header, so
+          // the service worker never answers them from its cached shell.
+          /^\/p(\/|$)/,
         ],
       },
       manifest: {

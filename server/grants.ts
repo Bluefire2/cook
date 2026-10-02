@@ -4,6 +4,10 @@ import { allowedEmails } from './env.ts';
 import { readMember } from './members.ts';
 import { accessAllows } from './membership.ts';
 import {
+  readLivePublicLinksInTransaction,
+  writeRevokedPublicLinks,
+} from './publicLinks.ts';
+import {
   canViewCollection,
   canViewRecipe,
   parseShareRole,
@@ -1107,8 +1111,10 @@ export async function deleteCollectionWithGrants(
     {
       now: () => Date.now(),
       runTransaction: (work) =>
-        db.runTransaction(async (tx) =>
-          work({
+        db.runTransaction(async (tx) => {
+          // Read before `work` writes anything (Firestore: all reads first).
+          const publicLinks = await readLivePublicLinksInTransaction(tx, ownerSub, collectionId);
+          const result = await work({
             readCollection: async () => {
               const snap = await tx.get(collectionRef);
               return snap.exists
@@ -1143,8 +1149,14 @@ export async function deleteCollectionWithGrants(
                 { merge: false },
               );
             },
-          }),
-        ),
+          });
+          // Like its grants, a deleted collection's public link does not come
+          // back if the collection is ever undeleted.
+          if (result.applied) {
+            writeRevokedPublicLinks(tx, publicLinks, Date.now());
+          }
+          return result;
+        }),
     },
   );
 }

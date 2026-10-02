@@ -651,6 +651,22 @@ export async function photosGet(req: Request): Promise<Response> {
     }
   }
 
+  return await streamStoredPhoto(uid, photoId, req.method);
+  } catch (err) {
+    console.error('photosGet store error:', err);
+    return storeUnavailable();
+  }
+}
+
+/**
+ * Streams one live photo of `uid` from GCS, or 404. The caller has already
+ * decided the request may read it. Throws on store errors.
+ */
+export async function streamStoredPhoto(
+  uid: string,
+  photoId: string,
+  method: string,
+): Promise<Response> {
   const snap = await photoDocRef(uid, photoId).get();
   if (!snap.exists) {
     return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
@@ -689,14 +705,10 @@ export async function photosGet(req: Request): Promise<Response> {
     headers['Content-Length'] = String(size);
   }
 
-  if (req.method === 'HEAD') {
+  if (method === 'HEAD') {
     nodeStream.destroy();
     return new Response(null, { status: 200, headers });
   }
 
   return new Response(webStream, { status: 200, headers });
-  } catch (err) {
-    console.error('photosGet store error:', err);
-    return storeUnavailable();
-  }
 }

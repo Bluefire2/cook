@@ -133,7 +133,9 @@
       a collection link are left out of that log, so the secret part of such
       a link is not recorded there. Entries written before then can still
       contain such a link until they are deleted automatically (see
-      Retention and deletion).
+      Retention and deletion). Requests that open a public collection link,
+      and the requests that load its recipes and photos, are left out the
+      same way.
     </p>
     <p>
       Sous also writes its own log lines for errors and for a few events.
@@ -205,6 +207,21 @@
       account. The implicit default list (recipes that are not in a named
       collection) is never shareable.
     </p>
+    <p>
+      You can also make a named collection public. Anyone who has its public
+      link can then read the live recipes in it and their recipe photos,
+      without signing in and without a Sous account. They do not see your
+      email address or account id. The link is not listed anywhere, pages
+      opened with it ask search engines not to index them, and it keeps
+      working until you turn it off or delete the collection; turning it on
+      again creates a new link. Sous stores the public link with a record of
+      which collection it opens, so you can copy it again later. Someone who
+      opens a public link without signing in cannot use the cooking
+      assistant, translation, or any other feature that sends text to Gemini,
+      and cannot change anything. A signed-in member who opens it can add the
+      collection to their library as a viewer; you then see their email
+      address, as with anyone else you share with.
+    </p>
 
     <h2>What it can reach in your Google account</h2>
     <p>
@@ -260,7 +277,8 @@
       so a revoked person still has a row. Unused invite-link records are
       kept until they are redeemed, expire, or they are revoked; a
       redeemed invite keeps a hashed identifier and the Google account id
-      that used it. There is no automated purge job: none of these records is
+      that used it. A public collection link record is kept, marked as off,
+      after you turn the link off or delete its collection. There is no automated purge job: none of these records is
       deleted on a schedule.
     </p>
     <p>
@@ -276,7 +294,7 @@
       from the same address you use to sign in. There is no in-app delete-account
       button. A deletion request covers all of it: your access-request record,
       your membership record, any invite-link redemption recorded for your
-      account, any import reports and suggestions you sent, and your stored library — recipes, chat
+      account, any import reports and suggestions you sent, any public collection links you created, and your stored library — recipes, chat
       messages, cooking progress, cook log entries (dates, ratings, notes,
       lessons and photos), photos, and cached translations — and deleting
       these also removes your access. Revoking Sous's access from your
