@@ -1,8 +1,8 @@
 # AGENTS.md
 
-Guidance for agents working in this repo. The product is **Sous**; the npm
-package, backup marker, and directories are still named
-`cook`.
+Guidance for agents working in this repo. The product is **Sous**, and so are
+the npm package and the GitHub repo (`Bluefire2/sous`); the backup marker and
+local directories are still named `cook`.
 
 ## What this is
 
@@ -395,7 +395,6 @@ it exercises the real delete path.
 - Region, domain mapping, certificate
 - `0x1E` chat framing / Gemini request shape / `maxDuration = 60`
 - Adding Google scopes, refresh tokens, or Auth.js
-- `package.json` `"name"`
 - Polling sync, Firestore listeners, WebSockets
 - Conflict-merge UI (LWW is the product)
 

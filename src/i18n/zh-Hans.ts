@@ -72,6 +72,8 @@ export const zhHans: Messages = {
   'library.actionsFor': '{title}的操作',
   'library.moveTo': '移动到…',
   'library.closeMenu': '关闭菜单',
+  'library.languageMenu': '语言：简体中文',
+  'library.languageShort': '中文',
   'library.addRecipe': '添加食谱',
   'library.addRecipeTitle': '添加食谱',
   'library.importFromLink': '从链接、文字或照片导入',

@@ -78,6 +78,8 @@ export const uk: Messages = {
   'library.actionsFor': 'Дії для «{title}»',
   'library.moveTo': 'Перемістити до…',
   'library.closeMenu': 'Закрити меню',
+  'library.languageMenu': 'Мова: українська',
+  'library.languageShort': 'УКР',
   'library.addRecipe': 'Додати рецепт',
   'library.addRecipeTitle': 'Додати рецепт',
   'library.importFromLink': 'Імпортувати з посилання, тексту або фото',
