@@ -328,7 +328,9 @@ Built as planned, with these choices and deviations:
 - **Calibration.** Offline over the 25 cached pages (no phase 1 pages yet):
   no source warning on any recipe page; the three goldens raise nothing.
   `wikibooks-pancake` is a category overview with no method, now
-  `class: source`. Thresholds are unchanged from this plan.
+  `class: source`. The live model answers it with `NOT_A_RECIPE` (issue #106),
+  correctly, so it never reaches `checkImport`; the calibration uses an
+  empty-steps stand-in. Thresholds are unchanged from this plan.
 - **Page schema ordering.** With the two booleans required, the model wrote
   `prepMinutes` last, and a trailing number sometimes ran on until
   `MAX_TOKENS` (a `parse_error`). The parent commit has the same failure,

@@ -22,6 +22,22 @@ summary, approach A.
 - Run by: <owner | agent>, model <CHAT_MODEL or default>
 ```
 
+## 2026-10-01 — Wikibooks Cookbook:Pancake returns not_a_recipe (issue #106), no change
+
+- Change: none to prompts, schema, checks, or goldens. Only the documented
+  expectation for `import-sites/wikibooks-pancake` was corrected
+  (`class.json`, `docs/plans/import-reliability.md`).
+- Finding: the cached page imported through `importFromHtml` gives
+  `not_a_recipe` 3/3 (same as production). The page is a category overview
+  (characteristics, varieties, gallery) with no ingredient list or method, so
+  the refusal is correct. The earlier note that it yields an ingredients-only
+  recipe with `INSTRUCTIONS_NOT_ON_PAGE` came from the empty-steps check
+  calibration, not from a model run.
+- Rejected: prompting the model to build an ingredients-only recipe from
+  prose. It would invent a recipe from one page's shape, and it needs the
+  full `--split=all` measurement before it could qualify.
+- Run by: agent, default model, 3 runs of the cached page only.
+
 ## 2026-10-01 — Page and paste import: self-report fields, import checks, retry loop at 0
 
 - Change: `importFromSource` (page, paste, extension) now asks for
