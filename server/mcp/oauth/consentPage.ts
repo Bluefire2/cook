@@ -32,7 +32,7 @@ export function consentPageHtml(input: ConsentPageInput): string {
         'That name comes from the app and is not checked.</p>';
   const abilities = ['<li>Search and read the recipes in your own library, and list your collections.</li>'];
   if (input.scopes.includes(SCOPE_WRITE)) {
-    abilities.push('<li>Add new recipes, and edit the recipes in your own library.</li>');
+    abilities.push('<li>Add new recipes, edit the recipes in your own library, and move them between your collections. Moving a recipe into a collection you share with other members shows it to them; collections with a public link are never changed.</li>');
   }
   const loopback = input.loopback
     ? '<p><strong>This app runs on your computer. Only allow it if you just started connecting it.</strong></p>'

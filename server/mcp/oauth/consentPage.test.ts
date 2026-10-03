@@ -35,7 +35,7 @@ describe('consentPageHtml', () => {
   it('shows the edit ability only when write is asked for', () => {
     expect(consentPageHtml(BASE)).not.toContain('edit the recipes');
     expect(consentPageHtml({ ...BASE, scopes: ['recipes:read', 'recipes:write'] })).toContain(
-      'Add new recipes, and edit the recipes in your own library.',
+      'Add new recipes, edit the recipes in your own library, and move them between your collections. Moving a recipe into a collection you share with other members shows it to them; collections with a public link are never changed.',
     );
   });
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildAgentLibrary, type AgentCollection, type AgentRecipe } from '../agent/sous/library.ts';
-import { ownRecipeUpdateDecision, recipeDocBody, type OwnRecipeUpdateResult } from '../store.ts';
+import { isLiveDoc, ownRecipeUpdateDecision, recipeDocBody, type OwnRecipeUpdateResult } from '../store.ts';
+import { planCollectionMove, UNFILED, type CollectionWriteOutcome } from './collectionMove.ts';
 import { SCOPE_READ, SCOPE_WRITE } from './config.ts';
 import {
   callToolResult,
@@ -16,6 +17,8 @@ const R1 = '11111111-1111-4111-8111-111111111111';
 const R2 = '22222222-2222-4222-8222-222222222222';
 const NEW_ID = '33333333-3333-4333-8333-333333333333';
 const PHOTO = '44444444-4444-4444-8444-444444444444';
+const SOUPS = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const PUBLIC = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 function recipe(overrides: Partial<AgentRecipe> & { id: string; title: string }): AgentRecipe {
   return {
@@ -29,18 +32,44 @@ function recipe(overrides: Partial<AgentRecipe> & { id: string; title: string })
   };
 }
 
-/** A fake store over plain docs, so the update path runs the real decision and merge. */
+/**
+ * A fake store over plain docs, so the update path runs the real decision and
+ * merge, and collection writes run the real `planCollectionMove`.
+ */
 function fakeContext(
   recipes: AgentRecipe[],
   collections: AgentCollection[] = [],
-  opts: { loadCap?: number } = {},
-): McpToolContext & { docs: Map<string, Record<string, unknown>>; created: string[]; directReads: string[][] } {
+  opts: { loadCap?: number; publicIds?: string[]; sharedWith?: Record<string, number> } = {},
+): McpToolContext & {
+  docs: Map<string, Record<string, unknown>>;
+  collectionDocs: Map<string, Record<string, unknown> & { id: string }>;
+  created: string[];
+  directReads: string[][];
+} {
   const docs = new Map<string, Record<string, unknown>>(recipes.map((r) => [r.id, { ...r }]));
+  const collectionDocs = new Map<string, Record<string, unknown> & { id: string }>(
+    collections.map((c) => [c.id, { ...c, createdAt: 1, updatedAt: 1 }]),
+  );
   const created: string[] = [];
   const directReads: string[][] = [];
+  const publicIds = new Set(opts.publicIds ?? []);
+  const fileInto = (ids: readonly string[], dest: string, now: number): CollectionWriteOutcome => {
+    const plan = planCollectionMove([...collectionDocs.values()], ids, dest, now);
+    if (plan.kind !== 'ok') return plan;
+    if (publicIds.has(dest)) return { kind: 'public_collection' };
+    for (const { id, doc } of plan.writes) collectionDocs.set(id, { ...doc, id });
+    return {
+      kind: 'ok',
+      moved: plan.moved,
+      alreadyThere: plan.alreadyThere,
+      ...(plan.collectionName === undefined ? {} : { collectionName: plan.collectionName }),
+      sharedWithMembers: opts.sharedWith?.[dest] ?? 0,
+    };
+  };
   const loaded = opts.loadCap === undefined ? recipes : recipes.slice(0, opts.loadCap);
   return {
     docs,
+    collectionDocs,
     created,
     directReads,
     async loadLibrary() {
@@ -58,6 +87,22 @@ function fakeContext(
       docs.set(id, payload);
       created.push(id);
       return true;
+    },
+    async createRecipeInCollection(id, payload, dest, now) {
+      const outcome = fileInto([id], dest, now);
+      if (outcome.kind === 'ok') {
+        docs.set(id, payload);
+        created.push(id);
+      }
+      return outcome;
+    },
+    async moveRecipes(ids, dest, now) {
+      const missingIds = [...new Set(ids)].filter((id) => !isLiveDoc(docs.get(id)));
+      if (missingIds.length > 0) return { kind: 'recipes_not_found', missingIds };
+      return fileInto(ids, dest, now);
+    },
+    async livePublicCollectionIds() {
+      return new Set(publicIds);
     },
     async updateRecipe(id, expectedVersion, apply): Promise<OwnRecipeUpdateResult> {
       const decision = ownRecipeUpdateDecision(docs.get(id), expectedVersion);
@@ -80,13 +125,14 @@ async function run(name: string, args: unknown, ctx: McpToolContext): Promise<Mc
 }
 
 describe('tool specs', () => {
-  it('are the five planned tools, with scopes, annotations and the untrusted-text notice', () => {
+  it('are the six tools, with scopes, annotations and the untrusted-text notice', () => {
     expect(MCP_TOOLS.map((t) => [t.name, t.scope, t.annotations.readOnlyHint])).toEqual([
       ['search_recipes', SCOPE_READ, true],
       ['get_recipes', SCOPE_READ, true],
       ['list_collections', SCOPE_READ, true],
       ['create_recipe', SCOPE_WRITE, false],
       ['update_recipe', SCOPE_WRITE, false],
+      ['move_recipes', SCOPE_WRITE, false],
     ]);
     for (const tool of MCP_TOOLS) {
       expect(tool.description).toContain(UNTRUSTED_TEXT_NOTICE);
@@ -173,6 +219,23 @@ describe('list_collections', () => {
       { id: 'unfiled', name: 'Unfiled', recipeCount: 1 },
     ]);
   });
+
+  it('marks a collection with a live public link', async () => {
+    const ctx = fakeContext(
+      [],
+      [
+        { id: SOUPS, name: 'Soups', recipeIds: [] },
+        { id: PUBLIC, name: 'For everyone', recipeIds: [] },
+      ],
+      { publicIds: [PUBLIC] },
+    );
+    const out = await run('list_collections', {}, ctx);
+    expect(out.ok && out.data.collections).toEqual([
+      { id: SOUPS, name: 'Soups', recipeCount: 0 },
+      { id: PUBLIC, name: 'For everyone', recipeCount: 0, public: true },
+      { id: 'unfiled', name: 'Unfiled', recipeCount: 0 },
+    ]);
+  });
 });
 
 describe('create_recipe', () => {
@@ -195,6 +258,94 @@ describe('create_recipe', () => {
     const out = await run('create_recipe', { title: 'x', servings: 0, ingredientSections: [], steps: [] }, ctx);
     expect(out).toMatchObject({ ok: false, code: 'invalid' });
     expect(ctx.created).toEqual([]);
+  });
+
+  const EGG = { title: 'Egg', servings: 1, ingredientSections: [{ items: [{ item: 'egg' }] }], steps: [{ text: 'Boil.' }] };
+
+  it('files the new recipe into a collection and says who else sees it', async () => {
+    const ctx = fakeContext([], [{ id: SOUPS, name: 'Soups', recipeIds: [R1] }], { sharedWith: { [SOUPS]: 2 } });
+    const out = await run('create_recipe', { ...EGG, collectionId: SOUPS }, ctx);
+    expect(out).toMatchObject({ ok: true, data: { recipe: { id: NEW_ID, collectionName: 'Soups' }, sharedWithMembers: 2 } });
+    expect(ctx.collectionDocs.get(SOUPS)?.recipeIds).toEqual([R1, NEW_ID]);
+    expect(ctx.created).toEqual([NEW_ID]);
+  });
+
+  it('treats "unfiled" as no collection', async () => {
+    const ctx = fakeContext([], [{ id: SOUPS, name: 'Soups', recipeIds: [] }]);
+    const out = await run('create_recipe', { ...EGG, collectionId: 'unfiled' }, ctx);
+    expect(out).toMatchObject({ ok: true, data: { recipe: { collectionName: 'Unfiled' } } });
+    expect(ctx.collectionDocs.get(SOUPS)?.recipeIds).toEqual([]);
+  });
+
+  it('writes nothing for a public, unknown, or malformed collection', async () => {
+    const ctx = fakeContext([], [{ id: PUBLIC, name: 'For everyone', recipeIds: [] }], { publicIds: [PUBLIC] });
+    expect(await run('create_recipe', { ...EGG, collectionId: PUBLIC }, ctx)).toMatchObject({ ok: false, code: 'not_allowed' });
+    expect(await run('create_recipe', { ...EGG, collectionId: SOUPS }, ctx)).toMatchObject({ ok: false, code: 'not_found' });
+    expect(await run('create_recipe', { ...EGG, collectionId: 'Soups' }, ctx)).toMatchObject({ ok: false, code: 'not_found' });
+    const blank = await run('create_recipe', { ...EGG, collectionId: ' ' }, ctx);
+    expect(blank).toMatchObject({ ok: false, code: 'invalid' });
+    expect(ctx.created).toEqual([]);
+  });
+});
+
+describe('move_recipes', () => {
+  const OTHER = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const library = () =>
+    fakeContext(
+      [recipe({ id: R1, title: 'Soup' }), recipe({ id: R2, title: 'Stew' })],
+      [
+        { id: SOUPS, name: 'Soups', recipeIds: [R1] },
+        { id: OTHER, name: 'Other', recipeIds: [] },
+        { id: PUBLIC, name: 'For everyone', recipeIds: [R2] },
+      ],
+      { publicIds: [PUBLIC] },
+    );
+
+  it('moves recipes, taking them out of their old collection, and reports what was already there', async () => {
+    const ctx = library();
+    const out = await run('move_recipes', { ids: [R1, R2], collectionId: OTHER }, ctx);
+    expect(out).toMatchObject({ ok: true, data: { collection: { id: OTHER, name: 'Other' }, movedIds: [R1, R2] } });
+    expect(ctx.collectionDocs.get(OTHER)?.recipeIds).toEqual([R1, R2]);
+    expect(ctx.collectionDocs.get(SOUPS)?.recipeIds).toEqual([]);
+    // Moving out of a public collection is allowed.
+    expect(ctx.collectionDocs.get(PUBLIC)?.recipeIds).toEqual([]);
+    const again = await run('move_recipes', { ids: [R1], collectionId: OTHER }, ctx);
+    expect(again).toMatchObject({ ok: true, data: { movedIds: [], alreadyThereIds: [R1] } });
+  });
+
+  it('unfiles with "unfiled"', async () => {
+    const ctx = library();
+    const out = await run('move_recipes', { ids: [R1], collectionId: 'unfiled' }, ctx);
+    expect(out).toMatchObject({ ok: true, data: { collection: { id: UNFILED, name: 'Unfiled' }, movedIds: [R1] } });
+    expect(ctx.collectionDocs.get(SOUPS)?.recipeIds).toEqual([]);
+  });
+
+  it('refuses a public destination and changes nothing', async () => {
+    const ctx = library();
+    const out = await run('move_recipes', { ids: [R1], collectionId: PUBLIC }, ctx);
+    expect(out).toMatchObject({ ok: false, code: 'not_allowed' });
+    expect(ctx.collectionDocs.get(SOUPS)?.recipeIds).toEqual([R1]);
+  });
+
+  it('moves nothing when any id is not an own live recipe', async () => {
+    const ctx = library();
+    const out = await run('move_recipes', { ids: [R1, NEW_ID], collectionId: OTHER }, ctx);
+    expect(out).toMatchObject({ ok: false, code: 'not_found', data: { missingIds: [NEW_ID] } });
+    expect(await run('move_recipes', { ids: [R1, 'not-an-id'], collectionId: OTHER }, ctx)).toMatchObject({
+      ok: false,
+      code: 'not_found',
+      data: { missingIds: ['not-an-id'] },
+    });
+    expect(ctx.collectionDocs.get(SOUPS)?.recipeIds).toEqual([R1]);
+    expect(ctx.collectionDocs.get(OTHER)?.recipeIds).toEqual([]);
+  });
+
+  it('is not_found for an unknown collection and invalid for bad arguments', async () => {
+    const ctx = library();
+    expect(await run('move_recipes', { ids: [R1], collectionId: NEW_ID }, ctx)).toMatchObject({ ok: false, code: 'not_found' });
+    for (const args of [{ ids: [], collectionId: OTHER }, { ids: [R1] }, { ids: Array(21).fill(R1), collectionId: OTHER }, { ids: [R1], collectionId: OTHER, x: 1 }]) {
+      expect(await run('move_recipes', args, ctx)).toMatchObject({ ok: false, code: 'invalid' });
+    }
   });
 });
 

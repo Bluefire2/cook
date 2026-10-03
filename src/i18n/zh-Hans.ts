@@ -303,7 +303,7 @@ export const zhHans: Messages = {
   'settings.feedbackBody': '有让 Sous 更好用的想法吗？',
   'settings.suggestButton': '提功能建议',
   'settings.connectedApps': '已连接的应用',
-  'settings.connectedAppsIntro': '你连接的 AI 应用可以搜索、读取、添加和编辑你自己的食谱。它们看不到别人与你共享的食谱、你的照片或烹饪记录，也不能删除任何内容。',
+  'settings.connectedAppsIntro': '你连接的 AI 应用可以搜索、读取、添加和编辑你自己的食谱，并在你的合集之间移动它们。它们看不到别人与你共享的食谱、你的照片或烹饪记录，也不能删除任何内容。',
   'settings.connectedAppsEmpty': '没有已连接的应用。',
   'settings.connectedAppsServerUrl': '要连接 AI 应用，请在其中添加此服务器地址：',
   'settings.connectedAppsSelfName': '自称“{name}”',
