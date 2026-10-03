@@ -58,7 +58,7 @@ replaces the old one. Sign out from Settings as usual.
 | `npm run dev:test` | Wipes the emulator, seeds it, serves the API on 3001. |
 | `npm run dev:test -- --keep` | Keeps whatever is in the emulator; no wipe, no seed. Use it to keep your own clicks across restarts. |
 | `npm run dev:test -- --static` | Also serves the built `dist/` on 4173, with no Vite. Run `npm run build` first. Open <http://localhost:4173/__test/>. |
-| `npm run dev:test -- --port 4000` | Another port. In API mode Vite still proxies to 3001, so this is mainly for `--static`. |
+| `npm run dev:test -- --port 4000` | Another port. In API mode, start Vite with `npm run dev -- --api-port 4000` so it proxies there. |
 
 The emulator is expected at `127.0.0.1:8085`. To use another port, start the
 emulator there and set `FIRESTORE_EMULATOR_HOST` to the same address. In
@@ -111,6 +111,8 @@ without a key.
   until the seed is done, then `200` with the personas and fixture ids.
 - **Without Vite**, run `node testing/test-server.ts --static --port 4173`
   after `npm run build`; the app and `/__test/` are on one origin.
+- `testing/library-click-through.ts` (`npm run click:library`) drives the
+  library in Chrome with Playwright as `member`; see its header.
 - `testing/smoke.ts` is a working example: it signs every persona in with
   `fetch` and reads back what each one should see, with the expected values
   taken from the fixtures. The `test-mode` CI job runs it; run it yourself

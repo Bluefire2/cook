@@ -1,27 +1,22 @@
 /**
  * Local click-through of Library search persistence and collection switching
- * (issue #57). Not part of `npm test` or CI.
+ * (issue #57), in test mode. Not part of `npm test` or CI.
  *
- * Run:
- *   1. `npm run dev` and `npm run dev:api`. On other ports, pass the same
- *      ones to all three commands: `npm run dev:api -- --port 3101`,
- *      `npm run dev -- --port 5273 --api-port 3101`, and step 3 with
- *      `-- --port 5273` (or SOUS_WEB_PORT / SOUS_API_PORT). This script signs
- *      its own session, so it needs no Google sign-in on those ports.
- *   2. Once: put your account in `.env.local` as `SOUS_E2E_SUB=...` and
- *      `SOUS_E2E_EMAIL=...` (signed in at http://localhost:5173, open
- *      /api/auth/session and copy `sub` and `email`). Neither is a secret.
- *   3. `npm run click:library` (add `-- --headed` to watch, `--port N` for
- *      a Vite that is not on 5173).
+ * Run (testing/README.md has the one-time setup):
+ *   1. `gcloud emulators firestore start --host-port=127.0.0.1:8085`
+ *   2. `npm run dev:test`, wait for `Test mode ready`
+ *   3. `npm run dev`
+ *   4. `npm run click:library` (add `-- --headed` to watch)
  *
- * Each run signs a one-hour `sous_session` with the `SESSION_SECRET` from
- * `.env.local`, the same signing code the server uses, and keeps it in memory
- * and in a throwaway browser context only. It is never printed or written.
+ * It signs in as the `member` persona through `/__test/sign-in`, so it needs
+ * no Google account and touches only the emulator. On other ports, pass the
+ * same ones everywhere: `npm run dev:test -- --port 3101`, `npm run dev --
+ * --port 5273 --api-port 3101`, and `npm run click:library -- --port 5273`.
  *
- * Dev talks to real Firestore, so the script aborts every non-GET `/api`
- * request (sign-out excepted, last step) and fails if any was attempted. The
- * library needs at least one owned collection and one recipe; nothing is
- * created to satisfy that.
+ * The script still aborts every non-GET `/api` request (sign-out excepted,
+ * last step) and fails if any was attempted: that is how flow 4 proves
+ * nothing was submitted. Discovery picks collections and a query from what
+ * the persona has; nothing is created.
  *
  * Uses the installed Chrome. Where `PLAYWRIGHT_BROWSERS_PATH` is set, uses
  * the bundled Chromium instead.
@@ -29,39 +24,18 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright-core';
-import { SESSION_COOKIE_NAME, signSession } from '../server/session.ts';
-import { DEFAULT_WEB_PORT, devPort } from './devPorts.ts';
+import { DEFAULT_WEB_PORT, devPort } from '../scripts/devPorts.ts';
 
 const BASE = `http://localhost:${devPort(process.argv, '--port', 'SOUS_WEB_PORT', DEFAULT_WEB_PORT)}`;
 const STORAGE_KEY = 'cook.librarySearch';
 const SEARCH_ALL_PLACEHOLDER = 'Search all recipes…';
-const SESSION_TTL_MS = 60 * 60 * 1000;
+// Two owned collections, an unfiled recipe, and recipes in each (fixtures.ts).
+const PERSONA = 'member';
+const SEED_WAIT_MS = 60_000;
 
 type StoredView = { query?: unknown; browseAll?: unknown } | null;
 
 class Precondition extends Error {}
-
-type Account = { sub: string; email: string };
-
-function readAccount(): Account {
-  const sub = process.env.SOUS_E2E_SUB?.trim() ?? '';
-  const email = process.env.SOUS_E2E_EMAIL?.trim() ?? '';
-  if (sub === '' || email === '') {
-    throw new Precondition(
-      'Set SOUS_E2E_SUB and SOUS_E2E_EMAIL in .env.local: sign in at http://localhost:5173, ' +
-        'open /api/auth/session, and copy `sub` and `email`. Run with `npm run click:library`.',
-    );
-  }
-  if (!process.env.SESSION_SECRET?.trim()) {
-    throw new Precondition('SESSION_SECRET is not set. Run with `npm run click:library`.');
-  }
-  return { sub, email };
-}
-
-/** A short session for this run only, signed like the server signs one. */
-function mintSession(account: Account): string {
-  return signSession(account, Date.now(), SESSION_TTL_MS);
-}
 
 async function waitUntil(
   description: string,
@@ -307,31 +281,47 @@ async function guardWrites(context: BrowserContext): Promise<{
   return { blocked, allowSignOut: () => (signOutAllowed = true) };
 }
 
+/** Test mode is up and seeded: `/__test/personas` answers 200. */
 async function preflight(context: BrowserContext): Promise<void> {
-  let response;
-  try {
-    response = await context.request.get(`${BASE}/api/auth/session`);
-  } catch {
-    throw new Precondition(`${BASE} is not answering. Start \`npm run dev\`.`);
+  const deadline = Date.now() + SEED_WAIT_MS;
+  for (;;) {
+    let status: number;
+    try {
+      status = (await context.request.get(`${BASE}/__test/personas`)).status();
+    } catch {
+      throw new Precondition(`${BASE} is not answering. Start \`npm run dev\`.`);
+    }
+    if (status === 200) return;
+    if (status === 404) {
+      throw new Precondition(
+        'No test mode behind Vite (/__test/ is 404): stop `npm run dev:api` and run ' +
+          '`npm run dev:test` (testing/README.md).',
+      );
+    }
+    if (status !== 503) {
+      throw new Precondition(
+        `/__test/personas answered ${status}. Start \`npm run dev:test\` (and pass Vite ` +
+          'the same --api-port).',
+      );
+    }
+    if (Date.now() > deadline) throw new Precondition('Test mode is still seeding after 60 s.');
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  let user: unknown = null;
-  try {
-    user = ((await response.json()) as { user?: unknown }).user ?? null;
-  } catch {
-    throw new Precondition(
-      `/api/auth/session answered ${response.status()} without JSON. Start \`npm run dev:api\`.`,
-    );
-  }
+}
+
+async function signIn(context: BrowserContext, page: Page): Promise<void> {
+  await page.goto(`${BASE}/__test/sign-in?as=${PERSONA}&returnTo=/`);
+  const response = await context.request.get(`${BASE}/api/auth/session`);
+  const user = ((await response.json()) as { user?: unknown }).user ?? null;
   if (user === null) {
     throw new Precondition(
-      'The session was not accepted. Check that `npm run dev:api` runs with the same ' +
-        '.env.local and that SOUS_E2E_SUB and SOUS_E2E_EMAIL are an admitted account.',
+      `Signing in as ${PERSONA} left the session signed out. Restart \`npm run dev:test\` ` +
+        'without --keep (testing/README.md, Troubleshooting).',
     );
   }
 }
 
 async function main(): Promise<number> {
-  const account = readAccount();
   const headed = process.argv.includes('--headed') || process.env.SOUS_E2E_HEADED === '1';
   const browser = await chromium.launch({
     ...(process.env.PLAYWRIGHT_BROWSERS_PATH ? {} : { channel: 'chrome' }),
@@ -342,20 +332,12 @@ async function main(): Promise<number> {
   let page: Page | undefined;
   try {
     const context = await browser.newContext({ locale: 'en-US', serviceWorkers: 'block' });
-    await context.addCookies([
-      {
-        name: SESSION_COOKIE_NAME,
-        value: mintSession(account),
-        url: BASE,
-        httpOnly: true,
-        sameSite: 'Lax',
-      },
-    ]);
     const guard = await guardWrites(context);
     await preflight(context);
     const p = await context.newPage();
     page = p;
     p.setDefaultTimeout(15_000);
+    await signIn(context, p);
 
     current = 'discovery';
     const fixture = await discover(p);

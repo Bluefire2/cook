@@ -161,18 +161,16 @@ function splitToken(token: string): { payload: string; signature: string } | nul
   return { payload: token.slice(0, dot), signature: token.slice(dot + 1) };
 }
 
-/** `ttlMs` is only shortened by the local click-through script; sign-in uses the default. */
 export function signSession(
   user: { sub: string; email: string },
   now: number,
-  ttlMs: number = NINETY_DAYS_MS,
 ): string {
   const secret = sessionSecret();
   if (!secret) {
     throw new Error('SESSION_SECRET is not set');
   }
   const iat = now;
-  const exp = now + ttlMs;
+  const exp = now + NINETY_DAYS_MS;
   const payloadPart = base64urlEncode(
     JSON.stringify({ v: 1, sub: user.sub, email: user.email, iat, exp }),
   );

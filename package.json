@@ -16,7 +16,7 @@
     "test:watch": "vitest",
     "test:import": "vitest run --config vitest.eval.config.ts",
     "eval:ocr-compare": "node --env-file=.env.local evals/ocrCompare.ts",
-    "click:library": "node --env-file=.env.local scripts/library-click-through.ts"
+    "click:library": "node testing/library-click-through.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.2.0",
