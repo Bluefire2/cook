@@ -533,9 +533,18 @@ is `server/mcp/`; `scripts/server.ts` imports only `server/mcp/index.ts`.
   read-only grant is 403 `insufficient_scope` (step-up). The gate runs before
   the MCP SDK, so a refusal is never a 200 tool error.
 - **Tools.** `search_recipes`, `get_recipes`, `list_collections`
-  (`recipes:read`), `create_recipe`, `update_recipe` (`recipes:write`), own
-  tree only, via the agent's `loadAgentLibrary`. No delete, no collection
-  writes, no photos, sharing, cook log, chat, translation, or import.
+  (`recipes:read`), `create_recipe`, `update_recipe`, `move_recipes`
+  (`recipes:write`), own tree only, via the agent's `loadAgentLibrary`. No
+  delete, no collection create, rename or delete, no photos, sharing, cook
+  log, chat, translation, or import. `create_recipe` takes an optional
+  `collectionId`; it and `move_recipes` file recipes with the app's
+  membership rule in one transaction (`server/mcp/collectionMove.ts`,
+  `docs/plans/mcp-collection-writes.md`) and refuse a collection with a live
+  public link (`not_allowed`); member-shared collections are allowed. Results
+  say who can see the destination and every collection the recipes left
+  (`sharedWithMembers`, `joinLinkOpen`, `public`), and `list_collections`
+  shows the same per collection, so the model can tell the user who gained
+  or lost recipes.
   `update_recipe` needs the stored `updatedAt` as `version` (else
   `conflict`), patches fields, and writes through `updateOwnRecipe`; the
   server stamps every time (`nextRecipeUpdatedAt`). Input is validated
@@ -639,6 +648,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/html-parser-recipe-import.md` | Built on `cursor/html-parser-recipe-import-11d4`. Not deployed. Replace the hand-rolled HTML scanner in `server/recipeImport.ts` with parse5 (issue #91). |
 | `docs/plans/public-collections.md` | Built on `claude/read-only-unauthenticated-mode-204be2`, not deployed. Unlisted public link per named collection, readable signed out; AI locked; members can add it as viewers. Apply the widened log exclusion before deploying. |
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |
+| `docs/plans/mcp-collection-writes.md` | Built on `claude/mcp-collection-writes`, not deployed. `create_recipe` into a collection and `move_recipes`; collections with a public link are refused. |
 | `docs/plans/mcp-server.md` | Built on `claude/llm-api-vs-mcp-04b215`, not deployed. Remote MCP server at `/mcp` with its own OAuth 2.1 authorization server (CIMD clients, no DCR): search, get, list collections, create and edit (with a version check) over the member's own recipes. No delete. |
 | `docs/plans/test-mode.md` | Built on `claude/test-mode`. `testing/test-server.ts` runs the app against a seeded Firestore emulator; `/__test/sign-in?as=<persona>` signs in a fake account with a real session cookie. Not in the image. The emulator runs in CI only in the `test-mode` job (owner-approved exception, Tests and verification). |
 

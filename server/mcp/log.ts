@@ -18,6 +18,7 @@ export type McpLogOutcome =
   | 'invalid'
   | 'conflict'
   | 'not_found'
+  | 'not_allowed'
   | 'rate_limited'
   | 'insufficient_scope'
   | 'unauthorized'

@@ -36,6 +36,9 @@ function toolContext(): McpToolContext {
       ),
     readRecipes: vi.fn(async (ids: readonly string[]) => ids.map(() => undefined)),
     createRecipe: vi.fn(async () => true),
+    createRecipeInCollection: vi.fn(async () => ({ kind: 'collection_not_found' as const })),
+    moveRecipes: vi.fn(async () => ({ kind: 'collection_not_found' as const })),
+    collectionSharing: vi.fn(async () => new Map()),
     updateRecipe: vi.fn(async () => ({ kind: 'not_found' as const })),
     newId: () => '33333333-3333-4333-8333-333333333333',
     now: () => 10,
@@ -135,7 +138,7 @@ describe('through the SDK', () => {
     expect(body.result.capabilities).toMatchObject({ tools: {} });
   });
 
-  it('lists the five tools with schemas and annotations, without server-only fields', async () => {
+  it('lists the six tools with schemas and annotations, without server-only fields', async () => {
     const res = await handleMcpPost(rpc({ jsonrpc: '2.0', id: 3, method: 'tools/list' }), deps());
     const body = (await res.json()) as { result: { tools: Record<string, unknown>[] } };
     expect(body.result.tools.map((t) => t.name)).toEqual([
@@ -144,6 +147,7 @@ describe('through the SDK', () => {
       'list_collections',
       'create_recipe',
       'update_recipe',
+      'move_recipes',
     ]);
     for (const tool of body.result.tools) {
       expect(tool).toHaveProperty('inputSchema');

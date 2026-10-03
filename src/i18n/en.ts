@@ -336,7 +336,7 @@ export const en = {
   'settings.feedbackBody': 'Have an idea that would make Sous more useful?',
   'settings.suggestButton': 'Suggest a feature',
   'settings.connectedApps': 'Connected apps',
-  'settings.connectedAppsIntro': "AI apps you connect can search, read, add, and edit your own recipes. They can't see recipes shared with you, your photos, or your cook log, and they can't delete anything.",
+  'settings.connectedAppsIntro': "AI apps you connect can search, read, add, and edit your own recipes, and move them between your collections. They can't see recipes shared with you, your photos, or your cook log, and they can't delete anything.",
   'settings.connectedAppsEmpty': 'No apps connected.',
   'settings.connectedAppsServerUrl': 'To connect an AI app, add this server address in it:',
   'settings.connectedAppsSelfName': 'Calls itself “{name}”',
