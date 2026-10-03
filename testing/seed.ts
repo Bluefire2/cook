@@ -3,15 +3,23 @@
  *
  * Writes through the app's own HTTP routes on the running test server, with
  * each persona's session from `/__test/sign-in`, so validation, compaction,
- * LWW, and the grant transactions all run. Only the MCP grant, which has no
- * HTTP path short of the OAuth dance, is written with the server's own store
- * function.
+ * LWW, and the grant transactions all run. The MCP grant has no HTTP path
+ * short of the consent page, which fetches a public client-metadata document,
+ * so the seed writes it with the server's own store function and then redeems
+ * its code through `POST /oauth/token`.
  *
  * Loaded by testing/test-server.ts after it has set the test environment.
  */
+import { s256Challenge } from '../server/mcp/oauth/pkce.ts';
 import { createGrantWithCode, touchGrant } from '../server/mcp/oauth/store.ts';
 import { signAccessRequestTx } from '../server/session.ts';
 import { TEST_PROJECT_ID } from './env.ts';
+import {
+  rememberSeededMcpTokens,
+  SEEDED_MCP_CLIENT_ID,
+  SEEDED_MCP_CODE_VERIFIER,
+  SEEDED_MCP_REDIRECT_URI,
+} from './seededMcp.ts';
 import {
   FIXTURE_IDS,
   memberLibrary,
@@ -120,22 +128,67 @@ async function admit(baseUrl: string, cookies: Cookies): Promise<void> {
   }
 }
 
-async function connectApp(now: number): Promise<void> {
+async function connectApp(baseUrl: string, now: number): Promise<void> {
   const member = persona('member');
-  const { grantId } = await createGrantWithCode(
+  // The grant stays "connected 4 days ago". The code's own clock is now, so
+  // its 60 s lifetime covers the exchange below.
+  const { grantId, code } = await createGrantWithCode(
     {
       sub: member.sub,
       email: member.email,
-      clientId: 'https://claude.ai/oauth/mcp-oauth-client-metadata',
+      clientId: SEEDED_MCP_CLIENT_ID,
       clientHost: 'claude.ai',
       clientName: 'Claude',
       scopes: ['recipes:read', 'recipes:write'],
-      redirectUri: 'https://claude.ai/api/mcp/auth_callback',
-      codeChallenge: 'test-mode-code-challenge-never-redeemed-000000',
+      redirectUri: SEEDED_MCP_REDIRECT_URI,
+      codeChallenge: s256Challenge(SEEDED_MCP_CODE_VERIFIER),
     },
     now - 4 * DAY,
+    Date.now(),
   );
+  const exchanged = await exchangeMcpCode(baseUrl, code);
+  rememberSeededMcpTokens({
+    clientId: SEEDED_MCP_CLIENT_ID,
+    accessToken: exchanged.accessToken,
+    refreshToken: exchanged.refreshToken,
+  });
+  // Redeeming the code stamps lastUsedAt. Put the fixture time back so
+  // Settings still reads "last used 2 hours ago" on a fresh seed.
   await touchGrant(member.sub, grantId, now - 2 * HOUR);
+}
+
+async function exchangeMcpCode(
+  baseUrl: string,
+  code: string,
+): Promise<{ accessToken: string; refreshToken: string }> {
+  const res = await fetch(`${baseUrl}/oauth/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: SEEDED_MCP_REDIRECT_URI,
+      client_id: SEEDED_MCP_CLIENT_ID,
+      code_verifier: SEEDED_MCP_CODE_VERIFIER,
+    }),
+  });
+  const text = await res.text();
+  let parsed: { access_token?: unknown; refresh_token?: unknown; scope?: unknown; error?: unknown };
+  try {
+    parsed = text === '' ? {} : (JSON.parse(text) as typeof parsed);
+  } catch {
+    parsed = {};
+  }
+  if (
+    res.status !== 200 ||
+    typeof parsed.access_token !== 'string' ||
+    typeof parsed.refresh_token !== 'string' ||
+    parsed.scope !== 'recipes:read recipes:write'
+  ) {
+    const error = typeof parsed.error === 'string' ? parsed.error : 'no token';
+    throw new Error(`MCP code exchange failed: ${res.status} ${error}`);
+  }
+  return { accessToken: parsed.access_token, refreshToken: parsed.refresh_token };
 }
 
 /** Signs every persona in and writes the fixtures. The emulator must be empty. */
@@ -166,5 +219,5 @@ export async function seed(baseUrl: string): Promise<void> {
   });
   await request(baseUrl, '/api/admin/invites', { cookie: cookies.owner });
 
-  await connectApp(now);
+  await connectApp(baseUrl, now);
 }

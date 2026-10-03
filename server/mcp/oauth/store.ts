@@ -226,6 +226,10 @@ function issueTokenPair(
  * authorization code. Returns the raw code once. Deleting rather than marking
  * the old grants revoked keeps this query to about one row however often an
  * app reconnects; a token whose grant is gone is refused like a revoked one.
+ *
+ * `codeNow` is the clock the code's 60 s expiry is measured from. It defaults
+ * to `now` (the grant's `createdAt`). Test mode passes a later clock so a
+ * backdated grant can still be redeemed.
  */
 export async function createGrantWithCode(
   input: {
@@ -239,6 +243,7 @@ export async function createGrantWithCode(
     codeChallenge: string;
   },
   now: number,
+  codeNow = now,
 ): Promise<{ code: string; grantId: string }> {
   const grantId = randomUUID();
   const code = randomToken(32);
@@ -261,7 +266,7 @@ export async function createGrantWithCode(
       redirectUri: input.redirectUri,
       codeChallenge: input.codeChallenge,
       scopes: input.scopes,
-      expireAt: new Date(now + AUTH_CODE_TTL_MS),
+      expireAt: new Date(codeNow + AUTH_CODE_TTL_MS),
     });
   });
   return { code, grantId };

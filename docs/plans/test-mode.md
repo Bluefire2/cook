@@ -120,9 +120,13 @@ end-to-end test. The scheduled i18n review (a later plan,
   seeded data cannot drift from what the app writes. Access requests also go
   through their route, `POST /api/access-request`, with the form's `t` token
   signed by the server's own `signAccessRequestTx`, as the invitation-only
-  page does. Only data with no HTTP path is written with the server's own
-  function, never a hand-built document: the MCP grant (`createGrantWithCode`
-  in `server/mcp/oauth/store.ts`).
+  page does. The MCP grant has no HTTP path short of the consent page, which
+  fetches a public client-metadata document, so the seed writes it with
+  `createGrantWithCode` and then redeems the code through `POST /oauth/token`.
+  The grant stays "connected 4 days ago"; the code uses a separate clock so
+  its 60 s lifetime is still open, and `lastUsedAt` is put back to 2 hours
+  ago after the redeem stamps it. The raw tokens are remembered for
+  `/__test/personas` and are not logged.
 - **Each start is a clean slate.** By default the test server clears the
   emulator (`DELETE /emulator/v1/projects/demo-sous/databases/(default)/documents`)
   and seeds before printing "ready". `--keep` skips both, for a developer who
@@ -175,7 +179,7 @@ test can open `/recipe/<id>` by a constant.
 | --- | --- |
 | `GET /__test/` | HTML list of personas, each linking to `/__test/sign-in?as=<persona>`. |
 | `GET /__test/sign-in?as=<persona>&returnTo=<path>` | Upserts the persona's profile with the server's `upsertUser`, as the OAuth callback does (add-by-email finds people by `emailLower` there), then `303` with `Set-Cookie: sous_session=…` from `signSession` and `sessionCookie`, and `Location` from `safeReturnTo` (default `/`). Built as a `Response` with a `Location` header, never `Response.redirect` (immutable headers drop `Set-Cookie`, as in the OAuth callback). Unknown persona: `404`. |
-| `GET /__test/personas` | JSON `[{ as, sub, email, admitted }]` plus the fixture ids, for scripts. |
+| `GET /__test/personas` | JSON of the personas (`as`, `sub`, `email`, `admitted`) plus the fixture ids, and after a fresh seed the member's MCP tokens (`mcp`). `--keep` omits `mcp`. |
 
 Sign-out is the app's normal route. Signing in as `outsider` gives a valid
 cookie that `/api/auth/session` then clears as denied, which is the real
@@ -199,7 +203,8 @@ Two modes:
 | `testing/guard.test.ts` | Unit tests for the two pure functions. |
 | `testing/personas.ts` | The persona table. |
 | `testing/fixtures.ts` | Recipes, collections, cook rows, cook logs, chat, fixed ids. |
-| `testing/seed.ts` | `seed(baseUrl)`: clears the emulator, signs personas in, writes the fixtures over HTTP; `createGrantWithCode` for the MCP grant. |
+| `testing/seed.ts` | `seed(baseUrl)`: clears the emulator, signs personas in, writes the fixtures over HTTP; `createGrantWithCode` for the MCP grant, then `POST /oauth/token` to redeem it. |
+| `testing/mcpSmoke.ts` | The MCP half of the smoke check: discovery, OAuth, and `/mcp`. |
 | `testing/test-server.ts` | Entrypoint: guard, env, dynamic import, `/__test/*`, seed, listen. Flags `--port`, `--static`, `--keep`. |
 | `testing/smoke.ts` | Reads the seed back through the app's routes on a running test server (step 6). |
 | `package.json` | `"dev:test": "node --env-file-if-exists=.env.local testing/test-server.ts"`. |
@@ -368,7 +373,12 @@ before `npm run dev:test`.
   as editor, with their recipes; `owner`'s recipes and collection, the
   pending, approved, and declined lists on `/admin`, and one unused invite;
   `empty` has no recipes or collections. An unknown persona is 404 and a pull
-  with no cookie is 401.
+  with no cookie is 401. It also drives the MCP endpoints (`testing/mcpSmoke.ts`):
+  both discovery documents, method and authorize/token refusals, a session
+  cookie and a bearer staying on their own routes, `/mcp` search/get/list/
+  create/update/move against the member library (including a stale-version conflict,
+  filing a recipe into a collection, and another account's recipe coming back missing), refresh narrowed to
+  `recipes:read`, and disconnect from Settings then revoke.
 - **The picker waits for the seed.** Review found that `/__test/` offered
   personas while the seed was still running; a sign-in then lands signed out,
   because the persona is not admitted yet. Until the seed is done the picker
