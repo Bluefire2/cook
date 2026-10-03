@@ -631,6 +631,18 @@ UI and layout changes: exercise the flow in the browser (not a screenshot).
 Vite + `dev:api`, signed in at `localhost:5173`. Check other routes that share
 the state you touched.
 
+`npm run click:library` (`scripts/library-click-through.ts`, #57) is a local
+Playwright click-through of Library search persistence and collection
+switching; run it after changing `Library`, `CollectionSection`,
+`librarySearchMemory`, or sign-out. It needs both dev servers and
+`SOUS_E2E_SESSION` in `.env.local`: the `sous_session` cookie value from
+`localhost:5173`. That value is a 90-day bearer for the account (only rotating
+`SESSION_SECRET` revokes it): never print or commit it, and remove it when
+done. The script aborts every non-GET `/api` request except its final
+sign-out, so it cannot write to the real library. It uses `playwright-core`
+(a devDependency, no browser download) with the installed Chrome. Not part of
+`npm test` or CI.
+
 Chat streaming must not grow `Content-Length` or `Content-Encoding` on
 `/api/chat`. The framing/streaming oracle in `docs/plans/sous-subdomain.md`
 step 2, with a `sous_session` cookie instead of `x-app-password`, is the
