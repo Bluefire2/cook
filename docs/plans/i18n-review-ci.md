@@ -1,6 +1,7 @@
 # In-context translation review as a suite and a scheduled workflow
 
-Status: planned, not built.
+Status: step 1 (spike) done on `claude/i18n-review-ci`; results below. Steps
+2–7 not built.
 
 Constitutions applied: `docs/constitutions/i18n.md`. This plan builds the
 "standalone i18n review suite" milestone from `docs/plans/i18n.md` and
@@ -72,10 +73,12 @@ reachable from personas.
   makes states reachable that today depend on luck.
 - **Only the judge calls Gemini.** The workflow passes `GEMINI_API_KEY` to
   the judge step, not to the test server.
-- **Judge model: the repo's current Flash (`gemini-3.7-flash`).** The
-  milestone expected Flash, not Flash-Lite, for nuance. The spike (step 1)
-  compares the two on a handful of pairs and records the choice here.
-  Structured output, temperature 0.
+- **Judge model: `gemini-3.7-flash`.** The spike confirmed it: Flash-Lite
+  reported 11 false blockers on 9 clean pairs (collection names and tags as
+  "left in English", language names in the picker, a spacing artifact of the
+  page text), and its pass/fail is not usable. Structured output,
+  temperature 0, default thinking. Calls that answer 429 or 5xx are retried
+  three times with backoff (the spike hit one 503).
 - **The judge reads the rubric and glossary from their sources.** The rubric
   bullets come from the README's "Rubric" section and the register and
   glossary from the constitution's "Register and glossary" decision, read at
@@ -84,16 +87,33 @@ reachable from personas.
 - **What the judge sees.** For each state and target language: the English
   screenshot as reference, the target screenshot, the target page's visible
   text (`innerText`, so quotes in findings are exact rather than read off
-  pixels), the language, the rubric, and the register and glossary. It
+  pixels), the language, the rubric, the register and glossary, and the
+  state's `setup` text from the manifest. The prompt also says, because the
+  spike showed each was needed:
+  - what is user data and never judged: recipe text and tags, collection
+    names, people's names and emails, connected app names;
+  - that language names in the language picker are in their own language on
+    purpose;
+  - that layout is judged from the image only, because extracted page text
+    loses the spacing between elements;
+  - that text using the glossary's term is correct even when the English
+    word looks ambiguous.
+
+  The `setup` text matters most: without it the judge read the "Cooks"
+  header link as people and flagged the glossary's "Приготування" as wrong;
+  with it, 27 judgings of 9 clean pairs reported nothing. It
   returns `{ pass, issues: [{ text, problem, suggestion, severity,
   rubricItem }] }`, `severity` `blocker` or `nit`, `rubricItem` one of the
   six rubric headings. For the English column of a full run it judges only
   sense in context and layout, as the README says.
-- **A blocker counts only if a second judging agrees.** Each state that
-  fails is judged once more. A blocker reported both times (matched by
-  language and normalized `text`) is confirmed; one reported once is listed
-  in the report as unconfirmed and never filed. This trades one extra call
-  per failing pair for far less churn in the issue.
+- **A finding counts only if a second judging agrees.** A pair whose first
+  judging reports any issue is judged once more. A text reported both times
+  (matched by language and normalized `text`) and called a blocker at least
+  once is a confirmed blocker; a text reported only once is listed in the
+  report as unconfirmed and never filed. The spike showed the judge often
+  agrees on a problem but not its severity (the same noun-for-verb button
+  was a blocker in one judging and a nit in the next), so agreement on the
+  text, not the severity, is what confirms it. Clean pairs cost one call.
 - **Findings are fingerprinted.** `sha256(screenId, lang,
   normalize(text))`, where `normalize` lowercases, trims, and collapses
   whitespace. The fingerprint carries a finding across runs (first seen,
@@ -187,6 +207,7 @@ The exact split is settled in step 5, and the report lists every skip.
 
 | File | What |
 | --- | --- |
+| `testing/i18n-review/spike.ts` | Step 1's script, kept until step 2 replaces it with `capture.ts` and `judge.ts`, then deleted. |
 | `testing/i18n-review/run.ts` | Entry point for `npm run test:i18n`: options, test-mode readiness, capture, judge, report. |
 | `testing/i18n-review/capture.ts` | Playwright: one browser, a context per persona, 390×844, `cook.locale` per language, screenshot plus `innerText`. |
 | `testing/i18n-review/states.ts` | The per-id entries above. |
@@ -194,6 +215,7 @@ The exact split is settled in step 5, and the report lists every skip.
 | `testing/i18n-review/mocks.ts` | Named `page.route` handlers that serve recordings or failures. |
 | `testing/i18n-review/responses/` | Recorded model responses (JSON / NDJSON). |
 | `testing/i18n-review/judge.ts` | Builds the prompt from the README and constitution, calls Gemini with the schema, confirms blockers, enforces `MAX_JUDGE_CALLS`. |
+| `testing/i18n-review/calibration.ts` | Live judge check: injected defects per rubric item, recall and false positives (step 3). |
 | `testing/i18n-review/judge.test.ts` | Pure: prompt assembly reads the right sections, schema parsing, blocker confirmation, fingerprints. |
 | `testing/i18n-review/report.ts` | Markdown report, `results.json`, candidate catalog keys. |
 | `testing/i18n-review/issue.ts` | Builds the issue body and the change comment from `results.json`, the previous state, and `accepted.json`. Pure; the workflow posts with `gh`. |
@@ -263,16 +285,54 @@ production, which removes the reason for the read-only rule.
    tokens and time per judge call, which model, and whether the judge's
    quotes match the page text. Stop and revise the plan if capture of a
    state is not deterministic across two runs.
+   **Results (2026-10-02, `testing/i18n-review/spike.ts`, Chromium 153 via
+   Playwright 1.63, `gemini-3.7-flash` unless noted):**
+   - **Captures are deterministic.** All 12 state × language captures were
+     byte-identical across two runs (full-page PNG, 390×844 at device scale
+     2, animations off, caret hidden, after `document.fonts.ready`). About
+     1 s each with a fresh browser per capture; the first launch took 10 s.
+   - **Selecting controls by catalog text works.** The script imports
+     `src/i18n/<lang>.ts` and finds controls by their label in the current
+     language (`getByRole('button', { name: <lang>['import.extractRecipe'] })`);
+     the app has no test ids and needs none.
+   - **Flash-Lite is not usable as the judge** (see Decisions). Flash, with
+     the prompt as first written, reported one false blocker on 9 clean
+     pairs ("Cooks" read as people).
+   - **With the revised prompt** (user data named, picker languages, layout
+     from the image only, glossary first, manifest `setup` text): 27
+     judgings of 9 clean pairs reported no issue at all. An English "Save"
+     injected into the `uk` import preview was a blocker in 3 of 3
+     judgings. A noun on a verb button ("Выбор" for "Выбрать") was missed in
+     3 of 3; without the `setup` text it had been reported 2 of 2, once as a
+     blocker and once as a nit.
+   - **Cost and time per judge call:** 2,800–4,000 input tokens (two images
+     and the prompt), 16 output tokens for a clean screen and about 85 with
+     one issue, 400–1,200 thinking tokens; 3–10 s, about 4.5 s typical. A
+     full run is about 360 calls (90 states × 4 columns) plus re-judgings:
+     roughly 1.3 M input and 0.3 M output and thinking tokens, and about
+     27 minutes if calls run one at a time, so the judge runs 4 calls at a
+     time. One 503 in about 100 calls; retries are needed.
+   - **Local setup:** `npx playwright install chromium` timed out on the
+     owner's machine although `curl` fetched the same files in seconds.
+     Serving the files from a local mirror with `PLAYWRIGHT_DOWNLOAD_HOST`
+     worked; `testing/README.md` gets that workaround in step 7. CI installs
+     normally.
 2. **[core] Capture.** `run.ts`, `capture.ts`, `mocks.ts`, the `--record`
    mode, and `states.ts` for the states that need no mocks (about 30). Check:
    two runs give byte-identical screenshots for each captured state, or the
    difference is understood and stabilized (fonts, animations, relative
    times, the caret).
-3. **[core] Judge.** `judge.ts` and its tests. Check: on the spike's pairs
-   the confirmed blockers are stable across two runs; a deliberately broken
-   catalog string (an English word left in `uk`, a wrong plural in `ru`) is
-   reported as a confirmed blocker naming that text; `MAX_JUDGE_CALLS`
-   stops the run with a clear line.
+3. **[core] Judge.** `judge.ts` and its tests, and a **calibration set**:
+   `testing/i18n-review/calibration.ts` injects one known defect per rubric
+   item into captured pages (English left in place, a noun on a verb
+   button, a wrong `uk`/`ru` plural, a non-glossary term, the wrong
+   register, a truncated button) the way the spike did, and reports recall
+   per rubric item and false positives on the clean pairs. It is a live
+   check like `npm run test:import`, never in `npm test`, and any change to
+   the judge prompt or model is measured with it and recorded here. Check:
+   no confirmed blocker on the clean pairs; every "left in English" defect
+   caught; recall on the other items recorded, not required;
+   `MAX_JUDGE_CALLS` stops the run with a clear line.
 4. **[core] Report.** `report.ts`: the README's report, `results.json`, and
    candidate keys. Check: the broken string from step 3 lists its key.
 5. **[core] All states.** The remaining entries, the recordings, and
@@ -297,6 +357,13 @@ production, which removes the reason for the read-only rule.
 
 ## Risks
 
+- **Weak recall on subtle problems.** In the spike the judge caught an
+  English word left on a button every time, but missed a noun on a verb
+  button in all three judgings once it had the manifest context (it had
+  caught it, as a blocker or a nit, without). The daily run is a backstop for
+  clear errors, not a replacement for a person or agent reading the screen;
+  the task review before a PR keeps its role. The calibration set (step 3)
+  measures recall per rubric item so this stays known, not assumed.
 - **Judge noise.** An LLM judge can disagree with itself. The confirmation
   run, the fingerprint, and the accepted list limit churn, and nits are
   never filed as blockers. If noise still dominates the issue after a week,
