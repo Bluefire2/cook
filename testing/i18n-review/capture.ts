@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import type { Browser, Page } from 'playwright';
 import { label, type Lang } from './catalog.ts';
 import { MOCKS } from './mocks.ts';
+import type { FIXTURE_IDS } from '../fixtures.ts';
 import type { Capturable, CaptureContext } from './states.ts';
 
 export const VIEWPORT = { width: 390, height: 844 };
@@ -54,6 +55,40 @@ export interface CaptureFailed {
   /** What the page looked like when it failed, when a screenshot was possible. */
   png?: Buffer;
   ms: number;
+}
+
+/** Waits for the test-mode seed, then reads what captures need from it. */
+export async function readCaptureEnv(baseUrl: string): Promise<CaptureEnv> {
+  let personas: { seededAt: number | null; fixtures: typeof FIXTURE_IDS } | undefined;
+  for (let attempt = 0; attempt < 60 && personas === undefined; attempt++) {
+    const res = await fetch(`${baseUrl}/__test/personas`).catch(() => undefined);
+    if (res?.status === 200) {
+      personas = (await res.json()) as typeof personas;
+    } else {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+  if (personas === undefined) {
+    throw new Error(`No test-mode server ready at ${baseUrl} (see testing/README.md)`);
+  }
+  // The public link's token, read the way the owner's Share sheet reads it.
+  const signIn = await fetch(`${baseUrl}/__test/sign-in?as=member`, { redirect: 'manual' });
+  const cookie = signIn.headers
+    .getSetCookie()
+    .map((line) => line.split(';')[0])
+    .find((pair) => pair.startsWith('sous_session='));
+  const link = await fetch(`${baseUrl}/api/collections/${personas.fixtures.member.weeknights}/public`, {
+    headers: cookie === undefined ? {} : { Cookie: cookie },
+  });
+  const url = ((await link.json()) as { url?: string }).url ?? '';
+  const publicToken = /\/p\/([^/?#]+)$/.exec(url)?.[1];
+  if (publicToken === undefined) {
+    throw new Error("Couldn't read Weeknights' public link; is the seed intact?");
+  }
+  if (personas.seededAt === null) {
+    console.log('Note: the test server ran with --keep, so relative times are live and captures may differ.');
+  }
+  return { baseUrl, seededAt: personas.seededAt, ids: personas.fixtures, publicToken };
 }
 
 export function contextFor(lang: Lang, env: CaptureEnv): CaptureContext {

@@ -1,23 +1,31 @@
 /**
  * `npm run test:i18n`: the in-context translation review
  * (docs/i18n-review/README.md, docs/plans/i18n-review-ci.md) against a running
- * test-mode server. This step captures; judging and the report come next.
+ * test-mode server. It captures each state, then has the judge review each
+ * target language against English. The Markdown report comes in step 4.
  *
  *   npm run test:i18n -- [--base-url http://localhost:4173] [--states a,b]
- *                        [--langs en,uk] [--out dir] [--repeat 2]
+ *                        [--langs uk,ru] [--scope task|full] [--no-judge]
+ *                        [--out dir] [--repeat 2]
  *
+ * `--scope task` (the default) judges the target languages; `full` also judges
+ * the English column for sense in context and layout. English is always
+ * captured as the reference. Judging needs GEMINI_API_KEY (`.env.local`).
  * `--repeat 2` captures every state twice and fails on any capture that is not
- * byte-identical, the determinism check from the plan. Exits non-zero when a
- * capture fails.
+ * byte-identical, the determinism check from the plan.
+ *
+ * Exits non-zero when a capture fails, a judge call fails, or a confirmed
+ * blocker is found.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { chromium } from 'playwright';
-import type { FIXTURE_IDS } from '../fixtures.ts';
-import { captureState, type CaptureEnv } from './capture.ts';
+import { GoogleGenAI } from '@google/genai';
+import { captureState, readCaptureEnv } from './capture.ts';
 import { isLang, LANGS, type Lang } from './catalog.ts';
+import { CallBudget, judgeAll, type JudgeTask, readSources, type Shot } from './judge.ts';
 import { isSkipped, STATES } from './states.ts';
 
 const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -29,7 +37,10 @@ const { values } = parseArgs({
     langs: { type: 'string' },
     out: { type: 'string' },
     repeat: { type: 'string', default: '1' },
+    scope: { type: 'string', default: 'task' },
+    judge: { type: 'boolean', default: true },
   },
+  allowNegative: true,
 });
 
 const baseUrl = values['base-url'].replace(/\/+$/, '');
@@ -37,12 +48,27 @@ const repeat = Number(values.repeat);
 if (!Number.isInteger(repeat) || repeat < 1 || repeat > 3) {
   throw new Error(`--repeat must be 1, 2, or 3, not ${values.repeat}`);
 }
-const langs = (values.langs?.split(',') ?? [...LANGS]).map((value) => value.trim());
-const badLang = langs.find((value) => !isLang(value));
+const scope = values.scope;
+if (scope !== 'task' && scope !== 'full') {
+  throw new Error(`--scope must be task or full, not ${scope}`);
+}
+const requested = (values.langs?.split(',') ?? [...LANGS]).map((value) => value.trim());
+const badLang = requested.find((value) => !isLang(value));
 if (badLang !== undefined) {
   throw new Error(`Unknown language ${badLang}; use ${LANGS.join(', ')}`);
 }
-const manifest = JSON.parse(readFileSync(join(repoRoot, 'docs/i18n-review/screens.json'), 'utf8')) as { id: string }[];
+const judging = values.judge;
+const apiKey = process.env.GEMINI_API_KEY;
+if (judging && !apiKey) {
+  throw new Error('Judging needs GEMINI_API_KEY (in .env.local); pass --no-judge to capture only.');
+}
+// English is the reference for every target language, so it is always captured.
+const langs = [...new Set(['en', ...requested])] as Lang[];
+const judgedLangs = langs.filter((lang) => lang !== 'en' || (scope === 'full' && requested.includes('en')));
+const manifest = JSON.parse(readFileSync(join(repoRoot, 'docs/i18n-review/screens.json'), 'utf8')) as {
+  id: string;
+  setup: string;
+}[];
 const wanted = values.states?.split(',').map((value) => value.trim()) ?? manifest.map((entry) => entry.id);
 const unknown = wanted.filter((id) => !Object.hasOwn(STATES, id));
 if (unknown.length > 0) {
@@ -50,39 +76,6 @@ if (unknown.length > 0) {
 }
 const date = new Date().toISOString().slice(0, 10);
 const outDir = resolve(values.out ?? join(repoRoot, '.i18n-review', date));
-
-async function readEnv(): Promise<CaptureEnv> {
-  let personas: { seededAt: number | null; fixtures: typeof FIXTURE_IDS } | undefined;
-  for (let attempt = 0; attempt < 60 && personas === undefined; attempt++) {
-    const res = await fetch(`${baseUrl}/__test/personas`).catch(() => undefined);
-    if (res?.status === 200) {
-      personas = (await res.json()) as typeof personas;
-    } else {
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-  }
-  if (personas === undefined) {
-    throw new Error(`No test-mode server ready at ${baseUrl} (see testing/README.md)`);
-  }
-  // The public link's token, read the way the owner's Share sheet reads it.
-  const signIn = await fetch(`${baseUrl}/__test/sign-in?as=member`, { redirect: 'manual' });
-  const cookie = signIn.headers
-    .getSetCookie()
-    .map((line) => line.split(';')[0])
-    .find((pair) => pair.startsWith('sous_session='));
-  const link = await fetch(`${baseUrl}/api/collections/${personas.fixtures.member.weeknights}/public`, {
-    headers: cookie === undefined ? {} : { Cookie: cookie },
-  });
-  const url = ((await link.json()) as { url?: string }).url ?? '';
-  const publicToken = /\/p\/([^/?#]+)$/.exec(url)?.[1];
-  if (publicToken === undefined) {
-    throw new Error("Couldn't read Weeknights' public link; is the seed intact?");
-  }
-  if (personas.seededAt === null) {
-    console.log('Note: the test server ran with --keep, so relative times are live and captures may differ.');
-  }
-  return { baseUrl, seededAt: personas.seededAt, ids: personas.fixtures, publicToken };
-}
 
 interface Row {
   state: string;
@@ -94,14 +87,15 @@ interface Row {
 }
 
 async function main(): Promise<void> {
-  const env = await readEnv();
+  const env = await readCaptureEnv(baseUrl);
   mkdirSync(outDir, { recursive: true });
   const browser = await chromium.launch();
   const rows: Row[] = [];
+  const shots = new Map<string, Shot>();
   try {
     for (const state of wanted) {
       const entry = STATES[state];
-      for (const lang of langs as Lang[]) {
+      for (const lang of langs) {
         if (isSkipped(entry)) {
           rows.push({ state, lang, status: 'skipped', detail: entry.skip });
           continue;
@@ -121,6 +115,7 @@ async function main(): Promise<void> {
         }
         writeFileSync(join(dir, `${lang}.png`), first.png);
         writeFileSync(join(dir, `${lang}.txt`), first.pageText);
+        shots.set(`${state}/${lang}`, { png: first.png, pageText: first.pageText });
         const hashes = results.map((r) => (r.status === 'ok' ? r.sha256 : `failed: ${r.error}`));
         const stable = hashes.every((hash) => hash === first.sha256);
         if (!stable) {
@@ -149,7 +144,46 @@ async function main(): Promise<void> {
     `\n${count('ok')} captured, ${count('failed')} failed, ${count('unstable')} not deterministic, ` +
       `${count('skipped')} skipped. Output: ${outDir}`,
   );
-  process.exitCode = count('failed') + count('unstable') > 0 ? 1 : 0;
+  let failed = count('failed') + count('unstable') > 0;
+
+  if (judging && apiKey) {
+    const setupOf = (id: string) => manifest.find((entry) => entry.id === id)?.setup ?? '';
+    const tasks: JudgeTask[] = [];
+    for (const state of wanted) {
+      const reference = shots.get(`${state}/en`);
+      for (const lang of judgedLangs) {
+        const target = shots.get(`${state}/${lang}`);
+        if (reference && target) tasks.push({ state, lang, setup: setupOf(state), reference, target });
+      }
+    }
+    console.log(`Judging ${tasks.length} captures.`);
+    const budget = new CallBudget();
+    const judgments = await judgeAll(
+      tasks,
+      { ai: new GoogleGenAI({ apiKey }), sources: readSources(repoRoot) },
+      budget,
+      (j) => {
+        if (j.status === 'error') console.log(`ERROR judging ${j.state} ${j.lang}: ${j.error}`);
+        for (const f of j.confirmed) {
+          console.log(`${f.severity.toUpperCase().padEnd(7)} ${j.state} ${j.lang}: "${f.text}" (${f.rubricItem}) ${f.problem}`);
+        }
+      },
+    );
+    writeFileSync(join(outDir, 'judgments.json'), JSON.stringify(judgments, null, 2));
+    const blockers = judgments.flatMap((j) => j.confirmed.filter((f) => f.severity === 'blocker'));
+    const nits = judgments.flatMap((j) => j.confirmed.filter((f) => f.severity === 'nit'));
+    const errors = judgments.filter((j) => j.status === 'error').length;
+    const overBudget = judgments.filter((j) => j.status === 'budget').length;
+    console.log(
+      `${judgments.length} judged with ${budget.used} calls: ${blockers.length} confirmed blockers, ${nits.length} nits, ` +
+        `${judgments.reduce((n, j) => n + j.unconfirmed.length, 0)} unconfirmed, ${errors} errors.`,
+    );
+    if (overBudget > 0) {
+      console.log(`Stopped judging at MAX_JUDGE_CALLS (${budget.limit}): ${overBudget} captures not judged.`);
+    }
+    failed ||= blockers.length > 0 || errors > 0 || overBudget > 0;
+  }
+  process.exitCode = failed ? 1 : 0;
 }
 
 await main();

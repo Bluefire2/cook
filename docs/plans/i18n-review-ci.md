@@ -1,7 +1,7 @@
 # In-context translation review as a suite and a scheduled workflow
 
-Status: steps 1 (spike) and 2 (capture) done on `claude/i18n-review-ci`;
-results below. Steps 3–7 not built.
+Status: steps 1 (spike), 2 (capture), and 3 (judge) done on
+`claude/i18n-review-ci`; results below. Steps 4–7 not built.
 
 Constitutions applied: `docs/constitutions/i18n.md`. This plan builds the
 "standalone i18n review suite" milestone from `docs/plans/i18n.md` and
@@ -207,7 +207,6 @@ The exact split is settled in step 5, and the report lists every skip.
 
 | File | What |
 | --- | --- |
-| `testing/i18n-review/spike.ts` | Step 1's script. Its capture half is replaced by `capture.ts`; it is deleted when step 3's `judge.ts` replaces its judge half. |
 | `testing/i18n-review/catalog.ts` | The four catalogs and `label(lang, key, params)`, for finding controls by their label. |
 | `testing/i18n-review/run.ts` | Entry point for `npm run test:i18n`: options, test-mode readiness, capture, judge, report. |
 | `testing/i18n-review/capture.ts` | Playwright: one browser, a context per persona, 390×844, `cook.locale` per language, screenshot plus `innerText`. |
@@ -366,6 +365,39 @@ production, which removes the reason for the read-only rule.
    no confirmed blocker on the clean pairs; every "left in English" defect
    caught; recall on the other items recorded, not required;
    `MAX_JUDGE_CALLS` stops the run with a clear line.
+   **Results (2026-10-03):** `judge.ts`, `judge.test.ts` (17 pure tests),
+   `calibration.ts`, and judging in `run.ts` (`--scope task|full`,
+   `--no-judge`). The spike script is deleted.
+   - **The spike never sent the glossary table.** The constitution has two
+     bullets that start "Register and glossary": a one-line pointer in
+     principle 16, then the table under Current decisions. The spike's
+     search found the first. `readSources` now reads inside Current
+     decisions, and `judge.test.ts` asserts the table is there. Every spike
+     number above was measured without it.
+   - **Calibration** (42 pairs: 10 clean states × 3 languages, and 12
+     planted defects, two per rubric item, in `uk`, `ru`, and `zh-Hans`), run
+     three times. With the glossary, every planted text defect was a
+     confirmed blocker in the first two runs, including the noun on a verb
+     button the spike missed; in the third, that one ("Выбор") was reported
+     by only one judging, so it was unconfirmed. Both clipped buttons were
+     confirmed blockers once the clip was really planted (the first two runs
+     never applied it: a string passed to `locator.evaluate` is evaluated as
+     an expression, not called; the plant now checks the button clips).
+     Final run: 11 of 12 confirmed, 12 of 12 reported. Clean pairs: no false
+     blocker in any of the three runs. 53–56 calls per run.
+   - **It found a real bug.** On the Russian recipe screen, "Записать
+     приготовление" (Log a cook) wraps to two lines and its second line sits
+     under the floating "Спросить" (Ask) button at the bottom of the page.
+     Confirmed in every run. `KNOWN_REAL` in `calibration.ts` keeps it from
+     counting as a false positive until it is fixed; the fix is separate
+     work.
+   - **Check:** no confirmed blocker on the clean pairs; both "left in
+     English" defects caught; recall recorded per item; `MAX_JUDGE_CALLS`
+     stopping the run is covered by `judge.test.ts`.
+   - `run.ts` judges target languages by default and also the English
+     column with `--scope full`; it exits non-zero on a confirmed blocker, a
+     judge error, or the call cap.
+
 4. **[core] Report.** `report.ts`: the README's report, `results.json`, and
    candidate keys. Check: the broken string from step 3 lists its key.
 5. **[core] All states.** The remaining entries, the recordings, and
@@ -390,13 +422,13 @@ production, which removes the reason for the read-only rule.
 
 ## Risks
 
-- **Weak recall on subtle problems.** In the spike the judge caught an
-  English word left on a button every time, but missed a noun on a verb
-  button in all three judgings once it had the manifest context (it had
-  caught it, as a blocker or a nit, without). The daily run is a backstop for
-  clear errors, not a replacement for a person or agent reading the screen;
-  the task review before a PR keeps its role. The calibration set (step 3)
-  measures recall per rubric item so this stays known, not assumed.
+- **Recall on subtle problems varies.** With the glossary (step 3), the
+  judge confirmed every planted defect in most runs, but a noun on a verb
+  button was confirmed in two runs and only reported by one judging in the
+  third. The daily run is a backstop, not a replacement for a person or
+  agent reading the screen; the task review before a PR keeps its role. The
+  calibration set measures recall per rubric item so this stays known, not
+  assumed.
 - **Judge noise.** An LLM judge can disagree with itself. The confirmation
   run, the fingerprint, and the accepted list limit churn, and nits are
   never filed as blockers. If noise still dominates the issue after a week,
