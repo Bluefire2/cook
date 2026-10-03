@@ -1,0 +1,347 @@
+# In-context translation review as a suite and a scheduled workflow
+
+Status: planned, not built.
+
+Constitutions applied: `docs/constitutions/i18n.md`. This plan builds the
+"standalone i18n review suite" milestone from `docs/plans/i18n.md` and
+**amends principle 16** and the "In-context review delivery" current decision
+(see Constitution amendment). The PR flags the amendment. `client-state.md`,
+`cook-log.md`, and `image-import.md` were checked against their descriptions:
+the suite reads the app and changes no app code, so none applies.
+
+## Goal
+
+Two things, one implementation:
+
+1. **`npm run test:i18n`**: the in-context review from
+   `docs/i18n-review/README.md` as a script. It captures each manifest state
+   in test mode, in English and the target languages, has a Gemini vision
+   judge apply the README's rubric, and writes the report the README
+   describes. Agents run it as the pre-PR task review instead of driving a
+   browser by hand.
+2. **A daily workflow on `main`** that runs the full review and keeps one
+   GitHub issue up to date with the open findings, so problems that slip past
+   a task review, or come from changes that no task review covered, surface
+   on their own.
+
+Test mode (`docs/plans/test-mode.md`) removes the blocker the milestone
+named: the review no longer needs a real session or production data, so the
+`needsData` states that a read-only run skipped (69 of 90 today) become
+reachable from personas.
+
+## Out of scope
+
+- **Opening fix PRs.** The first version files and updates an issue. Fix PRs
+  are a later phase with their own conditions (see Later).
+- **Running on pull requests.** Fork PRs get no secrets, and a judge call per
+  state per language is too slow and costly for every push. Agents run the
+  task scope locally before a PR, as principle 16 already requires.
+- **Changing the rubric or the manifest's meaning.** The README's rubric is
+  used as written. The manifest gains no new kinds of states.
+- **States that need stored photos.** Test mode has no photo storage, so
+  states that show a saved photo are skipped with a reason (see States).
+- **Judging recipe content.** As today, the judge ignores recipe text, which
+  is expected in any language.
+
+## Decisions
+
+- **The suite lives in `testing/i18n-review/`, not `scripts/i18n-review/`.**
+  The constitution's scope line anticipated `scripts/`, but the Dockerfile
+  copies `scripts/` into the production image, and the suite imports
+  Playwright, a dev dependency. `testing/` is already excluded from the image
+  and may import the test-mode fixtures directly. The constitution's `scope`
+  frontmatter is updated with the amendment.
+- **Playwright, as a dev dependency.** This is the exception to "no DOM
+  testing library" that the milestone anticipated. The suite is a live
+  review tool like the import evals, not a unit test, and `npm test` never
+  runs it. `AGENTS.md` records the exception. Only Chromium is installed.
+- **Captures run against test mode, signed in as personas.** Each state names
+  a persona (or signed out). The review signs in through `/__test/sign-in`.
+  Writes go to the emulator, so a state may be reached by doing what a
+  person would do (pressing Create link, sending a suggestion), and nothing
+  reaches production.
+- **The app's model calls are replayed, not live.** States behind a
+  model-backed route (import, translate, the assistant, Ask, dictation) get
+  their responses from recorded fixtures through Playwright `page.route`.
+  Captures are then deterministic, cheap, and independent of model drift,
+  and the test server needs no Gemini key. `npm run test:i18n -- --record`
+  refreshes the recordings with a real key; recordings are committed under
+  `testing/i18n-review/responses/` and hold only app output for the fixture
+  recipes. Failure states (`import-error-model-failed`, invite 409s, a
+  failed disconnect, a failed translation) are mocked responses too, which
+  makes states reachable that today depend on luck.
+- **Only the judge calls Gemini.** The workflow passes `GEMINI_API_KEY` to
+  the judge step, not to the test server.
+- **Judge model: the repo's current Flash (`gemini-3.7-flash`).** The
+  milestone expected Flash, not Flash-Lite, for nuance. The spike (step 1)
+  compares the two on a handful of pairs and records the choice here.
+  Structured output, temperature 0.
+- **The judge reads the rubric and glossary from their sources.** The rubric
+  bullets come from the README's "Rubric" section and the register and
+  glossary from the constitution's "Register and glossary" decision, read at
+  run time. Nothing is copied, so a change to either reaches the judge on
+  the next run.
+- **What the judge sees.** For each state and target language: the English
+  screenshot as reference, the target screenshot, the target page's visible
+  text (`innerText`, so quotes in findings are exact rather than read off
+  pixels), the language, the rubric, and the register and glossary. It
+  returns `{ pass, issues: [{ text, problem, suggestion, severity,
+  rubricItem }] }`, `severity` `blocker` or `nit`, `rubricItem` one of the
+  six rubric headings. For the English column of a full run it judges only
+  sense in context and layout, as the README says.
+- **A blocker counts only if a second judging agrees.** Each state that
+  fails is judged once more. A blocker reported both times (matched by
+  language and normalized `text`) is confirmed; one reported once is listed
+  in the report as unconfirmed and never filed. This trades one extra call
+  per failing pair for far less churn in the issue.
+- **Findings are fingerprinted.** `sha256(screenId, lang,
+  normalize(text))`, where `normalize` lowercases, trims, and collapses
+  whitespace. The fingerprint carries a finding across runs (first seen,
+  last seen) and across the accepted list.
+- **Accepted findings live in the repo.** `docs/i18n-review/accepted.json`
+  lists fingerprints the owner decided not to fix, each with a reason and a
+  date. Accepting a finding is a reviewed change. The workflow drops accepted
+  findings before filing.
+- **Candidate catalog keys.** For each finding the reporter searches the
+  target catalog (`src/i18n/<lang>.ts`) for the quoted text and lists the
+  keys whose value contains it. It is a hint for the person fixing it, and
+  the precondition for any later fix PR.
+- **One rolling issue.** Label `i18n-review`, title "In-context translation
+  review: open findings". Each run rewrites the body: confirmed blockers in a
+  table (screen, language, text, problem, suggestion, candidate keys, first
+  seen), nits in a collapsed section, skipped states with reasons, the run's
+  commit and a link to its artifacts. It adds a comment only when findings
+  appeared or were resolved since the last run. With no open findings the
+  issue is closed; a new finding reopens it. Run state (last commit, finding
+  first-seen dates) is kept in a hidden JSON comment in the body, so the
+  workflow needs no other storage.
+- **Daily, skipping unchanged `main`.** `schedule` at 06:00 UTC and
+  `workflow_dispatch`. A scheduled run whose `main` commit equals the last
+  reviewed commit in the issue state exits early. A dispatch always runs and
+  takes optional inputs: state ids and languages, for a partial run.
+- **A hard cap on judge calls.** A code constant, `MAX_JUDGE_CALLS` (start
+  at 500: a full run judges 90 states × 4 columns, English included, plus a
+  re-judging per failing pair, with headroom; set from the spike's numbers). The run stops judging at the cap and the report and
+  issue say so. A runaway manifest cannot spend without bound.
+- **Reports.** The Markdown report keeps the README's format (scope,
+  pass/fail table, issues, skips; "translation cache docs written" becomes
+  "none: test mode" since nothing reaches production). Screenshots and the
+  report are a workflow artifact kept 30 days; locally they go to
+  `.i18n-review/<date>/`, which is gitignored. The repo is public, so the
+  issue and the artifacts are public; they show only fixture data.
+- **`docs/i18n-review/README.md` becomes a guide to the suite.** The rubric,
+  the manifest description, and the report format stay there (the suite
+  reads the rubric from it). The manual browser procedure and the read-only
+  rules for production move to a short "without the suite" note: a person
+  can still review by hand, in test mode. The Cursor skill points at
+  `npm run test:i18n`.
+
+## States
+
+`docs/i18n-review/screens.json` stays the source of truth for ids, routes,
+and the plain-language `setup`. A new file, `testing/i18n-review/states.ts`,
+gives each id a machine-readable entry:
+
+```ts
+type StateEntry =
+  | {
+      persona: PersonaName | 'signedOut';
+      path: string | ((ids: typeof FIXTURE_IDS) => string);
+      /** Playwright steps after load: open a sheet, type, wait for text. */
+      reach?: (page: Page) => Promise<void>;
+      /** Route mocks, by name, from testing/i18n-review/mocks.ts. */
+      mocks?: MockName[];
+    }
+  | { skip: SkipReason };
+
+type SkipReason = 'needs stored photos' | 'needs a real Google sign-in';
+```
+
+A unit test, `testing/i18n-review/states.test.ts`, fails when a manifest id
+has no entry or an entry has no manifest id, so a new state cannot be added
+to the manifest without a way to capture it (or a named reason not to).
+
+`needsData` keeps its meaning for a hand review against a real account. In
+the suite every state is either captured or skipped with one of the reasons
+above. From the current manifest, by first reading:
+
+- **Reachable from a persona with no writes:** library states (`member`,
+  `empty`), collections, settings, admin, recipe view and edit, cook log,
+  public collection pages (`member`'s Weeknights link), shared viewer and
+  editor states (`viewer`).
+- **Reachable with an emulator write:** invite copied (Create link), feature
+  request sent, cook-log save, translated recipe (translate chip, with the
+  translate response mocked).
+- **Reachable with a mocked response:** every import preview and failure
+  state, the assistant's cards, Ask, the invite quota refusal, a failed
+  disconnect, a failed translation, clipboard failure (Playwright denies the
+  clipboard permission).
+- **Skipped, needs stored photos:** recipe gallery and photo-bearing chat or
+  cook-log states; step 5 lists them by id. Photo *import* is not skipped:
+  attaching a photo to an import is client-side until extraction, which is
+  mocked.
+
+The exact split is settled in step 5, and the report lists every skip.
+
+## Files
+
+| File | What |
+| --- | --- |
+| `testing/i18n-review/run.ts` | Entry point for `npm run test:i18n`: options, test-mode readiness, capture, judge, report. |
+| `testing/i18n-review/capture.ts` | Playwright: one browser, a context per persona, 390×844, `cook.locale` per language, screenshot plus `innerText`. |
+| `testing/i18n-review/states.ts` | The per-id entries above. |
+| `testing/i18n-review/states.test.ts` | Manifest ↔ entries parity; every mock name exists. |
+| `testing/i18n-review/mocks.ts` | Named `page.route` handlers that serve recordings or failures. |
+| `testing/i18n-review/responses/` | Recorded model responses (JSON / NDJSON). |
+| `testing/i18n-review/judge.ts` | Builds the prompt from the README and constitution, calls Gemini with the schema, confirms blockers, enforces `MAX_JUDGE_CALLS`. |
+| `testing/i18n-review/judge.test.ts` | Pure: prompt assembly reads the right sections, schema parsing, blocker confirmation, fingerprints. |
+| `testing/i18n-review/report.ts` | Markdown report, `results.json`, candidate catalog keys. |
+| `testing/i18n-review/issue.ts` | Builds the issue body and the change comment from `results.json`, the previous state, and `accepted.json`. Pure; the workflow posts with `gh`. |
+| `testing/i18n-review/issue.test.ts` | New, still open, resolved, accepted, reopen, unchanged-run cases. |
+| `docs/i18n-review/accepted.json` | `[]` to start. |
+| `.github/workflows/i18n-review.yml` | The scheduled workflow. |
+| `package.json` | `test:i18n` script; `playwright` dev dependency. |
+| `docs/i18n-review/README.md`, `.cursor/skills/i18n-visual-review/SKILL.md`, `AGENTS.md`, `docs/constitutions/i18n.md` | Docs and the amendment (step 7). |
+
+## Workflow
+
+```yaml
+on:
+  schedule: [{ cron: '0 6 * * *' }]
+  workflow_dispatch:
+    inputs:
+      states: { description: 'Comma-separated state ids (default: all)', required: false }
+      langs: { description: 'Comma-separated languages (default: uk,ru,zh-Hans)', required: false }
+permissions:
+  contents: read
+  issues: write
+concurrency: { group: i18n-review, cancel-in-progress: false }
+```
+
+One job on `ubuntu-latest`, `timeout-minutes: 60`: checkout `main`; read the
+issue state and exit early on an unchanged scheduled run; start the emulator
+(the `test-mode` job's command); `npm ci`; `npm run build`; install Chromium
+(`npx playwright install --with-deps chromium`); start
+`testing/test-server.ts --static`; run `npm run test:i18n -- --full
+--out review/` with `GEMINI_API_KEY` from secrets on that step only; upload
+`review/` as an artifact; run `node testing/i18n-review/issue.ts` to build
+the body and comment; apply them with `gh issue` (create the label and issue
+on the first run). The workflow never pushes, never opens a PR, and runs
+only on `main`.
+
+## Constitution amendment
+
+In `docs/constitutions/i18n.md`, principle 16:
+
+- **"The review writes nothing"** becomes **"The review never touches
+  production."** It runs in test mode, against the Firestore emulator,
+  signed in as fake personas. Writes during a review go to the emulator only.
+  A hand review against a real account, where test mode cannot be used,
+  keeps today's read-only rules.
+- **"Other members' data stays out of the judge"** becomes: the judge sees
+  only fixture data. A hand review against a real account keeps today's
+  redaction rule.
+- **New bullet: scheduled full run.** A daily full review on `main` files
+  open findings to one issue. It is a backstop and does not replace the task
+  review before each PR.
+- **Tool-neutral** stays: `npm run test:i18n` is the procedure; the README
+  describes it.
+
+The "In-context review delivery" decision is rewritten to say the suite
+exists, where it lives, and why (`testing/`, out of the image). The `scope`
+frontmatter replaces "later scripts/i18n-review/" with
+`testing/i18n-review/` and `.github/workflows/i18n-review.yml`. An amendment
+log entry gives the reason: test mode makes the review reachable without
+production, which removes the reason for the read-only rule.
+
+## Steps
+
+1. **[core] Spike.** Add Playwright, sign in through `/__test/sign-in`,
+   capture three states (`settings`, `library-populated`, `import-preview`
+   with a mocked response) in all four languages, and judge each target
+   language with Flash and Flash-Lite. Record here: capture time per state,
+   tokens and time per judge call, which model, and whether the judge's
+   quotes match the page text. Stop and revise the plan if capture of a
+   state is not deterministic across two runs.
+2. **[core] Capture.** `run.ts`, `capture.ts`, `mocks.ts`, the `--record`
+   mode, and `states.ts` for the states that need no mocks (about 30). Check:
+   two runs give byte-identical screenshots for each captured state, or the
+   difference is understood and stabilized (fonts, animations, relative
+   times, the caret).
+3. **[core] Judge.** `judge.ts` and its tests. Check: on the spike's pairs
+   the confirmed blockers are stable across two runs; a deliberately broken
+   catalog string (an English word left in `uk`, a wrong plural in `ru`) is
+   reported as a confirmed blocker naming that text; `MAX_JUDGE_CALLS`
+   stops the run with a clear line.
+4. **[core] Report.** `report.ts`: the README's report, `results.json`, and
+   candidate keys. Check: the broken string from step 3 lists its key.
+5. **[core] All states.** The remaining entries, the recordings, and
+   `states.test.ts`. List the skipped ids and reasons in this plan. Check:
+   a full local run completes and every manifest id is captured or skipped
+   with a reason.
+6. **[core] Workflow and issue.** `issue.ts` and its tests, `accepted.json`,
+   and the workflow. `issue.ts --dry-run` prints the body and comment instead
+   of posting. Check before merge: `issue.test.ts` covers first run, new,
+   still open, resolved (closes), accepted (dropped), reopen, and unchanged
+   commit (exits early); a dry run over two real `results.json` files, one
+   with a deliberately broken string, prints a "new" comment and then a
+   "resolved" one. `workflow_dispatch` only works once the file is on
+   `main`, so the live check is after merge: one dispatched run creates the
+   label and the issue, and the next scheduled run on an unchanged `main`
+   exits early. Record both runs here.
+7. **[core] Docs and amendment.** The constitution amendment; the README
+   rewrite; the Cursor skill; `AGENTS.md` (the Playwright exception in Tests
+   and verification, the UI text rule's "run the in-context translation
+   review" pointing at `npm run test:i18n`, the plan table row); a short
+   section in `testing/README.md` on reviewing a state by hand in test mode.
+
+## Risks
+
+- **Judge noise.** An LLM judge can disagree with itself. The confirmation
+  run, the fingerprint, and the accepted list limit churn, and nits are
+  never filed as blockers. If noise still dominates the issue after a week,
+  raise the bar (blockers only in the issue body) before tuning prompts.
+- **Wrong fixes from the issue.** The owner may not read `uk`, `ru`, or
+  `zh-Hans`, and the judge can be wrong. The issue says that a suggestion is
+  the model's, and a fix goes through the normal review, including a task
+  review of the screen.
+- **Recordings drift from the app.** If a route's response shape changes,
+  a recording can show a state the real app no longer reaches. Mocks are
+  typed against the route's response types where they exist, and a mocked
+  state that renders an error instead of its expected text fails capture
+  (each `reach` waits for a known element).
+- **Cost.** Bounded by `MAX_JUDGE_CALLS` and by skipping unchanged `main`.
+  The spike records the per-call cost so the cap means a known amount.
+- **Scheduled workflows on a public repository stop after 60 days without
+  repository activity.** Ordinary development keeps it alive; a dormant
+  period needs one manual dispatch.
+
+## Owner steps
+
+1. Add the `GEMINI_API_KEY` Actions secret (Settings → Secrets and
+   variables → Actions). Use a key with a spending limit set in its Google
+   Cloud project.
+2. Approve the constitution amendment in the PR.
+3. After the first scheduled run, read the issue and add any findings you
+   reject to `docs/i18n-review/accepted.json` with a reason.
+
+## Later
+
+**Fix PRs.** A workflow job could open a draft PR for confirmed blockers
+whose text maps to exactly one catalog key, with the judge's suggestion
+applied, and re-review the affected screens in the same job before opening
+it. Before building it: PRs opened with the workflow's `GITHUB_TOKEN` do not
+trigger `ci.yml`, so it needs a GitHub App or a fine-grained token; and the
+person merging must be able to judge the language, or the PR is the model
+grading itself.
+
+## Verification
+
+- `npm run build` and `npm test` pass, including `states.test.ts`,
+  `judge.test.ts`, and `issue.test.ts`. `npm test` does not run captures or
+  call Gemini.
+- Steps 1–6 checks recorded here with their numbers.
+- A full local run and a dispatched workflow run both complete; the issue
+  shows the findings, and the artifact holds the report and screenshots.
+- The image is unchanged: `testing/` stays in `.dockerignore`, and the
+  `image` job passes.

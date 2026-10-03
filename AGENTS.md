@@ -640,7 +640,8 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/public-collections.md` | Built on `claude/read-only-unauthenticated-mode-204be2`, not deployed. Unlisted public link per named collection, readable signed out; AI locked; members can add it as viewers. Apply the widened log exclusion before deploying. |
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |
 | `docs/plans/mcp-server.md` | Built on `claude/llm-api-vs-mcp-04b215`, not deployed. Remote MCP server at `/mcp` with its own OAuth 2.1 authorization server (CIMD clients, no DCR): search, get, list collections, create and edit (with a version check) over the member's own recipes. No delete. |
-| `docs/plans/test-mode.md` | Built on `claude/test-mode`. `testing/test-server.ts` runs the app against a seeded Firestore emulator; `/__test/sign-in?as=<persona>` signs in a fake account with a real session cookie. Not in the image. The emulator runs in CI only in the `test-mode` job (owner-approved exception, Tests and verification). |
+| `docs/plans/test-mode.md` | Merged (#123). `testing/test-server.ts` runs the app against a seeded Firestore emulator; `/__test/sign-in?as=<persona>` signs in a fake account with a real session cookie. Not in the image. The emulator runs in CI only in the `test-mode` job (owner-approved exception, Tests and verification). |
+| `docs/plans/i18n-review-ci.md` | Planned, not built. `npm run test:i18n`: the in-context translation review as a Playwright + Gemini-judge suite in `testing/i18n-review/`, run against test mode with model responses replayed; a daily workflow on `main` keeps one `i18n-review` issue of open findings. Amends i18n principle 16. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
