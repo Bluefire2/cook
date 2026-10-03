@@ -1,7 +1,12 @@
 # In-context translation review as a suite and a scheduled workflow
 
-Status: steps 1 (spike), 2 (capture), 3 (judge), 4 (report), and 5 (all
-states) done on `claude/i18n-review-ci`; results below. Steps 6–7 not built.
+Status: two PRs. **PR 1** (`claude/i18n-review-ci`): steps 1–5 and step 7's
+docs for the suite, so `npm run test:i18n` lands as a manually run review
+before anything is automated; results below. **PR 2**, not built: step 6
+(the workflow and issue) and the scheduled-run part of the amendment. The
+split keeps each PR reviewable, lets a few manual runs show the judge's
+noise before it files issues, and step 6 can only be checked live once its
+workflow is on `main` anyway.
 
 Constitutions applied: `docs/constitutions/i18n.md`. This plan builds the
 "standalone i18n review suite" milestone from `docs/plans/i18n.md` and
@@ -264,9 +269,9 @@ In `docs/constitutions/i18n.md`, principle 16:
 - **"Other members' data stays out of the judge"** becomes: the judge sees
   only fixture data. A hand review against a real account keeps today's
   redaction rule.
-- **New bullet: scheduled full run.** A daily full review on `main` files
-  open findings to one issue. It is a backstop and does not replace the task
-  review before each PR.
+- **New bullet: scheduled full run** (PR 2, with step 6). A daily full
+  review on `main` files open findings to one issue. It is a backstop and
+  does not replace the task review before each PR.
 - **Tool-neutral** stays: `npm run test:i18n` is the procedure; the README
   describes it.
 
@@ -532,6 +537,13 @@ production, which removes the reason for the read-only rule.
    and verification, the UI text rule's "run the in-context translation
    review" pointing at `npm run test:i18n`, the plan table row); a short
    section in `testing/README.md` on reviewing a state by hand in test mode.
+   **Split:** PR 1 carries all of this except the scheduled-run bullet,
+   which lands with step 6 in PR 2 under its own amendment-log row. Done
+   for PR 1 (2026-10-03): principle 16's "writes nothing" and "other
+   members' data" bullets, the In-context review delivery decision, the
+   scope frontmatter, and an amendment row; the README is now a guide to
+   the suite with the hand procedure under "Without the suite"; the Cursor
+   skill points at `npm run test:i18n`.
 
 ## Risks
 
@@ -563,7 +575,7 @@ production, which removes the reason for the read-only rule.
 
 ## Owner steps
 
-1. Add the `GEMINI_API_KEY` Actions secret (Settings → Secrets and
+1. (PR 2; done: the owner has added it.) Add the `GEMINI_API_KEY` Actions secret (Settings → Secrets and
    variables → Actions → New repository secret, or `gh secret set
    GEMINI_API_KEY --repo Bluefire2/sous`). Use a new key made for the review,
    not production's, so it can be revoked alone and its usage reads
@@ -571,8 +583,8 @@ production, which removes the reason for the read-only rule.
    stop spending. The limits are `MAX_JUDGE_CALLS` and the unchanged-`main`
    skip, plus, if wanted, a lower request quota for the Gemini API on that
    project.
-2. Approve the constitution amendment in the PR.
-3. After the first scheduled run, read the issue and add any findings you
+2. Approve the constitution amendment in each PR.
+3. (PR 2) After the first scheduled run, read the issue and add any findings you
    reject to `docs/i18n-review/accepted.json` with a reason.
 
 ## Later

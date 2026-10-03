@@ -126,6 +126,20 @@ without a key.
   process's seed, so run the script once after a fresh start. It fails
   against `--keep`, and a second run against the same server fails too.
 
+## Reviewing translations
+
+The in-context translation review, `npm run test:i18n`, runs against
+`node testing/test-server.ts --static --port 4173`: see
+`docs/i18n-review/README.md` for how to run it and what it reports, and its
+"Without the suite" section for reviewing a screen by hand here. Start the
+server fresh first; the smoke script above changes the seed.
+
+It needs Playwright's Chromium, installed once with
+`npx playwright install chromium`. If that download stalls while `curl`
+fetches the same URL fine, download the archives the install names with
+`curl`, serve them from a local directory with the same paths, and point
+the install at it with `PLAYWRIGHT_DOWNLOAD_HOST=http://localhost:<port>`.
+
 ## What test mode changes
 
 Test mode is `testing/test-server.ts`, a separate entrypoint around the same
