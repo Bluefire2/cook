@@ -653,7 +653,7 @@ rots silently (`docs/plans/test-mode.md`). Do not add the emulator to another
 job or to `npm test`. `.github/workflows/ci.yml` runs on PRs and pushes to
 `main`: `npm run build` + `npm test`, a Docker image build booted with no
 cloud credentials and checked by `.github/scripts/smoke-server.sh`, the
-`test-mode` job checked by `.github/scripts/smoke-test-mode.sh`, and
+`test-mode` job checked by `testing/smoke.ts`, and
 dependency review. None of it needs secrets, ADC, or production.
 `scripts/invariants.test.ts` turns rules in this file into failing tests; follow
 the rule rather than loosening the check. `evals/pageFixtures.test.ts` runs the

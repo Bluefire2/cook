@@ -111,9 +111,10 @@ without a key.
   until the seed is done, then `200` with the personas and fixture ids.
 - **Without Vite**, run `node testing/test-server.ts --static --port 4173`
   after `npm run build`; the app and `/__test/` are on one origin.
-- `.github/scripts/smoke-test-mode.sh <base-url>` is a working example: it
-  signs personas in with `curl` and checks what each one sees. The
-  `test-mode` CI job runs it.
+- `testing/smoke.ts` is a working example: it signs every persona in with
+  `fetch` and reads back what each one should see, with the expected values
+  taken from the fixtures. The `test-mode` CI job runs it; run it yourself
+  with `node testing/smoke.ts http://localhost:3001`.
 
 ## What test mode changes
 

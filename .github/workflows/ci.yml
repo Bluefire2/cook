@@ -94,7 +94,7 @@ jobs:
           FIRESTORE_EMULATOR_HOST: 127.0.0.1:8085
         run: node testing/test-server.ts --static --port 4173 > test-server.log 2>&1 &
       - name: Smoke test
-        run: bash .github/scripts/smoke-test-mode.sh http://localhost:4173
+        run: node testing/smoke.ts http://localhost:4173
       - name: Logs
         if: always()
         run: |

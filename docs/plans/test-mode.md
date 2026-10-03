@@ -201,7 +201,7 @@ Two modes:
 | `testing/fixtures.ts` | Recipes, collections, cook rows, cook logs, chat, fixed ids. |
 | `testing/seed.ts` | `seed(baseUrl)`: clears the emulator, signs personas in, writes the fixtures over HTTP; `createGrantWithCode` for the MCP grant. |
 | `testing/test-server.ts` | Entrypoint: guard, env, dynamic import, `/__test/*`, seed, listen. Flags `--port`, `--static`, `--keep`. |
-| `.github/scripts/smoke-test-mode.sh` | Checks against a running test server (step 6). |
+| `testing/smoke.ts` | Reads the seed back through the app's routes on a running test server (step 6). |
 | `package.json` | `"dev:test": "node --env-file-if-exists=.env.local testing/test-server.ts"`. |
 | `tsconfig.node.json` | Add `testing` to `include`, so `npm run build` type-checks it. |
 | `vite.config.ts` | `^/__test/` proxy; `/^\/__test\//` in the PWA denylist. |
@@ -271,14 +271,10 @@ Two modes:
    - New `test-mode` job in `ci.yml`, no secrets: `npm ci`, `npm run build`,
      start the emulator (the step 1 command), start `node
      testing/test-server.ts --static --port 4173` in the background, then
-     `bash .github/scripts/smoke-test-mode.sh http://localhost:4173`. The script
-     waits for `/__test/personas`, then checks: `as=member` returns 303 with a
-     `sous_session` cookie; with that cookie `/api/auth/session` has
-     `user.sub == "test-member"` and `/api/sync/pull` lists the 6 fixture
-     recipe ids; `as=outsider` then `/api/auth/session` gives `user: null`;
-     `as=nobody` is 404; with no cookie `/api/sync/pull` is 401. It follows the
-     `smoke-server.sh` helpers: `return 0` on every path inside `$(...)`, and
-     the job prints the server log on failure.
+     `node testing/smoke.ts http://localhost:4173`. The script waits for
+     `/__test/personas`, signs every persona in, and reads the seed back
+     through the routes the app uses (see Deviations: it replaced a bash
+     script). The job prints the server log on failure.
    - `smoke-server.sh` gains one check against the production image:
      `GET /__test/sign-in?as=member` is not a 303 and sets no `sous_session`
      cookie. (The SPA fallback answers it 200 with the app shell, so the check
@@ -356,3 +352,20 @@ before `npm run dev:test`.
   fails in PowerShell. A loopback default keeps the guarantee (only a local
   emulator is reachable) and makes `npm run dev:test` work in any shell. A
   value that is set must still be loopback.
+- **The CI smoke check reads the whole seed back.** The first version,
+  `.github/scripts/smoke-test-mode.sh`, checked sign-in, admission, and the 6
+  member recipe ids. `testing/smoke.ts` replaced it so CI also catches data
+  that is written but no longer read back correctly. It is Node rather than
+  bash because it follows the shared-pull cursor and parses JSON, and it
+  imports its expected values from the fixtures instead of copying ids. It
+  checks, per persona: every persona signs in, admitted ones get their own
+  session (owner as owner), and `outsider` and `declined` are denied;
+  `member`'s pull holds exactly the fixture recipes, collections, cook-log
+  entries, chat messages, and cook progress; Weeknights' public link reads
+  signed out and lists its recipes; `member` has one connected app,
+  `claude.ai` with read and write; `viewer`'s own recipe, and across every
+  shared-pull page exactly two shares, Weeknights as viewer and Owner's picks
+  as editor, with their recipes; `owner`'s recipes and collection, the
+  pending, approved, and declined lists on `/admin`, and one unused invite;
+  `empty` has no recipes or collections. An unknown persona is 404 and a pull
+  with no cookie is 401.
