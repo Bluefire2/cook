@@ -10,6 +10,7 @@ import {
   personalTopLevelCollections,
 } from '../server/accountDeletion.ts';
 import { STORE_KINDS } from '../server/sync.ts';
+import { ENV_TREATMENT } from '../testing/env.ts';
 
 // Rules from AGENTS.md that a grep can check. Each failure message names the
 // rule so the fix is to follow it, not to loosen the check.
@@ -342,6 +343,60 @@ describe('deploy', () => {
 
   it('package.json name is "sous"', () => {
     expect((JSON.parse(read('package.json')) as { name: string }).name).toBe('sous');
+  });
+});
+
+describe('test mode (docs/plans/test-mode.md)', () => {
+  // Test mode signs anyone in. It stays safe only while its code is a separate
+  // entrypoint that the app never loads and the image never contains.
+  const appFiles = (dirs: readonly string[]) =>
+    dirs.flatMap((dir) => filesUnder(dir, ['.ts', '.tsx'])).filter((path) => !isTestFile(path));
+
+  it('no app code imports from testing/', () => {
+    const offenders = appFiles(['server', 'api', 'scripts', 'src', 'evals']).flatMap((path) =>
+      matchingLines(path, /['"](?:\.\.?\/)+testing\//),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('no app code mentions the /__test/ routes', () => {
+    const offenders = appFiles(['server', 'api', 'scripts', 'src']).flatMap((path) =>
+      matchingLines(path, /__test\b/),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('the image never contains testing/', () => {
+    const ignored = read('.dockerignore')
+      .split('\n')
+      .map((line) => line.trim());
+    expect(ignored).toContain('testing');
+    const dockerfile = read('Dockerfile').split('\n');
+    const runtimeStart = dockerfile.findLastIndex((line) => /^FROM\s/i.test(line));
+    const copies = dockerfile.slice(runtimeStart).filter((line) => /^COPY\s/i.test(line));
+    expect(copies.length).toBeGreaterThan(0);
+    const offenders = copies.filter(
+      (line) => /\btesting\b/.test(line) || /^COPY\s+(?:--\S+\s+)*\.\/?\s/i.test(line),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('every env var the server reads is classified in testing/env.ts', () => {
+    // Otherwise a new variable falls through from a developer's .env.local,
+    // which may hold production values.
+    const files = [...appFiles(['server', 'api']), 'scripts/server.ts'];
+    const names = new Set<string>();
+    const dynamic: string[] = [];
+    for (const path of files) {
+      for (const match of read(path).matchAll(/process\.env\.([A-Z0-9_]+)|process\.env\[\s*(['"])([A-Z0-9_]+)\2\s*\]/g)) {
+        names.add(match[1] ?? match[3]);
+      }
+      dynamic.push(...matchingLines(path, /process\.env\[\s*[^'"\s]/));
+    }
+    expect(dynamic).toEqual([]);
+    expect(names.size).toBeGreaterThan(0);
+    const unclassified = [...names].filter((name) => !Object.hasOwn(ENV_TREATMENT, name)).sort();
+    expect(unclassified).toEqual([]);
   });
 });
 

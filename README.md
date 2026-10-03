@@ -157,12 +157,32 @@ Opt-outs: set `FIRESTORE_EMULATOR_HOST` to use the emulator instead of
 Firestore, or leave `PHOTO_BUCKET` unset in `.env.local` to keep photo upload
 off (`/api/photos` returns 503 and outbox rows stay until the bucket is set).
 
+### Test mode
+
+To work signed in without touching production, run test mode
+([docs/plans/test-mode.md](docs/plans/test-mode.md)): the app against a seeded
+Firestore emulator, with fake personas. It needs Java for the emulator.
+
+```bash
+gcloud emulators firestore start --host-port=127.0.0.1:8085
+```
+
+```bash
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 npm run dev:test
+```
+
+Then run `npm run dev` and open `http://localhost:5173/__test/` to sign in as
+a persona. Each start reseeds the emulator; add `-- --keep` to keep its data.
+Google sign-in, photos, and email are off; model routes work when
+`GEMINI_API_KEY` is set.
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `npm run dev` | Vite dev server on 5173, proxying `/api` to 3001 |
 | `npm run dev:api` | API listener on 3001; needs `.env.local` and Node ≥ 22.18 |
+| `npm run dev:test` | Test mode on 3001 instead of `dev:api`: seeded emulator, fake personas at `/__test/` |
 | `npm run build` | `tsc -b` over the app/node/api tsconfigs, then `vite build` into `dist/` |
 | `npm run preview` | Serves the built `dist/` on 4173, for checking the PWA build |
 | `npm test` | Vitest once over `src/` and `server/` |
