@@ -108,13 +108,21 @@ without a key.
   `sous_session` cookie and redirects to `returnTo` (a same-origin path;
   default `/`). An unknown persona is `404`.
 - **Wait for the seed** by polling `GET /__test/personas`: it answers `503`
-  until the seed is done, then `200` with the personas and fixture ids.
+  until the seed is done, then `200` with the personas, fixture ids, and
+  (after a fresh seed, not `--keep`) the member's MCP access and refresh
+  tokens.
 - **Without Vite**, run `node testing/test-server.ts --static --port 4173`
   after `npm run build`; the app and `/__test/` are on one origin.
 - `testing/smoke.ts` is a working example: it signs every persona in with
   `fetch` and reads back what each one should see, with the expected values
-  taken from the fixtures. The `test-mode` CI job runs it; run it yourself
-  with `node testing/smoke.ts http://localhost:3001`.
+  taken from the fixtures. It also calls the MCP server: discovery, authorize
+  and token errors, `/mcp` with the seeded member tokens (search, get, list
+  collections, create, edit, conflict), refresh narrowed to read-only, and
+  disconnect. The `test-mode` CI job runs it; run it yourself with
+  `node testing/smoke.ts http://localhost:3001`. Those MCP checks create a
+  recipe and disconnect the seeded app, and they need the tokens from this
+  process's seed, so run the script once after a fresh start. It fails
+  against `--keep`, and a second run against the same server fails too.
 
 ## What test mode changes
 

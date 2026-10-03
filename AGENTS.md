@@ -156,7 +156,8 @@ Open `http://localhost:5173/__test/` and pick a persona (`owner`, `member`,
 reseeds it; `npm run dev:test -- --keep` keeps the data. `--static --port 4173`
 serves `dist/` as well, for CI and browser automation without Vite;
 `GET /__test/personas` answers 503 until the seed is done and then lists the
-personas and fixture ids. Google sign-in, photos, and email are off in test
+personas, fixture ids, and, after a fresh seed, the member's MCP tokens.
+Google sign-in, photos, and email are off in test
 mode; model routes work when `GEMINI_API_KEY` is set.
 
 `/__test/sign-in` is not an auth bypass: it signs an ordinary session for a
