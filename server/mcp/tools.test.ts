@@ -88,18 +88,18 @@ function fakeContext(
       created.push(id);
       return true;
     },
-    async createRecipeInCollection(id, payload, dest, now) {
-      const outcome = fileInto([id], dest, now);
+    async createRecipeInCollection(id, payload, dest) {
+      const outcome = fileInto([id], dest, 400);
       if (outcome.kind === 'ok') {
         docs.set(id, payload);
         created.push(id);
       }
       return outcome;
     },
-    async moveRecipes(ids, dest, now) {
+    async moveRecipes(ids, dest) {
       const missingIds = [...new Set(ids)].filter((id) => !isLiveDoc(docs.get(id)));
       if (missingIds.length > 0) return { kind: 'recipes_not_found', missingIds };
-      return fileInto(ids, dest, now);
+      return fileInto(ids, dest, 400);
     },
     async livePublicCollectionIds() {
       return new Set(publicIds);

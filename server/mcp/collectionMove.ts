@@ -13,9 +13,11 @@
  * it, and the model asking may be steered by an imported page. Collections
  * shared with members are allowed, and the outcome counts their live grants.
  *
- * `planCollectionMove` is pure; the two transactions below it are I/O.
+ * `planCollectionMove` and `runCollectionWrite` (over a `CollectionTxPort`)
+ * are pure enough to test; `moveOwnRecipes` and `createOwnRecipeInCollection`
+ * run them in a Firestore transaction.
  */
-import type { DocumentReference, Transaction } from '@google-cloud/firestore';
+import type { Transaction } from '@google-cloud/firestore';
 import { winningMembership } from '../agent/index.ts';
 import { grantColRef, isLiveGrant, parseGrantDoc } from '../grants.ts';
 import { hasLivePublicLinkInTransaction } from '../publicLinks.ts';
@@ -122,7 +124,11 @@ export type CollectionWriteOutcome =
       moved: string[];
       alreadyThere: string[];
       collectionName?: string;
-      /** Live member grants on the destination: who else now sees these recipes. */
+      /**
+       * Members the destination is shared with (live grants), who now see
+       * these recipes. People who join later through a collection link are
+       * not counted.
+       */
       sharedWithMembers: number;
     }
   | { kind: 'recipes_not_found'; missingIds: string[] }
@@ -130,30 +136,89 @@ export type CollectionWriteOutcome =
   | { kind: 'collection_full'; max: number }
   | { kind: 'public_collection' };
 
-type DestinationChecks = { kind: 'public_collection' } | { kind: 'ok'; sharedWithMembers: number };
-
-/** Reads the destination's public link and grants inside `tx`. Reads only. */
-async function checkDestination(tx: Transaction, uid: string, dest: string): Promise<DestinationChecks> {
-  if (dest === UNFILED) return { kind: 'ok', sharedWithMembers: 0 };
-  if (await hasLivePublicLinkInTransaction(tx, uid, dest)) return { kind: 'public_collection' };
-  const grants = await tx.get(grantColRef(uid, dest));
-  const sharedWithMembers = grants.docs.filter((doc) => isLiveGrant(parseGrantDoc(doc.data(), doc.id))).length;
-  return { kind: 'ok', sharedWithMembers };
+/**
+ * The reads and writes of one collection-write transaction. The Firestore
+ * port wraps a single `Transaction`, so every call through it is inside that
+ * transaction; tests use a recording fake that refuses a read after a write.
+ */
+export interface CollectionTxPort {
+  /** The member's recipe documents for `ids`, in order; undefined when missing. */
+  readRecipes(ids: readonly string[]): Promise<Array<Record<string, unknown> | undefined>>;
+  /** Every stored collection document of the member, tombstones included. */
+  readCollections(): Promise<StoredCollection[]>;
+  /** Whether `dest` has a live public link. Fails closed on any matching row. */
+  hasLivePublicLink(dest: string): Promise<boolean>;
+  /** Live member grants on `dest`. */
+  countLiveGrants(dest: string): Promise<number>;
+  /** `create`, never `set`: an existing id fails instead of being overwritten. */
+  createRecipe(id: string, doc: Record<string, unknown>): void;
+  setCollection(id: string, doc: Record<string, unknown>): void;
 }
 
-async function readCollections(tx: Transaction, uid: string): Promise<StoredCollection[]> {
-  const snap = await tx.get(collectionsColRef(uid));
-  return snap.docs.map((doc) => ({ ...(doc.data() as Record<string, unknown>), id: doc.id }));
+function firestorePort(tx: Transaction, uid: string): CollectionTxPort {
+  return {
+    async readRecipes(ids) {
+      if (ids.length === 0) return [];
+      const snaps = await tx.getAll(...ids.map((id) => recipeDocRef(uid, id)));
+      return snaps.map((snap) => (snap.exists ? (snap.data() as Record<string, unknown>) : undefined));
+    },
+    async readCollections() {
+      const snap = await tx.get(collectionsColRef(uid));
+      return snap.docs.map((doc) => ({ ...(doc.data() as Record<string, unknown>), id: doc.id }));
+    },
+    hasLivePublicLink: (dest) => hasLivePublicLinkInTransaction(tx, uid, dest),
+    async countLiveGrants(dest) {
+      const grants = await tx.get(grantColRef(uid, dest));
+      return grants.docs.filter((doc) => isLiveGrant(parseGrantDoc(doc.data(), doc.id))).length;
+    },
+    createRecipe(id, doc) {
+      tx.create(recipeDocRef(uid, id), doc);
+    },
+    setCollection(id, doc) {
+      tx.set(collectionDocRef(uid, id), doc, { merge: false });
+    },
+  };
 }
 
-function writeCollections(
-  tx: Transaction,
-  uid: string,
-  writes: readonly { id: string; doc: Record<string, unknown> }[],
-): void {
-  for (const { id, doc } of writes) {
-    tx.set(collectionDocRef(uid, id), doc, { merge: false });
+/** A new recipe to save with the move: its id and its validated payload. */
+export type NewRecipe = { id: string; payload: Record<string, unknown> };
+
+/**
+ * One collection write, all reads first: the recipes being moved (each must
+ * be live in the member's tree), the collections, then the destination's
+ * public link and grants. Writes happen only when every check passed.
+ * `serverNow` is read inside the transaction attempt, so a retried attempt
+ * never stamps a time older than writes that committed before it.
+ */
+export async function runCollectionWrite(
+  port: CollectionTxPort,
+  input: { moveIds: readonly string[]; create?: NewRecipe; dest: string; serverNow: number },
+): Promise<CollectionWriteOutcome> {
+  const moveIds = [...new Set(input.moveIds)];
+  const stored = await port.readRecipes(moveIds);
+  const missingIds = moveIds.filter((_, i) => !isLiveDoc(stored[i]));
+  if (missingIds.length > 0) return { kind: 'recipes_not_found', missingIds };
+  const filing = input.create === undefined ? moveIds : [...moveIds, input.create.id];
+  const plan = planCollectionMove(await port.readCollections(), filing, input.dest, input.serverNow);
+  if (plan.kind !== 'ok') return plan;
+  let sharedWithMembers = 0;
+  if (input.dest !== UNFILED) {
+    if (await port.hasLivePublicLink(input.dest)) return { kind: 'public_collection' };
+    sharedWithMembers = await port.countLiveGrants(input.dest);
   }
+  if (input.create !== undefined) {
+    const { id, payload } = input.create;
+    const updatedAt = typeof payload.updatedAt === 'number' ? payload.updatedAt : input.serverNow;
+    port.createRecipe(id, recipeDocBody(payload, id, updatedAt, input.serverNow));
+  }
+  for (const { id, doc } of plan.writes) port.setCollection(id, doc);
+  return {
+    kind: 'ok',
+    moved: plan.moved,
+    alreadyThere: plan.alreadyThere,
+    ...(plan.collectionName === undefined ? {} : { collectionName: plan.collectionName }),
+    sharedWithMembers,
+  };
 }
 
 /**
@@ -165,58 +230,24 @@ export async function moveOwnRecipes(
   uid: string,
   recipeIds: readonly string[],
   dest: string,
-  now: number,
 ): Promise<CollectionWriteOutcome> {
-  const ids = [...new Set(recipeIds)];
-  return getStoreFirestore().runTransaction(async (tx): Promise<CollectionWriteOutcome> => {
-    const refs: DocumentReference[] = ids.map((id) => recipeDocRef(uid, id));
-    const snaps = await tx.getAll(...refs);
-    const missingIds = ids.filter((_, i) => {
-      const snap = snaps[i];
-      return !snap?.exists || !isLiveDoc(snap.data() as Record<string, unknown>);
-    });
-    if (missingIds.length > 0) return { kind: 'recipes_not_found', missingIds };
-    const plan = planCollectionMove(await readCollections(tx, uid), ids, dest, now);
-    if (plan.kind !== 'ok') return plan;
-    const checks = await checkDestination(tx, uid, dest);
-    if (checks.kind !== 'ok') return checks;
-    writeCollections(tx, uid, plan.writes);
-    return {
-      kind: 'ok',
-      moved: plan.moved,
-      alreadyThere: plan.alreadyThere,
-      ...(plan.collectionName === undefined ? {} : { collectionName: plan.collectionName }),
-      sharedWithMembers: checks.sharedWithMembers,
-    };
-  });
+  return getStoreFirestore().runTransaction((tx) =>
+    runCollectionWrite(firestorePort(tx, uid), { moveIds: recipeIds, dest, serverNow: Date.now() }),
+  );
 }
 
 /**
  * Saves a new recipe and files it into `dest` in one transaction, so a
  * refused destination leaves no stray Unfiled recipe. `payload` is the
- * validated recipe; the document is written with `create`, so an id that
- * already exists fails instead of overwriting.
+ * validated recipe, whose `updatedAt` is the version the tool returns.
  */
 export async function createOwnRecipeInCollection(
   uid: string,
   id: string,
   payload: Record<string, unknown>,
   dest: string,
-  now: number,
 ): Promise<CollectionWriteOutcome> {
-  return getStoreFirestore().runTransaction(async (tx): Promise<CollectionWriteOutcome> => {
-    const plan = planCollectionMove(await readCollections(tx, uid), [id], dest, now);
-    if (plan.kind !== 'ok') return plan;
-    const checks = await checkDestination(tx, uid, dest);
-    if (checks.kind !== 'ok') return checks;
-    tx.create(recipeDocRef(uid, id), recipeDocBody(payload, id, now, now));
-    writeCollections(tx, uid, plan.writes);
-    return {
-      kind: 'ok',
-      moved: plan.moved,
-      alreadyThere: plan.alreadyThere,
-      ...(plan.collectionName === undefined ? {} : { collectionName: plan.collectionName }),
-      sharedWithMembers: checks.sharedWithMembers,
-    };
-  });
+  return getStoreFirestore().runTransaction((tx) =>
+    runCollectionWrite(firestorePort(tx, uid), { moveIds: [], create: { id, payload }, dest, serverNow: Date.now() }),
+  );
 }

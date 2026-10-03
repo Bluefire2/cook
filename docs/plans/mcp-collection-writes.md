@@ -24,7 +24,10 @@ Unfiled.
     ids, and a collection id or `"unfiled"` to take them out of every
     collection.
   No new scope: filing is part of editing your library. The consent page's
-  write line says so, including that a collection may be shared.
+  write line says so, including that a collection may be shared and that a
+  public collection never receives recipes (editing a recipe that is already
+  in one, or moving it out, is still allowed, so the copy never says public
+  collections are untouched).
 - **Same membership rule as the app.** A recipe belongs to at most one
   collection (the smallest id wins if two lists hold it). A move appends to
   the destination, keeping ids it already lists in place, and removes the
@@ -45,13 +48,17 @@ Unfiled.
   write transaction, so it cannot race the owner turning a link on (that
   transaction reads the collection doc this one writes). Collections shared
   with members or by a join link are allowed; the result carries
-  `sharedWithMembers` (live grants) so the model can say who now sees it.
+  `sharedWithMembers` (live member grants; people who join later through a
+  collection link are not counted) so the model can say who now sees it.
   Moving out of a public or shared collection is allowed.
 - **`list_collections` marks public collections** (`public: true`), from one
   query on the member's live public links, so the model can avoid them.
 - **Server-stamped times.** Each changed collection gets `updatedAt =
   max(now, stored + 1)` (`nextRecipeUpdatedAt`) and `serverUpdatedAt = now`,
-  and keeps its other stored fields. Recipe documents and their versions are
+  and keeps its other stored fields. `now` is read inside each transaction
+  attempt: a retried attempt must not stamp a `serverUpdatedAt` older than
+  writes that committed meanwhile, or a device whose pull cursor already
+  passed it would never see the move. Recipe documents and their versions are
   untouched by a move. Like an edit from a second device, a phone that edits
   the same collection before it pulls can overwrite the list (LWW is the
   product).
@@ -62,8 +69,10 @@ Unfiled.
 
 1. [core] `collectionsColRef` in `server/store.ts`; `server/mcp/collectionMove.ts`
    (pure `planCollectionMove`, then `moveOwnRecipes` and
-   `createOwnRecipeInCollection` transactions); `listLivePublicCollectionIds`
-   in `server/publicLinks.ts`. Tests for the planner.
+   `createOwnRecipeInCollection` transactions, both through
+   `runCollectionWrite` over a `CollectionTxPort`); `listLivePublicCollectionIds`
+   in `server/publicLinks.ts`. Tests for the planner, and for
+   `runCollectionWrite` over a fake port that refuses a read after a write.
 2. [core] Tools: `move_recipes`, `collectionId` on `create_recipe`, `public`
    on `list_collections`, the `not_allowed` code, scopes, server
    instructions, tool tests.

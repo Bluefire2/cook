@@ -40,14 +40,9 @@ export interface McpToolContext {
   /** Writes a new recipe into the caller's tree, Unfiled. False when the store refused it. */
   createRecipe(id: string, payload: Record<string, unknown>, now: number): Promise<boolean>;
   /** Writes a new recipe and files it into collection `dest`, in one transaction. */
-  createRecipeInCollection(
-    id: string,
-    payload: Record<string, unknown>,
-    dest: string,
-    now: number,
-  ): Promise<CollectionWriteOutcome>;
+  createRecipeInCollection(id: string, payload: Record<string, unknown>, dest: string): Promise<CollectionWriteOutcome>;
   /** Moves the caller's own recipes (valid ids) to a collection id or `UNFILED`, all or nothing. */
-  moveRecipes(ids: readonly string[], dest: string, now: number): Promise<CollectionWriteOutcome>;
+  moveRecipes(ids: readonly string[], dest: string): Promise<CollectionWriteOutcome>;
   /** Ids of the caller's collections that have a live public link. */
   livePublicCollectionIds(): Promise<Set<string>>;
   updateRecipe(
@@ -481,7 +476,7 @@ const createTool: McpToolSpec = {
       }
       return { ok: true, data: { recipe: toMcpRecipe(stored, 'Unfiled') }, recipes: 1 };
     }
-    const outcome = await ctx.createRecipeInCollection(id, built.payload, dest, now);
+    const outcome = await ctx.createRecipeInCollection(id, built.payload, dest);
     if (outcome.kind !== 'ok') return collectionWriteFailure(outcome, dest);
     const data: Record<string, unknown> = { recipe: toMcpRecipe(stored, outcome.collectionName || dest) };
     if (outcome.sharedWithMembers > 0) data.sharedWithMembers = outcome.sharedWithMembers;
@@ -581,7 +576,8 @@ const moveTool: McpToolSpec = {
     'A recipe is in at most one collection, so moving it takes it out of any other. ' +
     `Send 1 to ${MAX_MOVE_IDS} recipe ids; every one must be the user's own recipe, or nothing moves and missingIds lists the rest. ` +
     'A collection marked public: true in list_collections cannot receive recipes from here (not_allowed); ask the user to do that in the Sous app. ' +
-    'If the destination is shared with other members, sharedWithMembers says how many now see these recipes; tell the user. ' +
+    'If the destination is shared with other members, sharedWithMembers says how many of them now see these recipes ' +
+    '(people who later join through a collection link will too); tell the user. ' +
     'Recipe versions do not change. ' +
     UNTRUSTED_TEXT_NOTICE,
   inputSchema: {
@@ -619,7 +615,7 @@ const moveTool: McpToolSpec = {
     const unknown = [...new Set(ids.filter((id) => !isUuid(id)))];
     if (unknown.length > 0) return recipesNotFound(unknown);
 
-    const outcome = await ctx.moveRecipes(ids, dest, ctx.now());
+    const outcome = await ctx.moveRecipes(ids, dest);
     if (outcome.kind !== 'ok') return collectionWriteFailure(outcome, dest);
     const data: Record<string, unknown> = {
       collection: dest === UNFILED ? { id: UNFILED, name: 'Unfiled' } : { id: dest, name: outcome.collectionName || dest },

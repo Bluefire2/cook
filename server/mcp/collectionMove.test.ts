@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_COLLECTION_RECIPE_IDS } from '../store.ts';
-import { planCollectionMove, UNFILED } from './collectionMove.ts';
+import { planCollectionMove, runCollectionWrite, UNFILED, type CollectionTxPort } from './collectionMove.ts';
 
 // Lexical order matters: the smallest id wins when two lists hold a recipe.
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -83,5 +83,103 @@ describe('planCollectionMove', () => {
     });
     // Already listed ids do not count against the cap.
     expect(planCollectionMove([collection(A, full)], ['r0'], A, NOW)).toMatchObject({ kind: 'ok', writes: [] });
+  });
+});
+
+/** A recording port: reads and writes in call order, and a read after any write throws, as Firestore does. */
+function fakePort(state: {
+  recipes?: Record<string, Record<string, unknown>>;
+  collections?: ReturnType<typeof collection>[];
+  publicIds?: string[];
+  grants?: Record<string, number>;
+}): CollectionTxPort & { calls: string[] } {
+  const calls: string[] = [];
+  let wrote = false;
+  const read = (name: string) => {
+    if (wrote) throw new Error(`read ${name} after a write`);
+    calls.push(name);
+  };
+  return {
+    calls,
+    async readRecipes(ids) {
+      read('readRecipes');
+      return ids.map((id) => state.recipes?.[id]);
+    },
+    async readCollections() {
+      read('readCollections');
+      return state.collections ?? [];
+    },
+    async hasLivePublicLink(dest) {
+      read('hasLivePublicLink');
+      return (state.publicIds ?? []).includes(dest);
+    },
+    async countLiveGrants(dest) {
+      read('countLiveGrants');
+      return state.grants?.[dest] ?? 0;
+    },
+    createRecipe(id) {
+      wrote = true;
+      calls.push(`createRecipe ${id}`);
+    },
+    setCollection(id) {
+      wrote = true;
+      calls.push(`setCollection ${id}`);
+    },
+  };
+}
+
+describe('runCollectionWrite', () => {
+  const live = { title: 'Soup', updatedAt: 1 };
+
+  it('reads everything, checks the public link and grants, then writes', async () => {
+    const port = fakePort({ recipes: { r1: live }, collections: [collection(A, ['r1']), collection(B, [])], grants: { [B]: 2 } });
+    const out = await runCollectionWrite(port, { moveIds: ['r1'], dest: B, serverNow: NOW });
+    expect(out).toMatchObject({ kind: 'ok', moved: ['r1'], sharedWithMembers: 2, collectionName: 'Name b' });
+    expect(port.calls).toEqual([
+      'readRecipes',
+      'readCollections',
+      'hasLivePublicLink',
+      'countLiveGrants',
+      `setCollection ${A}`,
+      `setCollection ${B}`,
+    ]);
+  });
+
+  it('writes nothing for a public destination, a deleted recipe, or a missing collection', async () => {
+    const pub = fakePort({ recipes: { r1: live }, collections: [collection(A, ['r1']), collection(B, [])], publicIds: [B] });
+    expect(await runCollectionWrite(pub, { moveIds: ['r1'], dest: B, serverNow: NOW })).toEqual({ kind: 'public_collection' });
+    expect(pub.calls.filter((c) => c.startsWith('set') || c.startsWith('create'))).toEqual([]);
+
+    const gone = fakePort({ recipes: { r1: { ...live, deletedAt: 5 } }, collections: [collection(B, [])] });
+    expect(await runCollectionWrite(gone, { moveIds: ['r1', 'r2'], dest: B, serverNow: NOW })).toEqual({
+      kind: 'recipes_not_found',
+      missingIds: ['r1', 'r2'],
+    });
+    expect(gone.calls).toEqual(['readRecipes']);
+
+    const missing = fakePort({ recipes: { r1: live }, collections: [] });
+    expect(await runCollectionWrite(missing, { moveIds: ['r1'], dest: C, serverNow: NOW })).toEqual({
+      kind: 'collection_not_found',
+    });
+  });
+
+  it('skips the public and grant reads for Unfiled', async () => {
+    const port = fakePort({ recipes: { r1: live }, collections: [collection(A, ['r1'])] });
+    expect(await runCollectionWrite(port, { moveIds: ['r1'], dest: UNFILED, serverNow: NOW })).toMatchObject({ kind: 'ok' });
+    expect(port.calls).toEqual(['readRecipes', 'readCollections', `setCollection ${A}`]);
+  });
+
+  it('creates the new recipe with its own version and the server time, then files it', async () => {
+    const created: Record<string, unknown>[] = [];
+    const port = fakePort({ collections: [collection(A, [])] });
+    port.createRecipe = (id, doc) => {
+      port.calls.push(`createRecipe ${id}`);
+      created.push(doc);
+    };
+    const payload = { id: 'new', title: 'Egg', servings: 1, ingredientSections: [], steps: [], tags: [], createdAt: 400, updatedAt: 400 };
+    const out = await runCollectionWrite(port, { moveIds: [], create: { id: 'new', payload }, dest: A, serverNow: NOW });
+    expect(out).toMatchObject({ kind: 'ok', moved: ['new'] });
+    expect(port.calls.slice(-2)).toEqual(['createRecipe new', `setCollection ${A}`]);
+    expect(created[0]).toMatchObject({ id: 'new', updatedAt: 400, serverUpdatedAt: NOW });
   });
 });

@@ -85,8 +85,8 @@ function liveToolContext(sub: string): McpToolContext {
       });
     },
     createRecipe: async (id, payload, now) => (await putDoc(sub, 'recipes', id, payload, now)).applied,
-    createRecipeInCollection: (id, payload, dest, now) => createOwnRecipeInCollection(sub, id, payload, dest, now),
-    moveRecipes: (ids, dest, now) => moveOwnRecipes(sub, ids, dest, now),
+    createRecipeInCollection: (id, payload, dest) => createOwnRecipeInCollection(sub, id, payload, dest),
+    moveRecipes: (ids, dest) => moveOwnRecipes(sub, ids, dest),
     livePublicCollectionIds: () => listLivePublicCollectionIds(sub),
     updateRecipe: (id, expectedVersion, apply) => updateOwnRecipe(sub, id, expectedVersion, apply),
     newId: () => randomUUID(),
