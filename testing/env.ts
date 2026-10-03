@@ -17,7 +17,14 @@ export const TEST_SESSION_SECRET = 'sous-test-mode-session-secret-not-for-produc
 /** The emulator's `demo-` convention: a `demo-` project reaches no real resource. */
 export const TEST_PROJECT_ID = 'demo-sous';
 
-export type Treatment = 'set' | 'cleared' | 'passthrough' | 'required';
+/**
+ * Where test mode looks for the emulator when FIRESTORE_EMULATOR_HOST is
+ * unset, so `npm run dev:test` needs no env syntax in any shell. Loopback, so
+ * the default can only ever reach a local emulator.
+ */
+export const DEFAULT_EMULATOR_HOST = '127.0.0.1:8085';
+
+export type Treatment = 'set' | 'cleared' | 'passthrough' | 'defaulted';
 
 export const ENV_TREATMENT: Readonly<Record<string, Treatment>> = {
   SESSION_SECRET: 'set',
@@ -38,18 +45,21 @@ export const ENV_TREATMENT: Readonly<Record<string, Treatment>> = {
   CHAT_MODEL: 'passthrough',
   TRANSLATE_MODEL: 'passthrough',
   TRANSLATE_PROVIDER: 'passthrough',
-  FIRESTORE_EMULATOR_HOST: 'required',
+  FIRESTORE_EMULATOR_HOST: 'defaulted',
 };
 
 type Env = Readonly<Record<string, string | undefined>>;
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
-/** `host:port` of the emulator, or null when it is not a loopback address. */
+/**
+ * `host:port` of the emulator: `DEFAULT_EMULATOR_HOST` when unset, or null
+ * when the value set is not a loopback address.
+ */
 export function emulatorHost(env: Env): string | null {
   const raw = env.FIRESTORE_EMULATOR_HOST?.trim();
   if (!raw) {
-    return null;
+    return DEFAULT_EMULATOR_HOST;
   }
   let url: URL;
   try {
@@ -66,11 +76,7 @@ export function emulatorHost(env: Env): string | null {
 /** Every reason test mode must not start, one line each. Empty means it may. */
 export function testModeRefusals(env: Env): string[] {
   const refusals: string[] = [];
-  if (!env.FIRESTORE_EMULATOR_HOST?.trim()) {
-    refusals.push(
-      'FIRESTORE_EMULATOR_HOST is not set. Start the Firestore emulator and set it, for example 127.0.0.1:8085.',
-    );
-  } else if (emulatorHost(env) === null) {
+  if (emulatorHost(env) === null) {
     refusals.push(
       `FIRESTORE_EMULATOR_HOST must be localhost, 127.0.0.1, or [::1] with a port, not ${env.FIRESTORE_EMULATOR_HOST}.`,
     );
@@ -109,6 +115,12 @@ export function testModeEnv(
       out[name] = value;
     } else if (treatment === 'cleared') {
       out[name] = undefined;
+    } else if (treatment === 'defaulted') {
+      const host = emulatorHost(env);
+      if (host === null) {
+        throw new Error(`${name} is not a loopback address; testModeRefusals reports it`);
+      }
+      out[name] = host;
     } else {
       out[name] = env[name];
     }

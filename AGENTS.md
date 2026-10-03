@@ -143,8 +143,12 @@ test server in place of `dev:api`:
 
 ```
 gcloud emulators firestore start --host-port=127.0.0.1:8085   # needs Java
-FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 npm run dev:test        # port 3001; Vite unchanged
+npm run dev:test                                               # port 3001; Vite unchanged
 ```
+
+`dev:test` looks for the emulator at `127.0.0.1:8085`. To use another port,
+set `FIRESTORE_EMULATOR_HOST` to a loopback `host:port`; any other host is
+refused.
 
 Open `http://localhost:5173/__test/` and pick a persona (`owner`, `member`,
 `empty`, `viewer`, `outsider`, `declined`). Each start clears the emulator and

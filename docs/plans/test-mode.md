@@ -72,8 +72,11 @@ end-to-end test. The scheduled i18n review (a later plan,
   through every variable the server reads (table below), so a developer's
   production values cannot leak in. It refuses to start, with one line per
   reason, unless:
-  - `FIRESTORE_EMULATOR_HOST` is set and its host is `localhost`, `127.0.0.1`,
-    or `[::1]`;
+  - `FIRESTORE_EMULATOR_HOST`, when set, has the host `localhost`,
+    `127.0.0.1`, or `[::1]`. Unset means `127.0.0.1:8085`, so `npm run
+    dev:test` needs no env syntax in any shell (PowerShell has no
+    `VAR=value command`). The default is loopback, so it can only reach a
+    local emulator;
   - the emulator at that host answers `GET /` with `Ok` within 5 seconds;
   - `K_SERVICE` is unset (Cloud Run always sets it);
   - `NODE_ENV` is not `production`.
@@ -95,7 +98,7 @@ end-to-end test. The scheduled i18n review (a later plan,
   | `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET` | cleared | No real Google sign-in in test mode. |
   | `PORT` | set from `--port` | |
   | `GEMINI_API_KEY`, `CHAT_MODEL`, `TRANSLATE_MODEL`, `TRANSLATE_PROVIDER` | passed through | Model routes work when the developer supplies a key. |
-  | `FIRESTORE_EMULATOR_HOST` | required, checked | See the refusals above. |
+  | `FIRESTORE_EMULATOR_HOST` | defaults to `127.0.0.1:8085`; a value set must be loopback | See the refusals above. |
 
   `scripts/invariants.test.ts` greps every `process.env.NAME` read under
   `server/`, `api/`, and `scripts/server.ts` and fails if a name is missing from
@@ -344,3 +347,8 @@ before `npm run dev:test`.
 - **Shared pull pages one share at a time.** The viewer's second share is on
   the second page of `/api/sync/shared`. That is existing behavior, noted
   because it looks like a missing grant when you read only the first page.
+- **The emulator host defaults to `127.0.0.1:8085`.** The plan required
+  `FIRESTORE_EMULATOR_HOST`, but `VAR=value npm run …` is bash syntax and
+  fails in PowerShell. A loopback default keeps the guarantee (only a local
+  emulator is reachable) and makes `npm run dev:test` work in any shell. A
+  value that is set must still be loopback.

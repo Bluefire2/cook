@@ -168,10 +168,11 @@ gcloud emulators firestore start --host-port=127.0.0.1:8085
 ```
 
 ```bash
-FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 npm run dev:test
+npm run dev:test
 ```
 
-Then run `npm run dev` and open `http://localhost:5173/__test/` to sign in as
+It looks for the emulator at `127.0.0.1:8085`; set `FIRESTORE_EMULATOR_HOST`
+to another loopback `host:port` to change that. Then run `npm run dev` and open `http://localhost:5173/__test/` to sign in as
 a persona. Each start reseeds the emulator; add `-- --keep` to keep its data.
 Google sign-in, photos, and email are off; model routes work when
 `GEMINI_API_KEY` is set.

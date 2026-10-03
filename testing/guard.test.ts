@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_EMULATOR_HOST,
   ENV_TREATMENT,
   TEST_PROJECT_ID,
   TEST_SESSION_SECRET,
@@ -18,9 +19,9 @@ describe('testModeRefusals', () => {
     expect(testModeRefusals({ FIRESTORE_EMULATOR_HOST: '[::1]:8085' })).toEqual([]);
   });
 
-  it('refuses without an emulator host', () => {
-    expect(testModeRefusals({})).toHaveLength(1);
-    expect(testModeRefusals({ FIRESTORE_EMULATOR_HOST: '  ' })).toHaveLength(1);
+  it('allows an unset emulator host, which means the loopback default', () => {
+    expect(testModeRefusals({})).toEqual([]);
+    expect(testModeRefusals({ FIRESTORE_EMULATOR_HOST: '  ' })).toEqual([]);
   });
 
   it('refuses an emulator host that is not loopback', () => {
@@ -39,14 +40,23 @@ describe('testModeRefusals', () => {
   });
 
   it('lists every reason at once', () => {
-    expect(testModeRefusals({ K_SERVICE: 'sous', NODE_ENV: 'production' })).toHaveLength(3);
+    expect(
+      testModeRefusals({ FIRESTORE_EMULATOR_HOST: 'example.com:8085', K_SERVICE: 'sous', NODE_ENV: 'production' }),
+    ).toHaveLength(3);
   });
 });
 
 describe('emulatorHost', () => {
   it('returns host:port for a loopback address', () => {
     expect(emulatorHost(OK_ENV)).toBe('127.0.0.1:8085');
+    expect(emulatorHost({ FIRESTORE_EMULATOR_HOST: 'localhost:9000' })).toBe('localhost:9000');
     expect(emulatorHost({ FIRESTORE_EMULATOR_HOST: 'example.com:8085' })).toBeNull();
+  });
+
+  it('defaults to a loopback address when unset', () => {
+    expect(DEFAULT_EMULATOR_HOST).toBe('127.0.0.1:8085');
+    expect(emulatorHost({})).toBe(DEFAULT_EMULATOR_HOST);
+    expect(emulatorHost({ FIRESTORE_EMULATOR_HOST: '' })).toBe(DEFAULT_EMULATOR_HOST);
   });
 });
 
@@ -89,6 +99,11 @@ describe('testModeEnv', () => {
     expect(env.GEMINI_API_KEY).toBe('gemini-key');
     expect(env.FIRESTORE_EMULATOR_HOST).toBe('127.0.0.1:8085');
     expect(env.CHAT_MODEL).toBeUndefined();
+  });
+
+  it('sets the default emulator host when none is given', () => {
+    const defaulted = testModeEnv({}, { publicOrigin: 'http://localhost:5173', port: 3001 });
+    expect(defaulted.FIRESTORE_EMULATOR_HOST).toBe(DEFAULT_EMULATOR_HOST);
   });
 
   it('names exactly the variables in ENV_TREATMENT', () => {

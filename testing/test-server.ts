@@ -7,8 +7,9 @@
  *   npm run dev:test -- --keep       # keep the emulator's data, no reseed
  *   node testing/test-server.ts --static --port 4173   # serves dist/ too
  *
- * Needs a running Firestore emulator and FIRESTORE_EMULATOR_HOST, for example
- * 127.0.0.1:8085. It refuses to start otherwise.
+ * Needs a running Firestore emulator, at 127.0.0.1:8085 unless
+ * FIRESTORE_EMULATOR_HOST names another loopback address. It refuses to start
+ * otherwise.
  *
  * Nothing from the app is imported statically: ESM hoists static imports, and
  * the environment must be set before any app module loads.
@@ -59,8 +60,14 @@ if (refusals.length > 0) {
   refuse(refusals);
 }
 const host = emulatorHost(process.env);
-if (host === null || !(await emulatorAnswers(host))) {
-  refuse([`No Firestore emulator answered at http://${host}/. Start it first (see docs/plans/test-mode.md).`]);
+if (host === null) {
+  refuse(['FIRESTORE_EMULATOR_HOST is not a loopback address.']);
+}
+if (!(await emulatorAnswers(host))) {
+  refuse([
+    `No Firestore emulator answered at http://${host}/. Start it first: ` +
+      `gcloud emulators firestore start --host-port=${host}`,
+  ]);
 }
 
 for (const [name, value] of Object.entries(testModeEnv(process.env, { publicOrigin, port }))) {
