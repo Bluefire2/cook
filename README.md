@@ -459,8 +459,9 @@ their client push it back on the next sync.
    - **Sharing as an owner:** every viewer's incoming share pointing at them
      is tombstoned without their email. This reads the grants in their own
      tree, which is why `users` runs last.
-   - `collectionLinks` they own, `importFeedback` and `featureRequests` they
-     sent, and MCP `mcpAuthCodes` and `mcpTokens` are deleted.
+   - `collectionLinks` and `publicLinks` they own, `importFeedback` and
+     `featureRequests` they sent, and MCP `mcpAuthCodes` and `mcpTokens` are
+     deleted.
    - **Invites:** ones they minted are deleted; on one they redeemed from
      someone else, `redeemedBy` is removed, and the invite still counts
      toward its minter's limit.

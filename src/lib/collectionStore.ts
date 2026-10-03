@@ -32,6 +32,9 @@ import { useLibrarySlice } from './useLibrary';
 import {
   addCollectionGrant,
   createCollectionLink,
+  disableCollectionPublicLink,
+  enableCollectionPublicLink,
+  getCollectionPublicLink,
   leaveSharedCollection,
   listCollectionGrants,
   listCollectionLinks,
@@ -44,6 +47,7 @@ import {
   type CollectionLinkHttpResult,
   type CollectionLinksBody,
   type GrantRole,
+  type PublicLinkHttpResult,
   type RemoteResult,
 } from './remote';
 import { withLocalWrite } from './localWrite';
@@ -84,6 +88,16 @@ function saveError(result: RemoteResult, created = false): Error {
   return result === 'signedOut'
     ? new SessionExpiredError()
     : new Error(collectionPushErrorMessage(result, created));
+}
+
+function publicLinkResult(result: PublicLinkHttpResult): string | null {
+  if (result.kind === 'signedOut') {
+    throw new Error(t('error.sessionExpired'));
+  }
+  if (result.kind === 'error') {
+    throw new Error(result.message);
+  }
+  return result.url;
 }
 
 /** A link the share sheet just minted: the one-time URL and its sha256 id. */
@@ -404,6 +418,24 @@ export const collectionStore = {
     } catch {
       return current.filter((link) => link.id !== gone);
     }
+  },
+
+  /** The collection's public link, or null while it is not public. Owner only. */
+  async publicLink(id: string): Promise<string | null> {
+    rejectShared(id);
+    return publicLinkResult(await getCollectionPublicLink(id));
+  },
+
+  /** Turns the public link on; already on returns the same link. */
+  async enablePublicLink(id: string): Promise<string | null> {
+    rejectShared(id);
+    return publicLinkResult(await enableCollectionPublicLink(id));
+  },
+
+  /** Turns the public link off. Turning it on again makes a new one. */
+  async disablePublicLink(id: string): Promise<void> {
+    rejectShared(id);
+    publicLinkResult(await disableCollectionPublicLink(id));
   },
 
   async moveRecipe(recipeId: string, dest: 'default' | string): Promise<void> {

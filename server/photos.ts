@@ -752,6 +752,24 @@ export async function photosGet(req: Request): Promise<Response> {
     }
   }
 
+  return await storedPhotoResponse(uid, photoId, req.method);
+  } catch (err) {
+    console.error('photosGet store error:', err);
+    return storeUnavailable();
+  }
+}
+
+/**
+ * One live photo of `uid` from GCS, or 404 (413 over MAX_PHOTO_BYTES). HEAD
+ * reads only metadata; GET downloads the capped object (`downloadPhotoBytes`),
+ * never the storage library's read stream. The caller has already decided
+ * the request may read it. Throws on store and download errors.
+ */
+export async function storedPhotoResponse(
+  uid: string,
+  photoId: string,
+  method: string,
+): Promise<Response> {
   const snap = await photoDocRef(uid, photoId).get();
   if (!snap.exists) {
     return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
@@ -790,7 +808,7 @@ export async function photosGet(req: Request): Promise<Response> {
     headers['Content-Length'] = String(size);
   }
 
-  if (req.method === 'HEAD') {
+  if (method === 'HEAD') {
     return new Response(null, { status: 200, headers });
   }
 
@@ -806,8 +824,4 @@ export async function photosGet(req: Request): Promise<Response> {
   }
   headers['Content-Length'] = String(downloaded.bytes.length);
   return new Response(downloaded.bytes, { status: 200, headers });
-  } catch (err) {
-    console.error('photosGet store error:', err);
-    return storeUnavailable();
-  }
 }

@@ -72,6 +72,26 @@ describe('client architecture', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('public collection pages reach no AI and write no library state', () => {
+    // docs/plans/public-collections.md: a visitor's page reads one public
+    // snapshot. AI controls are locked, so nothing here may import chat,
+    // translation, dictation, or the assistant, or a store that writes the
+    // library or cook state. (Joining goes through usePublicJoin, which only
+    // pulls after the server added the grant.)
+    const publicFiles = [
+      ...filesUnder('src/screens', ['.tsx']).filter((path) => /\/Public\w*\.tsx$/.test(path)),
+      'src/components/LockedAi.tsx',
+      'src/components/RecipeBody.tsx',
+      'src/lib/publicApi.ts',
+      'src/lib/usePublicCollection.ts',
+    ];
+    expect(publicFiles.length).toBeGreaterThan(5);
+    const forbidden =
+      /from\s+['"][^'"]*\/(?:ChatPanel|chatApi|chatStore|translateApi|translationStore|sttApi|voiceRecorder|recipeStore|collectionStore|cookLogStore|useCookState|photoStore|libraryMemory|remote|agent\/[^'"]*)['"]/;
+    const offenders = publicFiles.flatMap((path) => matchingLines(path, forbidden));
+    expect(offenders).toEqual([]);
+  });
+
   it('no VITE_-prefixed variable outside the non-secret allowlist', () => {
     // Vite inlines VITE_* into the client bundle. Never give a secret that prefix.
     // A new non-secret build-time variable goes in this list, on purpose.
@@ -196,6 +216,19 @@ describe('client state (docs/constitutions/client-state.md)', () => {
 });
 
 describe('server', () => {
+  it('the public link modules import no AI or import code', () => {
+    // docs/plans/public-collections.md: the only routes a visitor without a
+    // session reaches are the public reads. They must never be able to call a model.
+    const forbidden =
+      /from\s+['"](?:@google\/genai|\.\/agent\/|\.\/(?:stt|translate|translateRoute|recipeImport|recipeTranslation|importRoute)\.ts['"])/;
+    const offenders = [
+      'server/publicLinks.ts',
+      'server/publicLinksHttp.ts',
+      'server/publicJoin.ts',
+    ].flatMap((path) => matchingLines(path, forbidden));
+    expect(offenders).toEqual([]);
+  });
+
   it('never uses Response.redirect', () => {
     // AGENTS.md: Response.redirect() has immutable headers, so Set-Cookie on the
     // OAuth callback would be dropped. Build a Response with a Location header.

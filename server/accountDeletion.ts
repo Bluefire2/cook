@@ -70,6 +70,11 @@ export const FIRESTORE_COLLECTIONS = {
     personal: true,
     holds: "Collection links: the owner's sub and email.",
   },
+  publicLinks: {
+    scope: 'top-level',
+    personal: true,
+    holds: "Public collection links: the owner's sub and email, and the link token.",
+  },
   importFeedback: { scope: 'top-level', personal: true, holds: 'Import reports, with the sender sub.' },
   featureRequests: { scope: 'top-level', personal: true, holds: 'Suggestions, with the sender sub.' },
   incomingShares: {
@@ -432,6 +437,7 @@ const usersStep: DeletionStep = {
 export const ACCOUNT_DELETION_STEPS: Record<PersonalTopLevel, DeletionStep> = {
   incomingShares: incomingSharesStep,
   collectionLinks: deleteWhere('collectionLinks', 'ownerSub'),
+  publicLinks: deleteWhere('publicLinks', 'ownerSub'),
   invites: invitesStep,
   importFeedback: deleteWhere('importFeedback', 'sub'),
   featureRequests: deleteWhere('featureRequests', 'sub'),
@@ -446,6 +452,7 @@ export const ACCOUNT_DELETION_STEPS: Record<PersonalTopLevel, DeletionStep> = {
 export const ACCOUNT_DELETION_ORDER: readonly PersonalTopLevel[] = [
   'incomingShares',
   'collectionLinks',
+  'publicLinks',
   'invites',
   'importFeedback',
   'featureRequests',

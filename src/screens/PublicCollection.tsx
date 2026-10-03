@@ -1,0 +1,161 @@
+import { useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { useT } from '../i18n';
+import LanguageMenu from '../components/LanguageMenu';
+import {
+  AiLockedSheet,
+  LockedAiButton,
+  lockedIconBtn,
+  PublicSignInLink,
+} from '../components/LockedAi';
+import { ChatBubbleIcon } from '../lib/icons';
+import { publicPhotoUrl } from '../lib/publicApi';
+import { useSession } from '../lib/session';
+import { ghostBtn, primaryBtn, secondaryBtn } from '../lib/uiClasses';
+import { usePublicCollection } from '../lib/usePublicCollection';
+import { usePublicJoin } from '../lib/usePublicJoin';
+
+/**
+ * `/p/<token>`: a collection anyone with the link can read
+ * (`docs/plans/public-collections.md`). No library, sync, or session data is
+ * read or written here; a signed-in member can add it to their library.
+ */
+export default function PublicCollection() {
+  const t = useT();
+  const { token = '' } = useParams<{ token: string }>();
+  const { status } = useSession();
+  const member = status === 'signedIn';
+  const { result, retry } = usePublicCollection(token);
+  const join = usePublicJoin(token);
+  const [lockedOpen, setLockedOpen] = useState(false);
+
+  const header = (
+    <header className="flex items-center justify-between py-4">
+      <span className="text-2xl font-bold">Sous</span>
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-y-1">
+        <LockedAiButton
+          label={t('assistant.ask')}
+          hint={member ? t('public.aiLockedMember') : t('public.aiLocked')}
+          onOpen={() => setLockedOpen(true)}
+          className={lockedIconBtn}
+          placement="below-end"
+        >
+          <ChatBubbleIcon className="block h-5 w-5" />
+        </LockedAiButton>
+        {!member && (
+          <PublicSignInLink token={token} className={ghostBtn}>
+            {t('public.signIn')}
+          </PublicSignInLink>
+        )}
+        <LanguageMenu />
+      </div>
+    </header>
+  );
+
+  let body;
+  if (result === undefined) {
+    body = <p className="py-12 text-center text-ink-muted">{t('common.loading')}</p>;
+  } else if (result.kind === 'missing' || join.state.kind === 'missing') {
+    body = <p className="py-12 text-center text-ink-muted">{t('public.missing')}</p>;
+  } else if (result.kind === 'error') {
+    body = (
+      <div className="py-12 text-center text-ink-muted">
+        <p>{t('public.loadFailed')}</p>
+        <button
+          type="button"
+          onClick={retry}
+          className={`${secondaryBtn} mt-3 px-4 py-2 text-sm`}
+        >
+          {t('common.tryAgain')}
+        </button>
+      </div>
+    );
+  } else {
+    const { collection, recipes } = result.data;
+    body = (
+      <>
+        <div className="mb-4">
+          <h1 className="text-xl font-semibold break-words">{collection.name}</h1>
+          <p className="mt-0.5 text-sm text-ink-muted">{t('public.badge')}</p>
+          {member && (
+            <div className="mt-3">
+              <button
+                type="button"
+                disabled={join.state.kind === 'busy'}
+                onClick={() => void join.add()}
+                className={`${primaryBtn} px-4 py-2 text-sm`}
+              >
+                {join.state.kind === 'busy' ? t('public.adding') : t('public.addToLibrary')}
+              </button>
+              {join.state.kind === 'error' && !lockedOpen && (
+                <p role="alert" className="mt-2 text-sm text-danger">
+                  {join.state.message}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+        {recipes.length === 0 ? (
+          <p className="py-12 text-center text-ink-muted">{t('library.emptyCollection')}</p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {recipes.map((recipe) => (
+              <li key={recipe.id}>
+                <Link
+                  to={`/p/${encodeURIComponent(token)}/r/${encodeURIComponent(recipe.id)}`}
+                  className="flex gap-3 rounded-2xl border border-line bg-surface p-4 shadow-sm hover:border-line-strong hover:bg-surface-muted active:bg-surface-muted"
+                >
+                  {recipe.photoId !== undefined && (
+                    <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-surface-muted">
+                      <img
+                        src={publicPhotoUrl(token, recipe.id, recipe.photoId)}
+                        alt=""
+                        loading="lazy"
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-lg font-semibold">{recipe.title}</h2>
+                    {recipe.description && (
+                      <p className="mt-1 line-clamp-2 text-sm text-ink-muted">
+                        {recipe.description}
+                      </p>
+                    )}
+                    {recipe.tags.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {recipe.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded-full bg-surface-muted px-2 py-0.5 text-xs text-ink-muted"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-xl px-4 pb-24">
+      {header}
+      {body}
+      {lockedOpen && (
+        <AiLockedSheet
+          token={token}
+          member={member}
+          join={join}
+          onClose={() => setLockedOpen(false)}
+        />
+      )}
+    </div>
+  );
+}

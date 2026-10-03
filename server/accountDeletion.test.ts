@@ -33,6 +33,7 @@ describe('FIRESTORE_COLLECTIONS', () => {
         'mcpAuthCodes',
         'mcpTokens',
         'members',
+        'publicLinks',
         'users',
       ].sort(),
     );

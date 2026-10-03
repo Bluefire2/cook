@@ -53,6 +53,13 @@ import { extensionImport, extensionImportOptions } from '../server/extensionImpo
 import { inviteLandingGet } from '../server/invites.ts';
 import { withMembership } from '../server/membership.ts';
 import { photosGet, photosPost } from '../server/photos.ts';
+import {
+  collectionPublicLinkGet,
+  collectionPublicLinkPost,
+  collectionPublicLinkRevokePost,
+  publicGet,
+  publicJoinPost,
+} from '../server/publicLinksHttp.ts';
 import { agentPost } from '../server/agent/index.ts';
 import { matchMcpRoute, mcpGrantsGet, mcpGrantsRevokePost } from '../server/mcp/index.ts';
 import { sttPost } from '../server/stt.ts';
@@ -97,6 +104,7 @@ const apiRoutes: ApiRoute[] = [
   { method: 'GET', path: '/api/sync/shared', handler: syncSharedPull },
   { method: 'POST', path: '/api/sync/push', handler: syncPush },
   { method: 'POST', path: '/api/shared/leave', handler: sharedLeavePost },
+  { method: 'POST', path: '/api/public/join', handler: publicJoinPost },
   { method: 'POST', path: '/api/extension/import', handler: extensionImport },
   { method: 'OPTIONS', path: '/api/extension/import', handler: extensionImportOptions },
   { method: 'GET', path: '/api/mcp/grants', handler: mcpGrantsGet },
@@ -223,6 +231,14 @@ async function handleRequest(
       return;
     }
 
+    if (decodedPath === '/p' || decodedPath.startsWith('/p/')) {
+      // Public collection pages carry their token in the path: keep it out of
+      // every Referer (images, the source link, the Google sign-in hop) and
+      // out of search results. The SPA renders them from index.html.
+      nodeRes.setHeader('Referrer-Policy', 'no-referrer');
+      nodeRes.setHeader('X-Robots-Tag', 'noindex');
+    }
+
     if (method !== 'GET' && method !== 'HEAD') {
       sendText(nodeReq, nodeRes, 405, 'Method not allowed');
       return;
@@ -304,6 +320,15 @@ function matchApiRoute(pathname: string, method: string): ApiHandler | 'wrongMet
     return 'wrongMethod';
   }
 
+  // Visitor reads, no session: /api/public/<token>[/recipes/<id>/photos/<id>].
+  // `/api/public/join` is an exact route above.
+  if (pathname.startsWith('/api/public/')) {
+    if (method === 'GET' || method === 'HEAD') {
+      return publicGet;
+    }
+    return 'wrongMethod';
+  }
+
   const photosPrefix = '/api/photos/';
   if (pathname.startsWith(photosPrefix)) {
     const rest = pathname.slice(photosPrefix.length);
@@ -339,6 +364,21 @@ function matchApiRoute(pathname: string, method: string): ApiHandler | 'wrongMet
   if (roleMatch) {
     if (method === 'POST') {
       return collectionGrantsRolePost;
+    }
+    return 'wrongMethod';
+  }
+  if (/^\/api\/collections\/[^/]+\/public$/.test(pathname)) {
+    if (method === 'GET') {
+      return collectionPublicLinkGet;
+    }
+    if (method === 'POST') {
+      return collectionPublicLinkPost;
+    }
+    return 'wrongMethod';
+  }
+  if (/^\/api\/collections\/[^/]+\/public\/revoke$/.test(pathname)) {
+    if (method === 'POST') {
+      return collectionPublicLinkRevokePost;
     }
     return 'wrongMethod';
   }
