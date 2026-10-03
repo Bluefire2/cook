@@ -119,6 +119,22 @@ Vite proxies `/api` to 3001. **Vite alone looks fine and then chat/import/sync
 fail.** After any change under `server/` or `scripts/server.ts`, restart
 `dev:api` — it does not watch those files.
 
+To run several checkouts side by side, choose the ports on the command line;
+nothing is edited, and with no arguments they stay 5173 and 3001:
+
+```
+npm run dev:api -- --port 3101               # or npm run dev:test -- --port 3101
+npm run dev -- --port 5273 --api-port 3101   # --api-port is where Vite proxies
+```
+
+`SOUS_API_PORT` and `SOUS_WEB_PORT` work as fallbacks when the flag is absent
+(`scripts/devPorts.ts`). `npm run dev` is the thin wrapper `scripts/dev-web.ts`
+around Vite, because Vite's CLI rejects `--api-port`; other flags pass through.
+
+Google sign-in only works on 5173: the registered redirect URI is
+`http://localhost:5173/api/auth/callback/google`. On another web port, use
+test mode's `/__test/` sign-in instead.
+
 `.env.local` is gitignored and required for `dev:api`. Never print its values.
 Never add a `VITE_` prefix to a secret; Vite would inline it into the client.
 
@@ -709,6 +725,16 @@ Then remember that `dev:api` reads and writes the production library (Cloud
 and deploy), and say in the PR which check needed it. The in-context
 translation review still follows `docs/i18n-review/README.md` (a real
 session, read-only) until that procedure moves to test mode.
+
+`npm run click:library` (`testing/library-click-through.ts`, #57) is a local
+Playwright click-through of Library search persistence and collection
+switching, in test mode; run it after changing `Library`, `CollectionSection`,
+`librarySearchMemory`, or sign-out. Start the emulator, `npm run dev:test`,
+and `npm run dev`; it signs in as the `member` persona. It aborts every
+non-GET `/api` request except its final sign-out, which is how it shows a
+flow submitted nothing. For a Vite on another port, pass `-- --port 5273` (or
+set `SOUS_WEB_PORT`). It uses `playwright-core` (a devDependency, no browser
+download) with the installed Chrome. Not part of `npm test` or CI.
 
 Chat streaming must not grow `Content-Length` or `Content-Encoding` on
 `/api/chat`. The framing/streaming oracle in `docs/plans/sous-subdomain.md`
