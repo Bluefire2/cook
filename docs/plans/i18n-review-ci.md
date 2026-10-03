@@ -522,6 +522,16 @@ production, which removes the reason for the read-only rule.
    - **Note for running it:** `testing/smoke.ts` writes to the emulator (it
      disconnects `member`'s connected app and adds a recipe), so run the
      review against a fresh seed, not after the smoke check.
+   - **Review fixes (PR #131).** `--scope full` judges English whatever
+     `--langs` lists, since English is always captured. A judge answer with
+     any malformed issue is a judge error, not a pass with the issue
+     dropped. The judge's list of what is never judged moved to the
+     README's "Not judged" section, which it reads at run time and joins
+     into one sentence; the sentence is byte-identical to the calibrated
+     one, and `judge.test.ts` pins it. A bulleted, lightly reworded version
+     of the list was measured first and lost recall: the planted "Выбор"
+     was caught in 0 of 10 judgings with it against 7 of 10 with the
+     sentence.
 6. **[core] Workflow and issue.** `issue.ts` and its tests, `accepted.json`,
    and the workflow. `issue.ts --dry-run` prints the body and comment instead
    of posting. Check before merge: `issue.test.ts` covers first run, new,

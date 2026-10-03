@@ -12,6 +12,7 @@ import {
   type JudgeTask,
   judgeAll,
   judgePair,
+  notJudgedSentence,
   readSources,
   sectionOf,
   targetPrompt,
@@ -63,9 +64,19 @@ describe('judge sources', () => {
     expect(sources.rubric).toContain('**Sense in context.**');
     expect(sources.rubric).toContain('**Layout.**');
     expect(sources.rubric).not.toContain('## When it runs');
+    expect(sources.notJudged).not.toContain('## ');
     expect(sources.glossary).toMatch(/^- \*\*Register and glossary\.\*\*/);
     expect(sources.glossary).toContain('| English | `uk` | `ru` | `zh-Hans` |');
     expect(sources.glossary).not.toContain('**In-context review delivery.**');
+  });
+
+  it('turns the README "Not judged" list into the calibrated sentence', () => {
+    // The judge's recall was measured with exactly this sentence
+    // (docs/plans/i18n-review-ci.md, step 5). A README edit that
+    // changes it needs a calibration run, then this literal updated.
+    expect(notJudgedSentence(sources)).toBe(
+      "Not app text, so never report it, whatever language it is in: recipe titles, descriptions, ingredients, steps, notes, and tags; collection names; people's names and email addresses; names of connected apps; links and URLs; text the person typed or pasted, including where the app quotes it back; and the messages in a chat or assistant thread, both what the person asked and what the model answered, including what the model put in a card (a shopping list's title, sections, and items). These are the user's data or the model's words and stay as the user wrote them. Language names in the language picker are written in their own language on purpose (English, Українська, Русский, 简体中文); that is correct.",
+    );
   });
 
   it('stops a section at the next match after its first line', () => {
@@ -83,15 +94,16 @@ describe('prompts', () => {
     expect(prompt).toContain('Settings while signed in.');
     expect(prompt).toContain(sources.rubric);
     expect(prompt).toContain(sources.glossary);
-    expect(prompt).toContain('collection names');
+    expect(prompt).toContain(sources.notJudged);
     expect(prompt).toContain('only from the screenshot');
     expect(prompt).toContain('Налаштування');
   });
 
   it('limits the English column to sense in context and layout', () => {
-    const prompt = englishPrompt(task('en'));
+    const prompt = englishPrompt(task('en'), sources);
     expect(prompt).toContain('Check two things only');
     expect(prompt).not.toContain('Register and glossary');
+    expect(prompt).toContain(sources.notJudged);
   });
 
   it('sends two images for a target language and one for English', async () => {
@@ -153,10 +165,15 @@ describe('judgePair', () => {
     expect(judgment.unconfirmed.map((f) => f.text)).toEqual(['Приготування']);
   });
 
-  it('drops malformed issues and reports an unparseable answer as an error', async () => {
-    const half = scriptedAi([JSON.stringify({ pass: false, issues: [{ text: '', severity: 'blocker' }, issue('X')] }), [issue('X')]]);
-    const judged = await judgePair(task(), { ai: half.ai, sources, sleep: noSleep }, new CallBudget());
-    expect(judged.confirmed.map((f) => f.text)).toEqual(['X']);
+  it('reports a malformed issue or an unparseable answer as an error, never a pass', async () => {
+    // A dropped issue could have been the screen's only problem.
+    const half = scriptedAi([JSON.stringify({ pass: false, issues: [{ text: '', severity: 'blocker' }, issue('X')] })]);
+    expect(await judgePair(task(), { ai: half.ai, sources, sleep: noSleep }, new CallBudget())).toMatchObject({
+      status: 'error',
+      calls: 1,
+    });
+    const onlyBad = scriptedAi([JSON.stringify({ pass: false, issues: [{ text: 'Зберегти', severity: 'blocker' }] })]);
+    expect((await judgePair(task(), { ai: onlyBad.ai, sources, sleep: noSleep }, new CallBudget())).status).toBe('error');
     const broken = scriptedAi(['not json']);
     expect(await judgePair(task(), { ai: broken.ai, sources, sleep: noSleep }, new CallBudget())).toMatchObject({
       status: 'error',

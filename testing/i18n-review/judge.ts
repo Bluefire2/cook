@@ -74,6 +74,12 @@ export interface JudgeTask {
 
 export interface JudgeSources {
   rubric: string;
+  /**
+   * What is never judged (user data and the model's words), as one
+   * paragraph: the README's "Not judged" list run together, then the note
+   * after it.
+   */
+  notJudged: string;
   glossary: string;
 }
 
@@ -94,6 +100,37 @@ export function sectionOf(text: string, start: RegExp, end: RegExp): string {
   return (to === -1 ? rest : rest.slice(0, firstLineEnd + 1 + to)).trim();
 }
 
+/**
+ * The README's "Not judged" list run together into one sentence ("a; b;
+ * and c."), then the paragraph after it. Calibration measured the form: a
+ * noun planted on a Russian verb button was caught in 7 of 10 judgings with
+ * this sentence and 0 of 10 with a bulleted version of the list (lightly
+ * reworded), which reads like the rubric.
+ */
+export function notJudgedList(section: string): string {
+  const lines = section.split('\n');
+  const items: string[] = [];
+  let rest = '';
+  for (let i = lines.findIndex((l) => l.startsWith('- ')); i >= 0 && i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith('- ')) {
+      items.push(line.slice(2).trim());
+    } else if (line.startsWith('  ') && items.length > 0) {
+      items[items.length - 1] += ` ${line.trim()}`;
+    } else if (line.trim() !== '') {
+      rest = lines.slice(i).join(' ').replace(/\s+/g, ' ').trim();
+      break;
+    }
+  }
+  const joined = items.length > 1 ? `${items.slice(0, -1).join('; ')}; and ${items[items.length - 1]}` : items.join('');
+  return `${joined}.${rest === '' ? '' : ` ${rest}`}`;
+}
+
+/** The prompt's sentence on what is never judged. `judge.test.ts` pins it. */
+export function notJudgedSentence(sources: JudgeSources): string {
+  return `Not app text, so never report it, whatever language it is in: ${sources.notJudged}`;
+}
+
 export function readSources(repoRoot: string): JudgeSources {
   // Principle 16 also has a "Register and glossary" bullet that only points
   // here; the table is the one under Current decisions.
@@ -102,8 +139,10 @@ export function readSources(repoRoot: string): JudgeSources {
     /^## Current decisions$/m,
     /^## /m,
   );
+  const readme = readFileSync(join(repoRoot, 'docs/i18n-review/README.md'), 'utf8');
   return {
-    rubric: sectionOf(readFileSync(join(repoRoot, 'docs/i18n-review/README.md'), 'utf8'), /^## Rubric$/m, /^## /m),
+    rubric: sectionOf(readme, /^## Rubric$/m, /^## /m),
+    notJudged: notJudgedList(sectionOf(readme, /^## Not judged$/m, /^## /m)),
     glossary: sectionOf(decisions, /^- \*\*Register and glossary\.\*\*/m, /^- \*\*/m),
   };
 }
@@ -139,7 +178,6 @@ export const JUDGE_SCHEMA = {
   required: ['pass', 'issues'],
 };
 
-const USER_DATA = `Not app text, so never report it, whatever language it is in: recipe titles, descriptions, ingredients, steps, notes, and tags; collection names; people's names and email addresses; names of connected apps; links and URLs; text the person typed or pasted, including where the app quotes it back; and the messages in a chat or assistant thread, both what the person asked and what the model answered, including what the model put in a card (a shopping list's title, sections, and items). These are the user's data or the model's words and stay as the user wrote them. Language names in the language picker are written in their own language on purpose (English, Українська, Русский, 简体中文); that is correct.`;
 
 const LAYOUT_NOTE = `Layout: judge spacing, truncation, and overflow only from the screenshot. The page text below is extracted text and loses the spacing between elements, so never report spacing from it.`;
 
@@ -157,7 +195,7 @@ ${task.setup}
 
 Image 1 is the English screen, for reference. Image 2 is the same screen in ${name}. Judge only image 2, and only the app's own text: labels, buttons, headings, messages, hints.
 
-${USER_DATA}
+${notJudgedSentence(sources)}
 
 Apply this rubric:
 
@@ -180,7 +218,7 @@ ${task.target.pageText}
 }
 
 /** The English column of a full run: sense in context and layout only (docs/i18n-review/README.md). */
-export function englishPrompt(task: Pick<JudgeTask, 'setup' | 'target'>): string {
+export function englishPrompt(task: Pick<JudgeTask, 'setup' | 'target'>, sources: JudgeSources): string {
   return `You review the UI text of a recipe app, Sous, in English.
 
 What this screen is, from the review manifest (written for the person capturing it; it names the controls on screen):
@@ -192,7 +230,7 @@ The image is the screen. Judge only the app's own text: labels, buttons, heading
 - Sense in context: labels read as one coherent menu, form, or dialog, and each word is the right sense for its control (a verb on an action button, not a noun). rubricItem "Sense in context".
 - Layout: no truncation, overflow, clipped buttons, or bad line breaks. rubricItem "Layout".
 
-${USER_DATA}
+${notJudgedSentence(sources)}
 
 Severity: "blocker" for text that is wrong in meaning or visibly cut off or overflowing; "nit" for wording that is correct but could read better.
 
@@ -220,20 +258,32 @@ export interface JudgeDeps {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+function isIssue(i: unknown): i is JudgeIssue {
+  return (
+    typeof i === 'object' &&
+    i !== null &&
+    typeof (i as JudgeIssue).text === 'string' &&
+    (i as JudgeIssue).text.trim() !== '' &&
+    ((i as JudgeIssue).severity === 'blocker' || (i as JudgeIssue).severity === 'nit') &&
+    (RUBRIC_ITEMS as readonly string[]).includes((i as JudgeIssue).rubricItem)
+  );
+}
+
+/**
+ * The judge's issues. Any issue that does not fit the schema fails the
+ * judging rather than being dropped: dropping it could turn a screen whose
+ * only problem it was into a pass.
+ */
 function parseIssues(text: string | undefined): JudgeIssue[] {
   const parsed = JSON.parse(text ?? '') as { issues?: unknown };
   if (!Array.isArray(parsed.issues)) {
     throw new Error('judge answer has no issues array');
   }
-  return parsed.issues.filter(
-    (i): i is JudgeIssue =>
-      typeof i === 'object' &&
-      i !== null &&
-      typeof (i as JudgeIssue).text === 'string' &&
-      (i as JudgeIssue).text.trim() !== '' &&
-      ((i as JudgeIssue).severity === 'blocker' || (i as JudgeIssue).severity === 'nit') &&
-      (RUBRIC_ITEMS as readonly string[]).includes((i as JudgeIssue).rubricItem),
-  );
+  const malformed = parsed.issues.filter((i) => !isIssue(i));
+  if (malformed.length > 0) {
+    throw new Error(`judge answer has ${malformed.length} malformed issue(s): ${JSON.stringify(malformed[0]).slice(0, 200)}`);
+  }
+  return parsed.issues as JudgeIssue[];
 }
 
 /** One judging, with three retries on 429 and 5xx (2 s, 4 s, 8 s). */
@@ -242,7 +292,7 @@ export async function judgeOnce(task: JudgeTask, deps: JudgeDeps): Promise<Judge
   const parts = english
     ? [
         { inlineData: { mimeType: 'image/png', data: task.target.png.toString('base64') } },
-        { text: englishPrompt(task) },
+        { text: englishPrompt(task, deps.sources) },
       ]
     : [
         { inlineData: { mimeType: 'image/png', data: task.reference.png.toString('base64') } },

@@ -68,7 +68,9 @@ if (judging && !apiKey) {
 }
 // English is the reference for every target language, so it is always captured.
 const langs = [...new Set(['en', ...requested])] as Lang[];
-const judgedLangs = langs.filter((lang) => lang !== 'en' || (scope === 'full' && requested.includes('en')));
+// A full run judges the English column too (sense in context and layout),
+// whatever --langs lists, since English is always captured.
+const judgedLangs = scope === 'full' ? langs : langs.filter((lang) => lang !== 'en');
 const manifest = JSON.parse(readFileSync(join(repoRoot, 'docs/i18n-review/screens.json'), 'utf8')) as {
   id: string;
   setup: string;

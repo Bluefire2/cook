@@ -23,10 +23,32 @@ For each screen state in the manifest and each language in scope:
 4. Fix blockers in the catalogs, then re-review the affected screens.
    Record nits in the report or fix them.
 
-Recipe content (titles, ingredients, steps, notes) is excluded. A recipe in
-another language is expected. The reviewer judges only the app's own text:
-not collection names, people's names, text the person typed, or what the
-assistant or Ask replied.
+The reviewer judges only the app's own text; [Not judged](#not-judged) lists
+what it leaves alone.
+
+## Not judged
+
+The reviewer never reports these, whatever language they are in. A recipe
+in another language is expected. The suite's judge reads this list from
+here and runs it together into one sentence, so a hand review and the suite
+leave the same things alone. Its wording is calibrated: after changing it,
+run `testing/i18n-review/calibration.ts` and update the sentence pinned in
+`judge.test.ts`.
+
+- recipe titles, descriptions, ingredients, steps, notes, and tags
+- collection names
+- people's names and email addresses
+- names of connected apps
+- links and URLs
+- text the person typed or pasted, including where the app quotes it back
+- the messages in a chat or assistant thread, both what the person asked
+  and what the model answered, including what the model put in a card (a
+  shopping list's title, sections, and items)
+
+These are the user's data or the model's words and stay as the user wrote
+them. Language names in the language picker are written in their own
+language on purpose (English, Українська, Русский, 简体中文); that is
+correct.
 
 ## Rubric
 
@@ -93,7 +115,7 @@ checks change the seed.
 | --- | --- |
 | `--states a,b` | The manifest ids to review. Default: all. A task run names the states that show the text the task touched. |
 | `--langs uk,ru` | The languages to capture. Default: all four. English is always captured as the reference. |
-| `--scope full` | Also judge the English column (sense in context and layout). Default `task`. |
+| `--scope full` | Also judge the English column (sense in context and layout). Default `task`. English is always captured, so this applies whatever `--langs` says. |
 | `--no-judge` | Capture only; no Gemini calls. |
 | `--repeat 2` | Capture each state twice and fail if any pair differs (the determinism check). |
 | `--out dir` | Where to write. Default `.i18n-review/<date>/`, which is gitignored. |
