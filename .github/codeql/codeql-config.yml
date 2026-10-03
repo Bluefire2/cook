@@ -1,0 +1,6 @@
+name: Sous
+
+# Cached third-party HTML for import evals; not executed by the app.
+paths-ignore:
+  - evals
+  - dist

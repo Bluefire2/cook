@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useLocale, useT } from '../i18n';
 import { unitLabel } from '../i18n/unitLabel';
 import { chatStore, useChatMessages } from '../lib/chatStore';
-import { photoStore, useObjectUrl, usePhotoUrl } from '../lib/photoStore';
+import { MemoryBlobImage, StoredPhotoImage } from './BlobImage';
+import { photoStore } from '../lib/photoStore';
 import { recipeStore } from '../lib/recipeStore';
 import { streamChatReply, type CookingState } from '../lib/chatApi';
 import { transcribeAudio } from '../lib/sttApi';
@@ -187,32 +188,26 @@ function ProposalCard({
 
 function PhotoThumb({ photoId }: { photoId: string }) {
   const t = useT();
-  const url = usePhotoUrl(photoId);
   return (
     <div className="h-20 w-20 overflow-hidden rounded-lg bg-surface-muted">
-      {url && (
-        <img
-          src={url}
-          alt={t('chat.attachedPhoto')}
-          className="h-full w-full object-cover"
-        />
-      )}
+      <StoredPhotoImage
+        photoId={photoId}
+        alt={t('chat.attachedPhoto')}
+        className="h-full w-full object-cover"
+      />
     </div>
   );
 }
 
 function PendingPhotoThumb({ blob }: { blob: Blob }) {
   const t = useT();
-  const url = useObjectUrl(blob);
   return (
     <div className="h-20 w-20 overflow-hidden rounded-lg bg-surface-muted">
-      {url && (
-        <img
-          src={url}
-          alt={t('chat.attachedPhoto')}
-          className="h-full w-full object-cover"
-        />
-      )}
+      <MemoryBlobImage
+        blob={blob}
+        alt={t('chat.attachedPhoto')}
+        className="h-full w-full object-cover"
+      />
     </div>
   );
 }

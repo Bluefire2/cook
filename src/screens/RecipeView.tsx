@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { languageName, sameLanguage, useLocale, useT } from '../i18n';
+import { StoredPhotoImage } from '../components/BlobImage';
 import ChatPanel from '../components/ChatPanel';
 import CookLogCard from '../components/CookLogCard';
 import ImportWarningBanner from '../components/ImportWarningBanner';
@@ -18,7 +19,6 @@ import {
 import { libraryHref, libraryPathFromState } from '../lib/collectionHref';
 import { useCookLogs } from '../lib/cookLogStore';
 import { SpinnerIcon, TranslateIcon } from '../lib/icons';
-import { usePhotoUrl } from '../lib/photoStore';
 import {
   useRecipe,
   useRecipeAccess,
@@ -69,16 +69,10 @@ function TranslateChip({
   );
 }
 
-// This screen's two <img> tags stay as written on main rather than using
-// RecipeBody's CoverPhoto / GalleryFrame: their URLs can be object URLs of
-// photos picked on this device, which code scanning tracks (alerts #13, #14).
 function GalleryImage({ photoId }: { photoId: string }) {
-  const url = usePhotoUrl(photoId);
   return (
     <div className="overflow-hidden rounded-xl bg-surface-muted shadow-sm">
-      {url && (
-        <img src={url} alt="" className="aspect-square w-full object-cover" />
-      )}
+      <StoredPhotoImage photoId={photoId} alt="" className="aspect-square w-full object-cover" />
     </div>
   );
 }
@@ -94,7 +88,6 @@ export default function RecipeView() {
   // Back to the list the recipe was opened from; otherwise the one that files it.
   const location = useLocation();
   const libraryBack = libraryPathFromState(location.state) ?? libraryHref(collectionId);
-  const photoUrl = usePhotoUrl(recipe?.photoId);
   useWakeLock();
 
   const {
@@ -266,13 +259,11 @@ export default function RecipeView() {
             {sharedLine}
           </p>
         )}
-        {photoUrl && (
-          <img
-            src={photoUrl}
-            alt=""
-            className="mt-3 h-52 w-full rounded-2xl object-cover shadow-sm"
-          />
-        )}
+        <StoredPhotoImage
+          photoId={recipe.photoId}
+          alt=""
+          className="mt-3 h-52 w-full rounded-2xl object-cover shadow-sm"
+        />
         <h1 className="mt-2 text-2xl font-bold">{displayRecipe.title}</h1>
         {displayRecipe.description && (
           <p className="mt-1 text-ink-muted">{displayRecipe.description}</p>
