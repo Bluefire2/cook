@@ -1,6 +1,5 @@
 import { originAccess, type LibraryAccess, type LibrarySnapshot } from './libraryMemory';
-import type { CookLog, Recipe } from './types';
-import type { CookStateRow } from './useCookState';
+import type { CookLog, CookStateRow, Recipe } from './types';
 
 /**
  * Selectors for `useLibrarySelect`. Each returns a value the snapshot already

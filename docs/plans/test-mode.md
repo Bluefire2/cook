@@ -324,8 +324,10 @@ before `npm run dev:test`.
   invariants.
 - Steps 3 and 4 checked in the browser at `localhost:5173`, as each persona.
 - The `test-mode` CI job and the image smoke check pass on the PR.
-- Production is untouched: the PR changes no file under `server/`, `api/`, or
-  `src/`, and `scripts/` only in `invariants.test.ts`.
+- Production behavior is untouched: the PR changes no file under `server/`
+  or `api/`, `scripts/` only in `invariants.test.ts`, and `src/` only to move
+  the `CookStateRow` interface into `src/lib/types.ts` (type-only; see
+  Deviations).
 
 ## Deviations found while building
 
@@ -340,10 +342,12 @@ before `npm run dev:test`.
   read it, but no Google client library in test mode should find a real key.
 - **`declined` can sign in.** It is an ordinary persona whose session is
   denied, like `outsider`; there was no reason to forbid it.
-- **The cook-state payload type is copied** into `testing/fixtures.ts`
-  rather than imported: `src/lib/useCookState.ts` pulls browser modules into
-  the Node type check. The server's push validator is the check; a drifted
-  shape is not applied and the seed fails.
+- **`CookStateRow` moved to `src/lib/types.ts`.** It lived in
+  `src/lib/useCookState.ts`, which pulls browser modules into the Node type
+  check, so the fixtures first carried a copy. The interface moved, unchanged,
+  next to `CookLog` and `ChatMessage`; its importers now take it from
+  `./types`. `testing/fixtures.ts` imports it, so the build checks every
+  fixture type against the app's.
 - **Shared pull pages one share at a time.** The viewer's second share is on
   the second page of `/api/sync/shared`. That is existing behavior, noted
   because it looks like a missing grant when you read only the first page.

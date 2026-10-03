@@ -72,6 +72,21 @@ export interface ChatMessage {
   createdAt: number;
 }
 
+/** One row per recipe. `Set` is not JSON, hence `string[]`. */
+export interface CookStateRow {
+  recipeId: string;
+  servings: number;
+  currentStep: number;
+  checkedKeys: string[];
+  /** Recipe revision this progress was recorded against. Not the progress-write clock. */
+  recipeUpdatedAt: number;
+  /**
+   * Client time of this progress write. Absent on old rows. Not the recipe
+   * revision.
+   */
+  updatedAt?: number;
+}
+
 /** One time a recipe was cooked. Its own store kind; never fields on `Recipe`. */
 export interface CookLog {
   id: string;

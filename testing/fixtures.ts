@@ -4,22 +4,7 @@
  * `/recipe/<id>` by a constant. Timestamps are relative to the seed run, so
  * relative-time labels read the same on every run.
  */
-import type { CookLog, ChatMessage, Collection, Recipe } from '../src/lib/types.ts';
-
-/**
- * The `cookState.put` payload: `CookStateRow` in src/lib/useCookState.ts plus
- * `updatedAt`. Copied, not imported, because that module pulls browser code
- * into the Node type check. The server's push validator is the check: a
- * drifted shape is not applied, and the seed fails.
- */
-interface CookStatePut {
-  recipeId: string;
-  servings: number;
-  currentStep: number;
-  checkedKeys: string[];
-  recipeUpdatedAt: number;
-  updatedAt: number;
-}
+import type { ChatMessage, CookLog, CookStateRow, Collection, Recipe } from '../src/lib/types.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -69,7 +54,8 @@ function isoDay(ms: number): string {
 export interface PersonaLibrary {
   recipes: Recipe[];
   collections: Collection[];
-  cookStates: CookStatePut[];
+  /** `cookState.put` payloads: the row plus its write clock. */
+  cookStates: (CookStateRow & { updatedAt: number })[];
   cookLogs: CookLog[];
   chat: ChatMessage[];
 }
