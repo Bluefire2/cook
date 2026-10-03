@@ -167,6 +167,9 @@ and every env var the server reads must be classified in `testing/env.ts`;
 `scripts/invariants.test.ts` checks all three. Never add a flag or env var
 that turns test mode on in the real server.
 
+Test mode is the default for end-to-end checks; Tests and verification says
+when a real sign-in is needed instead.
+
 ## Architecture
 
 ```
@@ -668,8 +671,29 @@ golden, read `evals/AGENTS.md` (dev/holdout split, no tuning on holdout,
 experiments logged in `evals/EXPERIMENTS.md`).
 
 UI and layout changes: exercise the flow in the browser (not a screenshot).
-Vite + `dev:api`, signed in at `localhost:5173`. Check other routes that share
-the state you touched.
+Check other routes that share the state you touched.
+
+**End-to-end checks run in test mode by default** (`npm run dev:test` + Vite,
+a persona from `/__test/`; see `testing/README.md`). It needs no Google
+account, writes only to the emulator, and has personas for states a real
+account rarely has (empty library, shared viewer and editor, pending and
+declined requests). Pick the persona that shows the state; do not create
+data in a real account to reach it.
+
+Use `dev:api` with a real Google sign-in only when the check needs what test
+mode turns off:
+
+- the Google sign-in flow itself (`server/auth.ts`: sign-in, the OAuth
+  callback, sign-out), or a flow that goes through Google consent, such as
+  redeeming an `/invite/<token>` link or signing in from `/c/join` or `/p`;
+- photos, which need the real bucket (there is no Cloud Storage emulator);
+- something only production data or configuration shows, such as an index
+  or a TTL policy.
+
+Then remember that `dev:api` reads and writes the production library (Cloud
+and deploy), and say in the PR which check needed it. The in-context
+translation review still follows `docs/i18n-review/README.md` (a real
+session, read-only) until that procedure moves to test mode.
 
 Chat streaming must not grow `Content-Length` or `Content-Encoding` on
 `/api/chat`. The framing/streaming oracle in `docs/plans/sous-subdomain.md`
