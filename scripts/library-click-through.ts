@@ -4,11 +4,14 @@
  *
  * Run:
  *   1. `npm run dev` and `npm run dev:api`.
- *   2. Sign in at http://localhost:5173, copy the `sous_session` cookie value
- *      (DevTools → Application → Cookies → http://localhost:5173) into
- *      `.env.local` as `SOUS_E2E_SESSION=...`. It is a 90-day bearer for your
- *      account: never print or commit it, and remove it when done.
+ *   2. Once: put your account in `.env.local` as `SOUS_E2E_SUB=...` and
+ *      `SOUS_E2E_EMAIL=...` (signed in at http://localhost:5173, open
+ *      /api/auth/session and copy `sub` and `email`). Neither is a secret.
  *   3. `npm run click:library` (add `-- --headed` to watch).
+ *
+ * Each run signs a one-hour `sous_session` with the `SESSION_SECRET` from
+ * `.env.local`, the same signing code the server uses, and keeps it in memory
+ * and in a throwaway browser context only. It is never printed or written.
  *
  * Dev talks to real Firestore, so the script aborts every non-GET `/api`
  * request (sign-out excepted, last step) and fails if any was attempted. The
@@ -21,25 +24,37 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright-core';
+import { SESSION_COOKIE_NAME, signSession } from '../server/session.ts';
 
 const BASE = 'http://localhost:5173';
 const STORAGE_KEY = 'cook.librarySearch';
 const SEARCH_ALL_PLACEHOLDER = 'Search all recipes…';
+const SESSION_TTL_MS = 60 * 60 * 1000;
 
 type StoredView = { query?: unknown; browseAll?: unknown } | null;
 
 class Precondition extends Error {}
 
-function readSessionValue(): string {
-  const value = process.env.SOUS_E2E_SESSION?.trim() ?? '';
-  if (!value.includes('.')) {
+type Account = { sub: string; email: string };
+
+function readAccount(): Account {
+  const sub = process.env.SOUS_E2E_SUB?.trim() ?? '';
+  const email = process.env.SOUS_E2E_EMAIL?.trim() ?? '';
+  if (sub === '' || email === '') {
     throw new Precondition(
-      'SOUS_E2E_SESSION is missing or malformed. Sign in at http://localhost:5173, copy the ' +
-        'sous_session cookie (DevTools → Application → Cookies) into .env.local as ' +
-        'SOUS_E2E_SESSION=..., and run `npm run click:library`.',
+      'Set SOUS_E2E_SUB and SOUS_E2E_EMAIL in .env.local: sign in at http://localhost:5173, ' +
+        'open /api/auth/session, and copy `sub` and `email`. Run with `npm run click:library`.',
     );
   }
-  return value;
+  if (!process.env.SESSION_SECRET?.trim()) {
+    throw new Precondition('SESSION_SECRET is not set. Run with `npm run click:library`.');
+  }
+  return { sub, email };
+}
+
+/** A short session for this run only, signed like the server signs one. */
+function mintSession(account: Account): string {
+  return signSession(account, Date.now(), SESSION_TTL_MS);
 }
 
 async function waitUntil(
@@ -303,14 +318,14 @@ async function preflight(context: BrowserContext): Promise<void> {
   }
   if (user === null) {
     throw new Precondition(
-      'The session was not accepted. Check that `npm run dev:api` is running and that ' +
-        'SOUS_E2E_SESSION is a current sous_session from localhost (same SESSION_SECRET).',
+      'The session was not accepted. Check that `npm run dev:api` runs with the same ' +
+        '.env.local and that SOUS_E2E_SUB and SOUS_E2E_EMAIL are an admitted account.',
     );
   }
 }
 
 async function main(): Promise<number> {
-  const session = readSessionValue();
+  const account = readAccount();
   const headed = process.argv.includes('--headed') || process.env.SOUS_E2E_HEADED === '1';
   const browser = await chromium.launch({
     ...(process.env.PLAYWRIGHT_BROWSERS_PATH ? {} : { channel: 'chrome' }),
@@ -322,7 +337,13 @@ async function main(): Promise<number> {
   try {
     const context = await browser.newContext({ locale: 'en-US', serviceWorkers: 'block' });
     await context.addCookies([
-      { name: 'sous_session', value: session, url: BASE, httpOnly: true, sameSite: 'Lax' },
+      {
+        name: SESSION_COOKIE_NAME,
+        value: mintSession(account),
+        url: BASE,
+        httpOnly: true,
+        sameSite: 'Lax',
+      },
     ]);
     const guard = await guardWrites(context);
     await preflight(context);

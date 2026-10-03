@@ -635,11 +635,12 @@ the state you touched.
 Playwright click-through of Library search persistence and collection
 switching; run it after changing `Library`, `CollectionSection`,
 `librarySearchMemory`, or sign-out. It needs both dev servers and
-`SOUS_E2E_SESSION` in `.env.local`: the `sous_session` cookie value from
-`localhost:5173`. That value is a 90-day bearer for the account (only rotating
-`SESSION_SECRET` revokes it): never print or commit it, and remove it when
-done. The script aborts every non-GET `/api` request except its final
-sign-out, so it cannot write to the real library. It uses `playwright-core`
+`SOUS_E2E_SUB` / `SOUS_E2E_EMAIL` in `.env.local` (from `/api/auth/session`;
+not secrets). Each run signs a one-hour `sous_session` for that account with
+`.env.local`'s `SESSION_SECRET` (`signSession` with a short `ttlMs`), keeps it
+in memory and a throwaway browser context, and never prints or stores it. The
+script aborts every non-GET `/api` request except its final sign-out, so it
+cannot write to the real library. It uses `playwright-core`
 (a devDependency, no browser download) with the installed Chrome. Not part of
 `npm test` or CI.
 

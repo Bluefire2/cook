@@ -77,6 +77,14 @@ describe('signSession / verifySession', () => {
     expect(verifySession(token, nowMs() + 100 * 24 * 3600 * 1000)).toBeNull();
   });
 
+  it('honours a shorter lifetime', () => {
+    const now = nowMs();
+    const hour = 60 * 60 * 1000;
+    const token = signSession({ sub: 'sub-1', email: 'allowed@example.com' }, now, hour);
+    expect(verifySession(token, now)?.exp).toBe(now + hour);
+    expect(verifySession(token, now + hour)).toBeNull();
+  });
+
   it('rejects wrong version and malformed tokens', () => {
     process.env.SESSION_SECRET = 'test-secret-for-session-hmac';
     const token = signSession({ sub: 'sub-1', email: 'allowed@example.com' }, nowMs());
