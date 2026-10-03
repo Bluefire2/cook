@@ -2,19 +2,30 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import {
+  DEFAULT_API_PORT,
+  DEFAULT_WEB_PORT,
+  devPort,
+} from './scripts/devPorts.ts';
+
+// `npm run dev -- --port 5273 --api-port 3101` (or SOUS_WEB_PORT /
+// SOUS_API_PORT) moves both ends. Vite rejects --api-port, so scripts/dev-web.ts
+// strips it and passes it here as SOUS_API_PORT.
+const apiTarget = `http://localhost:${devPort(process.argv, '--api-port', 'SOUS_API_PORT', DEFAULT_API_PORT)}`;
 
 export default defineConfig({
   server: {
+    port: devPort(process.argv, '--port', 'SOUS_WEB_PORT', DEFAULT_WEB_PORT),
     proxy: {
       // Local stand-in for Vercel functions; see scripts/dev-api-server.ts
-      '/api': 'http://localhost:3001',
-      '/invite': 'http://localhost:3001',
+      '/api': apiTarget,
+      '/invite': apiTarget,
       // Regex key: a plain '/c' prefix would also catch the SPA's /cooks.
-      '^/c/': 'http://localhost:3001',
+      '^/c/': apiTarget,
       // The MCP server: its endpoint, the OAuth pages, and discovery.
-      '^/mcp$': 'http://localhost:3001',
-      '^/oauth/': 'http://localhost:3001',
-      '^/\\.well-known/oauth-': 'http://localhost:3001',
+      '^/mcp$': apiTarget,
+      '^/oauth/': apiTarget,
+      '^/\\.well-known/oauth-': apiTarget,
     },
   },
   plugins: [

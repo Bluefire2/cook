@@ -119,6 +119,22 @@ Vite proxies `/api` to 3001. **Vite alone looks fine and then chat/import/sync
 fail.** After any change under `server/` or `scripts/server.ts`, restart
 `dev:api` — it does not watch those files.
 
+To run several checkouts side by side, choose the ports on the command line;
+nothing is edited, and with no arguments they stay 5173 and 3001:
+
+```
+npm run dev:api -- --port 3101
+npm run dev -- --port 5273 --api-port 3101   # --api-port is where Vite proxies
+```
+
+`SOUS_API_PORT` and `SOUS_WEB_PORT` work as fallbacks when the flag is absent
+(`scripts/devPorts.ts`). `npm run dev` is the thin wrapper `scripts/dev-web.ts`
+around Vite, because Vite's CLI rejects `--api-port`; other flags pass through.
+
+Google sign-in only works on 5173: the registered redirect URI is `http://localhost:5173/api/auth/callback/google`. On another
+web port you are signed out unless something signs a session for you, as
+`npm run click:library` does.
+
 `.env.local` is gitignored and required for `dev:api`. Never print its values.
 Never add a `VITE_` prefix to a secret; Vite would inline it into the client.
 
@@ -640,7 +656,10 @@ not secrets). Each run signs a one-hour `sous_session` for that account with
 `.env.local`'s `SESSION_SECRET` (`signSession` with a short `ttlMs`), keeps it
 in memory and a throwaway browser context, and never prints or stores it. The
 script aborts every non-GET `/api` request except its final sign-out, so it
-cannot write to the real library. It uses `playwright-core`
+cannot write to the real library. It targets `http://localhost:5173`; for a
+Vite on another port run `npm run click:library -- --port 5273` (or set
+`SOUS_WEB_PORT`), since it signs its own session and needs no Google sign-in.
+It uses `playwright-core`
 (a devDependency, no browser download) with the installed Chrome. Not part of
 `npm test` or CI.
 
