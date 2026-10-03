@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:import": "vitest run --config vitest.eval.config.ts",
+    "test:i18n": "node --env-file-if-exists=.env.local testing/i18n-review/run.ts",
     "eval:ocr-compare": "node --env-file=.env.local evals/ocrCompare.ts"
   },
   "dependencies": {

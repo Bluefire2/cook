@@ -138,8 +138,11 @@ async function connectApp(now: number): Promise<void> {
   await touchGrant(member.sub, grantId, now - 2 * HOUR);
 }
 
-/** Signs every persona in and writes the fixtures. The emulator must be empty. */
-export async function seed(baseUrl: string): Promise<void> {
+/**
+ * Signs every persona in and writes the fixtures. The emulator must be empty.
+ * Returns the time the fixtures are relative to.
+ */
+export async function seed(baseUrl: string): Promise<number> {
   const now = Date.now();
   const cookies = {} as Cookies;
   for (const p of PERSONAS) {
@@ -167,4 +170,5 @@ export async function seed(baseUrl: string): Promise<void> {
   await request(baseUrl, '/api/admin/invites', { cookie: cookies.owner });
 
   await connectApp(now);
+  return now;
 }

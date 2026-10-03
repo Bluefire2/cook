@@ -1,7 +1,7 @@
 # In-context translation review as a suite and a scheduled workflow
 
-Status: step 1 (spike) done on `claude/i18n-review-ci`; results below. Steps
-2–7 not built.
+Status: steps 1 (spike) and 2 (capture) done on `claude/i18n-review-ci`;
+results below. Steps 3–7 not built.
 
 Constitutions applied: `docs/constitutions/i18n.md`. This plan builds the
 "standalone i18n review suite" milestone from `docs/plans/i18n.md` and
@@ -207,7 +207,8 @@ The exact split is settled in step 5, and the report lists every skip.
 
 | File | What |
 | --- | --- |
-| `testing/i18n-review/spike.ts` | Step 1's script, kept until step 2 replaces it with `capture.ts` and `judge.ts`, then deleted. |
+| `testing/i18n-review/spike.ts` | Step 1's script. Its capture half is replaced by `capture.ts`; it is deleted when step 3's `judge.ts` replaces its judge half. |
+| `testing/i18n-review/catalog.ts` | The four catalogs and `label(lang, key, params)`, for finding controls by their label. |
 | `testing/i18n-review/run.ts` | Entry point for `npm run test:i18n`: options, test-mode readiness, capture, judge, report. |
 | `testing/i18n-review/capture.ts` | Playwright: one browser, a context per persona, 390×844, `cook.locale` per language, screenshot plus `innerText`. |
 | `testing/i18n-review/states.ts` | The per-id entries above. |
@@ -322,6 +323,38 @@ production, which removes the reason for the read-only rule.
    two runs give byte-identical screenshots for each captured state, or the
    difference is understood and stabilized (fonts, animations, relative
    times, the caret).
+
+   **Results (2026-10-03):** 48 of the 90 manifest states are scripted
+   (every one that needs no new mock and no write, plus `import-preview` and
+   `save-to-collection-sheet` on one clean-import mock); the other 42 are
+   `{ skip: 'not scripted yet' }` until step 5, and `states.test.ts` already
+   holds every manifest id. `npm run test:i18n -- --repeat 2` captured all
+   48 × 4 languages twice: 192 of 192 byte-identical, 384 captures in 7 min
+   20 s. What it took:
+   - **A frozen browser clock.** `/__test/personas` now returns `seededAt`
+     (the time the fixtures are relative to), and captures fix the browser
+     clock at `seededAt` + 10 minutes, so `/admin`'s "requested 10 minutes
+     ago" reads the same whenever the run happens. After `dev:test --keep`
+     there is no `seededAt`, and the run says relative times are live.
+   - **Network idle is best-effort, capped at 10 s.** The public page does
+     not read a 404's body, so Chromium keeps that request open and network
+     idle never comes (`public-link-missing` takes the full 10 s per
+     capture). Each `reach` waits for the element it needs instead, and
+     `--repeat 2` catches a capture taken too early.
+   - **A forced click on the locked chat bubble.** It is `aria-disabled` on
+     purpose and still opens the sign-in sheet; Playwright treats
+     `aria-disabled` as not clickable.
+   - **Labels with hints.** A checkbox whose label also holds its hint (bulk
+     import) matches its catalog label as a prefix, not exactly.
+   - Service workers are blocked and the time zone is UTC in every context.
+
+   One capture varies between seeds, not within one: the public-link pane
+   shows the link's random token. Findings are fingerprinted by text, so
+   this does not churn the issue.
+
+   **Deviation:** `--record` moves to step 5, the first step with a state
+   whose response is worth recording from a real model call. Step 2 has the
+   mock mechanism (`MOCKS`, `entry.mocks`) and one hand-written mock.
 3. **[core] Judge.** `judge.ts` and its tests, and a **calibration set**:
    `testing/i18n-review/calibration.ts` injects one known defect per rubric
    item into captured pages (English left in place, a noun on a verb
