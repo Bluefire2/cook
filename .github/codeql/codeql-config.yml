@@ -1,6 +1,5 @@
-name: Sous
-
-# Cached third-party HTML for import evals; not executed by the app.
+# Cached recipe pages used as import eval fixtures. Scripts in the
+# HTML are page content, not application code.
 paths-ignore:
-  - evals
-  - dist
+  - 'evals/import-sites/**/*.html'
+  - 'evals/import/**/page.html'
