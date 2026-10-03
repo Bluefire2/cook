@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   ACCOUNT_DELETION_ORDER,
@@ -10,7 +10,6 @@ import {
   personalTopLevelCollections,
 } from '../server/accountDeletion.ts';
 import { STORE_KINDS } from '../server/sync.ts';
-import { ENV_TREATMENT } from '../testing/env.ts';
 
 // Rules from AGENTS.md that a grep can check. Each failure message names the
 // rule so the fix is to follow it, not to loosen the check.
@@ -381,7 +380,12 @@ describe('test mode (docs/plans/test-mode.md)', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('every env var the server reads is classified in testing/env.ts', () => {
+  it('every env var the server reads is classified in testing/env.ts', async () => {
+    // Loaded at test time through a computed specifier, not a static import:
+    // .dockerignore keeps testing/ out of the image build, where `tsc -b`
+    // still type-checks this file.
+    const testingEnv = pathToFileURL(join(repoRoot, 'testing', 'env.ts')).href;
+    const { ENV_TREATMENT } = (await import(testingEnv)) as { ENV_TREATMENT: Record<string, string> };
     // Otherwise a new variable falls through from a developer's .env.local,
     // which may hold production values.
     const files = [...appFiles(['server', 'api']), 'scripts/server.ts'];
