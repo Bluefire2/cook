@@ -667,7 +667,8 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |
 | `docs/plans/mcp-collection-writes.md` | Built on `claude/mcp-collection-writes`, not deployed. `create_recipe` into a collection and `move_recipes`; collections with a public link are refused. |
 | `docs/plans/mcp-server.md` | Built on `claude/llm-api-vs-mcp-04b215`, not deployed. Remote MCP server at `/mcp` with its own OAuth 2.1 authorization server (CIMD clients, no DCR): search, get, list collections, create and edit (with a version check) over the member's own recipes. No delete. |
-| `docs/plans/test-mode.md` | Built on `claude/test-mode`. `testing/test-server.ts` runs the app against a seeded Firestore emulator; `/__test/sign-in?as=<persona>` signs in a fake account with a real session cookie. Not in the image. The emulator runs in CI only in the `test-mode` job (owner-approved exception, Tests and verification). |
+| `docs/plans/test-mode.md` | Merged (#123). `testing/test-server.ts` runs the app against a seeded Firestore emulator; `/__test/sign-in?as=<persona>` signs in a fake account with a real session cookie. Not in the image. The emulator runs in CI only in the `test-mode` job (owner-approved exception, Tests and verification). |
+| `docs/plans/i18n-review-ci.md` | PR 1 built on `claude/i18n-review-ci`: `npm run test:i18n`, the in-context translation review as a Playwright + Gemini-judge suite in `testing/i18n-review/`, run against test mode with model routes mocked, all 91 states (steps 1–5 and its docs). Amends i18n principle 16. PR 2, not built: a daily workflow on `main` that keeps one `i18n-review` issue of open findings (step 6). |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
@@ -698,6 +699,18 @@ and need `GEMINI_API_KEY` from `.env.local` (same as `dev:api`). Website
 fixtures use cached `page.html` (never fetch at eval time). Do not fold them
 into `npm test` or CI.
 
+The in-context translation review is `npm run test:i18n`
+(`testing/i18n-review/`, `docs/i18n-review/README.md`): Playwright captures
+each manifest state in test mode, with the app's model routes mocked, and a
+Gemini judge (`GEMINI_API_KEY` from `.env.local`) reviews them. Like the
+import evals it is a live tool, not a unit test, and not part of `npm test`
+or CI. It uses `playwright` with its own Chromium (`npx playwright install
+chromium` once), not the installed Chrome that `click:library` drives,
+because screenshots must not change with the browser on the machine; it
+also needs the emulator and `testing/test-server.ts --static`. Before
+changing the judge's prompt or model, run `testing/i18n-review/calibration.ts`
+and record the result in `docs/plans/i18n-review-ci.md`.
+
 Before changing an import prompt, model setting, output check, retry, or eval
 golden, read `evals/AGENTS.md` (dev/holdout split, no tuning on holdout,
 experiments logged in `evals/EXPERIMENTS.md`).
@@ -724,8 +737,7 @@ mode turns off:
 
 Then remember that `dev:api` reads and writes the production library (Cloud
 and deploy), and say in the PR which check needed it. The in-context
-translation review still follows `docs/i18n-review/README.md` (a real
-session, read-only) until that procedure moves to test mode.
+translation review runs in test mode too (`npm run test:i18n`).
 
 `npm run click:library` (`testing/library-click-through.ts`, #57) is a local
 Playwright click-through of Library search persistence and collection
@@ -759,11 +771,13 @@ fragments; relative times go through `src/lib/relativeTime.ts`.
 Any UI change that adds or changes user-facing text must add it to
 every catalog in `src/i18n/` (see `docs/constitutions/i18n.md`), in
 the same change. New screens or states are added to
-`docs/i18n-review/screens.json` in the same change. Once a task's
+`docs/i18n-review/screens.json` in the same change, with the steps
+that reach them in `testing/i18n-review/states.ts`. Once a task's
 implementation is complete and you think its PR may be ready to
 merge, and before opening the PR, run the in-context translation
-review in `docs/i18n-review/README.md` for every screen that shows
-text the task added or changed, in every non-English language. Fix
+review (`npm run test:i18n -- --states <ids>`, see
+`docs/i18n-review/README.md`) for every screen that shows text the
+task added or changed, in every non-English language. Fix
 the blockers, re-review those screens, and attach the report to the
 PR. Do not run the review after each individual change; it is a
 pre-PR check, not part of the iteration loop. Cursor agents can use
