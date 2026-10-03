@@ -138,8 +138,9 @@ can sit until `npm run build` or a container start.
 ### Test mode
 
 To run the app signed in without Google and without production Firestore, use
-test mode (`docs/plans/test-mode.md`). Start the Firestore emulator, then the
-test server in place of `dev:api`:
+test mode. How to run it, the personas, and scripting it are in
+`testing/README.md`; the design is `docs/plans/test-mode.md`. Start the
+Firestore emulator, then the test server in place of `dev:api`:
 
 ```
 gcloud emulators firestore start --host-port=127.0.0.1:8085   # needs Java

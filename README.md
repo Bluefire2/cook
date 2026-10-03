@@ -159,9 +159,10 @@ off (`/api/photos` returns 503 and outbox rows stay until the bucket is set).
 
 ### Test mode
 
-To work signed in without touching production, run test mode
-([docs/plans/test-mode.md](docs/plans/test-mode.md)): the app against a seeded
-Firestore emulator, with fake personas. It needs Java for the emulator.
+To work signed in without touching production, run test mode: the app
+against a seeded Firestore emulator, with fake personas. The full guide
+(setup, personas, options, scripting, troubleshooting) is
+[testing/README.md](testing/README.md). It needs Java for the emulator.
 
 ```bash
 gcloud emulators firestore start --host-port=127.0.0.1:8085
@@ -172,10 +173,10 @@ npm run dev:test
 ```
 
 It looks for the emulator at `127.0.0.1:8085`; set `FIRESTORE_EMULATOR_HOST`
-to another loopback `host:port` to change that. Then run `npm run dev` and open `http://localhost:5173/__test/` to sign in as
-a persona. Each start reseeds the emulator; add `-- --keep` to keep its data.
-Google sign-in, photos, and email are off; model routes work when
-`GEMINI_API_KEY` is set.
+to another loopback `host:port` to change that. Then run `npm run dev` and
+open `http://localhost:5173/__test/` to sign in as a persona. Each start
+reseeds the emulator; add `-- --keep` to keep its data. Google sign-in,
+photos, and email are off; model routes work when `GEMINI_API_KEY` is set.
 
 ## Commands
 
