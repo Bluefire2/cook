@@ -205,6 +205,7 @@ export const uk: Messages = {
   'recipe.translatedFrom': 'Переклад з мови: {language} · Оригінал',
   'recipe.translateRetry': 'Не вдалося перекласти · Повторити',
   'recipe.alreadyInLanguage': 'Цей рецепт уже українською.',
+  'recipe.optionalIngredient': 'за бажанням',
 
   'chat.assistant': 'Помічник',
   'chat.clearAll': 'Очистити все?',
@@ -316,6 +317,7 @@ export const uk: Messages = {
   'form.unitPlaceholder': 'одиниця',
   'form.ingredientNote': 'Примітка до інгредієнта',
   'form.notePlaceholder': 'примітка, наприклад дрібно нарізати',
+  'form.optionalIngredient': 'За бажанням',
   'form.moveIngredientUp': 'Перемістити інгредієнт вгору',
   'form.moveIngredientDown': 'Перемістити інгредієнт вниз',
   'form.removeIngredient': 'Прибрати інгредієнт',

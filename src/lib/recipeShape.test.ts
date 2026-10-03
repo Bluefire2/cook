@@ -135,6 +135,27 @@ describe('normalizeRecipeDraft', () => {
       ['ingredientSections', 'servings', 'steps', 'tags', 'title'].sort(),
     );
   });
+
+  it('keeps an ingredient optional flag only when it is true', () => {
+    const draft = normalizeRecipeDraft({
+      title: 'Draft',
+      servings: 1,
+      ingredientSections: [
+        {
+          items: [
+            { item: 'chili', optional: true },
+            { item: 'salt', optional: false },
+            { item: 'pepper', optional: 'yes' },
+          ],
+        },
+      ],
+    });
+    expect(draft?.ingredientSections[0].items).toEqual([
+      { item: 'chili', optional: true },
+      { item: 'salt' },
+      { item: 'pepper' },
+    ]);
+  });
 });
 
 describe('isUsableRecipe', () => {
@@ -173,6 +194,16 @@ describe('isUsableRecipe', () => {
         ingredientSections: [{ items: [{ item: 'salt', quantity: '1' }] }],
       }),
     ).toBe(false);
+  });
+
+  it('accepts a boolean ingredient optional flag and rejects any other type', () => {
+    const withOptional = (optional: unknown) => ({
+      ...required,
+      ingredientSections: [{ items: [{ item: 'chili', optional }] }],
+    });
+    expect(isUsableRecipe(withOptional(true))).toBe(true);
+    expect(isUsableRecipe(withOptional(false))).toBe(true);
+    expect(isUsableRecipe(withOptional('yes'))).toBe(false);
   });
 
   it('returns false when galleryPhotoIds is not a string array', () => {

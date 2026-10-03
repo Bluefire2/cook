@@ -19,6 +19,7 @@ import {
   cellClass,
   iconBtn,
   inputClass,
+  inputFocus,
   primaryBtn,
   secondaryBtn,
 } from '../lib/uiClasses';
@@ -28,6 +29,7 @@ interface ItemFields {
   unit: string;
   item: string;
   note: string;
+  optional: boolean;
 }
 
 interface SectionFields {
@@ -105,6 +107,7 @@ export function fromDraft(
               unit: item.unit ?? '',
               item: item.item,
               note: item.note ?? '',
+              optional: item.optional === true,
             }))
           : [blankItem()],
     })),
@@ -122,6 +125,7 @@ function toIngredient(fields: ItemFields): Ingredient {
     ...(unit !== '' ? { unit } : {}),
     item: fields.item.trim(),
     ...(note !== '' ? { note } : {}),
+    ...(fields.optional ? { optional: true } : {}),
   };
 }
 
@@ -189,7 +193,7 @@ export function toDraft(
 }
 
 function blankItem(): ItemFields {
-  return { quantity: '', unit: '', item: '', note: '' };
+  return { quantity: '', unit: '', item: '', note: '', optional: false };
 }
 
 function moved<T>(list: T[], from: number, to: number): T[] {
@@ -762,6 +766,20 @@ export default function RecipeForm({
                         placeholder={t('form.notePlaceholder')}
                         className={`flex-1 text-sm ${cellClass}`}
                       />
+                      <button
+                        type="button"
+                        aria-pressed={item.optional}
+                        onClick={() =>
+                          patchItem(si, ii, { optional: !item.optional })
+                        }
+                        className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${inputFocus} ${
+                          item.optional
+                            ? 'border-amber-600/70 bg-accent-soft text-ink'
+                            : 'border-line text-ink-muted hover:bg-surface-muted active:bg-surface-muted'
+                        }`}
+                      >
+                        {t('form.optionalIngredient')}
+                      </button>
                       <button
                         type="button"
                         aria-label={t('form.moveIngredientUp')}

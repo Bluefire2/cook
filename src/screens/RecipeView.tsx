@@ -428,12 +428,19 @@ export default function RecipeView() {
                         >
                           {isChecked ? '✓' : ''}
                         </span>
-                        <span className={isChecked ? 'line-through' : ''}>
-                          {ingredientLabel(
-                            { ...(translatedItem ?? ing), quantity: ing.quantity },
-                            scale,
-                            locale,
-                            (token) => unitLabel(token, t),
+                        <span>
+                          <span className={isChecked ? 'line-through' : ''}>
+                            {ingredientLabel(
+                              { ...(translatedItem ?? ing), quantity: ing.quantity },
+                              scale,
+                              locale,
+                              (token) => unitLabel(token, t),
+                            )}
+                          </span>
+                          {ing.optional === true && (
+                            <span className="ml-2 inline-block rounded-full border border-line px-2 py-0.5 align-middle text-xs leading-none text-ink-muted">
+                              {t('recipe.optionalIngredient')}
+                            </span>
                           )}
                         </span>
                       </button>

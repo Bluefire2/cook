@@ -181,6 +181,7 @@ export const zhHans: Messages = {
   'recipe.translatedFrom': '译自{language} · 原文',
   'recipe.translateRetry': '无法翻译 · 重试',
   'recipe.alreadyInLanguage': '这个食谱已经是简体中文。',
+  'recipe.optionalIngredient': '可选',
 
   'chat.assistant': '助手',
   'chat.clearAll': '全部清除？',
@@ -287,6 +288,7 @@ export const zhHans: Messages = {
   'form.unitPlaceholder': '单位',
   'form.ingredientNote': '食材备注',
   'form.notePlaceholder': '备注，例如切碎',
+  'form.optionalIngredient': '可选',
   'form.moveIngredientUp': '上移食材',
   'form.moveIngredientDown': '下移食材',
   'form.removeIngredient': '移除食材',

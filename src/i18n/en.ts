@@ -209,6 +209,7 @@ export const en = {
   'recipe.translatedFrom': 'Translated from {language} · Original',
   'recipe.translateRetry': "Couldn't translate · Retry",
   'recipe.alreadyInLanguage': 'This recipe is already in English.',
+  'recipe.optionalIngredient': 'optional',
 
   'chat.assistant': 'Assistant',
   'chat.clearAll': 'Clear all?',
@@ -319,6 +320,7 @@ export const en = {
   'form.unitPlaceholder': 'unit',
   'form.ingredientNote': 'Ingredient note',
   'form.notePlaceholder': 'note, e.g. finely chopped',
+  'form.optionalIngredient': 'Optional',
   'form.moveIngredientUp': 'Move ingredient up',
   'form.moveIngredientDown': 'Move ingredient down',
   'form.removeIngredient': 'Remove ingredient',
