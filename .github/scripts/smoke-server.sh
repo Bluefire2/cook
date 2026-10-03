@@ -106,7 +106,11 @@ expect_status /mcp 405
 # Test mode (testing/, docs/plans/test-mode.md) is not in the image: its
 # sign-in path is only the SPA fallback here, never a redirect with a session.
 test_sign_in="$(curl -s -o /dev/null -D - --max-time 10 "${BASE_URL}/__test/sign-in?as=member" || true)"
-if [[ "$test_sign_in" == *"sous_session="* || "$test_sign_in" =~ ^HTTP/[0-9.]+\ 303 ]]; then
+if [[ ! "$test_sign_in" =~ ^HTTP/ ]]; then
+  # No status line: curl failed, so nothing was checked.
+  printf 'FAIL  /__test/sign-in did not answer\n'
+  failures=$((failures + 1))
+elif [[ "$test_sign_in" == *"sous_session="* || "$test_sign_in" =~ ^HTTP/[0-9.]+\ 303 ]]; then
   printf 'FAIL  /__test/sign-in signed someone in on the production server\n'
   failures=$((failures + 1))
 else

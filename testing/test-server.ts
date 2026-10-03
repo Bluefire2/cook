@@ -96,30 +96,43 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Set once the seed (or --keep) is done. `/__test/personas` is the readiness
+ * probe, and the picker offers no persona until then.
+ */
+let ready = false;
+
+/**
+ * The persona list. Until the seed is done it offers no links: a sign-in then
+ * would land signed out, because the persona is not admitted yet.
+ * `/__test/sign-in` itself stays open, since the seed signs in through it.
+ */
 function pickerPage(): Response {
   const rows = PERSONAS.map(
     (p) =>
       `<li><a href="/__test/sign-in?as=${p.as}">${escapeHtml(p.as)}</a> — ${escapeHtml(p.description)}</li>`,
   ).join('\n');
+  const body = ready
+    ? `<p>Sign in as a fake account. Data lives in the Firestore emulator. Sign out from Settings.</p>
+<ul>
+${rows}
+</ul>`
+    : '<p>Seeding the emulator. This page reloads itself when the personas are ready.</p>';
+  const refresh = ready ? '' : '<meta http-equiv="refresh" content="1">\n';
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sous test mode</title>
+${refresh}<title>Sous test mode</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;margin:2rem auto;max-width:40rem;padding:0 1rem}li{margin:.5rem 0}</style>
 </head><body>
 <h1>Sous test mode</h1>
-<p>Sign in as a fake account. Data lives in the Firestore emulator. Sign out from Settings.</p>
-<ul>
-${rows}
-</ul>
+${body}
 </body></html>`;
-  return new Response(html, {
-    status: 200,
-    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
-  });
+  const headers: Record<string, string> = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' };
+  if (!ready) {
+    headers['Retry-After'] = '1';
+  }
+  return new Response(html, { status: ready ? 200 : 503, headers });
 }
-
-/** Set once the seed (or --keep) is done. `/__test/personas` is the readiness probe. */
-let ready = false;
 
 function personasJson(): Response {
   if (!ready) {

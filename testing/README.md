@@ -141,5 +141,5 @@ the production image.
 | `--static serves dist/, which has no index.html` | Run `npm run build`. |
 | `EADDRINUSE` | Something already uses the port, often `npm run dev:api`. Stop it; test mode replaces it. |
 | `/__test/` answers `Not found` | `dev:api` is running instead of `dev:test`. Stop it and run `npm run dev:test`. |
-| Every persona lands signed out | The emulator keeps nothing across its own restarts, so after `--keep` against a restarted emulator no persona is admitted. Restart `dev:test` without `--keep`. (`outsider` and `declined` always land signed out.) |
+| Every persona lands signed out | Either you signed in before the seed finished (the picker waits for it, but a saved `/__test/sign-in` link does not; wait for `Test mode ready`), or you ran `--keep` against a restarted emulator, which keeps nothing, so no persona is admitted. Restart `dev:test` without `--keep`. (`outsider` and `declined` always land signed out.) |
 | Java warning about JRE 21 | Install Java 25 or later. |

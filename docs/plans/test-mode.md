@@ -1,7 +1,7 @@
 # Test mode
 
-Status: built on `claude/test-mode`. Steps 1–7 done; the `test-mode` CI job
-has not run on GitHub yet (see Verification).
+Status: built on `claude/test-mode` (#123). Steps 1–7 done. The
+`test-mode` CI job passed on GitHub on its first run and on every push since.
 
 Constitutions applied: none binds this change. It adds no app UI, no catalog
 text, no `Recipe` field, and no client store (`client-state.md`, `i18n.md`,
@@ -236,8 +236,8 @@ Two modes:
    answers 200 and empties the database, and the SDK reads and writes
    `demo-sous` with no credentials. CI: the image is pinned to
    `gcr.io/google.com/cloudsdktool/google-cloud-cli:587.0.0-emulators` (the
-   tag exists in the registry); its pull time on `ubuntu-latest` is measured
-   on the PR's first run.
+   tag exists in the registry). On `ubuntu-latest` the whole `test-mode` job,
+   pull included, took 48 s on its first run.
 2. **[core] `testing/env.ts` and `testing/guard.test.ts`.** Tests: each refusal
    alone (unset host, `example.com:8085`, `K_SERVICE` set, `NODE_ENV=production`);
    all clear gives no refusals; `testModeEnv` overrides `SESSION_SECRET`,
@@ -369,3 +369,15 @@ before `npm run dev:test`.
   pending, approved, and declined lists on `/admin`, and one unused invite;
   `empty` has no recipes or collections. An unknown persona is 404 and a pull
   with no cookie is 401.
+- **The picker waits for the seed.** Review found that `/__test/` offered
+  personas while the seed was still running; a sign-in then lands signed out,
+  because the persona is not admitted yet. Until the seed is done the picker
+  answers 503 with a page that reloads itself and offers no links.
+  `/__test/sign-in` stays open, because the seed signs in through it.
+- **The image check fails when nothing answers.** The `/__test/sign-in`
+  check in `smoke-server.sh` first passed on an empty `curl` result; it now
+  fails without a status line.
+- **The `__test` rule names its scope.** `AGENTS.md` first said nothing
+  outside `testing/` may mention `__test`, which `vite.config.ts` and
+  `.github/` contradict. It now names the directories the invariant scans and
+  lists the allowed traces outside them.

@@ -162,10 +162,15 @@ mode; model routes work when `GEMINI_API_KEY` is set.
 `/__test/sign-in` is not an auth bypass: it signs an ordinary session for a
 fake account with a test-only secret, and every route still runs
 `requireMember`. Test mode lives only in `testing/`, which the image never
-contains. Nothing outside `testing/` may import from it or mention `__test`,
-and every env var the server reads must be classified in `testing/env.ts`;
-`scripts/invariants.test.ts` checks all three. Never add a flag or env var
-that turns test mode on in the real server.
+contains. No non-test file under `server/`, `api/`, `scripts/`, `src/`, or
+`evals/` may import from `testing/`, none under the first four may mention
+`__test`, and every env var the server reads must be classified in
+`testing/env.ts`; `scripts/invariants.test.ts` checks all three. The allowed
+`__test` traces outside those directories are the dev proxy and the PWA
+`navigateFallbackDenylist` entry in `vite.config.ts` (the denylist ships in
+the production service worker and is inert there), the image check in
+`.github/scripts/smoke-server.sh`, and the CI job comment. Never add a flag
+or env var that turns test mode on in the real server.
 
 Test mode is the default for end-to-end checks; Tests and verification says
 when a real sign-in is needed instead.

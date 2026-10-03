@@ -359,6 +359,9 @@ describe('test mode (docs/plans/test-mode.md)', () => {
   });
 
   it('no app code mentions the /__test/ routes', () => {
+    // Deliberately these directories only. vite.config.ts (dev proxy, PWA
+    // denylist) and .github/ (the image check) mention __test on purpose;
+    // AGENTS.md lists them as the allowed traces.
     const offenders = appFiles(['server', 'api', 'scripts', 'src']).flatMap((path) =>
       matchingLines(path, /__test\b/),
     );
