@@ -60,6 +60,47 @@ jobs:
         if: always()
         run: docker logs sous-ci || true
 
+  # Test mode (docs/plans/test-mode.md): the built app against a seeded
+  # Firestore emulator, with fake personas signed in by /__test/sign-in. The
+  # only job that runs the emulator; unit tests stay pure. Needs no secrets.
+  test-mode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start the Firestore emulator
+        run: |
+          docker run -d --name firestore-emulator -p 127.0.0.1:8085:8085 \
+            gcr.io/google.com/cloudsdktool/google-cloud-cli:587.0.0-emulators \
+            gcloud emulators firestore start --host-port=0.0.0.0:8085
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.18'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Wait for the emulator
+        run: |
+          for _ in $(seq 1 90); do
+            if [ "$(curl -s --max-time 2 http://127.0.0.1:8085/ || true)" = "Ok" ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "The Firestore emulator never answered"
+          exit 1
+      - name: Start test mode
+        env:
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8085
+        run: node testing/test-server.ts --static --port 4173 > test-server.log 2>&1 &
+      - name: Smoke test
+        run: node testing/smoke.ts http://localhost:4173
+      - name: Logs
+        if: always()
+        run: |
+          cat test-server.log || true
+          docker logs firestore-emulator 2>&1 | tail -50 || true
+
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

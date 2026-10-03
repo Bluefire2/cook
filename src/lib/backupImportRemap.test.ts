@@ -14,8 +14,7 @@ import {
   type BackupGraphIds,
   type BackupImportEntities,
 } from './backupImportRemap';
-import type { ChatMessage, Collection, Recipe } from './types';
-import type { CookStateRow } from './useCookState';
+import type { ChatMessage, Collection, CookStateRow, Recipe } from './types';
 
 const ALICE = 'alice-sub';
 const CAROL = 'carol-sub';

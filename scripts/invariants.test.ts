@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   ACCOUNT_DELETION_ORDER,
@@ -342,6 +342,68 @@ describe('deploy', () => {
 
   it('package.json name is "sous"', () => {
     expect((JSON.parse(read('package.json')) as { name: string }).name).toBe('sous');
+  });
+});
+
+describe('test mode (docs/plans/test-mode.md)', () => {
+  // Test mode signs anyone in. It stays safe only while its code is a separate
+  // entrypoint that the app never loads and the image never contains.
+  const appFiles = (dirs: readonly string[]) =>
+    dirs.flatMap((dir) => filesUnder(dir, ['.ts', '.tsx'])).filter((path) => !isTestFile(path));
+
+  it('no app code imports from testing/', () => {
+    const offenders = appFiles(['server', 'api', 'scripts', 'src', 'evals']).flatMap((path) =>
+      matchingLines(path, /['"](?:\.\.?\/)+testing\//),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('no app code mentions the /__test/ routes', () => {
+    // Deliberately these directories only. vite.config.ts (dev proxy, PWA
+    // denylist) and .github/ (the image check) mention __test on purpose;
+    // AGENTS.md lists them as the allowed traces.
+    const offenders = appFiles(['server', 'api', 'scripts', 'src']).flatMap((path) =>
+      matchingLines(path, /__test\b/),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('the image never contains testing/', () => {
+    const ignored = read('.dockerignore')
+      .split('\n')
+      .map((line) => line.trim());
+    expect(ignored).toContain('testing');
+    const dockerfile = read('Dockerfile').split('\n');
+    const runtimeStart = dockerfile.findLastIndex((line) => /^FROM\s/i.test(line));
+    const copies = dockerfile.slice(runtimeStart).filter((line) => /^COPY\s/i.test(line));
+    expect(copies.length).toBeGreaterThan(0);
+    const offenders = copies.filter(
+      (line) => /\btesting\b/.test(line) || /^COPY\s+(?:--\S+\s+)*\.\/?\s/i.test(line),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('every env var the server reads is classified in testing/env.ts', async () => {
+    // Loaded at test time through a computed specifier, not a static import:
+    // .dockerignore keeps testing/ out of the image build, where `tsc -b`
+    // still type-checks this file.
+    const testingEnv = pathToFileURL(join(repoRoot, 'testing', 'env.ts')).href;
+    const { ENV_TREATMENT } = (await import(testingEnv)) as { ENV_TREATMENT: Record<string, string> };
+    // Otherwise a new variable falls through from a developer's .env.local,
+    // which may hold production values.
+    const files = [...appFiles(['server', 'api']), 'scripts/server.ts'];
+    const names = new Set<string>();
+    const dynamic: string[] = [];
+    for (const path of files) {
+      for (const match of read(path).matchAll(/process\.env\.([A-Z0-9_]+)|process\.env\[\s*(['"])([A-Z0-9_]+)\2\s*\]/g)) {
+        names.add(match[1] ?? match[3]);
+      }
+      dynamic.push(...matchingLines(path, /process\.env\[\s*[^'"\s]/));
+    }
+    expect(dynamic).toEqual([]);
+    expect(names.size).toBeGreaterThan(0);
+    const unclassified = [...names].filter((name) => !Object.hasOwn(ENV_TREATMENT, name)).sort();
+    expect(unclassified).toEqual([]);
   });
 });
 

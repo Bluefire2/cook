@@ -15,6 +15,8 @@ export default defineConfig({
       '^/mcp$': 'http://localhost:3001',
       '^/oauth/': 'http://localhost:3001',
       '^/\\.well-known/oauth-': 'http://localhost:3001',
+      // Test mode only (testing/test-server.ts); plain dev:api answers 404.
+      '^/__test(/|$)': 'http://localhost:3001',
     },
   },
   plugins: [
@@ -56,6 +58,8 @@ export default defineConfig({
           // Public collection pages need the server's no-referrer header, so
           // the service worker never answers them from its cached shell.
           /^\/p(\/|$)/,
+          // Test mode's sign-in pages (testing/test-server.ts with --static).
+          /^\/__test(\/|$)/,
         ],
       },
       manifest: {
