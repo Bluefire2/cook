@@ -1,47 +1,57 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import type { ImgHTMLAttributes } from 'react';
 import { selectPendingBlob } from '../lib/librarySelectors';
-import { photoStore, useObjectUrl } from '../lib/photoStore';
+import { photoStore } from '../lib/photoStore';
 import { useLibrarySelect } from '../lib/useLibrary';
 
 type MemoryBlobImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, 'src'> & {
   blob: Blob | undefined;
 };
 
-/**
- * Renders a photo preview from an in-memory blob (picked file or fetched bytes).
- * `src` is applied on the element after `URL.createObjectURL`, not from request data.
- */
-export function MemoryBlobImage({ blob, alt, className, ...rest }: MemoryBlobImageProps) {
-  const url = useObjectUrl(blob);
-  const ref = useRef<HTMLImageElement>(null);
-
-  useEffect(() => {
-    const img = ref.current;
-    if (!img) {
-      return;
-    }
-    if (url === undefined) {
-      img.removeAttribute('src');
-      return;
-    }
-    try {
-      if (new URL(url).protocol !== 'blob:') {
-        img.removeAttribute('src');
+function readImageDataUrl(blob: Blob): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== 'string' || !result.startsWith('data:image/')) {
+        resolve(undefined);
         return;
       }
-    } catch {
-      img.removeAttribute('src');
+      resolve(result);
+    };
+    reader.onerror = () => resolve(undefined);
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Renders a photo preview from an in-memory blob (picked file or fetched bytes).
+ * Previews use a `data:` URL from FileReader, not object URLs or request text.
+ */
+export function MemoryBlobImage({ blob, alt, className, ...rest }: MemoryBlobImageProps) {
+  const [dataUrl, setDataUrl] = useState<string>();
+
+  useEffect(() => {
+    if (blob === undefined) {
+      setDataUrl(undefined);
       return;
     }
-    img.src = url;
-  }, [url]);
+    let cancelled = false;
+    void readImageDataUrl(blob).then((url) => {
+      if (!cancelled) {
+        setDataUrl(url);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [blob]);
 
-  if (blob === undefined) {
+  if (blob === undefined || dataUrl === undefined) {
     return null;
   }
 
-  return <img ref={ref} alt={alt} className={className} {...rest} />;
+  return <img src={dataUrl} alt={alt} className={className} {...rest} />;
 }
 
 type StoredPhotoImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, 'src'> & {
