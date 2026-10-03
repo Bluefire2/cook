@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildAgentLibrary, type AgentCollection, type AgentRecipe } from '../agent/sous/library.ts';
-import { isLiveDoc, ownRecipeUpdateDecision, recipeDocBody, type OwnRecipeUpdateResult } from '../store.ts';
-import { planCollectionMove, UNFILED, type CollectionWriteOutcome } from './collectionMove.ts';
+import { ownRecipeUpdateDecision, recipeDocBody, type OwnRecipeUpdateResult } from '../store.ts';
+import { runCollectionWrite, UNFILED, type CollectionSharing, type CollectionTxPort } from './collectionMove.ts';
 import { SCOPE_READ, SCOPE_WRITE } from './config.ts';
 import {
   callToolResult,
@@ -34,12 +34,13 @@ function recipe(overrides: Partial<AgentRecipe> & { id: string; title: string })
 
 /**
  * A fake store over plain docs, so the update path runs the real decision and
- * merge, and collection writes run the real `planCollectionMove`.
+ * merge, and collection writes run the real `runCollectionWrite` over an
+ * in-memory port.
  */
 function fakeContext(
   recipes: AgentRecipe[],
   collections: AgentCollection[] = [],
-  opts: { loadCap?: number; publicIds?: string[]; sharedWith?: Record<string, number> } = {},
+  opts: { loadCap?: number; publicIds?: string[]; sharedWith?: Record<string, number>; joinLinks?: string[] } = {},
 ): McpToolContext & {
   docs: Map<string, Record<string, unknown>>;
   collectionDocs: Map<string, Record<string, unknown> & { id: string }>;
@@ -52,19 +53,28 @@ function fakeContext(
   );
   const created: string[] = [];
   const directReads: string[][] = [];
-  const publicIds = new Set(opts.publicIds ?? []);
-  const fileInto = (ids: readonly string[], dest: string, now: number): CollectionWriteOutcome => {
-    const plan = planCollectionMove([...collectionDocs.values()], ids, dest, now);
-    if (plan.kind !== 'ok') return plan;
-    if (publicIds.has(dest)) return { kind: 'public_collection' };
-    for (const { id, doc } of plan.writes) collectionDocs.set(id, { ...doc, id });
-    return {
-      kind: 'ok',
-      moved: plan.moved,
-      alreadyThere: plan.alreadyThere,
-      ...(plan.collectionName === undefined ? {} : { collectionName: plan.collectionName }),
-      sharedWithMembers: opts.sharedWith?.[dest] ?? 0,
-    };
+  const sharingOf = (id: string): CollectionSharing => ({
+    public: (opts.publicIds ?? []).includes(id),
+    members: opts.sharedWith?.[id] ?? 0,
+    joinLinkOpen: (opts.joinLinks ?? []).includes(id),
+  });
+  const port: CollectionTxPort = {
+    async readRecipes(ids) {
+      return ids.map((id) => docs.get(id));
+    },
+    async readCollections() {
+      return [...collectionDocs.values()];
+    },
+    async readSharing(id) {
+      return sharingOf(id);
+    },
+    createRecipe(id, doc) {
+      docs.set(id, doc);
+      created.push(id);
+    },
+    setCollection(id, doc) {
+      collectionDocs.set(id, { ...doc, id });
+    },
   };
   const loaded = opts.loadCap === undefined ? recipes : recipes.slice(0, opts.loadCap);
   return {
@@ -88,21 +98,11 @@ function fakeContext(
       created.push(id);
       return true;
     },
-    async createRecipeInCollection(id, payload, dest) {
-      const outcome = fileInto([id], dest, 400);
-      if (outcome.kind === 'ok') {
-        docs.set(id, payload);
-        created.push(id);
-      }
-      return outcome;
-    },
-    async moveRecipes(ids, dest) {
-      const missingIds = [...new Set(ids)].filter((id) => !isLiveDoc(docs.get(id)));
-      if (missingIds.length > 0) return { kind: 'recipes_not_found', missingIds };
-      return fileInto(ids, dest, 400);
-    },
-    async livePublicCollectionIds() {
-      return new Set(publicIds);
+    createRecipeInCollection: (id, payload, dest) =>
+      runCollectionWrite(port, { moveIds: [], create: { id, payload }, dest, serverNow: 400 }),
+    moveRecipes: (ids, dest) => runCollectionWrite(port, { moveIds: ids, dest, serverNow: 400 }),
+    async collectionSharing(ids) {
+      return new Map(ids.map((id) => [id, sharingOf(id)]));
     },
     async updateRecipe(id, expectedVersion, apply): Promise<OwnRecipeUpdateResult> {
       const decision = ownRecipeUpdateDecision(docs.get(id), expectedVersion);
@@ -220,18 +220,18 @@ describe('list_collections', () => {
     ]);
   });
 
-  it('marks a collection with a live public link', async () => {
+  it('marks public, member-shared and join-link collections', async () => {
     const ctx = fakeContext(
       [],
       [
         { id: SOUPS, name: 'Soups', recipeIds: [] },
         { id: PUBLIC, name: 'For everyone', recipeIds: [] },
       ],
-      { publicIds: [PUBLIC] },
+      { publicIds: [PUBLIC], sharedWith: { [SOUPS]: 3 }, joinLinks: [SOUPS] },
     );
     const out = await run('list_collections', {}, ctx);
     expect(out.ok && out.data.collections).toEqual([
-      { id: SOUPS, name: 'Soups', recipeCount: 0 },
+      { id: SOUPS, name: 'Soups', recipeCount: 0, sharedWithMembers: 3, joinLinkOpen: true },
       { id: PUBLIC, name: 'For everyone', recipeCount: 0, public: true },
       { id: 'unfiled', name: 'Unfiled', recipeCount: 0 },
     ]);
@@ -268,6 +268,13 @@ describe('create_recipe', () => {
     expect(out).toMatchObject({ ok: true, data: { recipe: { id: NEW_ID, collectionName: 'Soups' }, sharedWithMembers: 2 } });
     expect(ctx.collectionDocs.get(SOUPS)?.recipeIds).toEqual([R1, NEW_ID]);
     expect(ctx.created).toEqual([NEW_ID]);
+  });
+
+  it('flags an open join link on the destination even with no members yet', async () => {
+    const ctx = fakeContext([], [{ id: SOUPS, name: 'Soups', recipeIds: [] }], { joinLinks: [SOUPS] });
+    const out = await run('create_recipe', { ...EGG, collectionId: SOUPS }, ctx);
+    expect(out).toMatchObject({ ok: true, data: { joinLinkOpen: true } });
+    expect(out.ok && out.data).not.toHaveProperty('sharedWithMembers');
   });
 
   it('treats "unfiled" as no collection', async () => {
@@ -313,11 +320,30 @@ describe('move_recipes', () => {
     expect(again).toMatchObject({ ok: true, data: { movedIds: [], alreadyThereIds: [R1] } });
   });
 
-  it('unfiles with "unfiled"', async () => {
+  it('unfiles with "unfiled" and says which collection the recipe left', async () => {
     const ctx = library();
     const out = await run('move_recipes', { ids: [R1], collectionId: 'unfiled' }, ctx);
-    expect(out).toMatchObject({ ok: true, data: { collection: { id: UNFILED, name: 'Unfiled' }, movedIds: [R1] } });
+    expect(out).toMatchObject({
+      ok: true,
+      data: { collection: { id: UNFILED, name: 'Unfiled' }, movedIds: [R1], removedFrom: [{ id: SOUPS, name: 'Soups' }] },
+    });
     expect(ctx.collectionDocs.get(SOUPS)?.recipeIds).toEqual([]);
+  });
+
+  it('reports who loses the recipes when they leave a shared collection', async () => {
+    const ctx = fakeContext(
+      [recipe({ id: R1, title: 'Soup' }), recipe({ id: R2, title: 'Stew' })],
+      [
+        { id: SOUPS, name: 'Soups', recipeIds: [R1] },
+        { id: PUBLIC, name: 'For everyone', recipeIds: [R2] },
+      ],
+      { publicIds: [PUBLIC], sharedWith: { [SOUPS]: 3 }, joinLinks: [PUBLIC] },
+    );
+    const out = await run('move_recipes', { ids: [R1, R2], collectionId: 'unfiled' }, ctx);
+    expect(out.ok && out.data.removedFrom).toEqual([
+      { id: SOUPS, name: 'Soups', sharedWithMembers: 3 },
+      { id: PUBLIC, name: 'For everyone', public: true, joinLinkOpen: true },
+    ]);
   });
 
   it('refuses a public destination and changes nothing', async () => {

@@ -92,6 +92,7 @@ function fakePort(state: {
   collections?: ReturnType<typeof collection>[];
   publicIds?: string[];
   grants?: Record<string, number>;
+  joinLinks?: string[];
 }): CollectionTxPort & { calls: string[] } {
   const calls: string[] = [];
   let wrote = false;
@@ -109,13 +110,13 @@ function fakePort(state: {
       read('readCollections');
       return state.collections ?? [];
     },
-    async hasLivePublicLink(dest) {
-      read('hasLivePublicLink');
-      return (state.publicIds ?? []).includes(dest);
-    },
-    async countLiveGrants(dest) {
-      read('countLiveGrants');
-      return state.grants?.[dest] ?? 0;
+    async readSharing(id) {
+      read(`readSharing ${id}`);
+      return {
+        public: (state.publicIds ?? []).includes(id),
+        members: state.grants?.[id] ?? 0,
+        joinLinkOpen: (state.joinLinks ?? []).includes(id),
+      };
     },
     createRecipe(id) {
       wrote = true;
@@ -131,15 +132,28 @@ function fakePort(state: {
 describe('runCollectionWrite', () => {
   const live = { title: 'Soup', updatedAt: 1 };
 
-  it('reads everything, checks the public link and grants, then writes', async () => {
-    const port = fakePort({ recipes: { r1: live }, collections: [collection(A, ['r1']), collection(B, [])], grants: { [B]: 2 } });
+  it('reads everything, including who can see the destination and each collection left, then writes', async () => {
+    const port = fakePort({
+      recipes: { r1: live },
+      collections: [collection(A, ['r1']), collection(B, [])],
+      grants: { [A]: 3, [B]: 2 },
+      joinLinks: [B],
+    });
     const out = await runCollectionWrite(port, { moveIds: ['r1'], dest: B, serverNow: NOW });
-    expect(out).toMatchObject({ kind: 'ok', moved: ['r1'], sharedWithMembers: 2, collectionName: 'Name b' });
+    expect(out).toEqual({
+      kind: 'ok',
+      moved: ['r1'],
+      alreadyThere: [],
+      collectionName: 'Name b',
+      sharedWithMembers: 2,
+      joinLinkOpen: true,
+      leftCollections: [{ id: A, name: 'Name a', public: false, members: 3, joinLinkOpen: false }],
+    });
     expect(port.calls).toEqual([
       'readRecipes',
       'readCollections',
-      'hasLivePublicLink',
-      'countLiveGrants',
+      `readSharing ${B}`,
+      `readSharing ${A}`,
       `setCollection ${A}`,
       `setCollection ${B}`,
     ]);
@@ -163,10 +177,16 @@ describe('runCollectionWrite', () => {
     });
   });
 
-  it('skips the public and grant reads for Unfiled', async () => {
-    const port = fakePort({ recipes: { r1: live }, collections: [collection(A, ['r1'])] });
-    expect(await runCollectionWrite(port, { moveIds: ['r1'], dest: UNFILED, serverNow: NOW })).toMatchObject({ kind: 'ok' });
-    expect(port.calls).toEqual(['readRecipes', 'readCollections', `setCollection ${A}`]);
+  it('reads only the collections left when moving to Unfiled, and reports them', async () => {
+    const port = fakePort({ recipes: { r1: live }, collections: [collection(A, ['r1'])], publicIds: [A] });
+    const out = await runCollectionWrite(port, { moveIds: ['r1'], dest: UNFILED, serverNow: NOW });
+    expect(out).toMatchObject({
+      kind: 'ok',
+      sharedWithMembers: 0,
+      joinLinkOpen: false,
+      leftCollections: [{ id: A, public: true }],
+    });
+    expect(port.calls).toEqual(['readRecipes', 'readCollections', `readSharing ${A}`, `setCollection ${A}`]);
   });
 
   it('creates the new recipe with its own version and the server time, then files it', async () => {

@@ -8,7 +8,7 @@
 import type { AgentLibrary, AgentRecipe } from '../agent/index.ts';
 import { narrowAgentRecipe, searchRecipesPage, winningMembership } from '../agent/index.ts';
 import { isUuid, type OwnRecipeUpdateResult } from '../store.ts';
-import { UNFILED, type CollectionWriteOutcome } from './collectionMove.ts';
+import { UNFILED, type CollectionSharing, type CollectionWriteOutcome } from './collectionMove.ts';
 import type { McpScope } from './config.ts';
 import {
   fieldErrorText,
@@ -43,8 +43,8 @@ export interface McpToolContext {
   createRecipeInCollection(id: string, payload: Record<string, unknown>, dest: string): Promise<CollectionWriteOutcome>;
   /** Moves the caller's own recipes (valid ids) to a collection id or `UNFILED`, all or nothing. */
   moveRecipes(ids: readonly string[], dest: string): Promise<CollectionWriteOutcome>;
-  /** Ids of the caller's collections that have a live public link. */
-  livePublicCollectionIds(): Promise<Set<string>>;
+  /** Who else can see each of the caller's collections. */
+  collectionSharing(collectionIds: readonly string[]): Promise<Map<string, CollectionSharing>>;
   updateRecipe(
     id: string,
     expectedVersion: number,
@@ -120,6 +120,16 @@ function readDestination(value: unknown, errors: FieldError[]): string | null {
     return null;
   }
   return value.trim();
+}
+
+/** Only the sharing that applies: `public`, `sharedWithMembers` and `joinLinkOpen` are left out when false or 0. */
+function sharingFields(sharing: CollectionSharing | undefined): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (sharing === undefined) return fields;
+  if (sharing.public) fields.public = true;
+  if (sharing.members > 0) fields.sharedWithMembers = sharing.members;
+  if (sharing.joinLinkOpen) fields.joinLinkOpen = true;
+  return fields;
 }
 
 function collectionNotFound(dest: string): McpToolOutcome {
@@ -384,6 +394,8 @@ const listCollectionsTool: McpToolSpec = {
     "List the user's own named recipe collections with how many recipes each holds, plus Unfiled (id \"unfiled\") for recipes in none. " +
     'Use an id as collectionId in search_recipes, create_recipe or move_recipes. ' +
     'A collection marked public: true has a public link anyone can read, so recipes cannot be filed into it from here. ' +
+    'sharedWithMembers is how many other members it is shared with, and joinLinkOpen means a link is out that lets more join; ' +
+    'they all see its recipes, so moving recipes out of such a collection takes them away from those people: check with the user first. ' +
     UNTRUSTED_TEXT_NOTICE,
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   annotations: { readOnlyHint: true, openWorldHint: false },
@@ -395,7 +407,8 @@ const listCollectionsTool: McpToolSpec = {
     unknownArgs(args, [], errors);
     if (errors.length > 0) return invalid(errors);
 
-    const [library, publicIds] = await Promise.all([ctx.loadLibrary(), ctx.livePublicCollectionIds()]);
+    const library = await ctx.loadLibrary();
+    const sharing = await ctx.collectionSharing(library.collections.map((c) => c.id));
     const membership = winningMembership(library.collections);
     const counts = new Map<string, number>();
     let unfiled = 0;
@@ -411,7 +424,7 @@ const listCollectionsTool: McpToolSpec = {
       id: c.id,
       name: c.name,
       recipeCount: counts.get(c.id) ?? 0,
-      ...(publicIds.has(c.id) ? { public: true } : {}),
+      ...sharingFields(sharing.get(c.id)),
     }));
     collections.push({ id: UNFILED, name: 'Unfiled', recipeCount: unfiled });
     return { ok: true, data: { collections } };
@@ -478,8 +491,10 @@ const createTool: McpToolSpec = {
     }
     const outcome = await ctx.createRecipeInCollection(id, built.payload, dest);
     if (outcome.kind !== 'ok') return collectionWriteFailure(outcome, dest);
-    const data: Record<string, unknown> = { recipe: toMcpRecipe(stored, outcome.collectionName || dest) };
-    if (outcome.sharedWithMembers > 0) data.sharedWithMembers = outcome.sharedWithMembers;
+    const data: Record<string, unknown> = {
+      recipe: toMcpRecipe(stored, outcome.collectionName || dest),
+      ...sharingFields({ public: false, members: outcome.sharedWithMembers, joinLinkOpen: outcome.joinLinkOpen }),
+    };
     return { ok: true, data, recipes: 1 };
   },
 };
@@ -576,8 +591,9 @@ const moveTool: McpToolSpec = {
     'A recipe is in at most one collection, so moving it takes it out of any other. ' +
     `Send 1 to ${MAX_MOVE_IDS} recipe ids; every one must be the user's own recipe, or nothing moves and missingIds lists the rest. ` +
     'A collection marked public: true in list_collections cannot receive recipes from here (not_allowed); ask the user to do that in the Sous app. ' +
-    'If the destination is shared with other members, sharedWithMembers says how many of them now see these recipes ' +
-    '(people who later join through a collection link will too); tell the user. ' +
+    'removedFrom lists every collection the recipes were taken out of, with sharedWithMembers, joinLinkOpen and public when that ' +
+    'collection was shared: the people who could see the recipes there no longer can. When the destination is shared, ' +
+    'sharedWithMembers and joinLinkOpen on the result say who now sees them. Tell the user either way. ' +
     'Recipe versions do not change. ' +
     UNTRUSTED_TEXT_NOTICE,
   inputSchema: {
@@ -622,7 +638,13 @@ const moveTool: McpToolSpec = {
       movedIds: outcome.moved,
     };
     if (outcome.alreadyThere.length > 0) data.alreadyThereIds = outcome.alreadyThere;
-    if (outcome.sharedWithMembers > 0) data.sharedWithMembers = outcome.sharedWithMembers;
+    Object.assign(
+      data,
+      sharingFields({ public: false, members: outcome.sharedWithMembers, joinLinkOpen: outcome.joinLinkOpen }),
+    );
+    if (outcome.leftCollections.length > 0) {
+      data.removedFrom = outcome.leftCollections.map((c) => ({ id: c.id, name: c.name, ...sharingFields(c) }));
+    }
     return { ok: true, data, recipes: outcome.moved.length };
   },
 };

@@ -47,12 +47,21 @@ Unfiled.
   come from any imported page. The check reads the live links inside the
   write transaction, so it cannot race the owner turning a link on (that
   transaction reads the collection doc this one writes). Collections shared
-  with members or by a join link are allowed; the result carries
-  `sharedWithMembers` (live member grants; people who join later through a
-  collection link are not counted) so the model can say who now sees it.
-  Moving out of a public or shared collection is allowed.
-- **`list_collections` marks public collections** (`public: true`), from one
-  query on the member's live public links, so the model can avoid them.
+  with members or by a join link are allowed, and so is moving out of a
+  public or shared collection.
+- **The model is told who is affected on both sides.** The result carries
+  `sharedWithMembers` (live member grants) and `joinLinkOpen` (an unexpired
+  join link is out, even with 0 members) for the destination, and
+  `removedFrom` lists every collection the recipes left, with the same
+  fields and `public`. These are reads in the write transaction; a join-link
+  or public row that cannot be parsed counts.
+- **`list_collections` shows each collection's sharing** (`public: true`,
+  `sharedWithMembers`, `joinLinkOpen: true`) from two owner-wide queries
+  (public links, join links) and one grants read per collection, so the
+  model can avoid public ones and check with the user before emptying a
+  shared one. (Added after review: a move out of a shared collection, or
+  into one with an open link and no members yet, used to look like any
+  other success.)
 - **Server-stamped times.** Each changed collection gets `updatedAt =
   max(now, stored + 1)` (`nextRecipeUpdatedAt`) and `serverUpdatedAt = now`,
   and keeps its other stored fields. `now` is read inside each transaction

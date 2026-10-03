@@ -28,9 +28,8 @@ import { publicOrigin } from '../env.ts';
 import { readBoundedText } from '../membership.ts';
 import { admitTranslateCall } from '../recipeTranslation.ts';
 import { isSafeFirestoreDocumentId } from '../grants.ts';
-import { listLivePublicCollectionIds } from '../publicLinks.ts';
 import { isLiveDoc, putDoc, readDocsData, updateOwnRecipe } from '../store.ts';
-import { createOwnRecipeInCollection, moveOwnRecipes } from './collectionMove.ts';
+import { createOwnRecipeInCollection, listCollectionSharing, moveOwnRecipes } from './collectionMove.ts';
 import {
   MCP_BODY_LIMIT,
   MCP_LIBRARY_LIMITS,
@@ -87,7 +86,7 @@ function liveToolContext(sub: string): McpToolContext {
     createRecipe: async (id, payload, now) => (await putDoc(sub, 'recipes', id, payload, now)).applied,
     createRecipeInCollection: (id, payload, dest) => createOwnRecipeInCollection(sub, id, payload, dest),
     moveRecipes: (ids, dest) => moveOwnRecipes(sub, ids, dest),
-    livePublicCollectionIds: () => listLivePublicCollectionIds(sub),
+    collectionSharing: (ids) => listCollectionSharing(sub, ids, Date.now()),
     updateRecipe: (id, expectedVersion, apply) => updateOwnRecipe(sub, id, expectedVersion, apply),
     newId: () => randomUUID(),
     now: () => Date.now(),

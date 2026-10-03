@@ -11,7 +11,9 @@
  *
  * A destination with a live public link is refused: anyone on the web reads
  * it, and the model asking may be steered by an imported page. Collections
- * shared with members are allowed, and the outcome counts their live grants.
+ * shared with members are allowed. The outcome reports who can see the
+ * destination and every collection the recipes left, so the model can tell
+ * the user who gained or lost them.
  *
  * `planCollectionMove` and `runCollectionWrite` (over a `CollectionTxPort`)
  * are pure enough to test; `moveOwnRecipes` and `createOwnRecipeInCollection`
@@ -20,7 +22,8 @@
 import type { Transaction } from '@google-cloud/firestore';
 import { winningMembership } from '../agent/index.ts';
 import { grantColRef, isLiveGrant, parseGrantDoc } from '../grants.ts';
-import { hasLivePublicLinkInTransaction } from '../publicLinks.ts';
+import { hasOpenCollectionLinkInTransaction, listOpenCollectionLinkIds } from '../collectionLinks.ts';
+import { hasLivePublicLinkInTransaction, listLivePublicCollectionIds } from '../publicLinks.ts';
 import {
   collectionDocRef,
   collectionsColRef,
@@ -118,18 +121,28 @@ export function planCollectionMove(
   return plan;
 }
 
+/**
+ * Who can see a collection besides its owner: a live public link (anyone on
+ * the web), members with a live grant, and whether an unexpired join link is
+ * out (people who may join later, so the model is told even at 0 members).
+ */
+export type CollectionSharing = { public: boolean; members: number; joinLinkOpen: boolean };
+
+/** A collection the recipes left in a move, and who could see them there. */
+export type LeftCollection = CollectionSharing & { id: string; name: string };
+
 export type CollectionWriteOutcome =
   | {
       kind: 'ok';
       moved: string[];
       alreadyThere: string[];
       collectionName?: string;
-      /**
-       * Members the destination is shared with (live grants), who now see
-       * these recipes. People who join later through a collection link are
-       * not counted.
-       */
+      /** Members the destination is shared with (live grants), who now see these recipes. */
       sharedWithMembers: number;
+      /** The destination has an open join link: whoever joins will see these recipes too. */
+      joinLinkOpen: boolean;
+      /** Every collection the recipes were taken out of, with its sharing. */
+      leftCollections: LeftCollection[];
     }
   | { kind: 'recipes_not_found'; missingIds: string[] }
   | { kind: 'collection_not_found' }
@@ -146,16 +159,18 @@ export interface CollectionTxPort {
   readRecipes(ids: readonly string[]): Promise<Array<Record<string, unknown> | undefined>>;
   /** Every stored collection document of the member, tombstones included. */
   readCollections(): Promise<StoredCollection[]>;
-  /** Whether `dest` has a live public link. Fails closed on any matching row. */
-  hasLivePublicLink(dest: string): Promise<boolean>;
-  /** Live member grants on `dest`. */
-  countLiveGrants(dest: string): Promise<number>;
+  /** Who else can see `collectionId`. A public or join-link row that cannot be parsed counts. */
+  readSharing(collectionId: string): Promise<CollectionSharing>;
   /** `create`, never `set`: an existing id fails instead of being overwritten. */
   createRecipe(id: string, doc: Record<string, unknown>): void;
   setCollection(id: string, doc: Record<string, unknown>): void;
 }
 
-function firestorePort(tx: Transaction, uid: string): CollectionTxPort {
+function liveGrantCount(docs: readonly { id: string; data(): unknown }[]): number {
+  return docs.filter((doc) => isLiveGrant(parseGrantDoc(doc.data(), doc.id))).length;
+}
+
+function firestorePort(tx: Transaction, uid: string, now: number): CollectionTxPort {
   return {
     async readRecipes(ids) {
       if (ids.length === 0) return [];
@@ -166,10 +181,11 @@ function firestorePort(tx: Transaction, uid: string): CollectionTxPort {
       const snap = await tx.get(collectionsColRef(uid));
       return snap.docs.map((doc) => ({ ...(doc.data() as Record<string, unknown>), id: doc.id }));
     },
-    hasLivePublicLink: (dest) => hasLivePublicLinkInTransaction(tx, uid, dest),
-    async countLiveGrants(dest) {
-      const grants = await tx.get(grantColRef(uid, dest));
-      return grants.docs.filter((doc) => isLiveGrant(parseGrantDoc(doc.data(), doc.id))).length;
+    async readSharing(collectionId) {
+      const isPublic = await hasLivePublicLinkInTransaction(tx, uid, collectionId);
+      const grants = await tx.get(grantColRef(uid, collectionId));
+      const joinLinkOpen = await hasOpenCollectionLinkInTransaction(tx, uid, collectionId, now);
+      return { public: isPublic, members: liveGrantCount(grants.docs), joinLinkOpen };
     },
     createRecipe(id, doc) {
       tx.create(recipeDocRef(uid, id), doc);
@@ -185,10 +201,12 @@ export type NewRecipe = { id: string; payload: Record<string, unknown> };
 
 /**
  * One collection write, all reads first: the recipes being moved (each must
- * be live in the member's tree), the collections, then the destination's
- * public link and grants. Writes happen only when every check passed.
- * `serverNow` is read inside the transaction attempt, so a retried attempt
- * never stamps a time older than writes that committed before it.
+ * be live in the member's tree), the collections, the destination's sharing
+ * (refused when public), and the sharing of every collection the recipes
+ * leave, which the outcome reports so the model can tell the user who lost
+ * them. Writes happen only when every check passed. `serverNow` is read
+ * inside the transaction attempt, so a retried attempt never stamps a time
+ * older than writes that committed before it.
  */
 export async function runCollectionWrite(
   port: CollectionTxPort,
@@ -201,10 +219,16 @@ export async function runCollectionWrite(
   const filing = input.create === undefined ? moveIds : [...moveIds, input.create.id];
   const plan = planCollectionMove(await port.readCollections(), filing, input.dest, input.serverNow);
   if (plan.kind !== 'ok') return plan;
-  let sharedWithMembers = 0;
+  let destination: CollectionSharing = { public: false, members: 0, joinLinkOpen: false };
   if (input.dest !== UNFILED) {
-    if (await port.hasLivePublicLink(input.dest)) return { kind: 'public_collection' };
-    sharedWithMembers = await port.countLiveGrants(input.dest);
+    destination = await port.readSharing(input.dest);
+    if (destination.public) return { kind: 'public_collection' };
+  }
+  const leftCollections: LeftCollection[] = [];
+  for (const { id, doc } of plan.writes) {
+    if (id === input.dest) continue;
+    const name = typeof doc.name === 'string' && doc.name !== '' ? doc.name : id;
+    leftCollections.push({ id, name, ...(await port.readSharing(id)) });
   }
   if (input.create !== undefined) {
     const { id, payload } = input.create;
@@ -217,7 +241,9 @@ export async function runCollectionWrite(
     moved: plan.moved,
     alreadyThere: plan.alreadyThere,
     ...(plan.collectionName === undefined ? {} : { collectionName: plan.collectionName }),
-    sharedWithMembers,
+    sharedWithMembers: destination.members,
+    joinLinkOpen: destination.joinLinkOpen,
+    leftCollections,
   };
 }
 
@@ -231,9 +257,10 @@ export async function moveOwnRecipes(
   recipeIds: readonly string[],
   dest: string,
 ): Promise<CollectionWriteOutcome> {
-  return getStoreFirestore().runTransaction((tx) =>
-    runCollectionWrite(firestorePort(tx, uid), { moveIds: recipeIds, dest, serverNow: Date.now() }),
-  );
+  return getStoreFirestore().runTransaction((tx) => {
+    const serverNow = Date.now();
+    return runCollectionWrite(firestorePort(tx, uid, serverNow), { moveIds: recipeIds, dest, serverNow });
+  });
 }
 
 /**
@@ -247,7 +274,39 @@ export async function createOwnRecipeInCollection(
   payload: Record<string, unknown>,
   dest: string,
 ): Promise<CollectionWriteOutcome> {
-  return getStoreFirestore().runTransaction((tx) =>
-    runCollectionWrite(firestorePort(tx, uid), { moveIds: [], create: { id, payload }, dest, serverNow: Date.now() }),
-  );
+  return getStoreFirestore().runTransaction((tx) => {
+    const serverNow = Date.now();
+    return runCollectionWrite(firestorePort(tx, uid, serverNow), {
+      moveIds: [],
+      create: { id, payload },
+      dest,
+      serverNow,
+    });
+  });
+}
+
+/**
+ * Sharing of each of the member's collections, for `list_collections`. Not
+ * transactional: two owner-wide queries (public links, join links) and one
+ * grants read per collection.
+ */
+export async function listCollectionSharing(
+  uid: string,
+  collectionIds: readonly string[],
+  now: number,
+): Promise<Map<string, CollectionSharing>> {
+  const [publicIds, joinLinkIds, grants] = await Promise.all([
+    listLivePublicCollectionIds(uid),
+    listOpenCollectionLinkIds(uid, now),
+    Promise.all(collectionIds.map((id) => grantColRef(uid, id).get())),
+  ]);
+  const out = new Map<string, CollectionSharing>();
+  collectionIds.forEach((id, i) => {
+    out.set(id, {
+      public: publicIds.has(id),
+      members: liveGrantCount(grants[i]!.docs),
+      joinLinkOpen: joinLinkIds.has(id),
+    });
+  });
+  return out;
 }

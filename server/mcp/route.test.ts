@@ -38,7 +38,7 @@ function toolContext(): McpToolContext {
     createRecipe: vi.fn(async () => true),
     createRecipeInCollection: vi.fn(async () => ({ kind: 'collection_not_found' as const })),
     moveRecipes: vi.fn(async () => ({ kind: 'collection_not_found' as const })),
-    livePublicCollectionIds: vi.fn(async () => new Set<string>()),
+    collectionSharing: vi.fn(async () => new Map()),
     updateRecipe: vi.fn(async () => ({ kind: 'not_found' as const })),
     newId: () => '33333333-3333-4333-8333-333333333333',
     now: () => 10,

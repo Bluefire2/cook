@@ -499,7 +499,11 @@ is `server/mcp/`; `scripts/server.ts` imports only `server/mcp/index.ts`.
   `collectionId`; it and `move_recipes` file recipes with the app's
   membership rule in one transaction (`server/mcp/collectionMove.ts`,
   `docs/plans/mcp-collection-writes.md`) and refuse a collection with a live
-  public link (`not_allowed`); member-shared collections are allowed.
+  public link (`not_allowed`); member-shared collections are allowed. Results
+  say who can see the destination and every collection the recipes left
+  (`sharedWithMembers`, `joinLinkOpen`, `public`), and `list_collections`
+  shows the same per collection, so the model can tell the user who gained
+  or lost recipes.
   `update_recipe` needs the stored `updatedAt` as `version` (else
   `conflict`), patches fields, and writes through `updateOwnRecipe`; the
   server stamps every time (`nextRecipeUpdatedAt`). Input is validated
