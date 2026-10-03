@@ -1,7 +1,7 @@
 # In-context translation review as a suite and a scheduled workflow
 
-Status: steps 1 (spike), 2 (capture), and 3 (judge) done on
-`claude/i18n-review-ci`; results below. Steps 4–7 not built.
+Status: steps 1 (spike), 2 (capture), 3 (judge), and 4 (report) done on
+`claude/i18n-review-ci`; results below. Steps 5–7 not built.
 
 Constitutions applied: `docs/constitutions/i18n.md`. This plan builds the
 "standalone i18n review suite" milestone from `docs/plans/i18n.md` and
@@ -408,6 +408,41 @@ production, which removes the reason for the read-only rule.
 
 4. **[core] Report.** `report.ts`: the README's report, `results.json`, and
    candidate keys. Check: the broken string from step 3 lists its key.
+   **Results (2026-10-03):** `report.ts` and `report.test.ts` (17 pure
+   tests). `run.ts` writes `report.md` and `results.json` beside the
+   captures in the output directory; `captures.json` and `judgments.json`
+   are gone, since `results.json` holds both.
+   - **`results.json`** is what step 6 reads: the commit (and whether the
+     tree had uncommitted changes), scope, languages, judge calls and limit,
+     one cell per state and language, and every finding, confirmed or not,
+     with its fingerprint, screenshot path, and candidate keys.
+   - **Cells:** `pass`, `fail`, `reference` (English in a task run),
+     `captured` (`--no-judge`), `capture failed`, `not deterministic`,
+     `judge error`, `not judged: call limit`, `not judged: no reference`
+     (English did not capture), or `skipped: <reason>`.
+   - **Candidate keys** match the quoted text against every string and
+     plural form in the finding's catalog, best match first: the quote is
+     the whole string, then the string inside a longer quote, then the quote
+     inside a string. `{count}` matches only a number, any other param any
+     text. With no match in the target catalog it searches English, for
+     text left in English. Up to five keys, most specific first.
+   - **Check.** The step 3 defects were planted in the page, not the
+     catalogs, so no key holds them. Instead, two defects were planted in
+     the catalogs of a scratch build, and the run was pointed at seven
+     states in `uk` and `ru`: the `uk` few form of `library.moveManyTitle`
+     changed to "рецептів", and `ru` `settings.language` set to
+     "Language". Both were confirmed blockers (14 calls), and the report
+     named `library.moveManyTitle` and `settings.language` as their only
+     candidate keys. The other ten pairs passed.
+   - **Report location.** The README asks for `.i18n-review/<date>.md`;
+     the suite writes `.i18n-review/<date>/report.md`, so its screenshot
+     links are relative. The README rewrite in step 7 says so.
+   - **Merged `main`** (#117 Share beside the collection menu, #125's
+     Playwright click-through). The new manifest state
+     `library-collection-menu` is scripted (49 of 91). #125 depends on
+     `playwright-core` with the installed Chrome; the suite keeps
+     `playwright` and its bundled Chromium, which pins the browser that
+     screenshots depend on.
 5. **[core] All states.** The remaining entries, the recordings, and
    `states.test.ts`. List the skipped ids and reasons in this plan. Check:
    a full local run completes and every manifest id is captured or skipped

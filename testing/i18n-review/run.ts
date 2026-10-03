@@ -2,7 +2,9 @@
  * `npm run test:i18n`: the in-context translation review
  * (docs/i18n-review/README.md, docs/plans/i18n-review-ci.md) against a running
  * test-mode server. It captures each state, then has the judge review each
- * target language against English. The Markdown report comes in step 4.
+ * target language against English, and writes `report.md` (the README's
+ * report) and `results.json` (what the daily workflow files) to the output
+ * directory, with each capture as `<state>/<lang>.png` and `.txt`.
  *
  *   npm run test:i18n -- [--base-url http://localhost:4173] [--states a,b]
  *                        [--langs uk,ru] [--scope task|full] [--no-judge]
@@ -17,6 +19,7 @@
  * Exits non-zero when a capture fails, a judge call fails, or a confirmed
  * blocker is found.
  */
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +28,8 @@ import { chromium } from 'playwright';
 import { GoogleGenAI } from '@google/genai';
 import { captureState, readCaptureEnv } from './capture.ts';
 import { isLang, LANGS, type Lang } from './catalog.ts';
-import { CallBudget, judgeAll, type JudgeTask, readSources, type Shot } from './judge.ts';
+import { CallBudget, JUDGE_MODEL, type Judgment, judgeAll, type JudgeTask, readSources, type Shot } from './judge.ts';
+import { buildResults, type CaptureRow, renderReport } from './report.ts';
 import { isSkipped, STATES } from './states.ts';
 
 const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -48,10 +52,10 @@ const repeat = Number(values.repeat);
 if (!Number.isInteger(repeat) || repeat < 1 || repeat > 3) {
   throw new Error(`--repeat must be 1, 2, or 3, not ${values.repeat}`);
 }
-const scope = values.scope;
-if (scope !== 'task' && scope !== 'full') {
-  throw new Error(`--scope must be task or full, not ${scope}`);
+if (values.scope !== 'task' && values.scope !== 'full') {
+  throw new Error(`--scope must be task or full, not ${values.scope}`);
 }
+const scope: 'task' | 'full' = values.scope;
 const requested = (values.langs?.split(',') ?? [...LANGS]).map((value) => value.trim());
 const badLang = requested.find((value) => !isLang(value));
 if (badLang !== undefined) {
@@ -77,20 +81,21 @@ if (unknown.length > 0) {
 const date = new Date().toISOString().slice(0, 10);
 const outDir = resolve(values.out ?? join(repoRoot, '.i18n-review', date));
 
-interface Row {
-  state: string;
-  lang: Lang;
-  status: 'ok' | 'failed' | 'skipped' | 'unstable';
-  detail?: string;
-  sha256?: string;
-  ms?: number;
+/** The commit under review, and whether the working tree had changes on top. */
+function gitState(): { commit: string | null; dirty: boolean } {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
+  try {
+    return { commit: git('rev-parse', 'HEAD'), dirty: git('status', '--porcelain') !== '' };
+  } catch {
+    return { commit: process.env.GITHUB_SHA ?? null, dirty: false };
+  }
 }
 
 async function main(): Promise<void> {
   const env = await readCaptureEnv(baseUrl);
   mkdirSync(outDir, { recursive: true });
   const browser = await chromium.launch();
-  const rows: Row[] = [];
+  const rows: CaptureRow[] = [];
   const shots = new Map<string, Shot>();
   try {
     for (const state of wanted) {
@@ -138,14 +143,15 @@ async function main(): Promise<void> {
     await browser.close();
   }
 
-  writeFileSync(join(outDir, 'captures.json'), JSON.stringify(rows, null, 2));
-  const count = (status: Row['status']) => rows.filter((row) => row.status === status).length;
+  const count = (status: CaptureRow['status']) => rows.filter((row) => row.status === status).length;
   console.log(
     `\n${count('ok')} captured, ${count('failed')} failed, ${count('unstable')} not deterministic, ` +
       `${count('skipped')} skipped. Output: ${outDir}`,
   );
   let failed = count('failed') + count('unstable') > 0;
 
+  let judgments: Judgment[] | null = null;
+  const budget = new CallBudget();
   if (judging && apiKey) {
     const setupOf = (id: string) => manifest.find((entry) => entry.id === id)?.setup ?? '';
     const tasks: JudgeTask[] = [];
@@ -157,8 +163,7 @@ async function main(): Promise<void> {
       }
     }
     console.log(`Judging ${tasks.length} captures.`);
-    const budget = new CallBudget();
-    const judgments = await judgeAll(
+    judgments = await judgeAll(
       tasks,
       { ai: new GoogleGenAI({ apiKey }), sources: readSources(repoRoot) },
       budget,
@@ -169,7 +174,6 @@ async function main(): Promise<void> {
         }
       },
     );
-    writeFileSync(join(outDir, 'judgments.json'), JSON.stringify(judgments, null, 2));
     const blockers = judgments.flatMap((j) => j.confirmed.filter((f) => f.severity === 'blocker'));
     const nits = judgments.flatMap((j) => j.confirmed.filter((f) => f.severity === 'nit'));
     const errors = judgments.filter((j) => j.status === 'error').length;
@@ -183,6 +187,22 @@ async function main(): Promise<void> {
     }
     failed ||= blockers.length > 0 || errors > 0 || overBudget > 0;
   }
+
+  const results = buildResults({
+    date,
+    ...gitState(),
+    scope,
+    langs,
+    judgedLangs,
+    model: JUDGE_MODEL,
+    judgeCalls: budget.used,
+    callLimit: budget.limit,
+    captures: rows,
+    judgments,
+  });
+  writeFileSync(join(outDir, 'results.json'), `${JSON.stringify(results, null, 2)}\n`);
+  writeFileSync(join(outDir, 'report.md'), renderReport(results));
+  console.log(`Report: ${join(outDir, 'report.md')}`);
   process.exitCode = failed ? 1 : 0;
 }
 

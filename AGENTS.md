@@ -668,7 +668,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/mcp-collection-writes.md` | Built on `claude/mcp-collection-writes`, not deployed. `create_recipe` into a collection and `move_recipes`; collections with a public link are refused. |
 | `docs/plans/mcp-server.md` | Built on `claude/llm-api-vs-mcp-04b215`, not deployed. Remote MCP server at `/mcp` with its own OAuth 2.1 authorization server (CIMD clients, no DCR): search, get, list collections, create and edit (with a version check) over the member's own recipes. No delete. |
 | `docs/plans/test-mode.md` | Merged (#123). `testing/test-server.ts` runs the app against a seeded Firestore emulator; `/__test/sign-in?as=<persona>` signs in a fake account with a real session cookie. Not in the image. The emulator runs in CI only in the `test-mode` job (owner-approved exception, Tests and verification). |
-| `docs/plans/i18n-review-ci.md` | Planned, not built. `npm run test:i18n`: the in-context translation review as a Playwright + Gemini-judge suite in `testing/i18n-review/`, run against test mode with model responses replayed; a daily workflow on `main` keeps one `i18n-review` issue of open findings. Amends i18n principle 16. |
+| `docs/plans/i18n-review-ci.md` | Steps 1–4 built on `claude/i18n-review-ci` (capture, judge, report); steps 5–7 open. `npm run test:i18n`: the in-context translation review as a Playwright + Gemini-judge suite in `testing/i18n-review/`, run against test mode with model responses replayed; a daily workflow on `main` keeps one `i18n-review` issue of open findings. Amends i18n principle 16. |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not

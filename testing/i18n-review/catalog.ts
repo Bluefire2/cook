@@ -21,7 +21,8 @@ export const LANG_NAMES: Record<Lang, string> = {
 
 export type MessageKey = keyof typeof en;
 
-const CATALOGS: Record<Lang, Record<MessageKey, unknown>> = { en, uk, ru, 'zh-Hans': zhHans };
+/** Each value is a string or, for a plural key, an object of plural forms. */
+export const CATALOGS: Record<Lang, Record<MessageKey, unknown>> = { en, uk, ru, 'zh-Hans': zhHans };
 
 export function isLang(value: string): value is Lang {
   return (LANGS as readonly string[]).includes(value);
