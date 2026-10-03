@@ -4,10 +4,13 @@
  * tokens from `GET /__test/personas`.
  *
  * The consent page is not exercised. It fetches the client's metadata
- * document from a public https host, and test mode does not depend on that.
+ * document from a public https host, and test mode does not depend on that
+ * network. Checking the hop to `/oauth/consent` is as far as this script
+ * goes; the page itself stays in `server/mcp/oauth/consentPage.test.ts`.
  * The seed has already redeemed an authorization code through `POST /oauth/token`.
  */
 import { s256Challenge } from '../server/mcp/oauth/pkce.ts';
+import { MCP_TOOLS } from '../server/mcp/tools.ts';
 import { FIXTURE_IDS, memberLibrary } from './fixtures.ts';
 import { SEEDED_MCP_CLIENT_ID, SEEDED_MCP_REDIRECT_URI, type SeededMcpTokens } from './seededMcp.ts';
 
@@ -287,11 +290,10 @@ async function checkTools(baseUrl: string, token: string, memberCookie: string, 
 
   const listed = await mcp(baseUrl, rpcBody('tools/list', {}), token);
   const names = ((listed.body as { result?: { tools?: { name: string }[] } }).result?.tools ?? []).map((tool) => tool.name);
+  const expectedTools = MCP_TOOLS.map((tool) => tool.name);
   check(
-    'tools/list is the five recipe tools',
-    listed.status === 200 &&
-      JSON.stringify(names) ===
-        JSON.stringify(['search_recipes', 'get_recipes', 'list_collections', 'create_recipe', 'update_recipe']),
+    'tools/list matches the server tool list',
+    listed.status === 200 && JSON.stringify(names) === JSON.stringify(expectedTools),
     JSON.stringify(names),
   );
 
@@ -366,6 +368,50 @@ async function checkTools(baseUrl: string, token: string, memberCookie: string, 
       byName.get("Owner's picks") === undefined &&
       rows.length === 3,
     JSON.stringify(rows.map((row) => `${row.name}:${row.recipeCount}`)),
+  );
+
+  const oatsId = FIXTURE_IDS.member.overnightOats;
+  const bakingId = FIXTURE_IDS.member.baking;
+  const moved = await mcp(baseUrl, toolCall('move_recipes', { ids: [oatsId], collectionId: bakingId }), token);
+  const movedData = toolResult(moved.body)?.structuredContent;
+  const movedTo = movedData?.collection as { id?: unknown } | undefined;
+  check(
+    'move_recipes files an unfiled recipe into Baking',
+    moved.status === 200 &&
+      toolResult(moved.body)?.isError !== true &&
+      movedTo?.id === bakingId &&
+      JSON.stringify(movedData?.movedIds) === JSON.stringify([oatsId]),
+    `status ${moved.status} ${toolError(moved.body) ?? ''}`,
+  );
+
+  const foreignMove = await mcp(
+    baseUrl,
+    toolCall('move_recipes', { ids: [oatsId, FIXTURE_IDS.owner.shakshuka], collectionId: bakingId }),
+    token,
+  );
+  check(
+    "move_recipes changes nothing when an id is another account's recipe",
+    foreignMove.status === 200 &&
+      toolError(foreignMove.body) === 'not_found' &&
+      JSON.stringify(toolResult(foreignMove.body)?.structuredContent?.missingIds) ===
+        JSON.stringify([FIXTURE_IDS.owner.shakshuka]),
+    toolError(foreignMove.body) ?? `status ${foreignMove.status}`,
+  );
+
+  const afterMove = await call(baseUrl, '/api/sync/pull?limit=500', { headers: { Cookie: memberCookie } });
+  const collectionRows = (
+    (afterMove.body as { changes?: { collections?: { id: string; recipeIds?: string[] }[] } }).changes?.collections ??
+    []
+  );
+  const recipeIdsOf = (id: string) => collectionRows.find((row) => row.id === id)?.recipeIds ?? [];
+  const listedIds = collectionRows.flatMap((row) => row.recipeIds ?? []);
+  check(
+    'Baking holds the moved recipe and the other account stays out',
+    afterMove.status === 200 &&
+      recipeIdsOf(bakingId).includes(oatsId) &&
+      !recipeIdsOf(FIXTURE_IDS.member.weeknights).includes(oatsId) &&
+      !listedIds.includes(FIXTURE_IDS.owner.shakshuka),
+    `status ${afterMove.status}`,
   );
 
   const created = await mcp(

@@ -119,7 +119,7 @@ without a key.
   `fetch` and reads back what each one should see, with the expected values
   taken from the fixtures. It also calls the MCP server: discovery, authorize
   and token errors, `/mcp` with the seeded member tokens (search, get, list
-  collections, create, edit, conflict), refresh narrowed to read-only, and
+  collections, create, edit, conflict, move into a collection), refresh narrowed to read-only, and
   disconnect. The `test-mode` CI job runs it; run it yourself with
   `node testing/smoke.ts http://localhost:3001`. Those MCP checks create a
   recipe and disconnect the seeded app, and they need the tokens from this

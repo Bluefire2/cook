@@ -376,8 +376,8 @@ before `npm run dev:test`.
   with no cookie is 401. It also drives the MCP endpoints (`testing/mcpSmoke.ts`):
   both discovery documents, method and authorize/token refusals, a session
   cookie and a bearer staying on their own routes, `/mcp` search/get/list/
-  create/update against the member library (including a stale-version conflict
-  and another account's recipe coming back missing), refresh narrowed to
+  create/update/move against the member library (including a stale-version conflict,
+  filing a recipe into a collection, and another account's recipe coming back missing), refresh narrowed to
   `recipes:read`, and disconnect from Settings then revoke.
 - **The picker waits for the seed.** Review found that `/__test/` offered
   personas while the seed was still running; a sign-in then lands signed out,
