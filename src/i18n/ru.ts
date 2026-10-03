@@ -75,6 +75,7 @@ export const ru: Messages = {
   'library.empty': 'Рецептов пока нет. Импортируйте первый!',
   'library.collectionsEmpty': 'Складывайте рецепты в коллекцию, чтобы делиться ими с людьми, у которых есть аккаунт Sous.',
   'library.actionsFor': 'Действия для «{title}»',
+  'library.collectionActions': 'Действия для «{name}»',
   'library.moveTo': 'Переместить в…',
   'library.closeMenu': 'Закрыть меню',
   'library.languageMenu': 'Язык: русский',

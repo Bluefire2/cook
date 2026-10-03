@@ -70,6 +70,7 @@ export const zhHans: Messages = {
   'library.empty': '还没有食谱。导入你的第一个食谱吧！',
   'library.collectionsEmpty': '把食谱放进合集，就能分享给有 Sous 账号的人。',
   'library.actionsFor': '{title}的操作',
+  'library.collectionActions': '{name}的操作',
   'library.moveTo': '移动到…',
   'library.closeMenu': '关闭菜单',
   'library.languageMenu': '语言：简体中文',

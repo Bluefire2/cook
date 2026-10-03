@@ -76,6 +76,7 @@ export const uk: Messages = {
   'library.empty': 'Рецептів ще немає. Імпортуйте перший!',
   'library.collectionsEmpty': 'Складайте рецепти в колекцію, щоб ділитися ними з людьми, які мають обліковий запис Sous.',
   'library.actionsFor': 'Дії для «{title}»',
+  'library.collectionActions': 'Дії для «{name}»',
   'library.moveTo': 'Перемістити до…',
   'library.closeMenu': 'Закрити меню',
   'library.languageMenu': 'Мова: українська',
