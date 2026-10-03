@@ -385,12 +385,20 @@ production, which removes the reason for the read-only rule.
      an expression, not called; the plant now checks the button clips).
      Final run: 11 of 12 confirmed, 12 of 12 reported. Clean pairs: no false
      blocker in any of the three runs. 53–56 calls per run.
-   - **It found a real bug.** On the Russian recipe screen, "Записать
-     приготовление" (Log a cook) wraps to two lines and its second line sits
-     under the floating "Спросить" (Ask) button at the bottom of the page.
-     Confirmed in every run. `KNOWN_REAL` in `calibration.ts` keeps it from
-     counting as a false positive until it is fixed; the fix is separate
-     work.
+   - **A capture artifact, first taken for a bug.** On the Russian recipe
+     screen the judge confirmed, in every run, that "Записать
+     приготовление" (Log a cook) sat under the floating "Спросить" (Ask)
+     button. It does not: scrolled to the end of the page, the link clears
+     the button by 12 px (the page's `pb-24` already allows for it). A
+     full-page screenshot draws `position: fixed` elements where they sit
+     before any scrolling, so the button landed on the link. `capture.ts`
+     now moves each fixed element floating in the lower half of the screen,
+     outside a dialog, to where it sits at the end of the scroll, the only
+     place content under it is truly unreachable. After that, the judge no
+     longer reports it, recall is unchanged (11 of 12 confirmed, 12 of 12
+     reported, no false blocker on 30 clean pairs), and all 192 captures are
+     still byte-identical across two runs. `KNOWN_REAL` in `calibration.ts`
+     is empty; it is for real bugs the clean set turns up.
    - **Check:** no confirmed blocker on the clean pairs; both "left in
      English" defects caught; recall recorded per item; `MAX_JUDGE_CALLS`
      stopping the run is covered by `judge.test.ts`.

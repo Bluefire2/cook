@@ -30,6 +30,41 @@ async function settle(page: Page): Promise<void> {
   await page.waitForLoadState('networkidle', { timeout: NETWORK_IDLE_MS }).catch(() => undefined);
 }
 
+/**
+ * A full-page screenshot draws `position: fixed` elements where they sit
+ * before any scrolling, so a floating button (the recipe screen's Ask) lands
+ * on whatever content is there and reads as an overlap no one ever sees: the
+ * person scrolls past it. Moves each fixed element floating in the lower half
+ * of the screen, outside a dialog, to where it sits when the page is scrolled
+ * to the end, the only place content under it is truly unreachable. Returns
+ * how many moved.
+ */
+const PIN_FLOATING_TO_END = `(() => {
+  const root = document.documentElement;
+  const scrollable = root.scrollHeight - innerHeight;
+  if (scrollable <= 0) return 0;
+  let moved = 0;
+  for (const el of document.querySelectorAll('body *')) {
+    if (getComputedStyle(el).position !== 'fixed' || el.closest('[role="dialog"]')) continue;
+    // Floating near the bottom: in the lower half and under half the screen
+    // tall, which leaves out full-screen overlays. (Computed top is resolved
+    // to pixels even when only bottom is set, so it cannot tell them apart.)
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0 || rect.top < innerHeight / 2 || rect.height > innerHeight / 2) continue;
+    el.style.position = 'absolute';
+    const parent = (el.offsetParent || document.body).getBoundingClientRect();
+    Object.assign(el.style, {
+      top: rect.top + scrollable - (parent.top + scrollY) + 'px',
+      left: rect.left - parent.left + 'px',
+      bottom: 'auto',
+      right: 'auto',
+      width: rect.width + 'px',
+    });
+    moved += 1;
+  }
+  return moved;
+})()`;
+
 /** Captures read as if taken this long after the seed, whenever they run. */
 const CLOCK_AFTER_SEED_MS = 10 * 60 * 1000;
 
@@ -85,10 +120,10 @@ export async function readCaptureEnv(baseUrl: string): Promise<CaptureEnv> {
   if (publicToken === undefined) {
     throw new Error("Couldn't read Weeknights' public link; is the seed intact?");
   }
-  if (personas.seededAt === null) {
+  if (personas.seededAt == null) {
     console.log('Note: the test server ran with --keep, so relative times are live and captures may differ.');
   }
-  return { baseUrl, seededAt: personas.seededAt, ids: personas.fixtures, publicToken };
+  return { baseUrl, seededAt: personas.seededAt ?? null, ids: personas.fixtures, publicToken };
 }
 
 export function contextFor(lang: Lang, env: CaptureEnv): CaptureContext {
@@ -139,6 +174,7 @@ export async function captureState(
       await settle(page);
     }
     await page.evaluate('document.fonts.ready');
+    await page.evaluate(PIN_FLOATING_TO_END);
     const png = await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide' });
     const pageText = await page.locator('body').innerText();
     return {
