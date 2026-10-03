@@ -98,10 +98,13 @@ scroller scrolls the focused chip into view.
 ## Actions on the open collection
 
 Share, Rename, and Delete are not chips and must not join the scroller.
-When the open collection is owned and named, they sit in one menu opened
-from a vertical ellipsis on the label row, to the right of New collection.
-The menu items open the same sheets as before. There is no second line of
-text actions, and they do not get a bar or a card of their own.
+When the open collection is owned and named, Share is a one-tap icon on
+the label row, to the right of New collection: three nodes joined by two
+angled lines. That mark is the action. The two-node mark on a chip means
+the collection was shared with you. Rename and Delete sit in the menu
+opened from the vertical ellipsis beside the share icon. They open the
+same sheets as before. There is no second line of text actions, and they
+do not get a bar or a card of their own.
 
 When the open collection is shared, those three controls stay hidden. The
 existing shared sentence and Leave sit under the section.
@@ -186,10 +189,11 @@ the row scrolls Guests into view.
 existing sheet. Cancel closes it and changes nothing. A successful create
 opens the new collection.
 
-**Share, rename, delete.** The vertical ellipsis appears on the label row
-only while an owned named collection is open. Share, Rename, and Delete
-are the menu items, and they open the same sheets. After a delete, the
-library returns home as it does today.
+**Share, rename, delete.** The share icon and the vertical ellipsis appear
+on the label row only while an owned named collection is open. The icon
+opens the share sheet. Rename and Delete are the menu items, and they
+open the same sheets. After a delete, the library returns home as it does
+today.
 
 **Shared.** Opening a shared collection selects its chip and shows the
 shared sentence and Leave under the section. Leave is the existing sheet.

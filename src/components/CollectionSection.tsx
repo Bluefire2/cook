@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, useState, type FocusEvent } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useT } from '../i18n';
 import { libraryHref } from '../lib/collectionHref';
-import { FolderIcon, SharedIcon } from '../lib/icons';
+import { FolderIcon, ShareIcon, SharedIcon } from '../lib/icons';
 import type { Collection } from '../lib/types';
 import { chipClass, menuItem, menuItemDanger } from '../lib/uiClasses';
 import { useDisclosureMenu } from '../lib/useDisclosureMenu';
@@ -26,17 +26,15 @@ function revealChip(chip: HTMLElement, scroller: HTMLElement) {
 }
 
 /**
- * Share, rename, and delete for the open owned collection. The sheets stay
- * in Library's flow; this only discloses the three actions.
+ * Rename and delete for the open owned collection. Share is the icon beside
+ * this menu. The sheets stay in Library's flow.
  */
 function CollectionActionsMenu({
   name,
-  onShare,
   onRename,
   onDelete,
 }: {
   name: string;
-  onShare: () => void;
   onRename: () => void;
   onDelete: () => void;
 }) {
@@ -75,15 +73,8 @@ function CollectionActionsMenu({
             <button
               ref={initialItemRef}
               type="button"
-              onClick={() => choose(onShare)}
-              className={menuItem}
-            >
-              {t('common.share')}
-            </button>
-            <button
-              type="button"
               onClick={() => choose(onRename)}
-              className={`${menuItem} border-t border-line`}
+              className={menuItem}
             >
               {t('library.rename')}
             </button>
@@ -194,13 +185,22 @@ export default function CollectionSection({
             {t('common.newCollection')}
           </button>
           {ownedName !== undefined && (
-            <CollectionActionsMenu
-              key={currentId}
-              name={ownedName}
-              onShare={onShare}
-              onRename={onRename}
-              onDelete={onDelete}
-            />
+            <>
+              <button
+                type="button"
+                onClick={onShare}
+                aria-label={t('common.share')}
+                className="-my-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink-subtle hover:bg-surface-muted hover:text-ink active:bg-surface-muted"
+              >
+                <ShareIcon className="block h-5 w-5" />
+              </button>
+              <CollectionActionsMenu
+                key={currentId}
+                name={ownedName}
+                onRename={onRename}
+                onDelete={onDelete}
+              />
+            </>
           )}
         </div>
       </div>
