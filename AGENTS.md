@@ -119,6 +119,22 @@ Vite proxies `/api` to 3001. **Vite alone looks fine and then chat/import/sync
 fail.** After any change under `server/` or `scripts/server.ts`, restart
 `dev:api` — it does not watch those files.
 
+To run several checkouts side by side, choose the ports on the command line;
+nothing is edited, and with no arguments they stay 5173 and 3001:
+
+```
+npm run dev:api -- --port 3101               # or npm run dev:test -- --port 3101
+npm run dev -- --port 5273 --api-port 3101   # --api-port is where Vite proxies
+```
+
+`SOUS_API_PORT` and `SOUS_WEB_PORT` work as fallbacks when the flag is absent
+(`scripts/devPorts.ts`). `npm run dev` is the thin wrapper `scripts/dev-web.ts`
+around Vite, because Vite's CLI rejects `--api-port`; other flags pass through.
+
+Google sign-in only works on 5173: the registered redirect URI is
+`http://localhost:5173/api/auth/callback/google`. On another web port, use
+test mode's `/__test/` sign-in instead.
+
 `.env.local` is gitignored and required for `dev:api`. Never print its values.
 Never add a `VITE_` prefix to a secret; Vite would inline it into the client.
 
@@ -534,9 +550,18 @@ is `server/mcp/`; `scripts/server.ts` imports only `server/mcp/index.ts`.
   read-only grant is 403 `insufficient_scope` (step-up). The gate runs before
   the MCP SDK, so a refusal is never a 200 tool error.
 - **Tools.** `search_recipes`, `get_recipes`, `list_collections`
-  (`recipes:read`), `create_recipe`, `update_recipe` (`recipes:write`), own
-  tree only, via the agent's `loadAgentLibrary`. No delete, no collection
-  writes, no photos, sharing, cook log, chat, translation, or import.
+  (`recipes:read`), `create_recipe`, `update_recipe`, `move_recipes`
+  (`recipes:write`), own tree only, via the agent's `loadAgentLibrary`. No
+  delete, no collection create, rename or delete, no photos, sharing, cook
+  log, chat, translation, or import. `create_recipe` takes an optional
+  `collectionId`; it and `move_recipes` file recipes with the app's
+  membership rule in one transaction (`server/mcp/collectionMove.ts`,
+  `docs/plans/mcp-collection-writes.md`) and refuse a collection with a live
+  public link (`not_allowed`); member-shared collections are allowed. Results
+  say who can see the destination and every collection the recipes left
+  (`sharedWithMembers`, `joinLinkOpen`, `public`), and `list_collections`
+  shows the same per collection, so the model can tell the user who gained
+  or lost recipes.
   `update_recipe` needs the stored `updatedAt` as `version` (else
   `conflict`), patches fields, and writes through `updateOwnRecipe`; the
   server stamps every time (`nextRecipeUpdatedAt`). Input is validated
@@ -640,6 +665,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/html-parser-recipe-import.md` | Built on `cursor/html-parser-recipe-import-11d4`. Not deployed. Replace the hand-rolled HTML scanner in `server/recipeImport.ts` with parse5 (issue #91). |
 | `docs/plans/public-collections.md` | Built on `claude/read-only-unauthenticated-mode-204be2`, not deployed. Unlisted public link per named collection, readable signed out; AI locked; members can add it as viewers. Apply the widened log exclusion before deploying. |
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |
+| `docs/plans/mcp-collection-writes.md` | Built on `claude/mcp-collection-writes`, not deployed. `create_recipe` into a collection and `move_recipes`; collections with a public link are refused. |
 | `docs/plans/mcp-server.md` | Built on `claude/llm-api-vs-mcp-04b215`, not deployed. Remote MCP server at `/mcp` with its own OAuth 2.1 authorization server (CIMD clients, no DCR): search, get, list collections, create and edit (with a version check) over the member's own recipes. No delete. |
 | `docs/plans/test-mode.md` | Built on `claude/test-mode`. `testing/test-server.ts` runs the app against a seeded Firestore emulator; `/__test/sign-in?as=<persona>` signs in a fake account with a real session cookie. Not in the image. The emulator runs in CI only in the `test-mode` job (owner-approved exception, Tests and verification). |
 
@@ -700,6 +726,16 @@ Then remember that `dev:api` reads and writes the production library (Cloud
 and deploy), and say in the PR which check needed it. The in-context
 translation review still follows `docs/i18n-review/README.md` (a real
 session, read-only) until that procedure moves to test mode.
+
+`npm run click:library` (`testing/library-click-through.ts`, #57) is a local
+Playwright click-through of Library search persistence and collection
+switching, in test mode; run it after changing `Library`, `CollectionSection`,
+`librarySearchMemory`, or sign-out. Start the emulator, `npm run dev:test`,
+and `npm run dev`; it signs in as the `member` persona. It aborts every
+non-GET `/api` request except its final sign-out, which is how it shows a
+flow submitted nothing. For a Vite on another port, pass `-- --port 5273` (or
+set `SOUS_WEB_PORT`). It uses `playwright-core` (a devDependency, no browser
+download) with the installed Chrome. Not part of `npm test` or CI.
 
 Chat streaming must not grow `Content-Length` or `Content-Encoding` on
 `/api/chat`. The framing/streaming oracle in `docs/plans/sous-subdomain.md`

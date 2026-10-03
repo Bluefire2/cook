@@ -2,9 +2,10 @@ import { useLayoutEffect, useRef, useState, type FocusEvent } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useT } from '../i18n';
 import { libraryHref } from '../lib/collectionHref';
-import { FolderIcon, SharedIcon } from '../lib/icons';
+import { FolderIcon, ShareIcon, SharedIcon } from '../lib/icons';
 import type { Collection } from '../lib/types';
-import { chipClass } from '../lib/uiClasses';
+import { chipClass, menuItem, menuItemDanger } from '../lib/uiClasses';
+import { useDisclosureMenu } from '../lib/useDisclosureMenu';
 
 function edgeMask(lead: boolean, trail: boolean): string | undefined {
   if (!lead && !trail) return undefined;
@@ -25,6 +26,73 @@ function revealChip(chip: HTMLElement, scroller: HTMLElement) {
 }
 
 /**
+ * Rename and delete for the open owned collection. Share is the icon beside
+ * this menu. The sheets stay in Library's flow.
+ */
+function CollectionActionsMenu({
+  name,
+  onRename,
+  onDelete,
+}: {
+  name: string;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  const t = useT();
+  const { open, panelId, wrapperRef, initialItemRef, triggerProps, close, choose, onBlur } =
+    useDisclosureMenu();
+  const label = t('library.collectionActions', { name });
+
+  return (
+    // The negative margin keeps the 44px target from making the label row
+    // taller than it is when no owned collection is open.
+    <div ref={wrapperRef} className="relative -my-1.5 shrink-0" onBlur={onBlur}>
+      <button
+        {...triggerProps}
+        type="button"
+        aria-label={label}
+        className="flex h-11 w-11 items-center justify-center rounded-full text-xl leading-none text-ink-subtle hover:bg-surface-muted hover:text-ink active:bg-surface-muted"
+      >
+        ⋮
+      </button>
+      {open && (
+        <>
+          <button
+            type="button"
+            aria-label={t('library.closeMenu')}
+            tabIndex={-1}
+            onClick={close}
+            className="fixed inset-0 z-10 cursor-default"
+          />
+          <div
+            id={panelId}
+            role="group"
+            aria-label={label}
+            className="absolute top-full right-0 z-20 mt-1 w-48 overflow-hidden rounded-xl border border-line bg-surface shadow-xl"
+          >
+            <button
+              ref={initialItemRef}
+              type="button"
+              onClick={() => choose(onRename)}
+              className={menuItem}
+            >
+              {t('library.rename')}
+            </button>
+            <button
+              type="button"
+              onClick={() => choose(onDelete)}
+              className={`${menuItemDanger} border-t border-line`}
+            >
+              {t('common.delete')}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
  * Collections on the library: a label and one sideways row of names, on the
  * page background. See docs/plans/library-collections-region.md.
  */
@@ -33,7 +101,7 @@ export default function CollectionSection({
   sharedLabels,
   currentId,
   browseAll,
-  showOwnedActions,
+  ownedName,
   onCreate,
   onShare,
   onRename,
@@ -45,7 +113,8 @@ export default function CollectionSection({
   sharedLabels: ReadonlyMap<string, string>;
   currentId: string | undefined;
   browseAll: boolean;
-  showOwnedActions: boolean;
+  /** Name of the open collection when it is owned and named; undefined otherwise. */
+  ownedName: string | undefined;
   onCreate: () => void;
   onShare: () => void;
   onRename: () => void;
@@ -107,13 +176,33 @@ export default function CollectionSection({
           <FolderIcon className="block h-5 w-5 shrink-0" />
           {t('library.collectionsNav')}
         </Link>
-        <button
-          type="button"
-          onClick={onCreate}
-          className="shrink-0 rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
-        >
-          {t('common.newCollection')}
-        </button>
+        <div className="flex shrink-0 items-center">
+          <button
+            type="button"
+            onClick={onCreate}
+            className="shrink-0 rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
+          >
+            {t('common.newCollection')}
+          </button>
+          {ownedName !== undefined && (
+            <>
+              <button
+                type="button"
+                onClick={onShare}
+                aria-label={t('common.share')}
+                className="-my-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink-subtle hover:bg-surface-muted hover:text-ink active:bg-surface-muted"
+              >
+                <ShareIcon className="block h-5 w-5" />
+              </button>
+              <CollectionActionsMenu
+                key={currentId}
+                name={ownedName}
+                onRename={onRename}
+                onDelete={onDelete}
+              />
+            </>
+          )}
+        </div>
       </div>
       <div
         ref={scrollerRef}
@@ -153,31 +242,6 @@ export default function CollectionSection({
           );
         })}
       </div>
-      {showOwnedActions && (
-        <div className="mt-1 flex flex-wrap items-center">
-          <button
-            type="button"
-            onClick={onShare}
-            className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
-          >
-            {t('common.share')}
-          </button>
-          <button
-            type="button"
-            onClick={onRename}
-            className="rounded-full px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
-          >
-            {t('library.rename')}
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="rounded-full px-3 py-1.5 text-sm text-danger hover:text-ink"
-          >
-            {t('common.delete')}
-          </button>
-        </div>
-      )}
     </section>
   );
 }

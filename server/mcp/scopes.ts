@@ -2,8 +2,8 @@
  * OAuth scopes for `/mcp` and the `WWW-Authenticate` challenges that ask for
  * them. Pure.
  *
- * `recipes:read` covers the read tools; `recipes:write` the create and edit
- * tools, and implies read. A request with no `scope` means read. Unknown
+ * `recipes:read` covers the read tools; `recipes:write` the create, edit and
+ * move tools, and implies read. A request with no `scope` means read. Unknown
  * scopes are refused (`invalid_scope`), never dropped.
  */
 import { resourceMetadataUrl, SCOPE_READ, SCOPE_WRITE, SUPPORTED_SCOPES, type McpScope } from './config.ts';
@@ -15,6 +15,7 @@ export const TOOL_SCOPES = {
   list_collections: SCOPE_READ,
   create_recipe: SCOPE_WRITE,
   update_recipe: SCOPE_WRITE,
+  move_recipes: SCOPE_WRITE,
 } as const satisfies Record<string, McpScope>;
 
 export type McpToolName = keyof typeof TOOL_SCOPES;
