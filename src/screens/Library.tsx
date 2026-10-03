@@ -36,7 +36,6 @@ import {
   readPersistedLibraryView,
   writePersistedLibraryView,
 } from '../lib/librarySearchMemory';
-import { usePhotoUrl } from '../lib/photoStore';
 import { recipeStore, useRecipes } from '../lib/recipeStore';
 import { visibleLibraryRecipes } from '../lib/visibleLibraryRecipes';
 import { useSession } from '../lib/session';
@@ -56,12 +55,12 @@ import {
   primaryBtn,
   secondaryBtn,
 } from '../lib/uiClasses';
+import { StoredPhotoImage } from '../components/BlobImage';
 
 function CardThumb({ photoId }: { photoId: string }) {
-  const url = usePhotoUrl(photoId);
   return (
     <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-surface-muted">
-      {url && <img src={url} alt="" className="h-full w-full object-cover" />}
+      <StoredPhotoImage photoId={photoId} alt="" className="h-full w-full object-cover" />
     </div>
   );
 }

@@ -2,3 +2,4 @@
 # HTML are page content, not application code.
 paths-ignore:
   - 'evals/import-sites/**/*.html'
+  - 'evals/import/**/page.html'
