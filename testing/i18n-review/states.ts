@@ -77,6 +77,14 @@ export const STATES: Record<string, StateEntry> = {
   'library-collections-empty': { persona: 'empty', path: '/' },
   'collections-index': { persona: 'member', path: '/collections' },
   'library-populated': { persona: 'member', path: '/' },
+  'library-collection-menu': {
+    persona: 'member',
+    path: weeknights,
+    reach: async (page, ctx) => {
+      await clickButton(page, ctx.t('library.collectionActions', { name: 'Weeknights' }));
+      await page.locator('[aria-expanded="true"]').waitFor();
+    },
+  },
   'library-select': { persona: 'member', path: weeknights, reach: selectAllInCollection },
   'library-move-many': {
     persona: 'member',

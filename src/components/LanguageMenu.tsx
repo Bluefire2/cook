@@ -1,7 +1,7 @@
-import { useEffect, useId, useRef, useState, type FocusEvent } from 'react';
-import { SUPPORTED_LOCALES, localeDisplayName, useLocale, useT, type Locale } from '../i18n';
+import { SUPPORTED_LOCALES, localeDisplayName, useLocale, useT } from '../i18n';
 import { ChevronDownIcon } from '../lib/icons';
 import { settings } from '../lib/settings';
+import { useDisclosureMenu } from '../lib/useDisclosureMenu';
 import { menuItem } from '../lib/uiClasses';
 
 /**
@@ -12,63 +12,17 @@ import { menuItem } from '../lib/uiClasses';
 export default function LanguageMenu() {
   const t = useT();
   const locale = useLocale();
-  const [open, setOpen] = useState(false);
-  const panelId = useId();
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const currentItemRef = useRef<HTMLButtonElement>(null);
-
-  const close = () => {
-    setOpen(false);
-    triggerRef.current?.focus();
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    currentItemRef.current?.focus({ preventScroll: true });
-    // Capture phase, and stopped, so Library's own Escape handling (closing a
-    // recipe menu, leaving Select) does not also run. Only while focus is in
-    // the menu: an Escape meant for something else (a sheet opened from
-    // Select's bar) closes the menu and passes through.
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      if (!wrapperRef.current?.contains(document.activeElement)) {
-        setOpen(false);
-        return;
-      }
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      setOpen(false);
-      triggerRef.current?.focus();
-    };
-    document.addEventListener('keydown', onKeyDown, true);
-    return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [open]);
-
-  // Focus leaving the menu (Tab, or a tap on something above the backdrop,
-  // such as Select's bar) closes it, so it can't stay open under a sheet.
-  const onBlur = (event: FocusEvent<HTMLDivElement>) => {
-    if (open && !event.currentTarget.contains(event.relatedTarget)) {
-      setOpen(false);
-    }
-  };
-
-  const choose = (code: Locale) => {
-    settings.setLocale(code);
-    close();
-  };
+  const { open, panelId, wrapperRef, initialItemRef, triggerProps, close, choose, onBlur } =
+    useDisclosureMenu();
 
   const label = t('library.languageMenu');
 
   return (
     <div ref={wrapperRef} className="relative" onBlur={onBlur}>
       <button
-        ref={triggerRef}
+        {...triggerProps}
         type="button"
         aria-label={label}
-        aria-expanded={open}
-        aria-controls={open ? panelId : undefined}
-        onClick={() => setOpen((value) => !value)}
         className="inline-flex items-center rounded-full py-2 pr-1.5 pl-2 text-sm font-medium text-ink-muted hover:bg-surface-muted hover:text-ink active:bg-surface-muted"
       >
         <span lang={locale}>{t('library.languageShort')}</span>
@@ -97,11 +51,11 @@ export default function LanguageMenu() {
               return (
                 <button
                   key={code}
-                  ref={current ? currentItemRef : undefined}
+                  ref={current ? initialItemRef : undefined}
                   type="button"
                   lang={code}
                   aria-current={current ? 'true' : undefined}
-                  onClick={() => choose(code)}
+                  onClick={() => choose(() => settings.setLocale(code))}
                   className={`${menuItem} flex items-center justify-between gap-2 ${
                     index > 0 ? 'border-t border-line' : ''
                   } ${current ? 'font-semibold' : ''}`}

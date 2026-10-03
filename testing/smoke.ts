@@ -10,6 +10,7 @@
  */
 import type { PublicCollectionBody } from '../server/publicLinks.ts';
 import { FIXTURE_IDS, memberLibrary, ownerLibrary, viewerLibrary } from './fixtures.ts';
+import { checkMcpEndpoints } from './mcpSmoke.ts';
 import { PERSONAS, type PersonaName, persona } from './personas.ts';
 
 const baseUrl = (process.argv[2] ?? 'http://localhost:3001').replace(/\/+$/, '');
@@ -240,6 +241,7 @@ async function main(): Promise<void> {
   await run('viewer', checkViewer);
   await run('owner', checkOwner);
   await run('empty', checkEmpty);
+  await run('member', (cookie) => checkMcpEndpoints(baseUrl, cookie, check));
 
   console.log(failures === 0 ? 'All test-mode checks passed' : `${failures} test-mode check(s) failed`);
   process.exitCode = failures === 0 ? 0 : 1;

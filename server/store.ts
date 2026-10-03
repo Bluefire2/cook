@@ -90,6 +90,10 @@ export function collectionDocRef(uid: string, collectionId: string) {
   return colRef(uid, 'collections').doc(collectionId);
 }
 
+export function collectionsColRef(uid: string) {
+  return colRef(uid, 'collections');
+}
+
 export function photosColRef(uid: string) {
   return colRef(uid, 'photos');
 }

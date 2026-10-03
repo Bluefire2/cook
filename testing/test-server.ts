@@ -22,6 +22,7 @@ import { parseArgs } from 'node:util';
 import { emulatorHost, testModeEnv, testModeRefusals } from './env.ts';
 import { FIXTURE_IDS } from './fixtures.ts';
 import { PERSONAS, personaByName } from './personas.ts';
+import { seededMcpTokens } from './seededMcp.ts';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -147,6 +148,7 @@ function personasJson(): Response {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Retry-After': '1' },
     });
   }
+  const mcp = seededMcpTokens();
   const body = {
     personas: PERSONAS.map((p) => ({
       as: p.as,
@@ -156,6 +158,8 @@ function personasJson(): Response {
     })),
     fixtures: FIXTURE_IDS,
     seededAt: seededAt ?? null,
+    // Present after a fresh seed, absent with --keep. Raw tokens, test mode only.
+    ...(mcp === null ? {} : { mcp }),
   };
   return new Response(JSON.stringify(body, null, 2), {
     status: 200,

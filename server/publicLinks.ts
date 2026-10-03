@@ -364,6 +364,33 @@ export async function ensurePublicLink(
 
 type LivePublicLinkRow = { ref: DocumentReference; record: PublicLinkRecord };
 
+/**
+ * Whether the collection has a live public link, read inside `tx`. Fails
+ * closed: any row the query matches counts, even one `parsePublicLinkDoc`
+ * cannot read.
+ */
+export async function hasLivePublicLinkInTransaction(
+  tx: Transaction,
+  ownerSub: string,
+  collectionId: string,
+): Promise<boolean> {
+  return !(await tx.get(livePublicLinksQuery(ownerSub, collectionId))).empty;
+}
+
+/** Ids of the owner's collections with a live public link. Fails closed like the check above. */
+export async function listLivePublicCollectionIds(ownerSub: string): Promise<Set<string>> {
+  const snap = await publicLinksCol()
+    .where('ownerSub', '==', ownerSub)
+    .where('status', '==', 'live')
+    .get();
+  const ids = new Set<string>();
+  for (const doc of snap.docs) {
+    const collectionId = doc.get('collectionId');
+    if (typeof collectionId === 'string') ids.add(collectionId);
+  }
+  return ids;
+}
+
 /** Transaction read half of turning a collection's links off. */
 export async function readLivePublicLinksInTransaction(
   tx: Transaction,
