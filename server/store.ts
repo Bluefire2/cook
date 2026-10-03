@@ -90,6 +90,10 @@ export function collectionDocRef(uid: string, collectionId: string) {
   return colRef(uid, 'collections').doc(collectionId);
 }
 
+export function collectionsColRef(uid: string) {
+  return colRef(uid, 'collections');
+}
+
 export function photosColRef(uid: string) {
   return colRef(uid, 'photos');
 }
@@ -1113,6 +1117,103 @@ export async function countLiveNamedCollections(
   }
 }
 
+/**
+ * The stored recipe document: the compacted fields plus identity and both
+ * clocks. `putDoc` and `updateOwnRecipe` both build it here, so a sync push
+ * and an MCP edit write the same shape.
+ */
+export function recipeDocBody(
+  payload: Record<string, unknown>,
+  id: string,
+  updatedAt: number,
+  serverUpdatedAt: number,
+): Record<string, unknown> {
+  return {
+    ...compactRecipeFields(payload),
+    id,
+    updatedAt,
+    serverUpdatedAt,
+  };
+}
+
+/**
+ * `updatedAt` for a server-side edit: now, or one past the stored clock when
+ * that is ahead (a device with a fast clock). The edit always wins LWW against
+ * what it replaced, and the server never plants a time from a client.
+ */
+export function nextRecipeUpdatedAt(storedUpdatedAt: number, now: number): number {
+  return Math.max(now, storedUpdatedAt + 1);
+}
+
+export type OwnRecipeUpdateDecision =
+  | { kind: 'ok'; stored: Record<string, unknown>; storedUpdatedAt: number }
+  | { kind: 'not_found' }
+  | { kind: 'conflict'; version: number };
+
+/**
+ * Whether an edit of the caller's own recipe at `expectedVersion` may go
+ * ahead. A missing or tombstoned doc is `not_found` (a shared recipe's id is
+ * missing from the caller's tree, so it lands here too). A stored `updatedAt`
+ * other than the version the editor read is `conflict`, with the current one.
+ */
+export function ownRecipeUpdateDecision(
+  storedRaw: Record<string, unknown> | undefined,
+  expectedVersion: number,
+): OwnRecipeUpdateDecision {
+  if (storedRaw === undefined || !isLiveDoc(storedRaw)) {
+    return { kind: 'not_found' };
+  }
+  const storedUpdatedAt = finiteNumber(storedRaw.updatedAt);
+  if (storedUpdatedAt === undefined) {
+    return { kind: 'not_found' };
+  }
+  if (storedUpdatedAt !== expectedVersion) {
+    return { kind: 'conflict', version: storedUpdatedAt };
+  }
+  return { kind: 'ok', stored: storedRaw, storedUpdatedAt };
+}
+
+export type OwnRecipeUpdateResult =
+  | { kind: 'ok'; doc: Record<string, unknown> }
+  | { kind: 'not_found' }
+  | { kind: 'conflict'; version: number }
+  | { kind: 'too_large' };
+
+/**
+ * Edits one live recipe in the caller's own tree (`users/{uid}/recipes/{id}`)
+ * in one transaction: read, `ownRecipeUpdateDecision`, then `apply(stored,
+ * updatedAt)` builds the new payload and it is written whole (`merge: false`)
+ * through `recipeDocBody`. `apply` returns null when the result is too large
+ * to store. Never touches another member's tree, collections, or photos.
+ */
+export async function updateOwnRecipe(
+  uid: string,
+  id: string,
+  expectedVersion: number,
+  apply: (stored: Record<string, unknown>, updatedAt: number) => Record<string, unknown> | null,
+): Promise<OwnRecipeUpdateResult> {
+  const ref = colRef(uid, 'recipes').doc(id);
+  return getFirestore().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const decision = ownRecipeUpdateDecision(
+      snap.exists ? (snap.data() as Record<string, unknown>) : undefined,
+      expectedVersion,
+    );
+    if (decision.kind !== 'ok') {
+      return decision;
+    }
+    const serverUpdatedAt = Date.now();
+    const updatedAt = nextRecipeUpdatedAt(decision.storedUpdatedAt, serverUpdatedAt);
+    const payload = apply(decision.stored, updatedAt);
+    if (payload === null) {
+      return { kind: 'too_large' };
+    }
+    const doc = recipeDocBody(payload, id, updatedAt, serverUpdatedAt);
+    tx.set(ref, doc, { merge: false });
+    return { kind: 'ok', doc };
+  });
+}
+
 export async function putDoc(
   uid: string,
   kind: StoreKind,
@@ -1188,12 +1289,7 @@ export async function putDoc(
     const serverUpdatedAt = Date.now();
     let body: Record<string, unknown>;
     if (kind === 'recipes') {
-      body = {
-        ...compactRecipeFields(payload),
-        id,
-        updatedAt: clientUpdatedAt,
-        serverUpdatedAt,
-      };
+      body = recipeDocBody(payload, id, clientUpdatedAt, serverUpdatedAt);
       if (cmp.undeleting) {
         // deletedAt cleared by omission
       }

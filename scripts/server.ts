@@ -8,7 +8,9 @@
  * by `scripts/dev-api-server.ts`. With `staticRoot: null`, `/privacy`,
  * `/terms`, and `/about` return 404 on this port; Vite serves `public/` on
  * :5173 in dev. `/invite/:token` and the collection-link pages under `/c/`
- * are handled here in both modes (Vite proxies `/invite` and `/c/`).
+ * are handled here in both modes (Vite proxies `/invite` and `/c/`), as are
+ * the MCP server's `/mcp`, `/oauth/*`, and `/.well-known/oauth-*` (Vite
+ * proxies those too).
  *
  * Requires Node 22.18+ for native TypeScript type stripping.
  */
@@ -16,7 +18,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { basename, extname, isAbsolute, relative, resolve } from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, type Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { POST as chatPost } from '../api/chat.ts';
@@ -51,7 +53,15 @@ import { extensionImport, extensionImportOptions } from '../server/extensionImpo
 import { inviteLandingGet } from '../server/invites.ts';
 import { withMembership } from '../server/membership.ts';
 import { photosGet, photosPost } from '../server/photos.ts';
+import {
+  collectionPublicLinkGet,
+  collectionPublicLinkPost,
+  collectionPublicLinkRevokePost,
+  publicGet,
+  publicJoinPost,
+} from '../server/publicLinksHttp.ts';
 import { agentPost } from '../server/agent/index.ts';
+import { matchMcpRoute, mcpGrantsGet, mcpGrantsRevokePost } from '../server/mcp/index.ts';
 import { sttPost } from '../server/stt.ts';
 import { translatePost } from '../server/translateRoute.ts';
 import {
@@ -94,8 +104,11 @@ const apiRoutes: ApiRoute[] = [
   { method: 'GET', path: '/api/sync/shared', handler: syncSharedPull },
   { method: 'POST', path: '/api/sync/push', handler: syncPush },
   { method: 'POST', path: '/api/shared/leave', handler: sharedLeavePost },
+  { method: 'POST', path: '/api/public/join', handler: publicJoinPost },
   { method: 'POST', path: '/api/extension/import', handler: extensionImport },
   { method: 'OPTIONS', path: '/api/extension/import', handler: extensionImportOptions },
+  { method: 'GET', path: '/api/mcp/grants', handler: mcpGrantsGet },
+  { method: 'POST', path: '/api/mcp/grants/revoke', handler: mcpGrantsRevokePost },
 ];
 
 const PUBLIC_HTML: Record<string, string> = {
@@ -180,6 +193,20 @@ async function handleRequest(
       return;
     }
 
+    const mcpHandler = matchMcpRoute(decodedPath, method);
+    if (mcpHandler !== null) {
+      if (mcpHandler === 'notFound') {
+        sendText(nodeReq, nodeRes, 404, 'Not found');
+        return;
+      }
+      if (mcpHandler === 'wrongMethod') {
+        sendText(nodeReq, nodeRes, 405, 'Method not allowed');
+        return;
+      }
+      await dispatchFetch(nodeReq, nodeRes, decodedPath, method, mcpHandler);
+      return;
+    }
+
     if (decodedPath === '/invite' || decodedPath.startsWith('/invite/')) {
       if (method !== 'GET' && method !== 'HEAD') {
         sendText(nodeReq, nodeRes, 405, 'Method not allowed');
@@ -202,6 +229,14 @@ async function handleRequest(
     if (staticRoot === null) {
       sendText(nodeReq, nodeRes, 404, 'Not found');
       return;
+    }
+
+    if (decodedPath === '/p' || decodedPath.startsWith('/p/')) {
+      // Public collection pages carry their token in the path: keep it out of
+      // every Referer (images, the source link, the Google sign-in hop) and
+      // out of search results. The SPA renders them from index.html.
+      nodeRes.setHeader('Referrer-Policy', 'no-referrer');
+      nodeRes.setHeader('X-Robots-Tag', 'noindex');
     }
 
     if (method !== 'GET' && method !== 'HEAD') {
@@ -285,6 +320,15 @@ function matchApiRoute(pathname: string, method: string): ApiHandler | 'wrongMet
     return 'wrongMethod';
   }
 
+  // Visitor reads, no session: /api/public/<token>[/recipes/<id>/photos/<id>].
+  // `/api/public/join` is an exact route above.
+  if (pathname.startsWith('/api/public/')) {
+    if (method === 'GET' || method === 'HEAD') {
+      return publicGet;
+    }
+    return 'wrongMethod';
+  }
+
   const photosPrefix = '/api/photos/';
   if (pathname.startsWith(photosPrefix)) {
     const rest = pathname.slice(photosPrefix.length);
@@ -320,6 +364,21 @@ function matchApiRoute(pathname: string, method: string): ApiHandler | 'wrongMet
   if (roleMatch) {
     if (method === 'POST') {
       return collectionGrantsRolePost;
+    }
+    return 'wrongMethod';
+  }
+  if (/^\/api\/collections\/[^/]+\/public$/.test(pathname)) {
+    if (method === 'GET') {
+      return collectionPublicLinkGet;
+    }
+    if (method === 'POST') {
+      return collectionPublicLinkPost;
+    }
+    return 'wrongMethod';
+  }
+  if (/^\/api\/collections\/[^/]+\/public\/revoke$/.test(pathname)) {
+    if (method === 'POST') {
+      return collectionPublicLinkRevokePost;
     }
     return 'wrongMethod';
   }
@@ -383,6 +442,30 @@ async function dispatchFetch(
   await writeFetchResponse(nodeRes, response);
 }
 
+/**
+ * Pipes a route's response body to the client. When the client is already
+ * gone, `pipeline` throws ERR_STREAM_UNABLE_TO_PIPE without touching the
+ * body, which would leave its upstream (a GCS read, a model stream) open
+ * until it fails on a stream nobody listens to, killing the process. So a
+ * gone client cancels the body instead. (Cancel the web stream itself:
+ * destroying a `Readable.fromWeb` over a `Readable.toWeb` body that still
+ * holds data throws ERR_INVALID_STATE from Node's adapter.) When the client
+ * leaves mid-response, `pipeline` destroys the body and rejects; the extra
+ * listener absorbs anything the body emits after that.
+ */
+export async function pipeResponseBody(
+  body: ReadableStream<Uint8Array>,
+  destination: Writable,
+): Promise<void> {
+  if (destination.destroyed) {
+    await body.cancel().catch(() => {});
+    return;
+  }
+  const source = Readable.fromWeb(body);
+  source.on('error', () => {});
+  await pipeline(source, destination);
+}
+
 async function writeFetchResponse(nodeRes: ServerResponse, response: Response): Promise<void> {
   nodeRes.statusCode = response.status;
   const setCookies = response.headers.getSetCookie();
@@ -404,7 +487,7 @@ async function writeFetchResponse(nodeRes: ServerResponse, response: Response): 
   }
 
   try {
-    await pipeline(Readable.fromWeb(response.body), nodeRes);
+    await pipeResponseBody(response.body, nodeRes);
   } catch (err) {
     console.error(err);
     nodeRes.destroy();

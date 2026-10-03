@@ -79,12 +79,23 @@ holds the text, `contactOk`, and three context fields, never the email; the
 read-only `scripts/feature-requests.ts` looks the email up from `sub` only
 when `contactOk` is true. The `feature_request` log line never holds the
 text. `/privacy` describes both; change it with them, and change the schema
-section in the plan with `FeatureRequestDoc`. Because suggestions and import
-reports sit outside `users/{uid}`, an account deletion request needs the
-plan's owner step to remove them.
+section in the plan with `FeatureRequestDoc`. Suggestions and import reports
+sit outside `users/{uid}`; `scripts/delete-account-data.ts` removes them with
+the rest of an account (see Account deletion).
+
+**Account deletion.** A deletion request is the manual procedure in
+README.md: deny access, then `scripts/delete-account-data.ts <sub>` (dry run,
+then `--apply`), then the GCS photo prefix. `server/accountDeletion.ts`
+classifies every Firestore collection in `FIRESTORE_COLLECTIONS` and has one
+step per top-level collection that holds a member's data, run in
+`ACCOUNT_DELETION_ORDER`. A new collection must be classified there (and get
+a step if it is personal and top-level); `scripts/invariants.test.ts` fails on
+an unclassified `.collection(...)` name, and TypeScript on a missing step.
+`/privacy` promises what a deletion request covers; change it with the steps.
 
 No server log line may contain an email address or a link token. Invite
-(`/invite/<token>`) and collection-link (`/c/<token>`) pages send
+(`/invite/<token>`), collection-link (`/c/<token>`), and public-collection
+(`/p/<token>`, `/api/public/<token>`) pages send
 `Referrer-Policy: no-referrer` so the token never rides a `Referer`, and the
 `link-token-requests` exclusion on the `_Default` sink
 (`scripts/logExclusions.ts`, applied with `node
@@ -123,6 +134,46 @@ npm run build     # tsc -b && vite build — the only type gate on server/
 `erasableSyntaxOnly` is on for Node/API tsconfigs: **no enums, no constructor
 parameter properties**. Dev servers run TS unchecked; a `server/` type error
 can sit until `npm run build` or a container start.
+
+### Test mode
+
+To run the app signed in without Google and without production Firestore, use
+test mode. How to run it, the personas, and scripting it are in
+`testing/README.md`; the design is `docs/plans/test-mode.md`. Start the
+Firestore emulator, then the test server in place of `dev:api`:
+
+```
+gcloud emulators firestore start --host-port=127.0.0.1:8085   # needs Java
+npm run dev:test                                               # port 3001; Vite unchanged
+```
+
+`dev:test` looks for the emulator at `127.0.0.1:8085`. To use another port,
+set `FIRESTORE_EMULATOR_HOST` to a loopback `host:port`; any other host is
+refused.
+
+Open `http://localhost:5173/__test/` and pick a persona (`owner`, `member`,
+`empty`, `viewer`, `outsider`, `declined`). Each start clears the emulator and
+reseeds it; `npm run dev:test -- --keep` keeps the data. `--static --port 4173`
+serves `dist/` as well, for CI and browser automation without Vite;
+`GET /__test/personas` answers 503 until the seed is done and then lists the
+personas and fixture ids. Google sign-in, photos, and email are off in test
+mode; model routes work when `GEMINI_API_KEY` is set.
+
+`/__test/sign-in` is not an auth bypass: it signs an ordinary session for a
+fake account with a test-only secret, and every route still runs
+`requireMember`. Test mode lives only in `testing/`, which the image never
+contains. No non-test file under `server/`, `api/`, `scripts/`, `src/`, or
+`evals/` may import from `testing/`, none under the first four may mention
+`__test`, and every env var the server reads must be classified in
+`testing/env.ts`; `scripts/invariants.test.ts` checks all three. The allowed
+`__test` traces outside those directories are the dev proxy and the PWA
+`navigateFallbackDenylist` entry in `vite.config.ts` (the denylist ships in
+the production service worker and is inert there), the image check in
+`.github/scripts/smoke-server.sh`, and the CI job comment. Never add a flag
+or env var that turns test mode on in the real server.
+
+Test mode is the default for end-to-end checks; Tests and verification says
+when a real sign-in is needed instead.
 
 ## Architecture
 
@@ -202,12 +253,18 @@ No refresh tokens, no extra Google APIs, no Auth.js.
   cookie is not dependably attached to an extension-initiated request. Do not
   extend header auth to any other route, and do not add
   `Access-Control-Allow-Credentials` to this one.
+- **MCP bearer tokens are a separate family**, not the session token: `/mcp`
+  reads only `Authorization: Bearer sous_at_…` and `/oauth/token` only its
+  form body; neither reads a cookie, and no cookie route reads a bearer. See
+  Public MCP.
 - **Other cookies**, all HttpOnly, SameSite=Lax, HMAC-signed with
   `SESSION_SECRET`, 10 minutes, each its own `v` family so one never verifies
   as another: `sous_oauth` (oauth transaction), `sous_invite` (app invite
   hop), `sous_collection_link` (collection link hop, `v: 'clink'`,
-  **`Path=/c`**, carries the link's sha256 id, never the token). A new flow
-  gets a new cookie name and family; do not reuse one.
+  **`Path=/c`**, carries the link's sha256 id, never the token),
+  `sous_mcp_authz` (MCP authorization request hop, `v: 'mcpauthz'`,
+  **`Path=/oauth`**). A new flow gets a new cookie name and family; do not
+  reuse one.
 - OAuth callback **must not** use `Response.redirect()` (immutable Headers;
   `Set-Cookie` would be dropped). Build a `Response` with a `Location` header
   and always clear `sous_oauth`.
@@ -297,6 +354,28 @@ or downgrades anyone; the owner's row switch does), the
 link writes nothing. Unknown, revoked, expired, deleted collection, and
 unadmitted owner are one generic 404 page. The OAuth callback is unchanged.
 
+**Public collections** (`docs/plans/public-collections.md`,
+`server/publicLinks.ts`, `publicLinksHttp.ts`, `publicJoin.ts`) are the one
+place data is served without a session. The owner turns a named collection's
+unlisted link on or off under `/api/collections/:id/public` (owner only, 404
+for anyone else); top-level `publicLinks/{sha256(token)}` keeps the token so
+the owner can copy it again. `GET /api/public/<token>` and
+`…/recipes/<id>/photos/<id>` recheck live link → admitted owner → live
+collection → listed live recipe (→ listed photo) on every request, cache
+nothing, and answer one generic 404. They return recipe fields only, never an
+email, `sub`, chat, cook row, or cook log, and never reach a model. The client
+side is separate screens (`/p/:token`, `/p/:token/r/:recipeId`, `/p`) that
+keep the snapshot in component state, never `libraryMemory`; AI controls
+there are locked (`src/components/LockedAi.tsx`), and
+`scripts/invariants.test.ts` keeps AI and library-writing imports out of
+them. Sign-in from `/p` returns to `/p` with the token in sessionStorage, so
+it never rides the OAuth round trip. A signed-in member can `POST
+/api/public/join { token }` to become a viewer through the collection-link
+redeem path (`keepRole`, same cap); AI then runs through that grant. A new
+feature on a recipe page decides separately whether it belongs on
+`PublicRecipe`; shared display pieces live in `src/components/RecipeBody.tsx`.
+Collection delete revokes the public link in the grant-cascade transaction.
+
 Collection delete tombstones live grants in the same transaction. Forward
 grants carry an internal `active` flag, and the cascade time is
 `grantCascadeAt`, not the client `updatedAt`. Grants written before `active`
@@ -364,7 +443,8 @@ Local ADC: `gcloud auth application-default login` and
 `set-quota-project cooking-assistant-508423`. Dev talks to **real** Firestore
 (and, once set, the real bucket). Opt-outs: `FIRESTORE_EMULATOR_HOST`, unset
 `PHOTO_BUCKET`. Same Google account ⇒ same `sub` ⇒ local experiments mutate
-the production library.
+the production library. Test mode (How to run it) avoids that: fake
+personas against a seeded emulator.
 
 `scripts/deploy.sh` uses `--env-vars-file` (replaces the **whole** env map).
 Never `--set-env-vars` (`ALLOWED_EMAILS` is comma-separated). Never put a
@@ -415,11 +495,89 @@ it exercises the real delete path.
 - Polling sync, Firestore listeners, WebSockets
 - Conflict-merge UI (LWW is the product)
 
+## Public MCP
+
+A remote MCP server lets a member's AI app (claude.ai, Claude Code, any MCP
+client) read and edit their own recipes (`docs/plans/mcp-server.md`). The code
+is `server/mcp/`; `scripts/server.ts` imports only `server/mcp/index.ts`.
+
+- **Routes.** `POST /mcp` (Streamable HTTP, stateless, JSON responses; `GET`
+  and `DELETE` are 405), `GET /.well-known/oauth-protected-resource[/mcp]`,
+  `GET /.well-known/oauth-authorization-server`, `GET /oauth/authorize`,
+  `GET|POST /oauth/consent`, `POST /oauth/token`, `POST /oauth/revoke`, and
+  for Settings `GET /api/mcp/grants` and `POST /api/mcp/grants/revoke`
+  (cookie session). The dispatcher matches the non-`/api/` ones
+  (`matchMcpRoute`) before the static and SPA fallback, also with
+  `staticRoot: null`. Vite proxies `^/mcp$`, `^/oauth/` and
+  `^/\.well-known/oauth-` to 3001, and the PWA denylist covers them.
+- **Its own OAuth 2.1 server.** Clients identify with Client ID Metadata
+  Documents (CIMD); there is no dynamic client registration and no client
+  database. The authorization server metadata must keep
+  `client_id_metadata_document_supported: true` and `"none"` in
+  `token_endpoint_auth_methods_supported`, or Claude falls back to DCR, which
+  Sous does not offer. PKCE S256 only. The consent step is server HTML
+  (English, i18n principle 9) following the `/c/join` pattern: the
+  `sous_mcp_authz` hop cookie, a nonce, `sameOriginPost`, `Referrer-Policy:
+  same-origin`, `frame-ancestors 'none'`. Sous fetches a client's metadata
+  document only once a member session exists, through the SSRF-safe pinned
+  fetch in `oauth/clientMetadata.ts`.
+- **Tokens.** Opaque `sous_at_` (1 h) and `sous_rt_` (30 days, rotated on
+  every use) tokens, stored only as sha256 hashes; they are not HMAC-signed
+  and do not depend on `SESSION_SECRET`. `/mcp` reads the bearer from
+  `Authorization` only and `/oauth/token` reads only its form body; neither
+  reads a cookie. The `X-Sous-Session` header exception stays
+  extension-only. Every `/mcp` call re-reads the token and its grant (no
+  cache, so a revoke works on the next call), then runs `memberFromIdentity`
+  on the grant's `{ sub, email }`: denied is 401 with `WWW-Authenticate:
+  Bearer … resource_metadata=…`, unknown is 503, never 401. A write tool on a
+  read-only grant is 403 `insufficient_scope` (step-up). The gate runs before
+  the MCP SDK, so a refusal is never a 200 tool error.
+- **Tools.** `search_recipes`, `get_recipes`, `list_collections`
+  (`recipes:read`), `create_recipe`, `update_recipe`, `move_recipes`
+  (`recipes:write`), own tree only, via the agent's `loadAgentLibrary`. No
+  delete, no collection create, rename or delete, no photos, sharing, cook
+  log, chat, translation, or import. `create_recipe` takes an optional
+  `collectionId`; it and `move_recipes` file recipes with the app's
+  membership rule in one transaction (`server/mcp/collectionMove.ts`,
+  `docs/plans/mcp-collection-writes.md`) and refuse a collection with a live
+  public link (`not_allowed`); member-shared collections are allowed. Results
+  say who can see the destination and every collection the recipes left
+  (`sharedWithMembers`, `joinLinkOpen`, `public`), and `list_collections`
+  shows the same per collection, so the model can tell the user who gained
+  or lost recipes.
+  `update_recipe` needs the stored `updatedAt` as `version` (else
+  `conflict`), patches fields, and writes through `updateOwnRecipe`; the
+  server stamps every time (`nextRecipeUpdatedAt`). Input is validated
+  strictly (`server/mcp/recipeInput.ts`), never repaired.
+- **SDK.** `@modelcontextprotocol/sdk`, low-level `Server` plus
+  `WebStandardStreamableHTTPServerTransport`, built per request. Its
+  transitive dependencies (express, hono, …) ship in the image unused.
+- **Logs.** One `event: 'mcp'` line per `/mcp` request and one `event:
+  'mcp_oauth'` line per authorize, consent, token or revoke step
+  (`server/mcp/log.ts`). Never arguments, recipe text, tokens, codes,
+  `state`, the email, or a full `redirect_uri`. `/privacy` and `/terms`
+  describe them, and connected apps; change them with it.
+- **Storage.** Top-level `mcpAuthCodes/{sha256(code)}` and
+  `mcpTokens/{sha256(token)}`, each with `expireAt` for a TTL policy (owner
+  step, after deploy), and `users/{sub}/mcpGrants/{grantId}`. Because codes
+  and tokens sit outside `users/{uid}`, the account deletion script has a
+  step for each (see Account deletion); a new MCP collection needs one too.
+- **Rate limits.** Per instance, per `sub` and grant: 300 reads and 60 writes
+  an hour (`admitTranslateCall`'s window, own buckets); uncached client
+  metadata fetches at 10 a minute per member and 60 per instance; store
+  lookups by `/oauth/token` and `/oauth/revoke` at 120 a minute per instance
+  (503 with `Retry-After`).
+
 ## Agent module
 
 The library assistant (`POST /api/agent`, screen `/assistant`) is a module.
 Public entry points are `agentPost` from `server/agent/index.ts` and
-`AssistantScreen` / `AssistantEntryLink` from `src/agent/index.ts`. Nothing
+`AssistantScreen` / `AssistantEntryLink` from `src/agent/index.ts`.
+`server/agent/index.ts` also exports the agent's read surface over a member's
+own library, which the MCP tools reuse: `loadAgentLibrary`,
+`narrowAgentRecipe`, `winningMembership`, `searchRecipesPage` (the agent's
+`searchRecipes` is its first page), and the `AgentLibrary`, `AgentRecipe`,
+`AgentCollection`, `SearchRecipesArgs` and `SearchRecipeHit` types. Nothing
 outside those directories imports agent internals. Wiring outside the module
 is one route line in `scripts/server.ts`, one route in `src/App.tsx`,
 `<AssistantEntryLink />` in `src/screens/Library.tsx`, `listLiveDocs` in
@@ -486,8 +644,13 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/import-feedback.md` | Merged (#107), not deployed. Optional import reports after a failed or flagged import, 👍/👎 on clean previews, stored in Firestore `importFeedback` for 180 days. TTL policy on `expireAt` applied 2026-10-01. |
 | `docs/plans/feature-requests.md` | Built on `claude/feature-requests`, not deployed. `/suggest` page, stored in Firestore `featureRequests` for one year; TTL policy on `expireAt` is an owner step. |
 | `docs/plans/agent-collection-moves.md` | Built, not deployed. `propose_collection_move` / `collection_move` v1 proposal card; client apply via `collectionStore.moveRecipes`. |
+| `docs/plans/agent-create-collection.md` | Built, not deployed. `propose_create_collection` / `collection_create` v1 proposal card; client apply via `collectionStore.createWithRecipes` in one push. |
 | `docs/plans/html-parser-recipe-import.md` | Built on `cursor/html-parser-recipe-import-11d4`. Not deployed. Replace the hand-rolled HTML scanner in `server/recipeImport.ts` with parse5 (issue #91). |
+| `docs/plans/public-collections.md` | Built on `claude/read-only-unauthenticated-mode-204be2`, not deployed. Unlisted public link per named collection, readable signed out; AI locked; members can add it as viewers. Apply the widened log exclusion before deploying. |
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |
+| `docs/plans/mcp-collection-writes.md` | Built on `claude/mcp-collection-writes`, not deployed. `create_recipe` into a collection and `move_recipes`; collections with a public link are refused. |
+| `docs/plans/mcp-server.md` | Built on `claude/llm-api-vs-mcp-04b215`, not deployed. Remote MCP server at `/mcp` with its own OAuth 2.1 authorization server (CIMD clients, no DCR): search, get, list collections, create and edit (with a version check) over the member's own recipes. No delete. |
+| `docs/plans/test-mode.md` | Built on `claude/test-mode`. `testing/test-server.ts` runs the app against a seeded Firestore emulator; `/__test/sign-in?as=<persona>` signs in a fake account with a real session cookie. Not in the image. The emulator runs in CI only in the `test-mode` job (owner-approved exception, Tests and verification). |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
@@ -495,12 +658,18 @@ invent other OAuth workarounds.
 
 ## Tests and verification
 
-Unit tests cover **pure** logic only. There is no fake-indexeddb, no Firestore
-emulator in CI, no GCS mock, no DOM testing library — do not add them for one
-feature. `.github/workflows/ci.yml` runs on PRs and pushes to `main`:
-`npm run build` + `npm test`, a Docker image build booted with no cloud
-credentials and checked by `.github/scripts/smoke-server.sh`, and dependency
-review. None of it needs secrets, ADC, or production.
+Unit tests cover **pure** logic only. There is no fake-indexeddb, no GCS mock,
+no DOM testing library, and no Firestore emulator in unit tests — do not add
+them for one feature. The one exception is test mode (below): the Firestore
+emulator runs in CI only in the `test-mode` job, which boots the app against
+seeded data. That exception was approved on 2026-10-02 because test mode is
+shared infrastructure for every end-to-end test, and an unexercised test path
+rots silently (`docs/plans/test-mode.md`). Do not add the emulator to another
+job or to `npm test`. `.github/workflows/ci.yml` runs on PRs and pushes to
+`main`: `npm run build` + `npm test`, a Docker image build booted with no
+cloud credentials and checked by `.github/scripts/smoke-server.sh`, the
+`test-mode` job checked by `testing/smoke.ts`, and
+dependency review. None of it needs secrets, ADC, or production.
 `scripts/invariants.test.ts` turns rules in this file into failing tests; follow
 the rule rather than loosening the check. `evals/pageFixtures.test.ts` runs the
 offline extraction step over every cached page and needs an entry for each new
@@ -517,8 +686,29 @@ golden, read `evals/AGENTS.md` (dev/holdout split, no tuning on holdout,
 experiments logged in `evals/EXPERIMENTS.md`).
 
 UI and layout changes: exercise the flow in the browser (not a screenshot).
-Vite + `dev:api`, signed in at `localhost:5173`. Check other routes that share
-the state you touched.
+Check other routes that share the state you touched.
+
+**End-to-end checks run in test mode by default** (`npm run dev:test` + Vite,
+a persona from `/__test/`; see `testing/README.md`). It needs no Google
+account, writes only to the emulator, and has personas for states a real
+account rarely has (empty library, shared viewer and editor, pending and
+declined requests). Pick the persona that shows the state; do not create
+data in a real account to reach it.
+
+Use `dev:api` with a real Google sign-in only when the check needs what test
+mode turns off:
+
+- the Google sign-in flow itself (`server/auth.ts`: sign-in, the OAuth
+  callback, sign-out), or a flow that goes through Google consent, such as
+  redeeming an `/invite/<token>` link or signing in from `/c/join` or `/p`;
+- photos, which need the real bucket (there is no Cloud Storage emulator);
+- something only production data or configuration shows, such as an index
+  or a TTL policy.
+
+Then remember that `dev:api` reads and writes the production library (Cloud
+and deploy), and say in the PR which check needed it. The in-context
+translation review still follows `docs/i18n-review/README.md` (a real
+session, read-only) until that procedure moves to test mode.
 
 Chat streaming must not grow `Content-Length` or `Content-Encoding` on
 `/api/chat`. The framing/streaming oracle in `docs/plans/sous-subdomain.md`

@@ -29,12 +29,18 @@ export type CreateRecipeSubmitStatus = {
   locked: boolean;
   /** A write is in flight and the collection sheet is not already showing it. */
   saving: boolean;
+  /**
+   * A submitted draft is waiting on a save, a retry, or the collection sheet.
+   * A destination changed now would be used by Try again.
+   */
+  pending: boolean;
 };
 
 /** Owns a staged creation draft until saved or explicitly abandoned. */
 export default function CreateRecipeForm({
   initial,
   collectionId,
+  destinationId,
   onCreated,
   onCancel,
   formId,
@@ -48,6 +54,10 @@ export default function CreateRecipeForm({
 }: {
   initial: RecipeDraft;
   collectionId?: string;
+  /**
+   * Explicit destination. `null` is unfiled. `undefined` follows `collectionId`.
+   */
+  destinationId?: string | null;
   onCreated: (recipe: Recipe) => void;
   onCancel: () => void;
   /** Lets a Save button outside this form submit it (the import header). */
@@ -71,7 +81,7 @@ export default function CreateRecipeForm({
 }) {
   const t = useT();
   const collections = useCollections();
-  const destination = resolveCollectionDestination(collections, collectionId);
+  const destination = resolveCollectionDestination(collections, collectionId, destinationId);
   const [draft, setDraft] = useState<RecipeDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [choosing, setChoosing] = useState(false);
@@ -98,9 +108,10 @@ export default function CreateRecipeForm({
   const headerLocked =
     destination.kind === 'loading' || draft !== null || !canSubmit || submitLocked === true;
   const saving = busy && !choosing;
+  const pending = draft !== null;
   useLayoutEffect(() => {
-    onSubmitStatusChange?.({ locked: headerLocked, saving });
-  }, [headerLocked, saving, onSubmitStatusChange]);
+    onSubmitStatusChange?.({ locked: headerLocked, saving, pending });
+  }, [headerLocked, saving, pending, onSubmitStatusChange]);
   useEffect(() => {
     if (error) failureRef.current?.scrollIntoView({ block: 'center' });
   }, [error]);
