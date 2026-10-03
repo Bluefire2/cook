@@ -10,4 +10,5 @@ docs
 *.local
 .DS_Store
 extension
+testing
 gha-creds-*.json

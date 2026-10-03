@@ -1,8 +1,7 @@
 import { sortCookLogs } from './cookLogShape';
 import { recipePhotoIds } from './recipePhotos';
 import type { BackupGraphIds } from './backupImportRemap';
-import type { ChatMessage, Collection, CookLog, Recipe } from './types';
-import type { CookStateRow } from './useCookState';
+import type { ChatMessage, Collection, CookLog, CookStateRow, Recipe } from './types';
 
 /**
  * What this session may do to a row. `owner` is the session's own tree.

@@ -151,6 +151,46 @@ npm run build     # tsc -b && vite build — the only type gate on server/
 parameter properties**. Dev servers run TS unchecked; a `server/` type error
 can sit until `npm run build` or a container start.
 
+### Test mode
+
+To run the app signed in without Google and without production Firestore, use
+test mode. How to run it, the personas, and scripting it are in
+`testing/README.md`; the design is `docs/plans/test-mode.md`. Start the
+Firestore emulator, then the test server in place of `dev:api`:
+
+```
+gcloud emulators firestore start --host-port=127.0.0.1:8085   # needs Java
+npm run dev:test                                               # port 3001; Vite unchanged
+```
+
+`dev:test` looks for the emulator at `127.0.0.1:8085`. To use another port,
+set `FIRESTORE_EMULATOR_HOST` to a loopback `host:port`; any other host is
+refused.
+
+Open `http://localhost:5173/__test/` and pick a persona (`owner`, `member`,
+`empty`, `viewer`, `outsider`, `declined`). Each start clears the emulator and
+reseeds it; `npm run dev:test -- --keep` keeps the data. `--static --port 4173`
+serves `dist/` as well, for CI and browser automation without Vite;
+`GET /__test/personas` answers 503 until the seed is done and then lists the
+personas and fixture ids. Google sign-in, photos, and email are off in test
+mode; model routes work when `GEMINI_API_KEY` is set.
+
+`/__test/sign-in` is not an auth bypass: it signs an ordinary session for a
+fake account with a test-only secret, and every route still runs
+`requireMember`. Test mode lives only in `testing/`, which the image never
+contains. No non-test file under `server/`, `api/`, `scripts/`, `src/`, or
+`evals/` may import from `testing/`, none under the first four may mention
+`__test`, and every env var the server reads must be classified in
+`testing/env.ts`; `scripts/invariants.test.ts` checks all three. The allowed
+`__test` traces outside those directories are the dev proxy and the PWA
+`navigateFallbackDenylist` entry in `vite.config.ts` (the denylist ships in
+the production service worker and is inert there), the image check in
+`.github/scripts/smoke-server.sh`, and the CI job comment. Never add a flag
+or env var that turns test mode on in the real server.
+
+Test mode is the default for end-to-end checks; Tests and verification says
+when a real sign-in is needed instead.
+
 ## Architecture
 
 ```
@@ -419,7 +459,8 @@ Local ADC: `gcloud auth application-default login` and
 `set-quota-project cooking-assistant-508423`. Dev talks to **real** Firestore
 (and, once set, the real bucket). Opt-outs: `FIRESTORE_EMULATOR_HOST`, unset
 `PHOTO_BUCKET`. Same Google account ⇒ same `sub` ⇒ local experiments mutate
-the production library.
+the production library. Test mode (How to run it) avoids that: fake
+personas against a seeded emulator.
 
 `scripts/deploy.sh` uses `--env-vars-file` (replaces the **whole** env map).
 Never `--set-env-vars` (`ALLOWED_EMAILS` is comma-separated). Never put a
@@ -615,6 +656,7 @@ Non-trivial features go through `docs/plans/<slug>.md` with steps tagged
 | `docs/plans/public-collections.md` | Built on `claude/read-only-unauthenticated-mode-204be2`, not deployed. Unlisted public link per named collection, readable signed out; AI locked; members can add it as viewers. Apply the widened log exclusion before deploying. |
 | `docs/plans/sheet-dialog.md` | Merged (#95). Headless dialog for Sheet and Ask: focus trap, initial focus, restore on close, dialog semantics. Not deployed. |
 | `docs/plans/mcp-server.md` | Built on `claude/llm-api-vs-mcp-04b215`, not deployed. Remote MCP server at `/mcp` with its own OAuth 2.1 authorization server (CIMD clients, no DCR): search, get, list collections, create and edit (with a version check) over the member's own recipes. No delete. |
+| `docs/plans/test-mode.md` | Built on `claude/test-mode`. `testing/test-server.ts` runs the app against a seeded Firestore emulator; `/__test/sign-in?as=<persona>` signs in a fake account with a real session cookie. Not in the image. The emulator runs in CI only in the `test-mode` job (owner-approved exception, Tests and verification). |
 
 If iOS standalone PWA sign-in jumps to Safari and the app stays signed out,
 stop and plan the GIS `id_token` fallback from the parent Decisions. Do not
@@ -622,12 +664,18 @@ invent other OAuth workarounds.
 
 ## Tests and verification
 
-Unit tests cover **pure** logic only. There is no fake-indexeddb, no Firestore
-emulator in CI, no GCS mock, no DOM testing library — do not add them for one
-feature. `.github/workflows/ci.yml` runs on PRs and pushes to `main`:
-`npm run build` + `npm test`, a Docker image build booted with no cloud
-credentials and checked by `.github/scripts/smoke-server.sh`, and dependency
-review. None of it needs secrets, ADC, or production.
+Unit tests cover **pure** logic only. There is no fake-indexeddb, no GCS mock,
+no DOM testing library, and no Firestore emulator in unit tests — do not add
+them for one feature. The one exception is test mode (below): the Firestore
+emulator runs in CI only in the `test-mode` job, which boots the app against
+seeded data. That exception was approved on 2026-10-02 because test mode is
+shared infrastructure for every end-to-end test, and an unexercised test path
+rots silently (`docs/plans/test-mode.md`). Do not add the emulator to another
+job or to `npm test`. `.github/workflows/ci.yml` runs on PRs and pushes to
+`main`: `npm run build` + `npm test`, a Docker image build booted with no
+cloud credentials and checked by `.github/scripts/smoke-server.sh`, the
+`test-mode` job checked by `testing/smoke.ts`, and
+dependency review. None of it needs secrets, ADC, or production.
 `scripts/invariants.test.ts` turns rules in this file into failing tests; follow
 the rule rather than loosening the check. `evals/pageFixtures.test.ts` runs the
 offline extraction step over every cached page and needs an entry for each new
@@ -644,8 +692,29 @@ golden, read `evals/AGENTS.md` (dev/holdout split, no tuning on holdout,
 experiments logged in `evals/EXPERIMENTS.md`).
 
 UI and layout changes: exercise the flow in the browser (not a screenshot).
-Vite + `dev:api`, signed in at `localhost:5173`. Check other routes that share
-the state you touched.
+Check other routes that share the state you touched.
+
+**End-to-end checks run in test mode by default** (`npm run dev:test` + Vite,
+a persona from `/__test/`; see `testing/README.md`). It needs no Google
+account, writes only to the emulator, and has personas for states a real
+account rarely has (empty library, shared viewer and editor, pending and
+declined requests). Pick the persona that shows the state; do not create
+data in a real account to reach it.
+
+Use `dev:api` with a real Google sign-in only when the check needs what test
+mode turns off:
+
+- the Google sign-in flow itself (`server/auth.ts`: sign-in, the OAuth
+  callback, sign-out), or a flow that goes through Google consent, such as
+  redeeming an `/invite/<token>` link or signing in from `/c/join` or `/p`;
+- photos, which need the real bucket (there is no Cloud Storage emulator);
+- something only production data or configuration shows, such as an index
+  or a TTL policy.
+
+Then remember that `dev:api` reads and writes the production library (Cloud
+and deploy), and say in the PR which check needed it. The in-context
+translation review still follows `docs/i18n-review/README.md` (a real
+session, read-only) until that procedure moves to test mode.
 
 `npm run click:library` (`scripts/library-click-through.ts`, #57) is a local
 Playwright click-through of Library search persistence and collection
