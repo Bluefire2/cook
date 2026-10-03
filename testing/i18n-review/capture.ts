@@ -11,7 +11,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { Browser, Page } from 'playwright';
-import { label, type Lang } from './catalog.ts';
+import { label, type Lang, pattern } from './catalog.ts';
 import { MOCKS } from './mocks.ts';
 import type { FIXTURE_IDS } from '../fixtures.ts';
 import type { Capturable, CaptureContext } from './states.ts';
@@ -130,6 +130,7 @@ export function contextFor(lang: Lang, env: CaptureEnv): CaptureContext {
   return {
     lang,
     t: (key, params) => label(lang, key, params),
+    p: (key) => pattern(lang, key),
     ids: env.ids,
     publicToken: env.publicToken,
   };
@@ -151,15 +152,19 @@ export async function captureState(
     serviceWorkers: 'block',
   });
   const page = await context.newPage();
+  const now = env.seededAt === null ? Date.now() : env.seededAt + CLOCK_AFTER_SEED_MS;
   try {
-    if (env.seededAt !== null) {
-      await context.clock.setFixedTime(new Date(env.seededAt + CLOCK_AFTER_SEED_MS));
+    if (entry.pauseClock) {
+      // Timers run until the state is reached, then stop, so a toast stays up.
+      await context.clock.install({ time: now });
+    } else if (env.seededAt !== null) {
+      await context.clock.setFixedTime(new Date(now));
     }
     await context.addInitScript((locale) => {
       localStorage.setItem('cook.locale', locale);
     }, lang);
     for (const mock of entry.mocks ?? []) {
-      await MOCKS[mock](context);
+      await MOCKS[mock](context, { now, baseUrl: env.baseUrl, lang });
     }
 
     const path = typeof entry.path === 'function' ? entry.path(ctx) : entry.path;
@@ -171,6 +176,9 @@ export async function captureState(
     await settle(page);
     if (entry.reach) {
       await entry.reach(page, ctx);
+      if (entry.pauseClock) {
+        await page.clock.pauseAt(((await page.evaluate('Date.now()')) as number) + 1);
+      }
       await settle(page);
     }
     await page.evaluate('document.fonts.ready');

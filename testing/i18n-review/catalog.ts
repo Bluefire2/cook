@@ -38,3 +38,20 @@ export function label(lang: Lang, key: MessageKey, params: Record<string, string
     Object.hasOwn(params, name) ? String(params[name]) : match,
   );
 }
+
+/**
+ * Matches a key's text in any of its forms (each plural form, with every
+ * `{param}` matching any text), for waiting on text whose values a state does
+ * not fix.
+ */
+export function pattern(lang: Lang, key: MessageKey): RegExp {
+  const value = CATALOGS[lang][key];
+  const forms = typeof value === 'string' ? [value] : Object.values(value as Record<string, string>);
+  const escaped = forms.map((form) =>
+    form
+      .split(/\{\w+\}/)
+      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('.+?'),
+  );
+  return new RegExp(escaped.join('|'));
+}

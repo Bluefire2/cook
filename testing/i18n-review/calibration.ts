@@ -69,7 +69,8 @@ const DEFECTS: Defect[] = [
   { rubricItem: 'Nothing left in English', state: 'import-preview', lang: 'uk', plant: { text: ['Зберегти', 'Save'] }, expect: 'Save' },
   { rubricItem: 'Nothing left in English', state: 'settings', lang: 'zh-Hans', plant: { text: ['语言', 'Language'] }, expect: 'Language' },
   { rubricItem: 'Sense in context', state: 'library-populated', lang: 'ru', plant: { text: ['Выбрать', 'Выбор'] }, expect: 'Выбор' },
-  { rubricItem: 'Sense in context', state: 'library-select', lang: 'zh-Hans', plant: { text: ['分享', '份额'] }, expect: '份额' },
+  // The Move button as "emigrate" (#117 made Share an icon, so its "分享" is no longer text to plant in).
+  { rubricItem: 'Sense in context', state: 'library-select', lang: 'zh-Hans', plant: { text: ['移动', '移民'] }, expect: '移民' },
   {
     rubricItem: 'Grammar across strings',
     state: 'library-move-many',

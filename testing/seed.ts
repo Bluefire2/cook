@@ -25,6 +25,7 @@ import {
   memberLibrary,
   ownerLibrary,
   viewerLibrary,
+  viewerSharedChat,
   type PersonaLibrary,
 } from './fixtures.ts';
 import { PERSONAS, persona, type PersonaName } from './personas.ts';
@@ -217,6 +218,11 @@ export async function seed(baseUrl: string): Promise<number> {
     cookie: cookies.owner,
     json: { email: viewerEmail, role: 'editor' },
   });
+  await push(
+    baseUrl,
+    cookies.viewer,
+    viewerSharedChat(now).map((payload) => ({ kind: 'chat.put', payload })),
+  );
   await request(baseUrl, `/api/collections/${FIXTURE_IDS.member.weeknights}/public`, {
     cookie: cookies.member,
   });

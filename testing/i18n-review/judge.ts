@@ -139,7 +139,7 @@ export const JUDGE_SCHEMA = {
   required: ['pass', 'issues'],
 };
 
-const USER_DATA = `Not app text, so never report it, whatever language it is in: recipe titles, descriptions, ingredients, steps, notes, and tags; collection names; people's names and email addresses; names of connected apps; links and URLs. These are the user's data and stay as the user wrote them. Language names in the language picker are written in their own language on purpose (English, Українська, Русский, 简体中文); that is correct.`;
+const USER_DATA = `Not app text, so never report it, whatever language it is in: recipe titles, descriptions, ingredients, steps, notes, and tags; collection names; people's names and email addresses; names of connected apps; links and URLs; text the person typed or pasted, including where the app quotes it back; and the messages in a chat or assistant thread, both what the person asked and what the model answered, including what the model put in a card (a shopping list's title, sections, and items). These are the user's data or the model's words and stay as the user wrote them. Language names in the language picker are written in their own language on purpose (English, Українська, Русский, 简体中文); that is correct.`;
 
 const LAYOUT_NOTE = `Layout: judge spacing, truncation, and overflow only from the screenshot. The page text below is extracted text and loses the spacing between elements, so never report spacing from it.`;
 

@@ -113,9 +113,17 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Quote marks a judge may wrap a quotation in. */
+/** Opening and closing quote marks a judge may wrap a quotation in. */
+const QUOTE_PAIRS = ['""', "''", '“”', '«»', '‘’', '„“', '「」', '『』'];
+
+/**
+ * The text without quote marks that wrap all of it. Only a matched pair is
+ * removed: a closing 」 can be part of the quoted text itself.
+ */
 function unquote(text: string): string {
-  return text.trim().replace(/^["'“”«»‘’„「『]+|["'“”«»‘’「」『』]+$/g, '').trim();
+  const trimmed = text.trim();
+  const pair = QUOTE_PAIRS.find(([open, close]) => trimmed.length > 2 && trimmed.startsWith(open) && trimmed.endsWith(close));
+  return pair === undefined ? trimmed : trimmed.slice(1, -1).trim();
 }
 
 /** The parts of a template between its `{params}`, and the params in order. */

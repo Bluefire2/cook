@@ -54,6 +54,11 @@ describe('matchScore', () => {
     expect(matchScore('  «Зберегти» ', 'Зберегти')).toBe(3);
   });
 
+  it('keeps closing brackets that belong to the text', () => {
+    expect(matchScore('将 2 道食谱移到「Weeknights」', '将 {count} 道食谱移到「{name}」')).toBe(3);
+    expect(matchScore('「将 2 道食谱移到「Weeknights」」', '将 {count} 道食谱移到「{name}」')).toBe(3);
+  });
+
   it('finds a string inside a longer quote', () => {
     expect(matchScore('Зберегти Скасувати', 'Скасувати')).toBe(2);
   });

@@ -1,7 +1,7 @@
 # In-context translation review as a suite and a scheduled workflow
 
-Status: steps 1 (spike), 2 (capture), 3 (judge), and 4 (report) done on
-`claude/i18n-review-ci`; results below. Steps 5–7 not built.
+Status: steps 1 (spike), 2 (capture), 3 (judge), 4 (report), and 5 (all
+states) done on `claude/i18n-review-ci`; results below. Steps 6–7 not built.
 
 Constitutions applied: `docs/constitutions/i18n.md`. This plan builds the
 "standalone i18n review suite" milestone from `docs/plans/i18n.md` and
@@ -61,16 +61,18 @@ reachable from personas.
   Writes go to the emulator, so a state may be reached by doing what a
   person would do (pressing Create link, sending a suggestion), and nothing
   reaches production.
-- **The app's model calls are replayed, not live.** States behind a
-  model-backed route (import, translate, the assistant, Ask, dictation) get
-  their responses from recorded fixtures through Playwright `page.route`.
-  Captures are then deterministic, cheap, and independent of model drift,
-  and the test server needs no Gemini key. `npm run test:i18n -- --record`
-  refreshes the recordings with a real key; recordings are committed under
-  `testing/i18n-review/responses/` and hold only app output for the fixture
-  recipes. Failure states (`import-error-model-failed`, invite 409s, a
-  failed disconnect, a failed translation) are mocked responses too, which
-  makes states reachable that today depend on luck.
+- **The app's model calls are mocked, not live.** States behind a
+  model-backed route (import, translate, the assistant) get their responses
+  from hand-written mocks in `testing/i18n-review/mocks.ts`: Playwright
+  `context.route` for whole responses, and a patched `fetch` for the
+  assistant's NDJSON stream, which some states need held open. Captures are
+  then deterministic, cheap, and independent of model drift, and the test
+  server needs no Gemini key. Failure states (a failed model call, invite
+  409s, a failed disconnect, a failed translation, a failed collection
+  save) are mocks too, which makes states reachable that otherwise depend
+  on luck, and so are outcomes a capture must not leave in the emulator (a
+  minted collection link, a bulk import's saves). Step 5 replaced the
+  planned recordings and `--record` mode; see its results.
 - **Only the judge calls Gemini.** The workflow passes `GEMINI_API_KEY` to
   the judge step, not to the test server.
 - **Judge model: `gemini-3.7-flash`.** The spike confirmed it: Flash-Lite
@@ -212,8 +214,7 @@ The exact split is settled in step 5, and the report lists every skip.
 | `testing/i18n-review/capture.ts` | Playwright: one browser, a context per persona, 390×844, `cook.locale` per language, screenshot plus `innerText`. |
 | `testing/i18n-review/states.ts` | The per-id entries above. |
 | `testing/i18n-review/states.test.ts` | Manifest ↔ entries parity; every mock name exists. |
-| `testing/i18n-review/mocks.ts` | Named `page.route` handlers that serve recordings or failures. |
-| `testing/i18n-review/responses/` | Recorded model responses (JSON / NDJSON). |
+| `testing/i18n-review/mocks.ts` | Named mocks: model responses, failures, and writes kept out of the emulator. |
 | `testing/i18n-review/judge.ts` | Builds the prompt from the README and constitution, calls Gemini with the schema, confirms blockers, enforces `MAX_JUDGE_CALLS`. |
 | `testing/i18n-review/calibration.ts` | Live judge check: injected defects per rubric item, recall and false positives (step 3). |
 | `testing/i18n-review/judge.test.ts` | Pure: prompt assembly reads the right sections, schema parsing, blocker confirmation, fingerprints. |
@@ -447,6 +448,75 @@ production, which removes the reason for the read-only rule.
    `states.test.ts`. List the skipped ids and reasons in this plan. Check:
    a full local run completes and every manifest id is captured or skipped
    with a reason.
+   **Results (2026-10-03):** all 91 manifest states are scripted; **none is
+   skipped**. No state in the manifest shows a stored photo or needs a
+   Google sign-in, so `SKIP_REASONS` keeps those two reasons for later
+   states and drops `not scripted yet`: a new manifest state must now be
+   scripted or skipped for a named reason.
+   - **Full run:** 364 captures (91 × 4), none failed; 273 pairs judged with
+     284 calls, well under `MAX_JUDGE_CALLS`. Determinism: `--repeat 2`
+     over every state gave 362 of 364 byte-identical pairs; the two
+     failures were `suggest-sent` (below), which then passed 8 of 8.
+   - **Mocks, not recordings (deviation).** `--record` and `responses/` are
+     dropped. Most states need one particular outcome (a warning, a
+     failure, a card, a held-open reply) that a live call does not produce
+     on demand, and the only part of a real response the judge would see,
+     recipe text and model replies, is excluded from judging. `mocks.ts`
+     now holds 28 named mocks: import outcomes, translate outcomes,
+     invites and the clipboard, a failed disconnect, sync push accepted or
+     failing (bulk import and the assistant's Move and Create write
+     nothing to the emulator), a collection link, a suggestion, and
+     assistant streams. The assistant's NDJSON stream comes from a patched
+     `fetch`, because `route.fulfill` cannot hold a stream open for the
+     tool-chip and Stop states. Mock data is typed with `satisfies`
+     against `RecipeDraft` and the card data types, and mocks get the
+     frozen time, base URL, and UI language.
+   - **Toasts.** States that end on a toast (`library-invite-copied`,
+     `library-invite-copy-failed`, `sync-toast`) set `pauseClock`: the
+     capture installs Playwright's fake clock instead of only fixing the
+     date, timers run until the toast shows, then the clock pauses so the
+     toast cannot fade before the screenshot.
+   - **Seed changes.** `viewer` now has an Ask thread ending in a proposal
+     on one recipe from each share (`viewerSharedChat`, pushed after the
+     grants; `smoke.ts` checks it), for `recipe-chat-shared` and
+     `-shared-editor`. Banana bread has a source link, so its warning box
+     shows Retry import and View original as the manifest describes.
+   - **Two step 2 captures were wrong.** `import-preview` showed "Couldn't
+     translate this recipe": the clean mock had no language, which the
+     preview treats as unknown, so it tried to translate against a test
+     server with no Gemini key. The mock now answers in the UI language.
+     `recipe-view-import-warnings` lacked Retry import and View original
+     (banana bread had no link).
+   - **Suggestions are mocked.** The server rate-limits suggestions per
+     member, so real sends began failing after a few captures.
+   - **The judge prompt now excludes** text the person typed or pasted
+     (including where the app quotes it back) and chat and assistant
+     messages, including what the model put in a card. An English model
+     reply on a Ukrainian screen read as app text left in English, so the
+     assistant mocks also answer in the UI language. Calibration after the
+     change: 12 of 12 planted defects confirmed blockers, no false blocker
+     on 30 clean pairs, 54 calls. One plant moved: #117 made Share an
+     icon, so the `zh-Hans` wrong-sense plant is now 移动 → 移民 on the
+     Move button.
+   - **Candidate keys** no longer strip a closing 」 that belongs to the
+     text (`unquote` removes only a matched pair around the whole quote).
+   - **What the full run found** (after the fixes above, the confirmed
+     blockers are all real catalog text; none is fixed here, a fix is its
+     own change):
+     - `zh-Hans` uses 道 as the measure word for 食谱 in seven strings,
+       against the constitution's glossary ("食谱 takes the measure word
+       个, not 道"): the assistant's move and create headings and applied
+       lines (confirmed on seven screens) and `settings.importedRecipes`.
+     - `ru` `import.summaryAttention` is "Требуют внимания: {count}" in
+       every plural form; the judge wants "Требует" for 1. A "label: count"
+       line arguably takes the plural; the `uk` equivalent was not flagged.
+       A judgment call for someone who reads Russian.
+     - Unconfirmed: `uk` `error.importNoRecipe` ("не знайдено рецепт", the
+       judge suggests the genitive "рецепта"), and `uk` `import.bulkHint`
+       ("зберігається до вашої бібліотеки" read as a calque).
+   - **Note for running it:** `testing/smoke.ts` writes to the emulator (it
+     disconnects `member`'s connected app and adds a recipe), so run the
+     review against a fresh seed, not after the smoke check.
 6. **[core] Workflow and issue.** `issue.ts` and its tests, `accepted.json`,
    and the workflow. `issue.ts --dry-run` prints the body and comment instead
    of posting. Check before merge: `issue.test.ts` covers first run, new,
@@ -480,11 +550,11 @@ production, which removes the reason for the read-only rule.
   `zh-Hans`, and the judge can be wrong. The issue says that a suggestion is
   the model's, and a fix goes through the normal review, including a task
   review of the screen.
-- **Recordings drift from the app.** If a route's response shape changes,
-  a recording can show a state the real app no longer reaches. Mocks are
-  typed against the route's response types where they exist, and a mocked
-  state that renders an error instead of its expected text fails capture
-  (each `reach` waits for a known element).
+- **Mocks drift from the app.** If a route's response shape changes, a
+  mock can show a state the real app no longer reaches. Mock data is typed
+  against the client's types where they exist (`RecipeDraft`, the agent
+  card data), and a mocked state that renders an error instead of its
+  expected text fails capture (each `reach` waits for a known element).
 - **Cost.** Bounded by `MAX_JUDGE_CALLS` and by skipping unchanged `main`.
   The spike records the per-call cost so the cap means a known amount.
 - **Scheduled workflows on a public repository stop after 60 days without
