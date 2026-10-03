@@ -319,8 +319,13 @@ production, which removes the reason for the read-only rule.
 ## Owner steps
 
 1. Add the `GEMINI_API_KEY` Actions secret (Settings → Secrets and
-   variables → Actions). Use a key with a spending limit set in its Google
-   Cloud project.
+   variables → Actions → New repository secret, or `gh secret set
+   GEMINI_API_KEY --repo Bluefire2/sous`). Use a new key made for the review,
+   not production's, so it can be revoked alone and its usage reads
+   separately. A Cloud Billing budget on its project only alerts; it does not
+   stop spending. The limits are `MAX_JUDGE_CALLS` and the unchanged-`main`
+   skip, plus, if wanted, a lower request quota for the Gemini API on that
+   project.
 2. Approve the constitution amendment in the PR.
 3. After the first scheduled run, read the issue and add any findings you
    reject to `docs/i18n-review/accepted.json` with a reason.
