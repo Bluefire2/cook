@@ -1,9 +1,10 @@
 # In-context translation review as a suite and a scheduled workflow
 
-Status: two PRs. **PR 1** (`claude/i18n-review-ci`): steps 1–5 and step 7's
-docs for the suite, so `npm run test:i18n` lands as a manually run review
-before anything is automated; results below. **PR 2**, not built: step 6
-(the workflow and issue) and the scheduled-run part of the amendment. The
+Status: two PRs. **PR 1** (#131, merged): steps 1–5 and step 7's docs for the
+suite, so `npm run test:i18n` landed as a manually run review before
+anything was automated; results below. **PR 2** (`claude/i18n-review-workflow`):
+step 6 (the workflow and issue) and the scheduled-run part of the
+amendment. The
 split keeps each PR reviewable, lets a few manual runs show the judge's
 noise before it files issues, and step 6 can only be checked live once its
 workflow is on `main` anyway.
@@ -247,15 +248,16 @@ concurrency: { group: i18n-review, cancel-in-progress: false }
 ```
 
 One job on `ubuntu-latest`, `timeout-minutes: 60`: checkout `main`; read the
-issue state and exit early on an unchanged scheduled run; start the emulator
-(the `test-mode` job's command); `npm ci`; `npm run build`; install Chromium
+issue state and exit early on an unchanged scheduled run
+(`issue.ts should-run`); start the emulator (the `test-mode` job's command);
+`npm ci`; `npm run build`; install Chromium
 (`npx playwright install --with-deps chromium`); start
-`testing/test-server.ts --static`; run `npm run test:i18n -- --full
---out review/` with `GEMINI_API_KEY` from secrets on that step only; upload
-`review/` as an artifact; run `node testing/i18n-review/issue.ts` to build
-the body and comment; apply them with `gh issue` (create the label and issue
-on the first run). The workflow never pushes, never opens a PR, and runs
-only on `main`.
+`testing/test-server.ts --static`; run `npm run test:i18n -- --scope full
+--out review` with `GEMINI_API_KEY` from secrets on that step only; upload
+`review/` as an artifact; run `node testing/i18n-review/issue.ts update`,
+which builds the body and comment and applies them with `gh` (creating the
+label and issue on the first run). The workflow never pushes, never opens a
+PR, and runs only on `main`.
 
 ## Constitution amendment
 
@@ -542,6 +544,44 @@ production, which removes the reason for the read-only rule.
    `main`, so the live check is after merge: one dispatched run creates the
    label and the issue, and the next scheduled run on an unchanged `main`
    exits early. Record both runs here.
+   **Results (2026-10-04, before merge):** `issue.ts`, `issue.test.ts` (16
+   tests), `accepted.json` (`[]`), `.github/workflows/i18n-review.yml`, and
+   `markdown.ts` (the escaping the report and the issue share, with no
+   imports, so `should-run` works before `npm ci`).
+   - **`issue.ts`** is pure functions (`planUpdate`, `shouldRun`,
+     `parseState`, the body and comment) plus a command that reads and
+     writes the issue with `gh`: `should-run --event --sha` and
+     `update --results [--dry-run] [--previous-body] [--out]`. The plan
+     had the workflow apply the changes; one command doing it keeps the
+     workflow to two steps and gives the dry run the same path.
+   - **State** (the last reviewed commit and each open finding, with first-
+     and last-seen dates) is base64 JSON in a hidden comment, so no
+     finding's text can end the comment early.
+   - **Which findings change.** A finding is resolved only when a run
+     judged its screen and did not confirm it again. A finding on a screen
+     the run did not judge (out of a partial run's scope, or a failed
+     capture) stays open as it was. Only a complete full run (every state
+     in every language, nothing failed or cut off by the call limit)
+     records its commit, so a partial or broken run never makes the next
+     scheduled run skip.
+   - **When the job fails.** A confirmed blocker is not a failure; the
+     issue is where it goes. After updating the issue, `update` exits 1
+     when the run could not judge everything (a capture failure or a
+     non-deterministic capture, a judge error, the call limit), so a
+     rotting script shows up as a red run.
+   - **Hardening:** the token reaches only the two issue steps, the Gemini
+     key only the review step; checkout does not persist credentials; the
+     dispatch inputs reach the shell as environment variables, not
+     interpolated into the script.
+   - **Check (dry run).** A broken `ru` `settings.language` ("Language")
+     planted in a scratch build, then reverted, over `settings` and
+     `library-populated` in `ru`: run A confirmed it (3 calls); `update
+     --dry-run` would open the issue with it in the blocker table
+     (candidate key `settings.language`) and post "New (1)". Run B (2
+     calls, clean), fed A's body, would close the issue and post
+     "Resolved (1)". Both were partial, so neither recorded a commit.
+   - **The live check waits for the merge:** one dispatched run, then the
+     next scheduled run on an unchanged `main`.
 7. **[core] Docs and amendment.** The constitution amendment; the README
    rewrite; the Cursor skill; `AGENTS.md` (the Playwright exception in Tests
    and verification, the UI text rule's "run the in-context translation

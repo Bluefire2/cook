@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Judgment } from './judge.ts';
-import { buildResults, candidateKeys, type CaptureRow, inline, matchScore, renderReport, type ResultsInput } from './report.ts';
+import { inline } from './markdown.ts';
+import { buildResults, candidateKeys, type CaptureRow, matchScore, renderReport, type ResultsInput } from './report.ts';
 
 function input(over: Partial<ResultsInput> = {}): ResultsInput {
   return {
