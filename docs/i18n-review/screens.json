@@ -68,7 +68,7 @@
   {
     "id": "settings",
     "route": "/settings",
-    "setup": "Settings while signed in, with the language picker visible under Appearance. Scroll to the Feedback section above the About, Privacy, and Terms links; it has one line of text and a Suggest a feature button. Do not export, import a backup, refresh in order to force a toast, or sign out.",
+    "setup": "Settings while signed in, with the language picker visible under Appearance. Scroll to the Feedback section above the Show the intro again, About, Privacy, and Terms links; it has one line of text and a Suggest a feature button. Do not export, import a backup, refresh in order to force a toast, or sign out.",
     "needsData": false
   },
   {
@@ -124,6 +124,24 @@
     "route": "/",
     "setup": "Signed in on the Recipes list, open Add a recipe. The sheet shows Import from a link, text, or photos, and Write one from scratch. Do not leave the sheet and do not create a recipe. If this session is signed out, mark skipped: needs data.",
     "needsData": true
+  },
+  {
+    "id": "intro-step-1",
+    "route": "/",
+    "setup": "Signed in, open Settings and press Show the intro again at the bottom; the welcome intro opens as a sheet over the Recipes list. Review the first step (camera icon, Step 1 of 3) with Next and Skip. Do not press Import a recipe. Close it with Skip or Look around when done.",
+    "needsData": false
+  },
+  {
+    "id": "intro-step-2",
+    "route": "/",
+    "setup": "Signed in, open Settings and press Show the intro again at the bottom; the welcome intro opens as a sheet over the Recipes list. Review the second step (chat bubble icon, Step 2 of 3) with Next, Back, and Skip; press Next once to reach it. Do not press Import a recipe. Close it with Skip or Look around when done.",
+    "needsData": false
+  },
+  {
+    "id": "intro-step-3",
+    "route": "/",
+    "setup": "Signed in, open Settings and press Show the intro again at the bottom; the welcome intro opens as a sheet over the Recipes list. Review the last step (folder icon, Step 3 of 3) with Import a recipe, Look around, and Back; press Next twice to reach it. Do not press Import a recipe. Close it with Skip or Look around when done.",
+    "needsData": false
   },
   {
     "id": "library-language-menu",

@@ -1,6 +1,6 @@
 # New-member intro
 
-Status: planned, not built.
+Status: built on `claude/new-member-intro-plan`, not deployed.
 
 ## Goal
 
@@ -79,8 +79,10 @@ site data. (Owner's call, 2026-10-04, over a per-browser localStorage flag.)
 - It is never synced, pulled, or put in a backup, and it is not a `Recipe`
   field.
 
-**D3. Two small routes** in `server/intro.ts`, both behind `withMembership`,
-with the `sub` from the session only:
+**D3. Two small routes** in `server/intro.ts`. Each calls `requireMember`
+itself (injected, like `server/grantsHttp.ts`) rather than going through
+`withMembership`, whose `authorizedSub` is limited to a fixed list of files by
+`server/membership.test.ts`. The `sub` comes from the session only:
 
 | Route | Does | Answers |
 | --- | --- | --- |
@@ -189,9 +191,9 @@ people who see the intro are members.
    missing or the field is already set), plus the pure `introSeenFromProfile`.
    Unit tests for the pure parts.
 2. **[core]** `server/intro.ts`: `introGet` and `introSeenPost` (D3), and two
-   lines in the route table in `scripts/server.ts`, both wrapped in
-   `withMembership`. Neither lets the original error escape: a Firestore
-   failure is `503`. Unit tests for the response mapping, with the store
+   lines in the route table in `scripts/server.ts`. Neither lets the original
+   error escape: a Firestore failure is `503`, and only its gRPC code is
+   logged. Unit tests for the response mapping, with the store
    functions passed in so no emulator is needed.
 3. **[core]** `src/lib/introApi.ts` (D4) with tests for the status mapping
    (`200`, `401`, `503`, network error) and the per-`sub` page-load state.
@@ -202,7 +204,7 @@ people who see the intro are members.
    change).
 5. **[core]** A selector in `src/lib/librarySelectors.ts` that says whether
    the member has any live recipe of their own (no shared origin), and a pure
-   `shouldAskAboutIntro({ sessionStatus, ownPullDone, syncError, hasOwnRecipe,
+   `shouldAskAboutIntro({ sessionStatus, sync, hasOwnRecipe,
    sheetClosed })` in `src/lib/intro.ts`. Unit tests cover "only shared
    recipes" (ask) and "one own recipe" (don't ask).
 6. **[ui]** `src/components/IntroSheet.tsx`: one step at a time (icon, heading,
@@ -222,8 +224,8 @@ people who see the intro are members.
    ("Settings → Show the intro"; that works on any account, so these screens
    don't need an empty library).
 10. **[ui]** `public/privacy.html`: where it says sign-in associates your
-    `sub`, email address and display name with your library, add that Sous
-    also records whether you've closed the welcome intro. `/terms` lists no
+    `sub`, email address and display name with your library, add that the
+    profile also records when you closed the welcome intro. `/terms` lists no
     profile fields and doesn't change.
 11. **[ui]** Add a row to the Plans table in `AGENTS.md`.
 
