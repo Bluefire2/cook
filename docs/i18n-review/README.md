@@ -130,6 +130,35 @@ A change to the judge's prompt or model is measured with
 `testing/i18n-review/calibration.ts` (planted defects and clean screens)
 and recorded in `docs/plans/i18n-review-ci.md`.
 
+## Scheduled run
+
+`.github/workflows/i18n-review.yml` runs a full review of `main` every day at
+06:00 UTC and keeps the open findings in one issue, "In-context translation
+review: open findings", labelled `i18n-review`. It is a backstop for what
+task reviews miss, not a replacement for them.
+
+- **What is filed.** Confirmed findings only: blockers in a table, nits
+  folded away, each with its candidate keys and the date it was first seen.
+  The issue also lists screens the run could not judge, and a comment notes
+  each run that found something new or saw something resolved. With nothing
+  open, the issue is closed; a new finding reopens it.
+- **Declining a finding.** Add it to `accepted.json` in this directory with
+  a reason and the date, in a normal PR:
+  `{ "fingerprint": "…", "reason": "…", "date": "YYYY-MM-DD" }`. The issue
+  lists each finding's fingerprint. Optional `state`, `lang`, and `text`
+  fields are for people reading the file.
+- **When it runs.** A scheduled run on a commit it already reviewed in full
+  stops early. Run it by hand from the Actions tab (`workflow_dispatch`),
+  optionally for some state ids or languages; a partial run updates only
+  the findings on the screens it judged.
+- **Where the report is.** Each run uploads `report.md`, `results.json`,
+  and the screenshots as a workflow artifact, kept 30 days; the issue links
+  the run.
+
+The issue body ends with the run's state in a hidden comment; the next run
+rewrites the body from it, so edits to the body are lost. The repository is
+public, so the issue and artifacts are too; they show only fixture data.
+
 ## Screen manifest
 
 `screens.json` is a JSON array. Each object has:

@@ -6,6 +6,7 @@
  */
 import { CATALOGS, LANG_NAMES, type Lang, type MessageKey } from './catalog.ts';
 import { type Finding, type Judgment, normalizeText } from './judge.ts';
+import { inline } from './markdown.ts';
 import type { SkipReason } from './states.ts';
 
 export interface CaptureRow {
@@ -259,18 +260,6 @@ export function buildResults(input: ResultsInput): Results {
     cells,
     findings,
   };
-}
-
-/**
- * Model and page text, safe in Markdown and in a GitHub issue: no markup,
- * no table breaks, no @mentions.
- */
-export function inline(text: string): string {
-  return text
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/[\\`*_[\]<>|#~]/g, '\\$&')
-    .replace(/@/g, '&#64;');
 }
 
 function keysText(finding: ResultFinding): string {
