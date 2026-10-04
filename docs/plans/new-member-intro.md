@@ -150,6 +150,38 @@ Keep each step to a heading and at most two sentences.
 `ChatBubbleIcon`, `FolderIcon`). No images or illustrations, so nothing needs
 translating per locale and nothing grows the bundle.
 
+## English copy (draft)
+
+The draft for `src/i18n/en.ts`. Button and screen names match the existing
+labels: **Ask** (`recipe.ask`; the chat-bubble icon at the top of the
+library is `assistant.ask`), **Log a cook** (`recipe.logACook`), **Invite**
+(`library.inviteLink`), and the import wording of `library.importFromLink` and
+`import.photoHint`. Quotes use the curly `“ ”` the catalog already uses.
+
+| Key | Text |
+| --- | --- |
+| `intro.welcome` | Welcome to Sous |
+| `intro.stepOf` | Step {n} of {total} |
+| `intro.importTitle` | Bring your recipes in |
+| `intro.importBody` | Paste a link or a recipe's text, or add up to 4 photos of handwritten notes. Sous turns it into a clean recipe you can edit. |
+| `intro.cookTitle` | Cook with help |
+| `intro.cookBody` | On any recipe, tap Ask for substitutions, timing, or a second opinion on how it's going. Type or dictate, and when you're done, Log a cook to keep notes for next time. |
+| `intro.shareTitle` | Plan and share |
+| `intro.shareBody` | The chat bubble at the top of your library looks across all your own recipes: try “What can I make tonight?” or ask for a shopping list. Put recipes in a collection to share them, or tap Invite to bring a friend to Sous. |
+| `intro.back` | Back |
+| `intro.next` | Next |
+| `intro.skip` | Skip |
+| `intro.importCta` | Import a recipe |
+| `intro.lookAround` | Look around |
+| `settings.showIntro` | Show the intro again |
+
+`intro.welcome` sits above each step's title as a small label. Clauses to cut
+if their feature isn't in the deploy that ships the intro (D9): "or add up to 4
+photos of handwritten notes" (photo import), the whole first sentence of
+`intro.shareBody` (the library assistant), and "or tap Invite to bring a
+friend to Sous" (member invite links). An owner always has Invite, but most
+people who see the intro are members.
+
 ## Steps
 
 1. **[core]** `server/store.ts`: `readIntroSeen(sub)` and
